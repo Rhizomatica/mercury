@@ -1,16 +1,24 @@
 var searchData=
 [
-  ['data_0',['data',['../structarq__bytes__msg__t.html#ad71650ffad62d11445d405b45ad35811',1,'arq_bytes_msg_t']]],
-  ['data_5fbytes_1',['data_bytes',['../structarq__event__t.html#a4b6c48f8e019c4d77276bad6cad98d11',1,'arq_event_t']]],
+  ['d_0',['d',['../structcar__t.html#a397e479afb935b2e65ace29d8d392d36',1,'car_t::d'],['../structcar__mlog__t.html#a846b0a5885336890475f01229bcec161',1,'car_mlog_t::d']]],
+  ['data_1',['data',['../structarq__bytes__msg__t.html#ad71650ffad62d11445d405b45ad35811',1,'arq_bytes_msg_t::data'],['../structcar__sblock__t.html#a7955930748c1086421d2d2052bb3f150',1,'car_sblock_t::data']]],
   ['data_5frx_5fbuffer_5farq_2',['data_rx_buffer_arq',['../arq_8c.html#aabc89b126c3230df63b037ed4b018899',1,'arq.c']]],
   ['data_5frx_5fms_3',['data_rx_ms',['../structarq__timing__ctx__t.html#a4c9300e64fab5c1bfdbf65a2a911bbbb',1,'arq_timing_ctx_t']]],
   ['data_5ftx_5fbuffer_5farq_4',['data_tx_buffer_arq',['../arq_8c.html#a1cd0cb25fcc04295cbf33d517a927c26',1,'arq.c']]],
   ['data_5ftx_5fbuffer_5farq_5fcontrol_5',['data_tx_buffer_arq_control',['../arq_8c.html#a4c383c6be5920945378d789ff5b829cc',1,'arq.c']]],
-  ['deadline_5fevent_6',['deadline_event',['../structarq__session__t.html#ac4af3c9a7025182b1ee25999ab15a129',1,'arq_session_t']]],
-  ['deadline_5fms_7',['deadline_ms',['../structarq__session__t.html#ae5427c7247e38025eda04f4500651dd8',1,'arq_session_t']]],
-  ['decoder_5fmode_8',['decoder_mode',['../structarq__frame__msg__t.html#a773f96483b0f2db2baf94a7548cb109d',1,'arq_frame_msg_t']]],
-  ['deliver_5frx_5fdata_9',['deliver_rx_data',['../structarq__fsm__callbacks__t.html#ac9fcbea66140772ba5f409c77c6d4537',1,'arq_fsm_callbacks_t']]],
-  ['dflow_5fstate_10',['dflow_state',['../structarq__session__t.html#a991fe3f262daac29c89145b7600ca690',1,'arq_session_t']]],
-  ['disconnect_5fto_5fno_5fclient_11',['disconnect_to_no_client',['../structarq__session__t.html#a4e6a3d49c47d99860b35efdea27f0574',1,'arq_session_t']]],
-  ['dst_5faddr_12',['dst_addr',['../structarq__info.html#abd24ecb208a254859229cf631962fe90',1,'arq_info']]]
+  ['deadline_6',['deadline',['../structcar__t.html#a703007c147d792c3aa1aea42a068ef4c',1,'car_t']]],
+  ['deadline_5fevent_7',['deadline_event',['../structarq__session__t.html#ac4af3c9a7025182b1ee25999ab15a129',1,'arq_session_t']]],
+  ['deadline_5fms_8',['deadline_ms',['../structarq__session__t.html#ae5427c7247e38025eda04f4500651dd8',1,'arq_session_t']]],
+  ['decoder_5fmode_9',['decoder_mode',['../structarq__frame__msg__t.html#a773f96483b0f2db2baf94a7548cb109d',1,'arq_frame_msg_t']]],
+  ['deferred_5flisten_5foff_10',['deferred_listen_off',['../structarq__session__t.html#a499c4b05f025bbb145600a019fb57c35',1,'arq_session_t']]],
+  ['deliver_11',['deliver',['../structcar__io__t.html#a86610ade9d3980b7c91b05613eb09c2e',1,'car_io_t']]],
+  ['deliver_5frx_5fdata_12',['deliver_rx_data',['../structarq__fsm__callbacks__t.html#ac9fcbea66140772ba5f409c77c6d4537',1,'arq_fsm_callbacks_t']]],
+  ['deliver_5fseq_13',['deliver_seq',['../structcar__t.html#a87f838a9c9da2b4a44cbf2a7de780926',1,'car_t']]],
+  ['delivered_14',['delivered',['../structcar__rblock__t.html#abde28f32cd89bcaccfe7b7e12925a429',1,'car_rblock_t']]],
+  ['disc_5fdefer_5fcount_15',['disc_defer_count',['../structarq__session__t.html#a26a22ab1297d77c29954ff69d5a5670b',1,'arq_session_t']]],
+  ['disconnect_5fdeadline_5fms_16',['disconnect_deadline_ms',['../structarq__session__t.html#abf96238a46c7d061810b74bbeb5e2945',1,'arq_session_t']]],
+  ['disconnect_5fsent_17',['disconnect_sent',['../structarq__session__t.html#a9db7537e4c4408896eb20bf33e68643f',1,'arq_session_t']]],
+  ['done_18',['done',['../structcar__rblock__t.html#a242ae557497e6977a4edc99315495b6d',1,'car_rblock_t::done'],['../structcar__mlog__t.html#abd1093ad0fb565ff9b883f4b7e45aaee',1,'car_mlog_t::done']]],
+  ['done_5fin_5fround_19',['done_in_round',['../structcar__t.html#a5eb0cb867e77a5dc51ed3e760495f24f',1,'car_t']]],
+  ['dst_5faddr_20',['dst_addr',['../structarq__info.html#abd24ecb208a254859229cf631962fe90',1,'arq_info']]]
 ];

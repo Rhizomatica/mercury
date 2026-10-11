@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.9.8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HERMES Modem: arq_modem.c File Reference</title>
+<title>Mercury Modem: arq_modem.c File Reference</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -21,9 +21,9 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">HERMES Modem
+   <div id="projectname">Mercury Modem
    </div>
-   <div id="projectbrief">Hermes ARQ/Broadcast modem</div>
+   <div id="projectbrief">Mercury ARQ/Broadcast modem</div>
   </td>
  </tr>
  </tbody>
@@ -87,62 +87,71 @@ $(function() {
 <code>#include &lt;string.h&gt;</code><br />
 <code>#include &lt;time.h&gt;</code><br />
 <code>#include &lt;errno.h&gt;</code><br />
+<code>#include &lt;stdlib.h&gt;</code><br />
 <code>#include &quot;../modem/freedv/freedv_api.h&quot;</code><br />
 </div><div class="textblock"><div class="dynheader">
 Include dependency graph for arq_modem.c:</div>
 <div class="dyncontent">
 <div class="center"><img src="arq__modem_8c__incl.png" border="0" usemap="#aarq__modem_8c" alt=""/></div>
 <map name="aarq__modem_8c" id="aarq__modem_8c">
-<area shape="rect" title=" " alt="" coords="844,5,945,31"/>
-<area shape="rect" href="arq__modem_8h.html" title=" " alt="" coords="273,86,374,111"/>
-<area shape="poly" title=" " alt="" coords="844,29,388,91,388,86,843,24"/>
-<area shape="rect" title=" " alt="" coords="715,387,791,412"/>
-<area shape="poly" title=" " alt="" coords="886,32,869,54,853,80,832,127,826,178,826,254,821,290,808,324,774,378,769,375,803,322,816,289,821,254,821,178,827,126,848,77,865,51,882,29"/>
-<area shape="rect" href="arq__protocol_8h.html" title=" " alt="" coords="425,313,529,339"/>
-<area shape="poly" title=" " alt="" coords="878,33,807,81,633,208,504,307,501,303,630,204,804,76,875,29"/>
-<area shape="rect" title=" " alt="" coords="862,86,927,111"/>
-<area shape="poly" title=" " alt="" coords="897,31,897,72,892,72,892,31"/>
-<area shape="rect" title=" " alt="" coords="952,86,1010,111"/>
-<area shape="poly" title=" " alt="" coords="909,29,960,75,956,78,905,33"/>
-<area shape="rect" title=" " alt="" coords="1035,86,1098,111"/>
-<area shape="poly" title=" " alt="" coords="921,28,1030,78,1028,83,918,33"/>
-<area shape="rect" title=" " alt="" coords="1122,79,1280,119"/>
-<area shape="poly" title=" " alt="" coords="940,28,1115,73,1114,78,938,33"/>
-<area shape="rect" title=" " alt="" coords="69,387,144,412"/>
-<area shape="poly" title=" " alt="" coords="280,114,213,136,141,169,94,200,55,242,16,289,8,311,10,323,15,337,36,361,62,378,59,383,32,365,11,340,4,325,3,311,11,286,51,238,90,196,138,164,211,131,278,109"/>
-<area shape="rect" title=" " alt="" coords="548,387,617,412"/>
-<area shape="poly" title=" " alt="" coords="375,107,457,130,505,147,554,169,604,196,650,228,691,267,725,312,730,328,728,342,719,354,706,364,670,381,632,392,630,386,668,376,703,360,715,350,723,340,725,328,720,315,687,271,647,233,601,200,552,174,503,152,455,135,374,112"/>
-<area shape="rect" href="arq_8h.html" title=" " alt="" coords="298,240,349,265"/>
-<area shape="poly" title=" " alt="" coords="326,111,326,226,321,226,321,111"/>
-<area shape="rect" href="arq__fsm_8h.html" title=" " alt="" coords="152,167,232,192"/>
-<area shape="poly" title=" " alt="" coords="306,114,224,162,221,157,303,109"/>
-<area shape="poly" title=" " alt="" coords="308,268,137,381,134,377,305,263"/>
-<area shape="poly" title=" " alt="" coords="349,252,390,255,441,264,494,282,520,295,543,311,566,341,579,372,574,374,561,343,539,315,517,300,492,287,440,270,389,260,349,257"/>
-<area shape="rect" title=" " alt="" coords="194,387,259,412"/>
-<area shape="poly" title=" " alt="" coords="318,267,244,377,240,374,314,264"/>
-<area shape="rect" href="fsm_8h.html" title=" " alt="" coords="655,313,710,339"/>
-<area shape="poly" title=" " alt="" coords="350,256,642,314,641,319,349,262"/>
-<area shape="rect" href="arq__events_8h.html" title=" " alt="" coords="303,313,400,339"/>
-<area shape="poly" title=" " alt="" coords="331,265,345,300,340,302,326,267"/>
-<area shape="poly" title=" " alt="" coords="696,337,734,375,730,379,692,341"/>
-<area shape="poly" title=" " alt="" coords="313,341,158,386,156,381,312,336"/>
-<area shape="poly" title=" " alt="" coords="390,336,536,381,534,386,388,341"/>
-<area shape="poly" title=" " alt="" coords="333,341,260,382,258,377,330,336"/>
-<area shape="rect" title=" " alt="" coords="284,387,409,412"/>
-<area shape="poly" title=" " alt="" coords="354,339,351,373,346,373,348,339"/>
-<area shape="poly" title=" " alt="" coords="166,195,131,213,91,239,53,273,24,314,21,333,30,350,47,365,68,378,65,383,44,369,26,353,16,334,19,312,49,269,88,235,128,208,163,190"/>
-<area shape="poly" title=" " alt="" coords="233,179,306,187,398,208,446,225,492,248,535,276,571,312,580,326,585,341,588,372,582,373,580,343,575,328,567,315,531,280,490,252,444,230,397,213,305,193,232,185"/>
-<area shape="poly" title=" " alt="" coords="214,190,292,231,289,236,212,194"/>
-<area shape="poly" title=" " alt="" coords="196,192,225,373,220,373,191,193"/>
-<area shape="rect" href="arq__timing_8h.html" title=" " alt="" coords="33,313,126,339"/>
-<area shape="poly" title=" " alt="" coords="185,194,147,242,99,304,95,301,143,238,181,190"/>
-<area shape="poly" title=" " alt="" coords="87,338,100,373,95,375,82,340"/>
-<area shape="poly" title=" " alt="" coords="104,336,191,378,189,383,102,341"/>
-<area shape="poly" title=" " alt="" coords="425,340,158,391,157,386,424,335"/>
-<area shape="poly" title=" " alt="" coords="495,336,556,377,553,381,493,341"/>
-<area shape="poly" title=" " alt="" coords="438,341,273,388,272,382,436,336"/>
-<area shape="rect" title=" " alt="" coords="433,387,524,412"/>
-<area shape="poly" title=" " alt="" coords="480,339,481,373,475,373,475,339"/>
+<area shape="rect" title=" " alt="" coords="937,5,1038,31"/>
+<area shape="rect" href="arq__modem_8h.html" title=" " alt="" coords="393,86,494,111"/>
+<area shape="poly" title=" " alt="" coords="937,29,508,91,507,85,936,24"/>
+<area shape="rect" href="arq__protocol_8h.html" title=" " alt="" coords="633,313,737,339"/>
+<area shape="poly" title=" " alt="" coords="937,27,868,44,834,59,802,81,779,105,758,133,726,194,704,254,692,300,687,299,699,252,721,192,753,130,775,102,799,77,831,55,867,39,936,22"/>
+<area shape="rect" title=" " alt="" coords="812,86,888,111"/>
+<area shape="poly" title=" " alt="" coords="968,33,883,81,881,77,966,29"/>
+<area shape="rect" title=" " alt="" coords="912,86,977,111"/>
+<area shape="poly" title=" " alt="" coords="983,32,960,75,955,73,979,30"/>
+<area shape="rect" title=" " alt="" coords="1002,86,1061,111"/>
+<area shape="poly" title=" " alt="" coords="996,30,1021,73,1016,75,992,32"/>
+<area shape="rect" title=" " alt="" coords="1085,86,1148,111"/>
+<area shape="poly" title=" " alt="" coords="1008,29,1087,76,1085,81,1005,33"/>
+<area shape="rect" title=" " alt="" coords="1173,86,1237,111"/>
+<area shape="poly" title=" " alt="" coords="1024,28,1162,76,1167,78,1165,83,1160,81,1022,33"/>
+<area shape="rect" title=" " alt="" coords="1261,79,1418,119"/>
+<area shape="poly" title=" " alt="" coords="1039,28,1248,74,1247,80,1038,33"/>
+<area shape="rect" title=" " alt="" coords="523,387,598,412"/>
+<area shape="poly" title=" " alt="" coords="491,109,563,133,604,151,645,173,685,200,721,232,751,269,771,312,775,327,771,340,749,352,709,365,612,389,611,384,708,360,747,347,767,337,770,327,766,314,746,272,717,236,682,204,643,178,601,156,561,138,489,114"/>
+<area shape="rect" title=" " alt="" coords="15,387,85,412"/>
+<area shape="poly" title=" " alt="" coords="404,114,263,162,178,198,95,242,45,272,27,288,11,314,8,330,12,346,30,375,26,378,7,348,3,330,6,312,23,285,42,267,93,238,176,194,262,157,402,109"/>
+<area shape="rect" href="arq_8h.html" title=" " alt="" coords="249,240,299,265"/>
+<area shape="poly" title=" " alt="" coords="432,113,299,233,295,229,429,109"/>
+<area shape="rect" href="arq__fsm_8h.html" title=" " alt="" coords="403,167,483,192"/>
+<area shape="poly" title=" " alt="" coords="446,112,446,153,441,153,441,112"/>
+<area shape="poly" title=" " alt="" coords="298,263,527,378,525,383,296,268"/>
+<area shape="poly" title=" " alt="" coords="249,259,195,266,129,277,70,293,48,304,34,315,28,328,27,343,38,373,33,375,22,344,22,327,29,312,45,299,68,288,128,272,194,260,248,254"/>
+<area shape="rect" title=" " alt="" coords="360,387,425,412"/>
+<area shape="poly" title=" " alt="" coords="286,264,377,374,372,378,282,267"/>
+<area shape="rect" href="arq__events_8h.html" title=" " alt="" coords="207,313,304,339"/>
+<area shape="poly" title=" " alt="" coords="274,266,264,301,259,300,268,265"/>
+<area shape="poly" title=" " alt="" coords="305,336,511,384,510,389,304,341"/>
+<area shape="poly" title=" " alt="" coords="223,341,97,385,95,380,222,336"/>
+<area shape="poly" title=" " alt="" coords="279,336,359,378,357,383,276,341"/>
+<area shape="rect" title=" " alt="" coords="193,387,318,412"/>
+<area shape="poly" title=" " alt="" coords="258,339,258,373,253,373,253,339"/>
+<area shape="poly" title=" " alt="" coords="484,181,548,191,624,213,662,230,697,251,727,279,751,312,756,326,751,340,729,357,694,371,612,391,611,386,692,366,726,352,747,337,751,326,746,315,723,282,694,256,659,234,622,218,547,196,484,186"/>
+<area shape="poly" title=" " alt="" coords="404,190,310,207,193,235,136,252,86,271,47,292,22,315,16,329,18,344,34,375,29,377,13,346,11,328,17,312,44,288,84,267,135,247,192,230,309,202,403,184"/>
+<area shape="poly" title=" " alt="" coords="417,194,313,238,311,233,415,190"/>
+<area shape="poly" title=" " alt="" coords="443,193,401,374,396,372,438,192"/>
+<area shape="rect" href="arq__timing_8h.html" title=" " alt="" coords="497,240,590,265"/>
+<area shape="poly" title=" " alt="" coords="461,190,518,230,514,234,458,194"/>
+<area shape="poly" title=" " alt="" coords="484,188,543,207,604,238,641,269,670,301,666,304,637,273,601,242,540,212,483,193"/>
+<area shape="rect" href="carousel_8h.html" title=" " alt="" coords="323,240,406,265"/>
+<area shape="poly" title=" " alt="" coords="433,194,389,233,386,229,429,190"/>
+<area shape="poly" title=" " alt="" coords="535,268,464,341,419,380,416,376,460,337,531,264"/>
+<area shape="poly" title=" " alt="" coords="666,341,594,382,592,377,664,336"/>
+<area shape="poly" title=" " alt="" coords="633,336,99,395,98,390,632,331"/>
+<area shape="poly" title=" " alt="" coords="638,341,439,390,438,384,637,336"/>
+<area shape="rect" title=" " alt="" coords="639,387,730,412"/>
+<area shape="poly" title=" " alt="" coords="687,339,687,373,682,373,682,339"/>
+<area shape="poly" title=" " alt="" coords="407,260,461,279,489,293,515,311,539,341,555,373,550,375,534,344,511,315,486,298,459,284,406,265"/>
+<area shape="poly" title=" " alt="" coords="324,265,312,268,275,273,241,275,184,273,158,275,132,281,105,294,77,315,67,328,60,342,54,373,48,372,55,341,63,325,74,311,103,289,130,276,157,270,184,268,241,269,274,268,311,263,323,260"/>
+<area shape="poly" title=" " alt="" coords="370,265,391,372,385,373,364,266"/>
+<area shape="rect" href="rs__erasure_8h.html" title=" " alt="" coords="88,313,183,339"/>
+<area shape="poly" title=" " alt="" coords="329,268,187,312,185,307,327,263"/>
+<area shape="poly" title=" " alt="" coords="123,341,76,380,73,376,120,337"/>
+<area shape="poly" title=" " alt="" coords="177,336,347,383,346,388,176,341"/>
 </map>
 </div>
 </div><table class="memberdecls">
@@ -165,10 +174,21 @@ Functions</h2></td></tr>
 <tr class="memitem:abc9bff542ecb9fbfc189dbc664beae09" id="r_abc9bff542ecb9fbfc189dbc664beae09"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#abc9bff542ecb9fbfc189dbc664beae09">arq_modem_dequeue</a> (<a class="el" href="structarq__action__t.html">arq_action_t</a> *action, int timeout_ms)</td></tr>
 <tr class="memdesc:abc9bff542ecb9fbfc189dbc664beae09"><td class="mdescLeft">&#160;</td><td class="mdescRight">Dequeue the next modem action (called from modem TX worker).  <br /></td></tr>
 <tr class="separator:abc9bff542ecb9fbfc189dbc664beae09"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a61725b750eae096ea6dd9391b070d022" id="r_a61725b750eae096ea6dd9391b070d022"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a61725b750eae096ea6dd9391b070d022">arq_modem_set_event_fn</a> (void(*fn)(int mode, bool ptt_on))</td></tr>
+<tr class="memitem:a61725b750eae096ea6dd9391b070d022" id="r_a61725b750eae096ea6dd9391b070d022"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a61725b750eae096ea6dd9391b070d022">arq_modem_set_event_fn</a> (void(*fn)(int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, bool ptt_on))</td></tr>
 <tr class="memdesc:a61725b750eae096ea6dd9391b070d022"><td class="mdescLeft">&#160;</td><td class="mdescRight">Register the PTT event injection function (called from <a class="el" href="arq_8c.html">arq.c</a> init).  <br /></td></tr>
 <tr class="separator:a61725b750eae096ea6dd9391b070d022"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:af2af9af0a32a8df135c9ac30df012d88" id="r_af2af9af0a32a8df135c9ac30df012d88"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#af2af9af0a32a8df135c9ac30df012d88">arq_modem_ptt_on</a> (int mode, size_t frame_size)</td></tr>
+<tr class="memitem:a96da9ce65514f8b67f87d04f9e7845f8" id="r_a96da9ce65514f8b67f87d04f9e7845f8"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a96da9ce65514f8b67f87d04f9e7845f8">arq_modem_set_channel_busy_fn</a> (bool(*fn)(void))</td></tr>
+<tr class="memdesc:a96da9ce65514f8b67f87d04f9e7845f8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Register the station's channel-occupancy probe.  <br /></td></tr>
+<tr class="separator:a96da9ce65514f8b67f87d04f9e7845f8"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a82f9c6e98c349dbd1766cf94a0c3f196" id="r_a82f9c6e98c349dbd1766cf94a0c3f196"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a82f9c6e98c349dbd1766cf94a0c3f196">arq_modem_channel_busy</a> (void)</td></tr>
+<tr class="memdesc:a82f9c6e98c349dbd1766cf94a0c3f196"><td class="mdescLeft">&#160;</td><td class="mdescRight">Is the channel occupied? false when no probe is registered.  <br /></td></tr>
+<tr class="separator:a82f9c6e98c349dbd1766cf94a0c3f196"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:afd04700977278532eef094f0f65efcf9" id="r_afd04700977278532eef094f0f65efcf9"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#afd04700977278532eef094f0f65efcf9">arq_modem_set_crc_seed_fn</a> (void(*fn)(uint16_t seed))</td></tr>
+<tr class="memdesc:afd04700977278532eef094f0f65efcf9"><td class="mdescLeft">&#160;</td><td class="mdescRight">Register the modem's session-seed setter (carousel data plane).  <br /></td></tr>
+<tr class="separator:afd04700977278532eef094f0f65efcf9"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a40d419d1628f71a24079277f7bc71151" id="r_a40d419d1628f71a24079277f7bc71151"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a40d419d1628f71a24079277f7bc71151">arq_modem_crc_seed</a> (uint16_t seed)</td></tr>
+<tr class="separator:a40d419d1628f71a24079277f7bc71151"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:af2af9af0a32a8df135c9ac30df012d88" id="r_af2af9af0a32a8df135c9ac30df012d88"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#af2af9af0a32a8df135c9ac30df012d88">arq_modem_ptt_on</a> (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, size_t frame_size)</td></tr>
 <tr class="memdesc:af2af9af0a32a8df135c9ac30df012d88"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify ARQ that PTT has gone ON.  <br /></td></tr>
 <tr class="separator:af2af9af0a32a8df135c9ac30df012d88"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:adeb467373ebaea116dca6e3246074952" id="r_adeb467373ebaea116dca6e3246074952"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#adeb467373ebaea116dca6e3246074952">arq_modem_ptt_off</a> (void)</td></tr>
@@ -199,8 +219,12 @@ Variables</h2></td></tr>
 <tr class="separator:ad39ffebfcd1202534128ff78f5ea524d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4c09a9a6cdaf7985f3298836c50bae58" id="r_a4c09a9a6cdaf7985f3298836c50bae58"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a4c09a9a6cdaf7985f3298836c50bae58">g_shutdown</a> = false</td></tr>
 <tr class="separator:a4c09a9a6cdaf7985f3298836c50bae58"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a31de4848be75106fa08df30626a0a6da" id="r_a31de4848be75106fa08df30626a0a6da"><td class="memItemLeft" align="right" valign="top">static void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a31de4848be75106fa08df30626a0a6da">g_inject_event</a> )(int mode, bool ptt_on) = NULL</td></tr>
+<tr class="memitem:a31de4848be75106fa08df30626a0a6da" id="r_a31de4848be75106fa08df30626a0a6da"><td class="memItemLeft" align="right" valign="top">static void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a31de4848be75106fa08df30626a0a6da">g_inject_event</a> )(int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, bool ptt_on) = NULL</td></tr>
 <tr class="separator:a31de4848be75106fa08df30626a0a6da"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abde24d310b14d80ecfdc24efeb790681" id="r_abde24d310b14d80ecfdc24efeb790681"><td class="memItemLeft" align="right" valign="top">static bool(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#abde24d310b14d80ecfdc24efeb790681">g_channel_busy_fn</a> )(void) = NULL</td></tr>
+<tr class="separator:abde24d310b14d80ecfdc24efeb790681"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a67af575954a5ba2cba424fcfef726c31" id="r_a67af575954a5ba2cba424fcfef726c31"><td class="memItemLeft" align="right" valign="top">static void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a67af575954a5ba2cba424fcfef726c31">g_crc_seed_fn</a> )(uint16_t seed) = NULL</td></tr>
+<tr class="separator:a67af575954a5ba2cba424fcfef726c31"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <h2 class="groupheader">Macro Definition Documentation</h2>
 <a id="a7a863f6a4418b898cdb82d5ff5fa2752" name="a7a863f6a4418b898cdb82d5ff5fa2752"></a>
@@ -218,6 +242,44 @@ Variables</h2></td></tr>
 </div>
 </div>
 <h2 class="groupheader">Function Documentation</h2>
+<a id="a82f9c6e98c349dbd1766cf94a0c3f196" name="a82f9c6e98c349dbd1766cf94a0c3f196"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a82f9c6e98c349dbd1766cf94a0c3f196">&#9670;&#160;</a></span>arq_modem_channel_busy()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_modem_channel_busy </td>
+          <td>(</td>
+          <td class="paramtype">void&#160;</td>
+          <td class="paramname"></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Is the channel occupied? false when no probe is registered. </p>
+
+</div>
+</div>
+<a id="a40d419d1628f71a24079277f7bc71151" name="a40d419d1628f71a24079277f7bc71151"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a40d419d1628f71a24079277f7bc71151">&#9670;&#160;</a></span>arq_modem_crc_seed()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_modem_crc_seed </td>
+          <td>(</td>
+          <td class="paramtype">uint16_t&#160;</td>
+          <td class="paramname"><em>seed</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="abc9bff542ecb9fbfc189dbc664beae09" name="abc9bff542ecb9fbfc189dbc664beae09"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#abc9bff542ecb9fbfc189dbc664beae09">&#9670;&#160;</a></span>arq_modem_dequeue()</h2>
 
@@ -436,6 +498,49 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a96da9ce65514f8b67f87d04f9e7845f8" name="a96da9ce65514f8b67f87d04f9e7845f8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a96da9ce65514f8b67f87d04f9e7845f8">&#9670;&#160;</a></span>arq_modem_set_channel_busy_fn()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_modem_set_channel_busy_fn </td>
+          <td>(</td>
+          <td class="paramtype">bool(*)(void)&#160;</td>
+          <td class="paramname"><em>fn</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Register the station's channel-occupancy probe. </p>
+<p>Set by the modem at init. Lets the ARQ layer ask "is there energy on the
+channel right now" without including modem.h, keeping this header the single ARQ-&gt;modem boundary. Unset (or a detector that is switched off) simply reports not-busy, so the FSM falls back to decoder sync alone. </p>
+
+</div>
+</div>
+<a id="afd04700977278532eef094f0f65efcf9" name="afd04700977278532eef094f0f65efcf9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#afd04700977278532eef094f0f65efcf9">&#9670;&#160;</a></span>arq_modem_set_crc_seed_fn()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_modem_set_crc_seed_fn </td>
+          <td>(</td>
+          <td class="paramtype">void(*)(uint16_t seed)&#160;</td>
+          <td class="paramname"><em>fn</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Register the modem's session-seed setter (carousel data plane). </p>
+<p>The carousel's frames carry the session in their CRC16: with a seed set, the payload decoders accept only seeded frames, the control decoder seeded and plain ones (CALL, ACCEPT, DISCONNECT), and HARQ combining is off &ndash; consecutive carousel frames are different codewords. 0 restores plain CRCs and HARQ. </p>
+
+</div>
+</div>
 <a id="a61725b750eae096ea6dd9391b070d022" name="a61725b750eae096ea6dd9391b070d022"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a61725b750eae096ea6dd9391b070d022">&#9670;&#160;</a></span>arq_modem_set_event_fn()</h2>
 
@@ -445,7 +550,7 @@ Variables</h2></td></tr>
         <tr>
           <td class="memname">void arq_modem_set_event_fn </td>
           <td>(</td>
-          <td class="paramtype">void(*)(int mode, bool ptt_on)&#160;</td>
+          <td class="paramtype">void(*)(int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, bool ptt_on)&#160;</td>
           <td class="paramname"><em>fn</em></td><td>)</td>
           <td></td>
         </tr>
@@ -485,6 +590,32 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="abde24d310b14d80ecfdc24efeb790681" name="abde24d310b14d80ecfdc24efeb790681"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abde24d310b14d80ecfdc24efeb790681">&#9670;&#160;</a></span>g_channel_busy_fn</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool(* g_channel_busy_fn) (void) </td>
+          <td>(</td>
+          <td class="paramtype">void&#160;</td>
+          <td class="paramname"></td><td>)</td>
+          <td> = NULL</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a1301dab94ea8fb1855901172b7281de6" name="a1301dab94ea8fb1855901172b7281de6"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a1301dab94ea8fb1855901172b7281de6">&#9670;&#160;</a></span>g_count</h2>
 
@@ -496,6 +627,32 @@ Variables</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">size_t g_count</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a67af575954a5ba2cba424fcfef726c31" name="a67af575954a5ba2cba424fcfef726c31"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a67af575954a5ba2cba424fcfef726c31">&#9670;&#160;</a></span>g_crc_seed_fn</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void(* g_crc_seed_fn) (uint16_t seed) </td>
+          <td>(</td>
+          <td class="paramtype">uint16_t&#160;</td>
+          <td class="paramname"><em>seed</em></td><td>)</td>
+          <td> = NULL</td>
         </tr>
       </table>
   </td>
@@ -539,7 +696,7 @@ Variables</h2></td></tr>
   <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">void(* g_inject_event) (int mode, bool ptt_on) </td>
+          <td class="memname">void(* g_inject_event) (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, bool ptt_on) </td>
           <td>(</td>
           <td class="paramtype">int&#160;</td>
           <td class="paramname"><em>mode</em>, </td>

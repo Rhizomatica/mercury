@@ -1,7 +1,8 @@
 var searchData=
 [
-  ['max_5fcode_0',['MAX_CODE',['../arith_8c.html#a540a4072a1ff838c1880d86b7ff600d6',1,'arith.c']]],
-  ['max_5fencode_5fbits_1',['MAX_ENCODE_BITS',['../arith_8c.html#ac82b1e43fdbdef6830baaeec49e2bf18',1,'arith.c']]],
-  ['max_5fpending_2',['MAX_PENDING',['../arith_8c.html#aa6d6477212b284279d80e0593f3f42af',1,'arith.c']]],
-  ['max_5fqueue_5fcapacity_3',['MAX_QUEUE_CAPACITY',['../arq__modem_8c.html#a7a863f6a4418b898cdb82d5ff5fa2752',1,'arq_modem.c']]]
+  ['idle_5fpoll_5fmax_5fms_0',['IDLE_POLL_MAX_MS',['../carousel_8c.html#a279ef25990a6dabebb97c7c995e137ce',1,'carousel.c']]],
+  ['idle_5fpoll_5fmin_5fms_1',['IDLE_POLL_MIN_MS',['../carousel_8c.html#ab2ca60500b6b494eb0f2346bef655c4d',1,'carousel.c']]],
+  ['inline_5fctl_2',['INLINE_CTL',['../carousel_8c.html#a81be0514c07c00cbbc1fa88a5c0deeda',1,'carousel.c']]],
+  ['int_5fbuffer_5fsize_3',['INT_BUFFER_SIZE',['../arq__fsm_8c.html#ae79cfb06136a2c36e2ffa4f4f3a67282',1,'arq_fsm.c']]],
+  ['iss_5fguard_5fms_4',['ISS_GUARD_MS',['../carousel_8c.html#a761db43f6d8ef2a6888fbdc022b548f4',1,'carousel.c']]]
 ];

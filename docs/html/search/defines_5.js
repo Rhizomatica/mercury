@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['int_5fbuffer_5fsize_0',['INT_BUFFER_SIZE',['../arq__fsm_8c.html#ae79cfb06136a2c36e2ffa4f4f3a67282',1,'arq_fsm.c']]]
+  ['guard_5fms_0',['GUARD_MS',['../carousel_8c.html#a930a58d83e6315ddd9bb3d2e81c953d5',1,'carousel.c']]]
 ];

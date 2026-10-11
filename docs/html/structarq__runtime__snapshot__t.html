@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.9.8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HERMES Modem: arq_runtime_snapshot_t Struct Reference</title>
+<title>Mercury Modem: arq_runtime_snapshot_t Struct Reference</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -21,9 +21,9 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">HERMES Modem
+   <div id="projectname">Mercury Modem
    </div>
-   <div id="projectbrief">Hermes ARQ/Broadcast modem</div>
+   <div id="projectbrief">Mercury ARQ/Broadcast modem</div>
   </td>
  </tr>
  </tbody>
@@ -87,6 +87,12 @@ Data Fields</h2></td></tr>
 <tr class="separator:a227e49bb9501804cc0ae75c1f0753865"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af9a982572ba7d1b69d5779d1bf78b2cc" id="r_af9a982572ba7d1b69d5779d1bf78b2cc"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__runtime__snapshot__t.html#af9a982572ba7d1b69d5779d1bf78b2cc">connected</a></td></tr>
 <tr class="separator:af9a982572ba7d1b69d5779d1bf78b2cc"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a6fe4d9ebe1b2e76680ad4bc2e0f0dcdd" id="r_a6fe4d9ebe1b2e76680ad4bc2e0f0dcdd"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__runtime__snapshot__t.html#a6fe4d9ebe1b2e76680ad4bc2e0f0dcdd">expect_pattern_ack</a></td></tr>
+<tr class="separator:a6fe4d9ebe1b2e76680ad4bc2e0f0dcdd"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7d50179101d90a06458175097692e76c" id="r_a7d50179101d90a06458175097692e76c"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__runtime__snapshot__t.html#a7d50179101d90a06458175097692e76c">in_carousel</a></td></tr>
+<tr class="separator:a7d50179101d90a06458175097692e76c"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac664d53cd088a907775872a6e3f739c0" id="r_ac664d53cd088a907775872a6e3f739c0"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__runtime__snapshot__t.html#ac664d53cd088a907775872a6e3f739c0">listening_for_calls</a></td></tr>
+<tr class="separator:ac664d53cd088a907775872a6e3f739c0"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3a72c48d2b6103cf461ab53210362b03" id="r_a3a72c48d2b6103cf461ab53210362b03"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__runtime__snapshot__t.html#a3a72c48d2b6103cf461ab53210362b03">trx</a></td></tr>
 <tr class="separator:a3a72c48d2b6103cf461ab53210362b03"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a225fbaa70bf5859c6aa03e5dcbc79fb5" id="r_a225fbaa70bf5859c6aa03e5dcbc79fb5"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__runtime__snapshot__t.html#a225fbaa70bf5859c6aa03e5dcbc79fb5">tx_backlog_bytes</a></td></tr>
@@ -107,10 +113,58 @@ Data Fields</h2></td></tr>
 <tr class="separator:a7e431179cb313573ad0e09e5a16f86a5"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ab1ebcd0929486e105473c3131fdeaed9" id="r_ab1ebcd0929486e105473c3131fdeaed9"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__runtime__snapshot__t.html#ab1ebcd0929486e105473c3131fdeaed9">rx_bytes</a></td></tr>
 <tr class="separator:ab1ebcd0929486e105473c3131fdeaed9"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac9af090cffcdaddf0f524b2380cdbefa" id="r_ac9af090cffcdaddf0f524b2380cdbefa"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__runtime__snapshot__t.html#ac9af090cffcdaddf0f524b2380cdbefa">car_tx_mode</a></td></tr>
+<tr class="separator:ac9af090cffcdaddf0f524b2380cdbefa"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a72269d579682016f9a315e51c54d50f1" id="r_a72269d579682016f9a315e51c54d50f1"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__runtime__snapshot__t.html#a72269d579682016f9a315e51c54d50f1">car_rx_mode</a></td></tr>
+<tr class="separator:a72269d579682016f9a315e51c54d50f1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a9d1a3153b028127bff61982254ec0e1e" id="r_a9d1a3153b028127bff61982254ec0e1e"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__runtime__snapshot__t.html#a9d1a3153b028127bff61982254ec0e1e">car_peer_mode</a></td></tr>
+<tr class="separator:a9d1a3153b028127bff61982254ec0e1e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>Snapshot of current ARQ runtime state for telemetry/decision making. </p>
 </div><h2 class="groupheader">Field Documentation</h2>
+<a id="a9d1a3153b028127bff61982254ec0e1e" name="a9d1a3153b028127bff61982254ec0e1e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a9d1a3153b028127bff61982254ec0e1e">&#9670;&#160;</a></span>car_peer_mode</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_runtime_snapshot_t::car_peer_mode</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a72269d579682016f9a315e51c54d50f1" name="a72269d579682016f9a315e51c54d50f1"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a72269d579682016f9a315e51c54d50f1">&#9670;&#160;</a></span>car_rx_mode</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_runtime_snapshot_t::car_rx_mode</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ac9af090cffcdaddf0f524b2380cdbefa" name="ac9af090cffcdaddf0f524b2380cdbefa"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac9af090cffcdaddf0f524b2380cdbefa">&#9670;&#160;</a></span>car_tx_mode</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_runtime_snapshot_t::car_tx_mode</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="af9a982572ba7d1b69d5779d1bf78b2cc" name="af9a982572ba7d1b69d5779d1bf78b2cc"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#af9a982572ba7d1b69d5779d1bf78b2cc">&#9670;&#160;</a></span>connected</h2>
 
@@ -139,6 +193,34 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
+<a id="a6fe4d9ebe1b2e76680ad4bc2e0f0dcdd" name="a6fe4d9ebe1b2e76680ad4bc2e0f0dcdd"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6fe4d9ebe1b2e76680ad4bc2e0f0dcdd">&#9670;&#160;</a></span>expect_pattern_ack</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_runtime_snapshot_t::expect_pattern_ack</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a7d50179101d90a06458175097692e76c" name="a7d50179101d90a06458175097692e76c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7d50179101d90a06458175097692e76c">&#9670;&#160;</a></span>in_carousel</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_runtime_snapshot_t::in_carousel</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a227e49bb9501804cc0ae75c1f0753865" name="a227e49bb9501804cc0ae75c1f0753865"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a227e49bb9501804cc0ae75c1f0753865">&#9670;&#160;</a></span>initialized</h2>
 
@@ -147,6 +229,20 @@ Data Fields</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">bool arq_runtime_snapshot_t::initialized</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ac664d53cd088a907775872a6e3f739c0" name="ac664d53cd088a907775872a6e3f739c0"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac664d53cd088a907775872a6e3f739c0">&#9670;&#160;</a></span>listening_for_calls</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_runtime_snapshot_t::listening_for_calls</td>
         </tr>
       </table>
 </div><div class="memdoc">

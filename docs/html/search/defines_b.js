@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['rx_0',['RX',['../arq_8h.html#a5070712bba21161ad840408134ee229f',1,'arq.h']]]
+  ['num_5fsymbols_0',['NUM_SYMBOLS',['../arith_8c.html#af64260d4171a8e4b9020403dc9b4972c',1,'arith.c']]]
 ];

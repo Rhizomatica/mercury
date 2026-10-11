@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.9.8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HERMES Modem: arq.c File Reference</title>
+<title>Mercury Modem: arq.c File Reference</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -21,9 +21,9 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">HERMES Modem
+   <div id="projectname">Mercury Modem
    </div>
-   <div id="projectbrief">Hermes ARQ/Broadcast modem</div>
+   <div id="projectbrief">Mercury ARQ/Broadcast modem</div>
   </td>
  </tr>
  </tbody>
@@ -83,11 +83,13 @@ $(function() {
 <div class="contents">
 <div class="textblock"><code>#include &quot;<a class="el" href="arq_8h_source.html">arq.h</a>&quot;</code><br />
 <code>#include &quot;<a class="el" href="arq__fsm_8h_source.html">arq_fsm.h</a>&quot;</code><br />
+<code>#include &quot;<a class="el" href="arq__tnc_8h_source.html">arq_tnc.h</a>&quot;</code><br />
 <code>#include &quot;<a class="el" href="arq__protocol_8h_source.html">arq_protocol.h</a>&quot;</code><br />
+<code>#include &quot;<a class="el" href="arq__trace_8h_source.html">arq_trace.h</a>&quot;</code><br />
 <code>#include &quot;<a class="el" href="arq__timing_8h_source.html">arq_timing.h</a>&quot;</code><br />
 <code>#include &quot;<a class="el" href="arq__modem_8h_source.html">arq_modem.h</a>&quot;</code><br />
 <code>#include &quot;<a class="el" href="arq__channels_8h_source.html">arq_channels.h</a>&quot;</code><br />
-<code>#include &quot;<a class="el" href="fsm_8h_source.html">fsm.h</a>&quot;</code><br />
+<code>#include &quot;<a class="el" href="carousel_8h_source.html">carousel.h</a>&quot;</code><br />
 <code>#include &lt;stdbool.h&gt;</code><br />
 <code>#include &lt;stddef.h&gt;</code><br />
 <code>#include &lt;stdint.h&gt;</code><br />
@@ -100,8 +102,10 @@ $(function() {
 <code>#include &lt;limits.h&gt;</code><br />
 <code>#include &lt;stdatomic.h&gt;</code><br />
 <code>#include &quot;../common/hermes_log.h&quot;</code><br />
+<code>#include &quot;../common/virtual_clock.h&quot;</code><br />
 <code>#include &quot;../common/defines_modem.h&quot;</code><br />
 <code>#include &quot;../common/ring_buffer_posix.h&quot;</code><br />
+<code>#include &quot;../common/message_store.h&quot;</code><br />
 <code>#include &quot;../data_interfaces/tcp_interfaces.h&quot;</code><br />
 <code>#include &quot;../modem/framer.h&quot;</code><br />
 <code>#include &quot;../modem/freedv/freedv_api.h&quot;</code><br />
@@ -110,86 +114,103 @@ Include dependency graph for arq.c:</div>
 <div class="dyncontent">
 <div class="center"><img src="arq_8c__incl.png" border="0" usemap="#aarq_8c" alt=""/></div>
 <map name="aarq_8c" id="aarq_8c">
-<area shape="rect" title=" " alt="" coords="1103,5,1154,31"/>
-<area shape="rect" href="arq_8h.html" title=" " alt="" coords="431,240,482,265"/>
-<area shape="poly" title=" " alt="" coords="1103,23,967,27,775,38,594,55,531,67,497,81,484,96,473,113,461,153,456,192,457,226,451,226,451,192,455,151,468,111,479,93,494,76,529,62,594,50,774,33,967,22,1103,17"/>
-<area shape="rect" title=" " alt="" coords="458,387,533,412"/>
-<area shape="poly" title=" " alt="" coords="1104,30,1043,51,972,81,854,137,764,183,678,237,574,315,541,347,514,378,510,374,537,343,571,311,675,232,761,178,852,132,970,76,1041,46,1102,25"/>
-<area shape="rect" title=" " alt="" coords="825,387,894,412"/>
-<area shape="poly" title=" " alt="" coords="1128,32,1117,79,1118,137,1125,213,1128,287,1123,318,1112,340,1098,352,1078,362,1025,378,909,396,908,391,1024,372,1076,357,1095,347,1108,337,1118,316,1122,287,1120,213,1113,137,1111,78,1122,30"/>
-<area shape="rect" title=" " alt="" coords="285,387,351,412"/>
-<area shape="poly" title=" " alt="" coords="1103,23,953,27,729,37,499,54,403,67,332,81,263,94,202,105,178,114,160,128,148,148,143,178,143,254,147,277,156,299,170,318,188,334,231,362,273,381,271,386,228,367,185,339,166,321,152,301,142,279,138,254,138,178,143,146,156,124,175,109,201,100,262,89,331,76,402,61,498,49,729,32,953,21,1103,17"/>
-<area shape="rect" href="fsm_8h.html" title=" " alt="" coords="48,313,103,339"/>
-<area shape="poly" title=" " alt="" coords="1103,22,897,21,585,26,426,33,286,44,180,60,145,69,124,81,103,104,89,131,79,161,73,192,70,252,74,299,69,300,65,252,68,191,74,159,84,129,99,101,120,77,143,65,179,54,286,38,426,27,585,21,897,16,1103,16"/>
-<area shape="rect" title=" " alt="" coords="5,387,81,412"/>
-<area shape="poly" title=" " alt="" coords="1103,22,893,25,573,34,410,42,264,52,152,65,113,73,88,81,56,99,32,119,18,143,13,178,13,254,15,287,21,319,37,373,32,375,16,320,10,287,7,254,7,178,13,142,28,115,53,95,86,76,112,67,151,60,264,46,409,36,573,29,893,20,1103,17"/>
-<area shape="rect" href="arq__fsm_8h.html" title=" " alt="" coords="339,167,419,192"/>
-<area shape="poly" title=" " alt="" coords="1103,23,748,40,550,58,479,69,439,81,422,96,408,115,389,154,384,152,403,112,418,92,437,76,478,63,549,52,748,35,1103,17"/>
-<area shape="rect" href="arq__timing_8h.html" title=" " alt="" coords="178,240,271,265"/>
-<area shape="poly" title=" " alt="" coords="1103,22,963,22,756,29,647,36,546,47,460,61,398,81,347,113,303,153,267,195,242,230,237,227,263,191,299,150,344,109,396,76,459,56,545,41,647,31,756,23,963,17,1103,16"/>
-<area shape="rect" href="arq__protocol_8h.html" title=" " alt="" coords="807,313,911,339"/>
-<area shape="poly" title=" " alt="" coords="1104,29,1056,48,1030,63,1007,81,983,114,946,176,874,303,870,300,941,173,978,111,1003,77,1027,58,1054,44,1102,24"/>
-<area shape="rect" title=" " alt="" coords="1029,387,1119,412"/>
-<area shape="poly" title=" " alt="" coords="1129,31,1123,79,1123,118,1129,152,1138,181,1160,232,1168,256,1171,281,1168,309,1156,340,1138,364,1114,382,1110,378,1134,360,1152,337,1163,307,1166,281,1163,257,1155,233,1133,183,1124,153,1118,119,1118,79,1124,31"/>
-<area shape="rect" href="arq__modem_8h.html" title=" " alt="" coords="507,86,609,111"/>
-<area shape="poly" title=" " alt="" coords="1103,25,623,91,622,86,1103,20"/>
-<area shape="rect" href="arq__channels_8h.html" title=" " alt="" coords="960,240,1071,265"/>
-<area shape="poly" title=" " alt="" coords="1104,29,1063,48,1044,62,1028,80,1013,117,1008,157,1009,195,1013,226,1007,227,1003,195,1002,156,1008,115,1024,77,1040,58,1060,43,1102,24"/>
-<area shape="rect" title=" " alt="" coords="1133,86,1194,111"/>
-<area shape="poly" title=" " alt="" coords="1136,30,1155,72,1150,75,1131,32"/>
-<area shape="rect" title=" " alt="" coords="1219,86,1284,111"/>
-<area shape="poly" title=" " alt="" coords="1148,29,1223,76,1220,81,1145,33"/>
-<area shape="rect" title=" " alt="" coords="1309,86,1373,111"/>
-<area shape="poly" title=" " alt="" coords="1155,25,1298,76,1303,78,1301,83,1296,81,1154,30"/>
-<area shape="rect" title=" " alt="" coords="1397,86,1455,111"/>
-<area shape="poly" title=" " alt="" coords="1155,21,1257,41,1385,76,1391,78,1389,83,1384,81,1255,46,1154,26"/>
-<area shape="rect" title=" " alt="" coords="1480,86,1543,111"/>
-<area shape="poly" title=" " alt="" coords="1155,19,1290,37,1379,54,1468,76,1475,78,1473,83,1467,81,1378,59,1289,42,1154,24"/>
-<area shape="rect" title=" " alt="" coords="1567,86,1631,111"/>
-<area shape="poly" title=" " alt="" coords="1154,18,1324,33,1440,50,1556,76,1564,79,1562,84,1555,81,1439,55,1324,38,1154,23"/>
-<area shape="rect" title=" " alt="" coords="1656,86,1823,111"/>
-<area shape="poly" title=" " alt="" coords="1155,19,1358,39,1644,76,1672,81,1671,86,1643,81,1357,44,1154,24"/>
-<area shape="rect" title=" " alt="" coords="1847,86,2037,111"/>
-<area shape="poly" title=" " alt="" coords="1155,18,1430,36,1630,53,1836,76,1869,81,1868,86,1835,81,1630,59,1430,41,1154,23"/>
-<area shape="rect" title=" " alt="" coords="2061,79,2209,119"/>
-<area shape="poly" title=" " alt="" coords="1154,17,1288,20,1506,28,1771,46,2048,76,2047,81,1771,51,1506,34,1288,25,1154,22"/>
-<area shape="rect" title=" " alt="" coords="2234,79,2357,119"/>
-<area shape="poly" title=" " alt="" coords="1154,16,1311,16,1570,21,1889,39,2056,55,2221,76,2220,81,2055,60,1888,45,1570,27,1311,21,1154,22"/>
-<area shape="rect" title=" " alt="" coords="2381,86,2511,111"/>
-<area shape="poly" title=" " alt="" coords="1154,17,1727,35,2097,52,2252,63,2369,76,2393,80,2392,86,2368,81,2252,69,2096,58,1727,40,1154,23"/>
-<area shape="rect" title=" " alt="" coords="2535,79,2693,119"/>
-<area shape="poly" title=" " alt="" coords="1154,17,1784,35,2202,52,2382,64,2522,76,2521,81,2381,69,2202,58,1784,40,1154,23"/>
-<area shape="poly" title=" " alt="" coords="462,265,479,338,490,373,485,374,474,339,457,266"/>
-<area shape="poly" title=" " alt="" coords="483,256,577,276,636,291,695,311,756,340,827,378,825,382,754,344,693,316,635,297,576,281,482,261"/>
-<area shape="poly" title=" " alt="" coords="447,268,340,379,337,375,443,264"/>
-<area shape="poly" title=" " alt="" coords="432,261,117,320,116,315,431,256"/>
-<area shape="rect" href="arq__events_8h.html" title=" " alt="" coords="584,313,681,339"/>
-<area shape="poly" title=" " alt="" coords="483,262,592,306,590,311,481,267"/>
-<area shape="poly" title=" " alt="" coords="72,340,56,375,52,373,68,338"/>
-<area shape="poly" title=" " alt="" coords="612,341,531,383,529,378,609,336"/>
-<area shape="poly" title=" " alt="" coords="670,336,812,381,811,386,668,341"/>
-<area shape="poly" title=" " alt="" coords="584,341,365,390,364,385,583,336"/>
-<area shape="rect" title=" " alt="" coords="570,387,695,412"/>
-<area shape="poly" title=" " alt="" coords="635,339,635,373,630,373,630,339"/>
-<area shape="poly" title=" " alt="" coords="394,190,436,229,432,232,390,194"/>
-<area shape="poly" title=" " alt="" coords="387,191,422,264,484,373,479,376,417,267,382,193"/>
-<area shape="poly" title=" " alt="" coords="420,189,564,236,652,270,739,311,793,344,837,376,834,380,790,348,737,316,650,275,562,241,419,194"/>
-<area shape="poly" title=" " alt="" coords="379,193,328,374,322,372,373,192"/>
-<area shape="poly" title=" " alt="" coords="356,194,263,237,261,232,353,190"/>
-<area shape="poly" title=" " alt="" coords="246,263,377,336,460,378,458,383,374,341,243,268"/>
-<area shape="poly" title=" " alt="" coords="224,266,218,300,220,319,226,337,247,362,274,379,271,383,243,366,221,340,214,320,213,300,218,265"/>
-<area shape="poly" title=" " alt="" coords="808,340,547,391,546,385,807,335"/>
-<area shape="poly" title=" " alt="" coords="862,339,862,373,857,373,857,339"/>
-<area shape="poly" title=" " alt="" coords="807,337,365,395,364,389,807,332"/>
-<area shape="poly" title=" " alt="" coords="895,336,1027,380,1025,385,893,341"/>
-<area shape="poly" title=" " alt="" coords="553,113,474,230,470,227,548,110"/>
-<area shape="poly" title=" " alt="" coords="558,112,503,373,498,372,553,111"/>
-<area shape="poly" title=" " alt="" coords="607,109,681,133,771,173,816,200,858,232,895,269,926,312,930,332,923,350,909,367,892,381,889,377,905,363,918,347,924,331,921,314,891,273,854,236,813,205,768,178,679,138,605,114"/>
-<area shape="poly" title=" " alt="" coords="533,114,419,164,417,159,531,109"/>
-<area shape="poly" title=" " alt="" coords="1014,267,997,302,969,341,938,365,904,383,902,378,935,361,965,337,993,299,1009,265"/>
-<area shape="poly" title=" " alt="" coords="960,267,695,316,694,311,959,262"/>
-<area shape="rect" title=" " alt="" coords="1037,313,1098,339"/>
-<area shape="poly" title=" " alt="" coords="1026,264,1053,301,1049,304,1022,267"/>
+<area shape="rect" title=" " alt="" coords="1313,5,1363,31"/>
+<area shape="rect" href="arq_8h.html" title=" " alt="" coords="1010,240,1061,265"/>
+<area shape="poly" title=" " alt="" coords="1314,29,1258,49,1226,63,1197,81,1152,117,1112,158,1053,230,1049,227,1108,154,1149,113,1194,76,1224,58,1256,44,1312,24"/>
+<area shape="rect" title=" " alt="" coords="774,387,849,412"/>
+<area shape="poly" title=" " alt="" coords="1313,22,1136,23,1012,29,880,41,755,60,699,73,650,88,609,106,578,127,558,151,551,178,551,254,557,286,573,313,597,335,627,353,661,367,696,377,761,390,760,395,694,383,659,372,625,358,594,339,569,316,552,288,546,254,546,178,553,149,574,123,606,102,648,83,698,67,754,54,880,35,1011,24,1136,18,1313,16"/>
+<area shape="rect" title=" " alt="" coords="1263,387,1333,412"/>
+<area shape="poly" title=" " alt="" coords="1314,31,1280,50,1265,64,1254,80,1247,99,1254,117,1270,137,1287,152,1324,169,1364,176,1406,177,1448,178,1490,184,1528,203,1546,218,1563,239,1577,265,1583,290,1578,315,1563,340,1548,352,1527,363,1470,379,1405,390,1346,397,1346,392,1404,385,1469,374,1525,358,1545,348,1559,337,1573,313,1578,290,1572,267,1558,241,1542,222,1525,207,1488,189,1448,183,1406,182,1364,181,1322,174,1284,156,1266,141,1249,120,1242,99,1249,77,1261,60,1277,46,1311,27"/>
+<area shape="rect" title=" " alt="" coords="476,387,541,412"/>
+<area shape="poly" title=" " alt="" coords="1313,23,768,40,448,58,331,69,263,81,210,96,164,111,147,121,134,135,125,153,122,178,122,254,126,283,139,303,159,320,186,336,237,355,312,371,463,391,462,396,311,376,236,361,183,341,156,324,135,307,121,285,117,254,117,178,120,152,129,132,144,117,162,106,208,91,261,76,330,64,448,52,768,35,1313,17"/>
+<area shape="rect" href="arq__fsm_8h.html" title=" " alt="" coords="805,167,885,192"/>
+<area shape="poly" title=" " alt="" coords="1312,23,1223,26,1102,36,985,53,938,66,905,81,887,96,873,115,855,155,850,152,869,113,883,93,902,76,936,61,984,48,1102,31,1223,21,1312,17"/>
+<area shape="rect" href="arq__timing_8h.html" title=" " alt="" coords="189,240,282,265"/>
+<area shape="poly" title=" " alt="" coords="1313,22,1103,22,782,28,618,35,473,46,363,61,325,70,302,81,286,95,273,112,255,152,244,192,239,226,234,226,239,191,250,150,269,110,282,92,299,76,323,65,362,56,473,41,618,30,781,23,1103,17,1313,16"/>
+<area shape="rect" href="arq__protocol_8h.html" title=" " alt="" coords="407,240,511,265"/>
+<area shape="poly" title=" " alt="" coords="1313,22,1145,26,897,35,662,53,577,65,549,73,531,81,515,95,502,112,482,152,470,192,464,227,459,226,465,191,477,150,497,110,511,92,529,76,547,68,576,60,661,47,897,30,1144,20,1313,17"/>
+<area shape="rect" title=" " alt="" coords="207,313,298,339"/>
+<area shape="poly" title=" " alt="" coords="1312,22,1128,27,853,37,589,55,493,67,439,81,415,110,367,172,271,304,267,300,363,169,410,106,437,76,492,61,588,49,852,32,1128,21,1312,17"/>
+<area shape="rect" href="carousel_8h.html" title=" " alt="" coords="829,240,911,265"/>
+<area shape="poly" title=" " alt="" coords="1313,23,1234,28,1130,38,1030,55,990,67,962,81,948,101,926,141,883,229,879,226,921,139,943,98,959,77,988,62,1028,50,1129,33,1233,23,1312,18"/>
+<area shape="rect" href="arq__tnc_8h.html" title=" " alt="" coords="5,167,81,192"/>
+<area shape="poly" title=" " alt="" coords="1312,22,1067,21,684,27,487,33,312,44,177,60,131,70,102,81,84,96,71,115,53,154,48,152,66,112,81,92,99,76,129,65,176,55,311,39,487,28,684,21,1067,16,1312,16"/>
+<area shape="rect" href="arq__trace_8h.html" title=" " alt="" coords="373,313,460,339"/>
+<area shape="poly" title=" " alt="" coords="1312,22,1137,26,878,36,630,54,541,66,510,73,491,81,450,113,427,147,412,188,398,240,397,271,407,300,402,302,392,272,393,240,407,186,422,144,447,109,489,76,509,68,540,61,630,48,878,31,1137,21,1312,17"/>
+<area shape="rect" href="arq__modem_8h.html" title=" " alt="" coords="973,86,1074,111"/>
+<area shape="poly" title=" " alt="" coords="1313,28,1083,85,1082,80,1312,23"/>
+<area shape="rect" href="arq__channels_8h.html" title=" " alt="" coords="1437,240,1548,265"/>
+<area shape="poly" title=" " alt="" coords="1313,25,1287,31,1258,42,1231,58,1210,80,1203,99,1210,117,1229,143,1253,165,1309,200,1369,223,1424,238,1423,243,1367,229,1307,205,1250,169,1225,146,1205,120,1197,99,1205,77,1228,53,1256,37,1286,26,1312,20"/>
+<area shape="rect" title=" " alt="" coords="1263,86,1325,111"/>
+<area shape="poly" title=" " alt="" coords="1334,32,1310,75,1305,73,1329,30"/>
+<area shape="rect" title=" " alt="" coords="1349,86,1415,111"/>
+<area shape="poly" title=" " alt="" coords="1347,30,1371,73,1366,75,1342,32"/>
+<area shape="rect" title=" " alt="" coords="1439,86,1515,111"/>
+<area shape="poly" title=" " alt="" coords="1360,29,1446,77,1443,82,1357,33"/>
+<area shape="rect" title=" " alt="" coords="1539,86,1603,111"/>
+<area shape="poly" title=" " alt="" coords="1364,24,1438,46,1528,76,1534,78,1532,83,1526,81,1437,51,1363,29"/>
+<area shape="rect" title=" " alt="" coords="1627,86,1686,111"/>
+<area shape="poly" title=" " alt="" coords="1364,20,1474,40,1545,56,1616,76,1622,78,1620,83,1615,81,1544,61,1473,45,1363,26"/>
+<area shape="rect" title=" " alt="" coords="1711,86,1773,111"/>
+<area shape="poly" title=" " alt="" coords="1364,19,1507,36,1603,53,1699,76,1706,78,1704,83,1697,81,1602,58,1507,41,1363,24"/>
+<area shape="rect" title=" " alt="" coords="1798,86,1862,111"/>
+<area shape="poly" title=" " alt="" coords="1364,18,1542,32,1664,49,1787,76,1794,78,1793,84,1785,81,1663,55,1542,37,1364,23"/>
+<area shape="rect" title=" " alt="" coords="1887,86,2053,111"/>
+<area shape="poly" title=" " alt="" coords="1364,19,1575,39,1723,55,1874,76,1903,81,1902,86,1874,81,1722,61,1574,44,1364,24"/>
+<area shape="rect" title=" " alt="" coords="2077,86,2249,111"/>
+<area shape="poly" title=" " alt="" coords="1364,18,1648,35,1855,52,2066,76,2097,81,2096,86,2066,81,1854,57,1648,40,1364,23"/>
+<area shape="rect" title=" " alt="" coords="2273,86,2464,111"/>
+<area shape="poly" title=" " alt="" coords="1364,17,1721,32,1987,49,2262,76,2297,81,2296,86,2262,81,1987,55,1720,37,1363,23"/>
+<area shape="rect" title=" " alt="" coords="2488,79,2636,119"/>
+<area shape="poly" title=" " alt="" coords="1363,16,1525,17,1795,24,2128,41,2302,56,2475,76,2474,81,2302,62,2127,47,1795,29,1525,22,1363,22"/>
+<area shape="rect" title=" " alt="" coords="2660,86,2848,111"/>
+<area shape="poly" title=" " alt="" coords="1364,17,1548,18,1863,25,2249,43,2451,57,2649,76,2685,81,2684,86,2648,81,2451,62,2249,48,1863,30,1548,23,1364,22"/>
+<area shape="rect" title=" " alt="" coords="2873,79,2995,119"/>
+<area shape="poly" title=" " alt="" coords="1364,17,1623,21,2051,30,2510,48,2707,61,2859,76,2859,81,2706,66,2509,54,2051,36,1623,26,1364,22"/>
+<area shape="rect" title=" " alt="" coords="3020,86,3149,111"/>
+<area shape="poly" title=" " alt="" coords="1364,17,1651,20,2128,30,2634,47,2848,60,3008,76,3032,80,3031,86,3007,81,2847,66,2634,53,2128,35,1651,26,1364,22"/>
+<area shape="rect" title=" " alt="" coords="3174,79,3331,119"/>
+<area shape="poly" title=" " alt="" coords="1364,17,1669,21,2184,31,2738,48,2977,61,3160,76,3160,81,2976,66,2738,54,2184,36,1669,26,1363,22"/>
+<area shape="poly" title=" " alt="" coords="1035,267,1021,303,1009,323,993,341,962,361,929,377,863,394,861,389,927,372,960,357,990,337,1005,320,1016,300,1030,265"/>
+<area shape="poly" title=" " alt="" coords="1061,251,1105,253,1160,261,1217,279,1244,293,1268,311,1279,325,1288,341,1297,372,1292,373,1283,343,1275,328,1264,315,1241,298,1215,284,1158,266,1104,258,1061,256"/>
+<area shape="poly" title=" " alt="" coords="1010,261,908,283,777,316,710,341,555,388,554,383,708,336,776,311,907,277,1009,256"/>
+<area shape="rect" href="arq__events_8h.html" title=" " alt="" coords="1061,313,1159,339"/>
+<area shape="poly" title=" " alt="" coords="1049,263,1090,302,1086,306,1045,267"/>
+<area shape="poly" title=" " alt="" coords="1063,341,863,389,861,383,1061,336"/>
+<area shape="poly" title=" " alt="" coords="1141,336,1255,379,1254,384,1139,341"/>
+<area shape="poly" title=" " alt="" coords="1062,336,555,395,555,390,1061,330"/>
+<area shape="rect" title=" " alt="" coords="1047,387,1173,412"/>
+<area shape="poly" title=" " alt="" coords="1113,339,1113,373,1107,373,1107,339"/>
+<area shape="poly" title=" " alt="" coords="876,190,998,235,996,240,874,195"/>
+<area shape="poly" title=" " alt="" coords="838,194,807,244,791,278,779,314,777,326,779,338,797,374,792,377,774,339,772,326,774,313,786,276,803,242,834,191"/>
+<area shape="poly" title=" " alt="" coords="885,184,984,201,1109,228,1170,245,1224,265,1268,287,1296,312,1304,326,1307,342,1306,373,1301,373,1302,343,1299,328,1292,315,1265,292,1222,270,1168,251,1107,233,983,206,884,189"/>
+<area shape="poly" title=" " alt="" coords="829,194,539,381,537,377,826,190"/>
+<area shape="poly" title=" " alt="" coords="805,188,296,247,295,242,804,183"/>
+<area shape="poly" title=" " alt="" coords="805,191,525,242,524,237,804,185"/>
+<area shape="poly" title=" " alt="" coords="851,191,864,226,859,228,846,193"/>
+<area shape="poly" title=" " alt="" coords="224,267,210,283,198,301,192,320,193,329,197,337,214,350,241,362,312,378,392,388,462,394,462,399,392,394,311,384,239,367,212,355,193,340,188,331,186,320,193,299,206,279,221,264"/>
+<area shape="poly" title=" " alt="" coords="468,264,492,300,510,320,531,336,589,363,651,380,710,390,761,394,760,400,709,395,649,386,587,368,529,341,507,324,488,304,463,267"/>
+<area shape="poly" title=" " alt="" coords="512,252,658,257,849,267,1036,284,1113,296,1171,311,1219,338,1273,376,1270,381,1216,342,1169,316,1112,301,1035,290,848,272,657,262,511,258"/>
+<area shape="poly" title=" " alt="" coords="427,268,399,281,374,298,359,317,358,327,363,337,383,358,408,373,436,384,463,390,461,396,434,389,406,378,379,362,358,340,353,327,354,315,370,294,396,276,425,263"/>
+<area shape="poly" title=" " alt="" coords="427,268,300,311,298,306,425,263"/>
+<area shape="poly" title=" " alt="" coords="881,264,899,298,902,319,898,340,878,365,853,382,850,378,874,361,893,338,897,319,894,300,876,267"/>
+<area shape="poly" title=" " alt="" coords="912,255,1074,276,1158,292,1217,311,1256,341,1284,374,1280,377,1252,344,1214,316,1156,297,1074,281,911,261"/>
+<area shape="poly" title=" " alt="" coords="842,268,551,384,549,379,840,263"/>
+<area shape="rect" href="rs__erasure_8h.html" title=" " alt="" coords="789,313,884,339"/>
+<area shape="poly" title=" " alt="" coords="867,267,850,302,845,300,862,265"/>
+<area shape="poly" title=" " alt="" coords="885,332,1250,388,1249,393,884,337"/>
+<area shape="poly" title=" " alt="" coords="790,340,555,391,554,385,789,335"/>
+<area shape="poly" title=" " alt="" coords="46,192,49,222,58,261,75,303,87,321,102,337,129,351,167,364,267,381,374,390,462,394,462,400,373,396,266,386,166,369,127,356,99,341,83,324,70,305,53,263,44,222,41,192"/>
+<area shape="poly" title=" " alt="" coords="461,333,480,336,761,386,760,392,479,341,460,338"/>
+<area shape="poly" title=" " alt="" coords="433,337,485,376,481,380,430,341"/>
+<area shape="poly" title=" " alt="" coords="1027,111,1036,226,1031,227,1022,112"/>
+<area shape="poly" title=" " alt="" coords="1024,112,1013,153,993,213,962,279,942,311,919,341,889,365,857,383,854,379,886,361,915,337,937,308,957,277,988,211,1008,152,1018,111"/>
+<area shape="poly" title=" " alt="" coords="1055,109,1115,136,1190,178,1227,205,1263,237,1294,272,1319,312,1324,328,1323,345,1314,375,1309,374,1318,344,1318,329,1314,314,1290,276,1259,241,1224,210,1187,183,1113,140,1053,114"/>
+<area shape="poly" title=" " alt="" coords="998,114,884,164,882,159,996,109"/>
+<area shape="poly" title=" " alt="" coords="1487,267,1459,302,1420,341,1381,365,1343,384,1340,379,1379,360,1416,337,1455,299,1483,264"/>
+<area shape="poly" title=" " alt="" coords="1438,267,1173,316,1172,311,1437,262"/>
+<area shape="rect" title=" " alt="" coords="1487,313,1549,339"/>
+<area shape="poly" title=" " alt="" coords="1499,265,1512,300,1507,301,1494,267"/>
 </map>
 </div>
 </div><table class="memberdecls">
@@ -197,6 +218,8 @@ Include dependency graph for arq.c:</div>
 Macros</h2></td></tr>
 <tr class="memitem:aca0c04356b5f03789b3f5c7e1ecfedf9" id="r_aca0c04356b5f03789b3f5c7e1ecfedf9"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#aca0c04356b5f03789b3f5c7e1ecfedf9">LOG_COMP</a>&#160;&#160;&#160;&quot;arq&quot;</td></tr>
 <tr class="separator:aca0c04356b5f03789b3f5c7e1ecfedf9"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac2663553b072167a403521db5b4e82c4" id="r_ac2663553b072167a403521db5b4e82c4"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ac2663553b072167a403521db5b4e82c4">PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP</a>&#160;&#160;&#160;PTHREAD_RECURSIVE_MUTEX_INITIALIZER</td></tr>
+<tr class="separator:ac2663553b072167a403521db5b4e82c4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a9e6e26f3b1576402b650da86d62e0ea9" id="r_a9e6e26f3b1576402b650da86d62e0ea9"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a9e6e26f3b1576402b650da86d62e0ea9">APP_TX_BUF_SIZE</a>&#160;&#160;&#160;(64 * 1024)</td></tr>
 <tr class="separator:a9e6e26f3b1576402b650da86d62e0ea9"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a6f7b9d4999b12dab45f0a1d3d26f6e8f" id="r_a6f7b9d4999b12dab45f0a1d3d26f6e8f"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a6f7b9d4999b12dab45f0a1d3d26f6e8f">ARQ_EV_QUEUE_CAP</a>&#160;&#160;&#160;64</td></tr>
@@ -204,32 +227,26 @@ Macros</h2></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
-<tr class="memitem:a08d0fcf625903ff7c8fc100c28e08ab6" id="r_a08d0fcf625903ff7c8fc100c28e08ab6"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a08d0fcf625903ff7c8fc100c28e08ab6">tnc_send_pending</a> (void)</td></tr>
-<tr class="separator:a08d0fcf625903ff7c8fc100c28e08ab6"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:abbdf4a4a862bb4a16c742efa97ecf023" id="r_abbdf4a4a862bb4a16c742efa97ecf023"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#abbdf4a4a862bb4a16c742efa97ecf023">tnc_send_cancelpending</a> (void)</td></tr>
-<tr class="separator:abbdf4a4a862bb4a16c742efa97ecf023"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aabbba7cd6be9bbe4224f9ce9394707f7" id="r_aabbba7cd6be9bbe4224f9ce9394707f7"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#aabbba7cd6be9bbe4224f9ce9394707f7">tnc_send_connected</a> (void)</td></tr>
-<tr class="separator:aabbba7cd6be9bbe4224f9ce9394707f7"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a3603847db389e0e350b56dac52a7daa3" id="r_a3603847db389e0e350b56dac52a7daa3"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a3603847db389e0e350b56dac52a7daa3">tnc_send_cqframe</a> (const char *source_call, int bw_hz)</td></tr>
-<tr class="separator:a3603847db389e0e350b56dac52a7daa3"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ae6d43282a3ee3d6ccc5c636d8c50edcd" id="r_ae6d43282a3ee3d6ccc5c636d8c50edcd"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ae6d43282a3ee3d6ccc5c636d8c50edcd">tnc_send_disconnected</a> (void)</td></tr>
-<tr class="separator:ae6d43282a3ee3d6ccc5c636d8c50edcd"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a0bbf64b284fa1d1de6111b7ea1858a73" id="r_a0bbf64b284fa1d1de6111b7ea1858a73"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a0bbf64b284fa1d1de6111b7ea1858a73">tnc_send_buffer</a> (uint32_t bytes)</td></tr>
-<tr class="separator:a0bbf64b284fa1d1de6111b7ea1858a73"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a20ba212914eecfa750df00a0368da233" id="r_a20ba212914eecfa750df00a0368da233"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a20ba212914eecfa750df00a0368da233">init_model</a> (void)</td></tr>
 <tr class="separator:a20ba212914eecfa750df00a0368da233"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a871082578e0b2e71e08796c15aea2005" id="r_a871082578e0b2e71e08796c15aea2005"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a871082578e0b2e71e08796c15aea2005">evq_push</a> (const <a class="el" href="structarq__event__t.html">arq_event_t</a> *ev)</td></tr>
 <tr class="separator:a871082578e0b2e71e08796c15aea2005"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a6e92cdb1e4e76da4143eb55ac181f8ca" id="r_a6e92cdb1e4e76da4143eb55ac181f8ca"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a6e92cdb1e4e76da4143eb55ac181f8ca">arq_notify_virtual_time</a> (void)</td></tr>
+<tr class="separator:a6e92cdb1e4e76da4143eb55ac181f8ca"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a686376f7762b50781dff2c46503d7de8" id="r_a686376f7762b50781dff2c46503d7de8"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a686376f7762b50781dff2c46503d7de8">evq_pop_locked</a> (<a class="el" href="structarq__event__t.html">arq_event_t</a> *ev)</td></tr>
 <tr class="separator:a686376f7762b50781dff2c46503d7de8"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a367adb33420f76fc165f986a86fcb3be" id="r_a367adb33420f76fc165f986a86fcb3be"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a367adb33420f76fc165f986a86fcb3be">ptt_event_inject</a> (int mode, bool ptt_on)</td></tr>
+<tr class="memitem:a367adb33420f76fc165f986a86fcb3be" id="r_a367adb33420f76fc165f986a86fcb3be"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a367adb33420f76fc165f986a86fcb3be">ptt_event_inject</a> (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, bool ptt_on)</td></tr>
 <tr class="separator:a367adb33420f76fc165f986a86fcb3be"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:abe43ba1b2b8d0076ab9e4fa0a3a2c0e2" id="r_abe43ba1b2b8d0076ab9e4fa0a3a2c0e2"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#abe43ba1b2b8d0076ab9e4fa0a3a2c0e2">cb_send_tx_frame</a> (int packet_type, int mode, size_t frame_size, const uint8_t *frame)</td></tr>
-<tr class="separator:abe43ba1b2b8d0076ab9e4fa0a3a2c0e2"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ab94dc800da6cdf087725fcf5d52093a6" id="r_ab94dc800da6cdf087725fcf5d52093a6"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ab94dc800da6cdf087725fcf5d52093a6">cb_notify_connected</a> (const char *remote_call)</td></tr>
-<tr class="separator:ab94dc800da6cdf087725fcf5d52093a6"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a1ecc301dd009e966c10b43e794a148ef" id="r_a1ecc301dd009e966c10b43e794a148ef"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a1ecc301dd009e966c10b43e794a148ef">cb_notify_pending</a> (const char *remote_call)</td></tr>
-<tr class="separator:a1ecc301dd009e966c10b43e794a148ef"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a338a94884027eb31919dd8c62ca8c039" id="r_a338a94884027eb31919dd8c62ca8c039"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a338a94884027eb31919dd8c62ca8c039">cb_send_tx_frame</a> (int packet_type, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, size_t frame_size, const uint8_t *frame, int burst_remaining)</td></tr>
+<tr class="separator:a338a94884027eb31919dd8c62ca8c039"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a44b5b28bb409703fffb66745c93c86aa" id="r_a44b5b28bb409703fffb66745c93c86aa"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a44b5b28bb409703fffb66745c93c86aa">cb_send_pattern</a> (int pattern_kind)</td></tr>
+<tr class="separator:a44b5b28bb409703fffb66745c93c86aa"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ae9fffa564ebddc087d15b8444e9cd745" id="r_ae9fffa564ebddc087d15b8444e9cd745"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ae9fffa564ebddc087d15b8444e9cd745">cb_send_keydown</a> (const <a class="el" href="structarq__keydown__t.html">arq_keydown_t</a> *kd)</td></tr>
+<tr class="separator:ae9fffa564ebddc087d15b8444e9cd745"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ae07c2f20da18708c4b5c17be82554a6a" id="r_ae07c2f20da18708c4b5c17be82554a6a"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ae07c2f20da18708c4b5c17be82554a6a">cb_notify_connected</a> (const char *remote_call, const char *local_call)</td></tr>
+<tr class="separator:ae07c2f20da18708c4b5c17be82554a6a"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a05d39b488f6dd2b19b96d02def65242a" id="r_a05d39b488f6dd2b19b96d02def65242a"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a05d39b488f6dd2b19b96d02def65242a">cb_notify_pending</a> (const char *remote_call, const char *local_call)</td></tr>
+<tr class="separator:a05d39b488f6dd2b19b96d02def65242a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a9af6a7929ddce74bfc731afdd07998f2" id="r_a9af6a7929ddce74bfc731afdd07998f2"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a9af6a7929ddce74bfc731afdd07998f2">cb_notify_cancelpending</a> (void)</td></tr>
 <tr class="separator:a9af6a7929ddce74bfc731afdd07998f2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:add4c6e54b7b745b22a82d93f352bbb6d" id="r_add4c6e54b7b745b22a82d93f352bbb6d"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#add4c6e54b7b745b22a82d93f352bbb6d">cb_notify_disconnected</a> (bool to_no_client)</td></tr>
@@ -242,19 +259,21 @@ Functions</h2></td></tr>
 <tr class="separator:a698bf6ccacac2bf0535aa0c513162fd5"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a14ea0bd32442d0e3b553f28179f35f39" id="r_a14ea0bd32442d0e3b553f28179f35f39"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a14ea0bd32442d0e3b553f28179f35f39">cb_send_buffer_status</a> (int backlog_bytes)</td></tr>
 <tr class="separator:a14ea0bd32442d0e3b553f28179f35f39"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aa5c09f5a85257cb4bce4526906838d33" id="r_aa5c09f5a85257cb4bce4526906838d33"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#aa5c09f5a85257cb4bce4526906838d33">normalize_bandwidth_hz</a> (int bw_hz)</td></tr>
+<tr class="memitem:aa5c09f5a85257cb4bce4526906838d33" id="r_aa5c09f5a85257cb4bce4526906838d33"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#aa5c09f5a85257cb4bce4526906838d33">normalize_bandwidth_hz</a> (int <a class="el" href="carousel_8c.html#a30c888e8758f5c25df50cf62f461d58e">bw_hz</a>)</td></tr>
 <tr class="separator:aa5c09f5a85257cb4bce4526906838d33"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a15ed9e61a6fcf4c0130d769dff4f389a" id="r_a15ed9e61a6fcf4c0130d769dff4f389a"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a15ed9e61a6fcf4c0130d769dff4f389a">active_session_bandwidth_hz</a> (void)</td></tr>
 <tr class="separator:a15ed9e61a6fcf4c0130d769dff4f389a"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a0a69144ae7f255bfb3560b787e93d799" id="r_a0a69144ae7f255bfb3560b787e93d799"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a0a69144ae7f255bfb3560b787e93d799">arq_effective_bandwidth_hz</a> (void)</td></tr>
-<tr class="memdesc:a0a69144ae7f255bfb3560b787e93d799"><td class="mdescLeft">&#160;</td><td class="mdescRight">Get the effective ARQ bandwidth cap in Hz used for mode gating.  <br /></td></tr>
-<tr class="separator:a0a69144ae7f255bfb3560b787e93d799"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ad254ed20853c861bb167be3909ccf669" id="r_ad254ed20853c861bb167be3909ccf669"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ad254ed20853c861bb167be3909ccf669">arq_reported_bandwidth_hz</a> (void)</td></tr>
 <tr class="memdesc:ad254ed20853c861bb167be3909ccf669"><td class="mdescLeft">&#160;</td><td class="mdescRight">Get the configured ARQ bandwidth token to report to VARA clients.  <br /></td></tr>
 <tr class="separator:ad254ed20853c861bb167be3909ccf669"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aea27d4566f901902c43e8cbbe9db6ab7" id="r_aea27d4566f901902c43e8cbbe9db6ab7"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#aea27d4566f901902c43e8cbbe9db6ab7">arq_bandwidth_allows_mode</a> (int mode)</td></tr>
-<tr class="memdesc:aea27d4566f901902c43e8cbbe9db6ab7"><td class="mdescLeft">&#160;</td><td class="mdescRight">Check whether the current ARQ bandwidth cap allows a modem mode.  <br /></td></tr>
-<tr class="separator:aea27d4566f901902c43e8cbbe9db6ab7"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ada224276cffbc98d2c205bf4c3bf1ef9" id="r_ada224276cffbc98d2c205bf4c3bf1ef9"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ada224276cffbc98d2c205bf4c3bf1ef9">arq_set_trx</a> (int trx)</td></tr>
+<tr class="separator:ada224276cffbc98d2c205bf4c3bf1ef9"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a64bfa44f49f390d87b5724cb229169f0" id="r_a64bfa44f49f390d87b5724cb229169f0"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a64bfa44f49f390d87b5724cb229169f0">arq_get_trx</a> (void)</td></tr>
+<tr class="separator:a64bfa44f49f390d87b5724cb229169f0"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ae9f7bd1d6a107320c2544fd376913baf" id="r_ae9f7bd1d6a107320c2544fd376913baf"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ae9f7bd1d6a107320c2544fd376913baf">arq_conn_get_calls</a> (char *my_call, char *src_addr, char *dst_addr, size_t bufsz)</td></tr>
+<tr class="separator:ae9f7bd1d6a107320c2544fd376913baf"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a038f8fadbf7592b7985dd075a74dfa66" id="r_a038f8fadbf7592b7985dd075a74dfa66"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a038f8fadbf7592b7985dd075a74dfa66">arq_get_bw</a> (void)</td></tr>
+<tr class="separator:a038f8fadbf7592b7985dd075a74dfa66"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a43cdb08aa62b0a621477ca7a092e9d7d" id="r_a43cdb08aa62b0a621477ca7a092e9d7d"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a43cdb08aa62b0a621477ca7a092e9d7d">handle_cmd</a> (const <a class="el" href="structarq__cmd__msg__t.html">arq_cmd_msg_t</a> *msg)</td></tr>
 <tr class="separator:a43cdb08aa62b0a621477ca7a092e9d7d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a5fa9a25e53532bb4dd2612da1d0eac96" id="r_a5fa9a25e53532bb4dd2612da1d0eac96"><td class="memItemLeft" align="right" valign="top">static void *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a5fa9a25e53532bb4dd2612da1d0eac96">arq_cmd_bridge_worker</a> (void *arg)</td></tr>
@@ -263,9 +282,11 @@ Functions</h2></td></tr>
 <tr class="separator:a0cdb11e76dabb3c91bccd30e424ab5d0"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af79b5db367805decf025d14958eb87b7" id="r_af79b5db367805decf025d14958eb87b7"><td class="memItemLeft" align="right" valign="top">static void *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#af79b5db367805decf025d14958eb87b7">arq_event_loop_worker</a> (void *arg)</td></tr>
 <tr class="separator:af79b5db367805decf025d14958eb87b7"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a680e48d89b1ee94ab8335b130ce74500" id="r_a680e48d89b1ee94ab8335b130ce74500"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a680e48d89b1ee94ab8335b130ce74500">arq_handle_incoming_connect_frame</a> (uint8_t *data, size_t frame_size)</td></tr>
-<tr class="memdesc:a680e48d89b1ee94ab8335b130ce74500"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle incoming compressed CALL/ACCEPT frame.  <br /></td></tr>
-<tr class="separator:a680e48d89b1ee94ab8335b130ce74500"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a0b5e650da406bb512ef3be2828f8f901" id="r_a0b5e650da406bb512ef3be2828f8f901"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a0b5e650da406bb512ef3be2828f8f901">arq_handle_carousel_frame</a> (const uint8_t *data, size_t frame_size, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, bool from_control, float rx_snr, uint32_t age_ms)</td></tr>
+<tr class="separator:a0b5e650da406bb512ef3be2828f8f901"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a762bcd87687cd9dc81b5831b96893350" id="r_a762bcd87687cd9dc81b5831b96893350"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a762bcd87687cd9dc81b5831b96893350">arq_handle_incoming_connect_frame</a> (uint8_t *data, size_t frame_size, float rx_snr, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
+<tr class="memdesc:a762bcd87687cd9dc81b5831b96893350"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle an incoming CALL/ACCEPT frame (protocol version 1).  <br /></td></tr>
+<tr class="separator:a762bcd87687cd9dc81b5831b96893350"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a0b6771834916d44f282af024af580ccb" id="r_a0b6771834916d44f282af024af580ccb"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a0b6771834916d44f282af024af580ccb">arq_handle_incoming_cq_frame</a> (uint8_t *data, size_t frame_size)</td></tr>
 <tr class="memdesc:a0b6771834916d44f282af024af580ccb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle incoming compact CQ frame and emit host-side CQFRAME notification.  <br /></td></tr>
 <tr class="separator:a0b6771834916d44f282af024af580ccb"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -277,7 +298,7 @@ Functions</h2></td></tr>
 <tr class="memitem:a1c0139812b9c9b073b8c4c9be4acc3b8" id="r_a1c0139812b9c9b073b8c4c9be4acc3b8"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a1c0139812b9c9b073b8c4c9be4acc3b8">arq_handle_incoming_frame</a> (uint8_t *data, size_t frame_size, float rx_snr)</td></tr>
 <tr class="memdesc:a1c0139812b9c9b073b8c4c9be4acc3b8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle incoming regular ARQ control/data frame.  <br /></td></tr>
 <tr class="separator:a1c0139812b9c9b073b8c4c9be4acc3b8"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a124478c5cd13f1e211666b2051e6ac70" id="r_a124478c5cd13f1e211666b2051e6ac70"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a124478c5cd13f1e211666b2051e6ac70">arq_init</a> (size_t frame_size, int mode)</td></tr>
+<tr class="memitem:a124478c5cd13f1e211666b2051e6ac70" id="r_a124478c5cd13f1e211666b2051e6ac70"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a124478c5cd13f1e211666b2051e6ac70">arq_init</a> (size_t frame_size, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
 <tr class="memdesc:a124478c5cd13f1e211666b2051e6ac70"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initialize ARQ subsystem.  <br /></td></tr>
 <tr class="separator:a124478c5cd13f1e211666b2051e6ac70"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af4405a7f9f73579526b8e51e2f34fc1f" id="r_af4405a7f9f73579526b8e51e2f34fc1f"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#af4405a7f9f73579526b8e51e2f34fc1f">arq_shutdown</a> (void)</td></tr>
@@ -289,33 +310,33 @@ Functions</h2></td></tr>
 <tr class="memitem:a4098ee343c6a96aef872c8d682f5d815" id="r_a4098ee343c6a96aef872c8d682f5d815"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a4098ee343c6a96aef872c8d682f5d815">arq_post_event</a> (int event)</td></tr>
 <tr class="memdesc:a4098ee343c6a96aef872c8d682f5d815"><td class="mdescLeft">&#160;</td><td class="mdescRight">Post an FSM event to ARQ.  <br /></td></tr>
 <tr class="separator:a4098ee343c6a96aef872c8d682f5d815"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a5da248268eeb2852dc3383b5062c3635" id="r_a5da248268eeb2852dc3383b5062c3635"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a5da248268eeb2852dc3383b5062c3635">arq_post_pattern_ack</a> (bool is_break)</td></tr>
+<tr class="separator:a5da248268eeb2852dc3383b5062c3635"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac508dd91b0ac44ed4dc4b8c34ed188a8" id="r_ac508dd91b0ac44ed4dc4b8c34ed188a8"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ac508dd91b0ac44ed4dc4b8c34ed188a8">arq_is_link_connected</a> (void)</td></tr>
 <tr class="memdesc:ac508dd91b0ac44ed4dc4b8c34ed188a8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Check whether ARQ link is connected.  <br /></td></tr>
 <tr class="separator:ac508dd91b0ac44ed4dc4b8c34ed188a8"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aaab420ad37cc5ff46152130992da7fb4" id="r_aaab420ad37cc5ff46152130992da7fb4"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#aaab420ad37cc5ff46152130992da7fb4">arq_discard_stale_rx</a> (void)</td></tr>
+<tr class="memdesc:aaab420ad37cc5ff46152130992da7fb4"><td class="mdescLeft">&#160;</td><td class="mdescRight">Drop received bytes an ended session left in the RX buffer.  <br /></td></tr>
+<tr class="separator:aaab420ad37cc5ff46152130992da7fb4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ace211c35fb67ea6ac3d9115b6145f404" id="r_ace211c35fb67ea6ac3d9115b6145f404"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ace211c35fb67ea6ac3d9115b6145f404">arq_queue_data</a> (const uint8_t *data, size_t len)</td></tr>
 <tr class="memdesc:ace211c35fb67ea6ac3d9115b6145f404"><td class="mdescLeft">&#160;</td><td class="mdescRight">Queue outbound payload bytes for ARQ transmission.  <br /></td></tr>
 <tr class="separator:ace211c35fb67ea6ac3d9115b6145f404"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac7eb6578855b43252d4fe6b75729765a" id="r_ac7eb6578855b43252d4fe6b75729765a"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ac7eb6578855b43252d4fe6b75729765a">arq_get_tx_backlog_bytes</a> (void)</td></tr>
 <tr class="memdesc:ac7eb6578855b43252d4fe6b75729765a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Get pending outbound payload backlog.  <br /></td></tr>
 <tr class="separator:ac7eb6578855b43252d4fe6b75729765a"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a287962c2c4409e7d6aad22b8a5cfe2cc" id="r_a287962c2c4409e7d6aad22b8a5cfe2cc"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a287962c2c4409e7d6aad22b8a5cfe2cc">arq_get_speed_level</a> (void)</td></tr>
-<tr class="memdesc:a287962c2c4409e7d6aad22b8a5cfe2cc"><td class="mdescLeft">&#160;</td><td class="mdescRight">Get current ARQ speed level (gear).  <br /></td></tr>
-<tr class="separator:a287962c2c4409e7d6aad22b8a5cfe2cc"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ac43066e7e09e7d872fbff8cadcd57ccd" id="r_ac43066e7e09e7d872fbff8cadcd57ccd"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ac43066e7e09e7d872fbff8cadcd57ccd">arq_get_payload_mode</a> (void)</td></tr>
-<tr class="memdesc:ac43066e7e09e7d872fbff8cadcd57ccd"><td class="mdescLeft">&#160;</td><td class="mdescRight">Get active ARQ payload mode.  <br /></td></tr>
-<tr class="separator:ac43066e7e09e7d872fbff8cadcd57ccd"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:afcb839435c304a46d63c155920d358af" id="r_afcb839435c304a46d63c155920d358af"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#afcb839435c304a46d63c155920d358af">arq_get_control_mode</a> (void)</td></tr>
-<tr class="memdesc:afcb839435c304a46d63c155920d358af"><td class="mdescLeft">&#160;</td><td class="mdescRight">Get active ARQ control mode.  <br /></td></tr>
-<tr class="separator:afcb839435c304a46d63c155920d358af"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a643830e84fdfda5fba3f4f63ba12cfea" id="r_a643830e84fdfda5fba3f4f63ba12cfea"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a643830e84fdfda5fba3f4f63ba12cfea">arq_get_preferred_rx_mode</a> (void)</td></tr>
-<tr class="memdesc:a643830e84fdfda5fba3f4f63ba12cfea"><td class="mdescLeft">&#160;</td><td class="mdescRight">Get ARQ-preferred receive mode for modem.  <br /></td></tr>
-<tr class="separator:a643830e84fdfda5fba3f4f63ba12cfea"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ae388724ef6bc7b7cef06c1fc4c74631f" id="r_ae388724ef6bc7b7cef06c1fc4c74631f"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ae388724ef6bc7b7cef06c1fc4c74631f">arq_get_preferred_tx_mode</a> (void)</td></tr>
-<tr class="memdesc:ae388724ef6bc7b7cef06c1fc4c74631f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Get ARQ-preferred transmit mode for modem.  <br /></td></tr>
-<tr class="separator:ae388724ef6bc7b7cef06c1fc4c74631f"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a67d12cb2540272e8dde165df7f3d8c47" id="r_a67d12cb2540272e8dde165df7f3d8c47"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a67d12cb2540272e8dde165df7f3d8c47">arq_set_active_modem_mode</a> (int mode, size_t frame_size)</td></tr>
+<tr class="memitem:a8ca8dd8b8fb3ed0f4e21efd8cf4317ac" id="r_a8ca8dd8b8fb3ed0f4e21efd8cf4317ac"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a8ca8dd8b8fb3ed0f4e21efd8cf4317ac">arq_set_listen_mode</a> (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
+<tr class="separator:a8ca8dd8b8fb3ed0f4e21efd8cf4317ac"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a67d12cb2540272e8dde165df7f3d8c47" id="r_a67d12cb2540272e8dde165df7f3d8c47"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a67d12cb2540272e8dde165df7f3d8c47">arq_set_active_modem_mode</a> (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, size_t frame_size)</td></tr>
 <tr class="memdesc:a67d12cb2540272e8dde165df7f3d8c47"><td class="mdescLeft">&#160;</td><td class="mdescRight">Inform ARQ of modem mode/frame size actually active in modem.  <br /></td></tr>
 <tr class="separator:a67d12cb2540272e8dde165df7f3d8c47"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ae9c9a6ac226dd87d6988f5483118e083" id="r_ae9c9a6ac226dd87d6988f5483118e083"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ae9c9a6ac226dd87d6988f5483118e083">arq_note_rx_preamble</a> (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
+<tr class="memdesc:ae9c9a6ac226dd87d6988f5483118e083"><td class="mdescLeft">&#160;</td><td class="mdescRight">A decoder for <code>mode</code> has just caught a frame's preamble: the channel is busy for that frame's airtime even if the decoder then loses sync.  <br /></td></tr>
+<tr class="separator:ae9c9a6ac226dd87d6988f5483118e083"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a0006146c0a987ee0db8dda67d25abf01" id="r_a0006146c0a987ee0db8dda67d25abf01"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a0006146c0a987ee0db8dda67d25abf01">arq_note_rx_nav</a> (uint32_t age_ms, uint32_t hold_ms)</td></tr>
+<tr class="memdesc:a0006146c0a987ee0db8dda67d25abf01"><td class="mdescLeft">&#160;</td><td class="mdescRight">A NAV header that began <code>age_ms</code> ago says the peer's keydown ends within <code>hold_ms</code> of its start: the channel is busy until then, whether or not any of the keydown's frames can be decoded.  <br /></td></tr>
+<tr class="separator:a0006146c0a987ee0db8dda67d25abf01"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a491fcb4441f14a35181fc1909c76fe18" id="r_a491fcb4441f14a35181fc1909c76fe18"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a491fcb4441f14a35181fc1909c76fe18">arq_note_rx_frame_done</a> (void)</td></tr>
+<tr class="separator:a491fcb4441f14a35181fc1909c76fe18"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a13dc145e5a843e32bb1fe641de60d1da" id="r_a13dc145e5a843e32bb1fe641de60d1da"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a13dc145e5a843e32bb1fe641de60d1da">arq_update_link_metrics</a> (int sync, float snr, int rx_status, bool frame_decoded)</td></tr>
 <tr class="memdesc:a13dc145e5a843e32bb1fe641de60d1da"><td class="mdescLeft">&#160;</td><td class="mdescRight">Feed decoder/link metrics into ARQ adaptation.  <br /></td></tr>
 <tr class="separator:a13dc145e5a843e32bb1fe641de60d1da"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -337,9 +358,14 @@ Functions</h2></td></tr>
 <tr class="memitem:a3619b45844362fbbd90dbe680a01db27" id="r_a3619b45844362fbbd90dbe680a01db27"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a3619b45844362fbbd90dbe680a01db27">clear_connection_data</a> (void)</td></tr>
 <tr class="memdesc:a3619b45844362fbbd90dbe680a01db27"><td class="mdescLeft">&#160;</td><td class="mdescRight">Clear legacy ARQ connection state and buffers.  <br /></td></tr>
 <tr class="separator:a3619b45844362fbbd90dbe680a01db27"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7c5982cdf15e235e407d65853b8f5594" id="r_a7c5982cdf15e235e407d65853b8f5594"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a7c5982cdf15e235e407d65853b8f5594">arq_set_disconnect_drain_timeout_s</a> (int seconds)</td></tr>
+<tr class="memdesc:a7c5982cdf15e235e407d65853b8f5594"><td class="mdescLeft">&#160;</td><td class="mdescRight">Set the absolute cap on how long an app DISCONNECT may stay deferred while draining the last TX bytes.  <br /></td></tr>
+<tr class="separator:a7c5982cdf15e235e407d65853b8f5594"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a04d78ed634def81cad2e0667b65dcfc8" id="r_a04d78ed634def81cad2e0667b65dcfc8"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a04d78ed634def81cad2e0667b65dcfc8">arq_set_retry_slots</a> (int slots)</td></tr>
 <tr class="memdesc:a04d78ed634def81cad2e0667b65dcfc8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Set runtime retry slot counts.  <br /></td></tr>
 <tr class="separator:a04d78ed634def81cad2e0667b65dcfc8"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a20e3ff815a2fed69743aa9bf3b1890bf" id="r_a20e3ff815a2fed69743aa9bf3b1890bf"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a20e3ff815a2fed69743aa9bf3b1890bf">arq_set_retry_stagger_ms</a> (int ms)</td></tr>
+<tr class="separator:a20e3ff815a2fed69743aa9bf3b1890bf"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ab0841377a8f9cec4ece4f9bd42aa96ec" id="r_ab0841377a8f9cec4ece4f9bd42aa96ec"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ab0841377a8f9cec4ece4f9bd42aa96ec">reset_arq_info</a> (<a class="el" href="structarq__info.html">arq_info</a> *conn)</td></tr>
 <tr class="memdesc:ab0841377a8f9cec4ece4f9bd42aa96ec"><td class="mdescLeft">&#160;</td><td class="mdescRight">Reset external <a class="el" href="structarq__info.html" title="Runtime ARQ connection and mode state shared across modules.">arq_info</a> structure.  <br /></td></tr>
 <tr class="separator:ab0841377a8f9cec4ece4f9bd42aa96ec"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -354,8 +380,6 @@ Functions</h2></td></tr>
 Variables</h2></td></tr>
 <tr class="memitem:a0f6867b4f42465246425479aaaef7043" id="r_a0f6867b4f42465246425479aaaef7043"><td class="memItemLeft" align="right" valign="top"><a class="el" href="structarq__info.html">arq_info</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a0f6867b4f42465246425479aaaef7043">arq_conn</a></td></tr>
 <tr class="separator:a0f6867b4f42465246425479aaaef7043"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ab6d51445d7af4d064c90f518e5299f23" id="r_ab6d51445d7af4d064c90f518e5299f23"><td class="memItemLeft" align="right" valign="top"><a class="el" href="structfsm__handle.html">fsm_handle</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ab6d51445d7af4d064c90f518e5299f23">arq_fsm</a></td></tr>
-<tr class="separator:ab6d51445d7af4d064c90f518e5299f23"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a1cd0cb25fcc04295cbf33d517a927c26" id="r_a1cd0cb25fcc04295cbf33d517a927c26"><td class="memItemLeft" align="right" valign="top">cbuf_handle_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a1cd0cb25fcc04295cbf33d517a927c26">data_tx_buffer_arq</a></td></tr>
 <tr class="separator:a1cd0cb25fcc04295cbf33d517a927c26"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4c383c6be5920945378d789ff5b829cc" id="r_a4c383c6be5920945378d789ff5b829cc"><td class="memItemLeft" align="right" valign="top">cbuf_handle_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a4c383c6be5920945378d789ff5b829cc">data_tx_buffer_arq_control</a></td></tr>
@@ -366,12 +390,16 @@ Variables</h2></td></tr>
 <tr class="separator:ae6efcf4d8ab864a6f3baec466cfb1e23"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a2acbf921129f15a7d0201b96650a9d5f" id="r_a2acbf921129f15a7d0201b96650a9d5f"><td class="memItemLeft" align="right" valign="top">static <a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a2acbf921129f15a7d0201b96650a9d5f">g_timing</a></td></tr>
 <tr class="separator:a2acbf921129f15a7d0201b96650a9d5f"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a69a68f444f4715af92839c524363cc83" id="r_a69a68f444f4715af92839c524363cc83"><td class="memItemLeft" align="right" valign="top">static pthread_mutex_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a69a68f444f4715af92839c524363cc83">g_sess_lock</a> = <a class="el" href="arq_8c.html#ac2663553b072167a403521db5b4e82c4">PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP</a></td></tr>
+<tr class="separator:a69a68f444f4715af92839c524363cc83"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aae368b330fe05840b26387bbacaa3f0d" id="r_aae368b330fe05840b26387bbacaa3f0d"><td class="memItemLeft" align="right" valign="top">static uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#aae368b330fe05840b26387bbacaa3f0d">g_app_tx_storage</a> [<a class="el" href="arq_8c.html#a9e6e26f3b1576402b650da86d62e0ea9">APP_TX_BUF_SIZE</a>]</td></tr>
 <tr class="separator:aae368b330fe05840b26387bbacaa3f0d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae7157a01a232b8ce6e7c1660adb9cf63" id="r_ae7157a01a232b8ce6e7c1660adb9cf63"><td class="memItemLeft" align="right" valign="top">static cbuf_handle_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ae7157a01a232b8ce6e7c1660adb9cf63">g_app_tx_buf</a></td></tr>
 <tr class="separator:ae7157a01a232b8ce6e7c1660adb9cf63"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a06cd907b75b313d41b72df5193c37e51" id="r_a06cd907b75b313d41b72df5193c37e51"><td class="memItemLeft" align="right" valign="top">static pthread_mutex_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a06cd907b75b313d41b72df5193c37e51">g_app_tx_mtx</a> = PTHREAD_MUTEX_INITIALIZER</td></tr>
 <tr class="separator:a06cd907b75b313d41b72df5193c37e51"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a00a683117ea005f31e103cf4623ae84a" id="r_a00a683117ea005f31e103cf4623ae84a"><td class="memItemLeft" align="right" valign="top">static pthread_mutex_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a00a683117ea005f31e103cf4623ae84a">g_conn_lock</a> = PTHREAD_MUTEX_INITIALIZER</td></tr>
+<tr class="separator:a00a683117ea005f31e103cf4623ae84a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a13a41fc14513d5c71aea88b3e83b6866" id="r_a13a41fc14513d5c71aea88b3e83b6866"><td class="memItemLeft" align="right" valign="top">static <a class="el" href="structarq__event__t.html">arq_event_t</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a13a41fc14513d5c71aea88b3e83b6866">g_evq</a> [<a class="el" href="arq_8c.html#a6f7b9d4999b12dab45f0a1d3d26f6e8f">ARQ_EV_QUEUE_CAP</a>]</td></tr>
 <tr class="separator:a13a41fc14513d5c71aea88b3e83b6866"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af9396bf0bcd2fcc7b1003566e3cc69d1" id="r_af9396bf0bcd2fcc7b1003566e3cc69d1"><td class="memItemLeft" align="right" valign="top">static size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#af9396bf0bcd2fcc7b1003566e3cc69d1">g_evq_head</a></td></tr>
@@ -392,10 +420,10 @@ Variables</h2></td></tr>
 <tr class="separator:a6a81588cdf05604a6ee303ef9892df4b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a90cb30b9701ea325b7b1af0e1a11d377" id="r_a90cb30b9701ea325b7b1af0e1a11d377"><td class="memItemLeft" align="right" valign="top">static pthread_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a90cb30b9701ea325b7b1af0e1a11d377">g_payload_tid</a></td></tr>
 <tr class="separator:a90cb30b9701ea325b7b1af0e1a11d377"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a57ed4de51683e0e0d3fb548b11e1ebd1" id="r_a57ed4de51683e0e0d3fb548b11e1ebd1"><td class="memItemLeft" align="right" valign="top">static volatile bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a57ed4de51683e0e0d3fb548b11e1ebd1">g_running</a></td></tr>
-<tr class="separator:a57ed4de51683e0e0d3fb548b11e1ebd1"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a2fc18e858b5a902af2f355d46c4d24d2" id="r_a2fc18e858b5a902af2f355d46c4d24d2"><td class="memItemLeft" align="right" valign="top">static volatile bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a2fc18e858b5a902af2f355d46c4d24d2">g_initialized</a></td></tr>
-<tr class="separator:a2fc18e858b5a902af2f355d46c4d24d2"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a74b1fabd63221b8774232e58fb59fa94" id="r_a74b1fabd63221b8774232e58fb59fa94"><td class="memItemLeft" align="right" valign="top">static _Atomic bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a74b1fabd63221b8774232e58fb59fa94">g_running</a></td></tr>
+<tr class="separator:a74b1fabd63221b8774232e58fb59fa94"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ad245c252cbd5089ef156d17e21e2ac73" id="r_ad245c252cbd5089ef156d17e21e2ac73"><td class="memItemLeft" align="right" valign="top">static _Atomic bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ad245c252cbd5089ef156d17e21e2ac73">g_initialized</a></td></tr>
+<tr class="separator:ad245c252cbd5089ef156d17e21e2ac73"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <h2 class="groupheader">Macro Definition Documentation</h2>
 <a id="a9e6e26f3b1576402b650da86d62e0ea9" name="a9e6e26f3b1576402b650da86d62e0ea9"></a>
@@ -440,6 +468,20 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="ac2663553b072167a403521db5b4e82c4" name="ac2663553b072167a403521db5b4e82c4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac2663553b072167a403521db5b4e82c4">&#9670;&#160;</a></span>PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP&#160;&#160;&#160;PTHREAD_RECURSIVE_MUTEX_INITIALIZER</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <h2 class="groupheader">Function Documentation</h2>
 <a id="a15ed9e61a6fcf4c0130d769dff4f389a" name="a15ed9e61a6fcf4c0130d769dff4f389a"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a15ed9e61a6fcf4c0130d769dff4f389a">&#9670;&#160;</a></span>active_session_bandwidth_hz()</h2>
@@ -464,33 +506,6 @@ Variables</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
-
-</div>
-</div>
-<a id="aea27d4566f901902c43e8cbbe9db6ab7" name="aea27d4566f901902c43e8cbbe9db6ab7"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aea27d4566f901902c43e8cbbe9db6ab7">&#9670;&#160;</a></span>arq_bandwidth_allows_mode()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">bool arq_bandwidth_allows_mode </td>
-          <td>(</td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>mode</em></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Check whether the current ARQ bandwidth cap allows a modem mode. </p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">mode</td><td>FreeDV mode value. </td></tr>
-  </table>
-  </dd>
-</dl>
-<dl class="section return"><dt>Returns</dt><dd>true if the mode is allowed under the active BW setting. </dd></dl>
 
 </div>
 </div>
@@ -520,14 +535,54 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a0a69144ae7f255bfb3560b787e93d799" name="a0a69144ae7f255bfb3560b787e93d799"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a0a69144ae7f255bfb3560b787e93d799">&#9670;&#160;</a></span>arq_effective_bandwidth_hz()</h2>
+<a id="ae9f7bd1d6a107320c2544fd376913baf" name="ae9f7bd1d6a107320c2544fd376913baf"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae9f7bd1d6a107320c2544fd376913baf">&#9670;&#160;</a></span>arq_conn_get_calls()</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">int arq_effective_bandwidth_hz </td>
+          <td class="memname">void arq_conn_get_calls </td>
+          <td>(</td>
+          <td class="paramtype">char *&#160;</td>
+          <td class="paramname"><em>my_call</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">char *&#160;</td>
+          <td class="paramname"><em>src_addr</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">char *&#160;</td>
+          <td class="paramname"><em>dst_addr</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>bufsz</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="aaab420ad37cc5ff46152130992da7fb4" name="aaab420ad37cc5ff46152130992da7fb4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aaab420ad37cc5ff46152130992da7fb4">&#9670;&#160;</a></span>arq_discard_stale_rx()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_discard_stale_rx </td>
           <td>(</td>
           <td class="paramtype">void&#160;</td>
           <td class="paramname"></td><td>)</td>
@@ -536,8 +591,8 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Get the effective ARQ bandwidth cap in Hz used for mode gating. </p>
-<dl class="section return"><dt>Returns</dt><dd>500 for narrow-band mode, otherwise 2300. </dd></dl>
+<p>Drop received bytes an ended session left in the RX buffer. </p>
+<p>Does nothing while a session is up. Check and clear are one step under the session lock, so they cannot straddle a session starting. </p>
 
 </div>
 </div>
@@ -567,14 +622,14 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="afcb839435c304a46d63c155920d358af" name="afcb839435c304a46d63c155920d358af"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#afcb839435c304a46d63c155920d358af">&#9670;&#160;</a></span>arq_get_control_mode()</h2>
+<a id="a038f8fadbf7592b7985dd075a74dfa66" name="a038f8fadbf7592b7985dd075a74dfa66"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a038f8fadbf7592b7985dd075a74dfa66">&#9670;&#160;</a></span>arq_get_bw()</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">int arq_get_control_mode </td>
+          <td class="memname">int arq_get_bw </td>
           <td>(</td>
           <td class="paramtype">void&#160;</td>
           <td class="paramname"></td><td>)</td>
@@ -582,72 +637,6 @@ Variables</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
-
-<p>Get active ARQ control mode. </p>
-<dl class="section return"><dt>Returns</dt><dd>FreeDV control mode value. </dd></dl>
-
-</div>
-</div>
-<a id="ac43066e7e09e7d872fbff8cadcd57ccd" name="ac43066e7e09e7d872fbff8cadcd57ccd"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ac43066e7e09e7d872fbff8cadcd57ccd">&#9670;&#160;</a></span>arq_get_payload_mode()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int arq_get_payload_mode </td>
-          <td>(</td>
-          <td class="paramtype">void&#160;</td>
-          <td class="paramname"></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Get active ARQ payload mode. </p>
-<dl class="section return"><dt>Returns</dt><dd>FreeDV payload mode value. </dd></dl>
-
-</div>
-</div>
-<a id="a643830e84fdfda5fba3f4f63ba12cfea" name="a643830e84fdfda5fba3f4f63ba12cfea"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a643830e84fdfda5fba3f4f63ba12cfea">&#9670;&#160;</a></span>arq_get_preferred_rx_mode()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int arq_get_preferred_rx_mode </td>
-          <td>(</td>
-          <td class="paramtype">void&#160;</td>
-          <td class="paramname"></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Get ARQ-preferred receive mode for modem. </p>
-<dl class="section return"><dt>Returns</dt><dd>FreeDV mode value. </dd></dl>
-
-</div>
-</div>
-<a id="ae388724ef6bc7b7cef06c1fc4c74631f" name="ae388724ef6bc7b7cef06c1fc4c74631f"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ae388724ef6bc7b7cef06c1fc4c74631f">&#9670;&#160;</a></span>arq_get_preferred_tx_mode()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int arq_get_preferred_tx_mode </td>
-          <td>(</td>
-          <td class="paramtype">void&#160;</td>
-          <td class="paramname"></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Get ARQ-preferred transmit mode for modem. </p>
-<dl class="section return"><dt>Returns</dt><dd>FreeDV mode value. </dd></dl>
 
 </div>
 </div>
@@ -678,14 +667,14 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a287962c2c4409e7d6aad22b8a5cfe2cc" name="a287962c2c4409e7d6aad22b8a5cfe2cc"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a287962c2c4409e7d6aad22b8a5cfe2cc">&#9670;&#160;</a></span>arq_get_speed_level()</h2>
+<a id="a64bfa44f49f390d87b5724cb229169f0" name="a64bfa44f49f390d87b5724cb229169f0"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a64bfa44f49f390d87b5724cb229169f0">&#9670;&#160;</a></span>arq_get_trx()</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">int arq_get_speed_level </td>
+          <td class="memname">int arq_get_trx </td>
           <td>(</td>
           <td class="paramtype">void&#160;</td>
           <td class="paramname"></td><td>)</td>
@@ -693,9 +682,6 @@ Variables</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
-
-<p>Get current ARQ speed level (gear). </p>
-<dl class="section return"><dt>Returns</dt><dd>Speed level index. </dd></dl>
 
 </div>
 </div>
@@ -720,8 +706,60 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a680e48d89b1ee94ab8335b130ce74500" name="a680e48d89b1ee94ab8335b130ce74500"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a680e48d89b1ee94ab8335b130ce74500">&#9670;&#160;</a></span>arq_handle_incoming_connect_frame()</h2>
+<a id="a0b5e650da406bb512ef3be2828f8f901" name="a0b5e650da406bb512ef3be2828f8f901"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0b5e650da406bb512ef3be2828f8f901">&#9670;&#160;</a></span>arq_handle_carousel_frame()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_handle_carousel_frame </td>
+          <td>(</td>
+          <td class="paramtype">const uint8_t *&#160;</td>
+          <td class="paramname"><em>data</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>frame_size</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>mode</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">bool&#160;</td>
+          <td class="paramname"><em>from_control</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">float&#160;</td>
+          <td class="paramname"><em>rx_snr</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">uint32_t&#160;</td>
+          <td class="paramname"><em>age_ms</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a762bcd87687cd9dc81b5831b96893350" name="a762bcd87687cd9dc81b5831b96893350"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a762bcd87687cd9dc81b5831b96893350">&#9670;&#160;</a></span>arq_handle_incoming_connect_frame()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -736,7 +774,19 @@ Variables</h2></td></tr>
           <td class="paramkey"></td>
           <td></td>
           <td class="paramtype">size_t&#160;</td>
-          <td class="paramname"><em>frame_size</em>&#160;</td>
+          <td class="paramname"><em>frame_size</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">float&#160;</td>
+          <td class="paramname"><em>rx_snr</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>mode</em>&#160;</td>
         </tr>
         <tr>
           <td></td>
@@ -746,11 +796,13 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Handle incoming compressed CALL/ACCEPT frame. </p>
+<p>Handle an incoming CALL/ACCEPT frame (protocol version 1). </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">data</td><td>Frame bytes. </td></tr>
     <tr><td class="paramname">frame_size</td><td>Frame length in bytes. </td></tr>
+    <tr><td class="paramname">rx_snr</td><td>SNR the frame was decoded at (dB); sets the start rung. </td></tr>
+    <tr><td class="paramname">mode</td><td>The carrier it came on (DATAC16 or MFSK); the answer goes on it. </td></tr>
   </table>
   </dd>
 </dl>
@@ -899,6 +951,75 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a491fcb4441f14a35181fc1909c76fe18" name="a491fcb4441f14a35181fc1909c76fe18"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a491fcb4441f14a35181fc1909c76fe18">&#9670;&#160;</a></span>arq_note_rx_frame_done()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_note_rx_frame_done </td>
+          <td>(</td>
+          <td class="paramtype">void&#160;</td>
+          <td class="paramname"></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a0006146c0a987ee0db8dda67d25abf01" name="a0006146c0a987ee0db8dda67d25abf01"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0006146c0a987ee0db8dda67d25abf01">&#9670;&#160;</a></span>arq_note_rx_nav()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_note_rx_nav </td>
+          <td>(</td>
+          <td class="paramtype">uint32_t&#160;</td>
+          <td class="paramname"><em>age_ms</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">uint32_t&#160;</td>
+          <td class="paramname"><em>hold_ms</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>A NAV header that began <code>age_ms</code> ago says the peer's keydown ends within <code>hold_ms</code> of its start: the channel is busy until then, whether or not any of the keydown's frames can be decoded. </p>
+
+</div>
+</div>
+<a id="ae9c9a6ac226dd87d6988f5483118e083" name="ae9c9a6ac226dd87d6988f5483118e083"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae9c9a6ac226dd87d6988f5483118e083">&#9670;&#160;</a></span>arq_note_rx_preamble()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_note_rx_preamble </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>mode</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>A decoder for <code>mode</code> has just caught a frame's preamble: the channel is busy for that frame's airtime even if the decoder then loses sync. </p>
+<p><a class="el" href="arq_8h.html#a491fcb4441f14a35181fc1909c76fe18">arq_note_rx_frame_done()</a> ends it when a frame decodes. </p>
+
+</div>
+</div>
 <a id="a8358a283b699c81af82abff457bb7f29" name="a8358a283b699c81af82abff457bb7f29"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a8358a283b699c81af82abff457bb7f29">&#9670;&#160;</a></span>arq_notify_cq_tx_complete()</h2>
 
@@ -935,6 +1056,24 @@ Variables</h2></td></tr>
 
 <p>Emit VARA-style async status for an outgoing CQFRAME transmission. </p>
 <p>VARA clients such as varim treat CQFRAME as a pending operation and expect PENDING/CANCELPENDING around the actual send lifecycle. </p>
+
+</div>
+</div>
+<a id="a6e92cdb1e4e76da4143eb55ac181f8ca" name="a6e92cdb1e4e76da4143eb55ac181f8ca"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6e92cdb1e4e76da4143eb55ac181f8ca">&#9670;&#160;</a></span>arq_notify_virtual_time()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_notify_virtual_time </td>
+          <td>(</td>
+          <td class="paramtype">void&#160;</td>
+          <td class="paramname"></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
 
 </div>
 </div>
@@ -983,10 +1122,28 @@ Variables</h2></td></tr>
 <p>Post an FSM event to ARQ. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">event</td><td>Event identifier from <a class="el" href="fsm_8h.html">fsm.h</a>. </td></tr>
+    <tr><td class="paramname">event</td><td>Event identifier from fsm.h. </td></tr>
   </table>
   </dd>
 </dl>
+
+</div>
+</div>
+<a id="a5da248268eeb2852dc3383b5062c3635" name="a5da248268eeb2852dc3383b5062c3635"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5da248268eeb2852dc3383b5062c3635">&#9670;&#160;</a></span>arq_post_pattern_ack()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_post_pattern_ack </td>
+          <td>(</td>
+          <td class="paramtype">bool&#160;</td>
+          <td class="paramname"><em>is_break</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
 
 </div>
 </div>
@@ -1086,6 +1243,50 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a7c5982cdf15e235e407d65853b8f5594" name="a7c5982cdf15e235e407d65853b8f5594"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7c5982cdf15e235e407d65853b8f5594">&#9670;&#160;</a></span>arq_set_disconnect_drain_timeout_s()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_set_disconnect_drain_timeout_s </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>seconds</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Set the absolute cap on how long an app DISCONNECT may stay deferred while draining the last TX bytes. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">seconds</td><td>Window in seconds. Values &lt;= 0 reset to the compiled default (ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT). </td></tr>
+  </table>
+  </dd>
+</dl>
+
+</div>
+</div>
+<a id="a8ca8dd8b8fb3ed0f4e21efd8cf4317ac" name="a8ca8dd8b8fb3ed0f4e21efd8cf4317ac"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a8ca8dd8b8fb3ed0f4e21efd8cf4317ac">&#9670;&#160;</a></span>arq_set_listen_mode()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_set_listen_mode </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>mode</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a04d78ed634def81cad2e0667b65dcfc8" name="a04d78ed634def81cad2e0667b65dcfc8"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a04d78ed634def81cad2e0667b65dcfc8">&#9670;&#160;</a></span>arq_set_retry_slots()</h2>
 
@@ -1103,13 +1304,49 @@ Variables</h2></td></tr>
 </div><div class="memdoc">
 
 <p>Set runtime retry slot counts. </p>
-<p>Updates CALL, ACCEPT, and DATA retry counters used by the ARQ FSM. DISCONNECT retries are left at the compiled default. Pass 0 to restore all counters to compiled defaults.</p>
+<p>Updates the CALL and ACCEPT retry counters used by the ARQ FSM. DISCONNECT retries are left at the compiled default. Pass 0 to restore all counters to compiled defaults.</p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">slots</td><td>Number of retry slots, or 0 to restore defaults. </td></tr>
   </table>
   </dd>
 </dl>
+
+</div>
+</div>
+<a id="a20e3ff815a2fed69743aa9bf3b1890bf" name="a20e3ff815a2fed69743aa9bf3b1890bf"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a20e3ff815a2fed69743aa9bf3b1890bf">&#9670;&#160;</a></span>arq_set_retry_stagger_ms()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_set_retry_stagger_ms </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>ms</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ada224276cffbc98d2c205bf4c3bf1ef9" name="ada224276cffbc98d2c205bf4c3bf1ef9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ada224276cffbc98d2c205bf4c3bf1ef9">&#9670;&#160;</a></span>arq_set_trx()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_set_trx </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>trx</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
 
 </div>
 </div>
@@ -1436,8 +1673,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="ab94dc800da6cdf087725fcf5d52093a6" name="ab94dc800da6cdf087725fcf5d52093a6"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ab94dc800da6cdf087725fcf5d52093a6">&#9670;&#160;</a></span>cb_notify_connected()</h2>
+<a id="ae07c2f20da18708c4b5c17be82554a6a" name="ae07c2f20da18708c4b5c17be82554a6a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae07c2f20da18708c4b5c17be82554a6a">&#9670;&#160;</a></span>cb_notify_connected()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -1449,8 +1686,18 @@ Variables</h2></td></tr>
           <td class="memname">static void cb_notify_connected </td>
           <td>(</td>
           <td class="paramtype">const char *&#160;</td>
-          <td class="paramname"><em>remote_call</em></td><td>)</td>
+          <td class="paramname"><em>remote_call</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
           <td></td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>local_call</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
         </tr>
       </table>
   </td>
@@ -1488,8 +1735,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a1ecc301dd009e966c10b43e794a148ef" name="a1ecc301dd009e966c10b43e794a148ef"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a1ecc301dd009e966c10b43e794a148ef">&#9670;&#160;</a></span>cb_notify_pending()</h2>
+<a id="a05d39b488f6dd2b19b96d02def65242a" name="a05d39b488f6dd2b19b96d02def65242a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a05d39b488f6dd2b19b96d02def65242a">&#9670;&#160;</a></span>cb_notify_pending()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -1501,8 +1748,18 @@ Variables</h2></td></tr>
           <td class="memname">static void cb_notify_pending </td>
           <td>(</td>
           <td class="paramtype">const char *&#160;</td>
-          <td class="paramname"><em>remote_call</em></td><td>)</td>
+          <td class="paramname"><em>remote_call</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
           <td></td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>local_call</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
         </tr>
       </table>
   </td>
@@ -1540,8 +1797,60 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="abe43ba1b2b8d0076ab9e4fa0a3a2c0e2" name="abe43ba1b2b8d0076ab9e4fa0a3a2c0e2"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#abe43ba1b2b8d0076ab9e4fa0a3a2c0e2">&#9670;&#160;</a></span>cb_send_tx_frame()</h2>
+<a id="ae9fffa564ebddc087d15b8444e9cd745" name="ae9fffa564ebddc087d15b8444e9cd745"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae9fffa564ebddc087d15b8444e9cd745">&#9670;&#160;</a></span>cb_send_keydown()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static void cb_send_keydown </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structarq__keydown__t.html">arq_keydown_t</a> *&#160;</td>
+          <td class="paramname"><em>kd</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a44b5b28bb409703fffb66745c93c86aa" name="a44b5b28bb409703fffb66745c93c86aa"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a44b5b28bb409703fffb66745c93c86aa">&#9670;&#160;</a></span>cb_send_pattern()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static void cb_send_pattern </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>pattern_kind</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a338a94884027eb31919dd8c62ca8c039" name="a338a94884027eb31919dd8c62ca8c039"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a338a94884027eb31919dd8c62ca8c039">&#9670;&#160;</a></span>cb_send_tx_frame()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -1571,7 +1880,13 @@ Variables</h2></td></tr>
           <td class="paramkey"></td>
           <td></td>
           <td class="paramtype">const uint8_t *&#160;</td>
-          <td class="paramname"><em>frame</em>&#160;</td>
+          <td class="paramname"><em>frame</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>burst_remaining</em>&#160;</td>
         </tr>
         <tr>
           <td></td>
@@ -1862,172 +2177,6 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a0bbf64b284fa1d1de6111b7ea1858a73" name="a0bbf64b284fa1d1de6111b7ea1858a73"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a0bbf64b284fa1d1de6111b7ea1858a73">&#9670;&#160;</a></span>tnc_send_buffer()</h2>
-
-<div class="memitem">
-<div class="memproto">
-<table class="mlabels">
-  <tr>
-  <td class="mlabels-left">
-      <table class="memname">
-        <tr>
-          <td class="memname">void tnc_send_buffer </td>
-          <td>(</td>
-          <td class="paramtype">uint32_t&#160;</td>
-          <td class="paramname"><em>bytes</em></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-  </td>
-  <td class="mlabels-right">
-<span class="mlabels"><span class="mlabel">extern</span></span>  </td>
-  </tr>
-</table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="abbdf4a4a862bb4a16c742efa97ecf023" name="abbdf4a4a862bb4a16c742efa97ecf023"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#abbdf4a4a862bb4a16c742efa97ecf023">&#9670;&#160;</a></span>tnc_send_cancelpending()</h2>
-
-<div class="memitem">
-<div class="memproto">
-<table class="mlabels">
-  <tr>
-  <td class="mlabels-left">
-      <table class="memname">
-        <tr>
-          <td class="memname">void tnc_send_cancelpending </td>
-          <td>(</td>
-          <td class="paramtype">void&#160;</td>
-          <td class="paramname"></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-  </td>
-  <td class="mlabels-right">
-<span class="mlabels"><span class="mlabel">extern</span></span>  </td>
-  </tr>
-</table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="aabbba7cd6be9bbe4224f9ce9394707f7" name="aabbba7cd6be9bbe4224f9ce9394707f7"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aabbba7cd6be9bbe4224f9ce9394707f7">&#9670;&#160;</a></span>tnc_send_connected()</h2>
-
-<div class="memitem">
-<div class="memproto">
-<table class="mlabels">
-  <tr>
-  <td class="mlabels-left">
-      <table class="memname">
-        <tr>
-          <td class="memname">void tnc_send_connected </td>
-          <td>(</td>
-          <td class="paramtype">void&#160;</td>
-          <td class="paramname"></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-  </td>
-  <td class="mlabels-right">
-<span class="mlabels"><span class="mlabel">extern</span></span>  </td>
-  </tr>
-</table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="a3603847db389e0e350b56dac52a7daa3" name="a3603847db389e0e350b56dac52a7daa3"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a3603847db389e0e350b56dac52a7daa3">&#9670;&#160;</a></span>tnc_send_cqframe()</h2>
-
-<div class="memitem">
-<div class="memproto">
-<table class="mlabels">
-  <tr>
-  <td class="mlabels-left">
-      <table class="memname">
-        <tr>
-          <td class="memname">void tnc_send_cqframe </td>
-          <td>(</td>
-          <td class="paramtype">const char *&#160;</td>
-          <td class="paramname"><em>source_call</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>bw_hz</em>&#160;</td>
-        </tr>
-        <tr>
-          <td></td>
-          <td>)</td>
-          <td></td><td></td>
-        </tr>
-      </table>
-  </td>
-  <td class="mlabels-right">
-<span class="mlabels"><span class="mlabel">extern</span></span>  </td>
-  </tr>
-</table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="ae6d43282a3ee3d6ccc5c636d8c50edcd" name="ae6d43282a3ee3d6ccc5c636d8c50edcd"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ae6d43282a3ee3d6ccc5c636d8c50edcd">&#9670;&#160;</a></span>tnc_send_disconnected()</h2>
-
-<div class="memitem">
-<div class="memproto">
-<table class="mlabels">
-  <tr>
-  <td class="mlabels-left">
-      <table class="memname">
-        <tr>
-          <td class="memname">void tnc_send_disconnected </td>
-          <td>(</td>
-          <td class="paramtype">void&#160;</td>
-          <td class="paramname"></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-  </td>
-  <td class="mlabels-right">
-<span class="mlabels"><span class="mlabel">extern</span></span>  </td>
-  </tr>
-</table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="a08d0fcf625903ff7c8fc100c28e08ab6" name="a08d0fcf625903ff7c8fc100c28e08ab6"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a08d0fcf625903ff7c8fc100c28e08ab6">&#9670;&#160;</a></span>tnc_send_pending()</h2>
-
-<div class="memitem">
-<div class="memproto">
-<table class="mlabels">
-  <tr>
-  <td class="mlabels-left">
-      <table class="memname">
-        <tr>
-          <td class="memname">void tnc_send_pending </td>
-          <td>(</td>
-          <td class="paramtype">void&#160;</td>
-          <td class="paramname"></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-  </td>
-  <td class="mlabels-right">
-<span class="mlabels"><span class="mlabel">extern</span></span>  </td>
-  </tr>
-</table>
-</div><div class="memdoc">
-
-</div>
-</div>
 <h2 class="groupheader">Variable Documentation</h2>
 <a id="a0f6867b4f42465246425479aaaef7043" name="a0f6867b4f42465246425479aaaef7043"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a0f6867b4f42465246425479aaaef7043">&#9670;&#160;</a></span>arq_conn</h2>
@@ -2037,20 +2186,6 @@ Variables</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname"><a class="el" href="structarq__info.html">arq_info</a> arq_conn</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="ab6d51445d7af4d064c90f518e5299f23" name="ab6d51445d7af4d064c90f518e5299f23"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ab6d51445d7af4d064c90f518e5299f23">&#9670;&#160;</a></span>arq_fsm</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname"><a class="el" href="structfsm__handle.html">fsm_handle</a> arq_fsm</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -2233,6 +2368,28 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a00a683117ea005f31e103cf4623ae84a" name="a00a683117ea005f31e103cf4623ae84a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a00a683117ea005f31e103cf4623ae84a">&#9670;&#160;</a></span>g_conn_lock</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">pthread_mutex_t g_conn_lock = PTHREAD_MUTEX_INITIALIZER</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a13a41fc14513d5c71aea88b3e83b6866" name="a13a41fc14513d5c71aea88b3e83b6866"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a13a41fc14513d5c71aea88b3e83b6866">&#9670;&#160;</a></span>g_evq</h2>
 
@@ -2365,8 +2522,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a2fc18e858b5a902af2f355d46c4d24d2" name="a2fc18e858b5a902af2f355d46c4d24d2"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a2fc18e858b5a902af2f355d46c4d24d2">&#9670;&#160;</a></span>g_initialized</h2>
+<a id="ad245c252cbd5089ef156d17e21e2ac73" name="ad245c252cbd5089ef156d17e21e2ac73"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad245c252cbd5089ef156d17e21e2ac73">&#9670;&#160;</a></span>g_initialized</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -2375,7 +2532,7 @@ Variables</h2></td></tr>
   <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">volatile bool g_initialized</td>
+          <td class="memname">_Atomic bool g_initialized</td>
         </tr>
       </table>
   </td>
@@ -2431,8 +2588,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a57ed4de51683e0e0d3fb548b11e1ebd1" name="a57ed4de51683e0e0d3fb548b11e1ebd1"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a57ed4de51683e0e0d3fb548b11e1ebd1">&#9670;&#160;</a></span>g_running</h2>
+<a id="a74b1fabd63221b8774232e58fb59fa94" name="a74b1fabd63221b8774232e58fb59fa94"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a74b1fabd63221b8774232e58fb59fa94">&#9670;&#160;</a></span>g_running</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -2441,7 +2598,7 @@ Variables</h2></td></tr>
   <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">volatile bool g_running</td>
+          <td class="memname">_Atomic bool g_running</td>
         </tr>
       </table>
   </td>
@@ -2464,6 +2621,28 @@ Variables</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname"><a class="el" href="structarq__session__t.html">arq_session_t</a> g_sess</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a69a68f444f4715af92839c524363cc83" name="a69a68f444f4715af92839c524363cc83"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a69a68f444f4715af92839c524363cc83">&#9670;&#160;</a></span>g_sess_lock</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">pthread_mutex_t g_sess_lock = <a class="el" href="arq_8c.html#ac2663553b072167a403521db5b4e82c4">PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP</a></td>
         </tr>
       </table>
   </td>

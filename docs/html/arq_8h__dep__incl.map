@@ -1,15 +1,17 @@
 <map id="arq.h" name="arq.h">
-<area shape="rect" id="Node000001" title=" " alt="" coords="113,5,164,31"/>
+<area shape="rect" id="Node000001" title=" " alt="" coords="152,5,203,31"/>
 <area shape="rect" id="Node000002" href="$arq_8c.html" title=" " alt="" coords="107,225,157,251"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="110,41,84,61,55,87,30,118,12,153,8,165,12,176,31,197,56,213,107,230,106,235,54,218,28,201,7,179,3,165,7,151,26,115,52,83,80,57,107,36"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="140,37,105,55,68,80,34,113,21,132,12,153,8,165,12,176,31,197,56,213,107,230,106,235,54,218,28,201,7,179,3,165,7,151,17,129,30,110,64,76,102,51,138,32"/>
 <area shape="rect" id="Node000003" href="$arq__fsm_8c.html" title=" " alt="" coords="21,152,101,177"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="118,42,89,80,74,119,66,152,61,151,68,117,84,77,114,39"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="141,38,113,56,89,80,78,98,71,118,65,152,60,151,66,116,74,96,84,77,110,52,138,34"/>
 <area shape="rect" id="Node000004" href="$arq__fsm_8h.html" title=" " alt="" coords="99,79,179,104"/>
-<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="141,44,141,79,136,79,136,44"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="167,44,147,80,143,77,162,42"/>
 <area shape="rect" id="Node000005" href="$arq__modem_8h.html" title=" " alt="" coords="176,152,277,177"/>
-<area shape="poly" id="edge9_Node000001_Node000005" title=" " alt="" coords="162,39,193,77,213,117,226,151,221,153,208,119,188,80,158,42"/>
+<area shape="poly" id="edge9_Node000001_Node000005" title=" " alt="" coords="188,43,225,151,220,153,183,45"/>
 <area shape="rect" id="Node000007" href="$arq__protocol_8c.html" title=" " alt="" coords="253,79,357,104"/>
-<area shape="poly" id="edge10_Node000001_Node000007" title=" " alt="" coords="178,33,279,76,277,81,176,38"/>
+<area shape="poly" id="edge10_Node000001_Node000007" title=" " alt="" coords="211,35,286,76,283,81,209,40"/>
+<area shape="rect" id="Node000008" href="$carousel_8c.html" title=" " alt="" coords="381,79,464,104"/>
+<area shape="poly" id="edge11_Node000001_Node000008" title=" " alt="" coords="217,28,384,76,382,81,215,33"/>
 <area shape="poly" id="edge4_Node000004_Node000002" title=" " alt="" coords="140,118,135,225,130,225,135,118"/>
 <area shape="poly" id="edge5_Node000004_Node000003" title=" " alt="" coords="118,115,76,154,72,150,114,111"/>
 <area shape="poly" id="edge6_Node000004_Node000005" title=" " alt="" coords="165,110,214,150,211,154,162,115"/>

@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.9.8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HERMES Modem: arq_info Struct Reference</title>
+<title>Mercury Modem: arq_info Struct Reference</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -21,9 +21,9 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">HERMES Modem
+   <div id="projectname">Mercury Modem
    </div>
-   <div id="projectbrief">Hermes ARQ/Broadcast modem</div>
+   <div id="projectbrief">Mercury ARQ/Broadcast modem</div>
   </td>
  </tr>
  </tbody>
@@ -87,6 +87,10 @@ Data Fields</h2></td></tr>
 <tr class="separator:ab28afe1230ca491b2b7ccdb66f83f85f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a234df707beef09a8fe41abae8a5e8370" id="r_a234df707beef09a8fe41abae8a5e8370"><td class="memItemLeft" align="right" valign="top">char&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__info.html#a234df707beef09a8fe41abae8a5e8370">my_call_sign</a> [<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td></tr>
 <tr class="separator:a234df707beef09a8fe41abae8a5e8370"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a8dd046f6f50950910fc85f6cfeba30cf" id="r_a8dd046f6f50950910fc85f6cfeba30cf"><td class="memItemLeft" align="right" valign="top">char&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__info.html#a8dd046f6f50950910fc85f6cfeba30cf">secondary_calls</a> [<a class="el" href="arq_8h.html#a57e6fad1301341c98c42463c7e2e4d32">CALLSIGN_MAX_SECONDARY</a>][<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td></tr>
+<tr class="separator:a8dd046f6f50950910fc85f6cfeba30cf"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:af36a41e42bd9a4551e0609835b438c77" id="r_af36a41e42bd9a4551e0609835b438c77"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__info.html#af36a41e42bd9a4551e0609835b438c77">secondary_call_count</a></td></tr>
+<tr class="separator:af36a41e42bd9a4551e0609835b438c77"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a6f9f09bddc7c3e7fee25b1b93e400f78" id="r_a6f9f09bddc7c3e7fee25b1b93e400f78"><td class="memItemLeft" align="right" valign="top">char&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__info.html#a6f9f09bddc7c3e7fee25b1b93e400f78">src_addr</a> [<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td></tr>
 <tr class="separator:a6f9f09bddc7c3e7fee25b1b93e400f78"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:abd24ecb208a254859229cf631962fe90" id="r_abd24ecb208a254859229cf631962fe90"><td class="memItemLeft" align="right" valign="top">char&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__info.html#abd24ecb208a254859229cf631962fe90">dst_addr</a> [<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td></tr>
@@ -231,6 +235,34 @@ Data Fields</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">int arq_info::retry_slots</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="af36a41e42bd9a4551e0609835b438c77" name="af36a41e42bd9a4551e0609835b438c77"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af36a41e42bd9a4551e0609835b438c77">&#9670;&#160;</a></span>secondary_call_count</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_info::secondary_call_count</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a8dd046f6f50950910fc85f6cfeba30cf" name="a8dd046f6f50950910fc85f6cfeba30cf"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a8dd046f6f50950910fc85f6cfeba30cf">&#9670;&#160;</a></span>secondary_calls</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">char arq_info::secondary_calls[<a class="el" href="arq_8h.html#a57e6fad1301341c98c42463c7e2e4d32">CALLSIGN_MAX_SECONDARY</a>][<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td>
         </tr>
       </table>
 </div><div class="memdoc">

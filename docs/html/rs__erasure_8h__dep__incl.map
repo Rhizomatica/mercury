@@ -1,0 +1,21 @@
+<map id="rs_erasure.h" name="rs_erasure.h">
+<area shape="rect" id="Node000001" title=" " alt="" coords="91,5,186,31"/>
+<area shape="rect" id="Node000002" href="$carousel_8h.html" title=" " alt="" coords="41,79,124,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="123,43,94,80,90,77,119,40"/>
+<area shape="rect" id="Node000009" href="$rs__erasure_8c.html" title=" " alt="" coords="149,79,243,104"/>
+<area shape="poly" id="edge10_Node000001_Node000009" title=" " alt="" coords="159,40,189,77,185,80,154,43"/>
+<area shape="rect" id="Node000003" href="$arq_8c.html" title=" " alt="" coords="5,299,56,324"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="60,115,45,133,33,153,24,193,23,234,31,298,25,299,17,235,19,193,28,151,40,129,56,112"/>
+<area shape="rect" id="Node000004" href="$arq__fsm_8h.html" title=" " alt="" coords="43,152,123,177"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="85,118,85,152,80,152,80,118"/>
+<area shape="rect" id="Node000008" href="$carousel_8c.html" title=" " alt="" coords="147,152,229,177"/>
+<area shape="poly" id="edge9_Node000002_Node000008" title=" " alt="" coords="113,110,172,150,169,154,110,114"/>
+<area shape="poly" id="edge4_Node000004_Node000003" title=" " alt="" coords="74,191,59,226,36,299,31,298,53,224,69,189"/>
+<area shape="rect" id="Node000005" href="$arq__fsm_8c.html" title=" " alt="" coords="68,225,148,251"/>
+<area shape="poly" id="edge5_Node000004_Node000005" title=" " alt="" coords="94,189,106,224,101,226,89,191"/>
+<area shape="rect" id="Node000006" href="$arq__modem_8h.html" title=" " alt="" coords="172,225,273,251"/>
+<area shape="poly" id="edge6_Node000004_Node000006" title=" " alt="" coords="119,181,201,223,199,227,116,186"/>
+<area shape="poly" id="edge7_Node000006_Node000003" title=" " alt="" coords="180,258,57,303,56,298,178,253"/>
+<area shape="rect" id="Node000007" href="$arq__modem_8c.html" title=" " alt="" coords="172,299,273,324"/>
+<area shape="poly" id="edge8_Node000006_Node000007" title=" " alt="" coords="225,264,225,299,220,299,220,264"/>
+</map>

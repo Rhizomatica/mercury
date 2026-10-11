@@ -1,5 +1,21 @@
 var searchData=
 [
-  ['callsign_5fmax_5fsize_0',['CALLSIGN_MAX_SIZE',['../arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79',1,'arq.h']]],
-  ['code_5fbits_1',['CODE_BITS',['../arith_8c.html#a251992bfb3b94a87075fee6e9e077c86',1,'arith.c']]]
+  ['callsign_5fmax_5fsecondary_0',['CALLSIGN_MAX_SECONDARY',['../arq_8h.html#a57e6fad1301341c98c42463c7e2e4d32',1,'arq.h']]],
+  ['callsign_5fmax_5fsize_1',['CALLSIGN_MAX_SIZE',['../arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79',1,'arq.h']]],
+  ['car_5fframe_5fmax_2',['CAR_FRAME_MAX',['../carousel_8h.html#ad4d233baeb2cb8e00aa5092e3efc89c3',1,'carousel.h']]],
+  ['car_5fkeydown_5fmax_3',['CAR_KEYDOWN_MAX',['../carousel_8h.html#ad28a71916fc5270ee35dcff66075299d',1,'carousel.h']]],
+  ['car_5fmax_5fk_4',['CAR_MAX_K',['../carousel_8h.html#a3e605a4fa3642e132f90f2892a526342',1,'carousel.h']]],
+  ['car_5fmlog_5',['CAR_MLOG',['../carousel_8h.html#a7463aa219498952dc401cf563a04315f',1,'carousel.h']]],
+  ['car_5fnlevels_6',['CAR_NLEVELS',['../carousel_8h.html#a626ac0374ec2ecf1a25d0dcf18a8a538',1,'carousel.h']]],
+  ['car_5fpiece_7',['CAR_PIECE',['../carousel_8h.html#a3875364cc722a807c199f8f58fd9c9e8',1,'carousel.h']]],
+  ['car_5fpiece_5ffloor_8',['CAR_PIECE_FLOOR',['../carousel_8h.html#aec6fea5663baac40a487fcedcac3dd92',1,'carousel.h']]],
+  ['car_5fpoll_5fbytes_9',['CAR_POLL_BYTES',['../carousel_8h.html#a3f2f1419542c05a47fb3deab34801344',1,'carousel.h']]],
+  ['car_5fwin_10',['CAR_WIN',['../carousel_8h.html#a6bda25cbbd8ba021253666880200a4af',1,'carousel.h']]],
+  ['carrier_5fcheck_5fms_11',['CARRIER_CHECK_MS',['../carousel_8c.html#a657e383dde1cdb6704288e0a3596513b',1,'carousel.c']]],
+  ['chain_5fgap_5fms_12',['CHAIN_GAP_MS',['../carousel_8c.html#a36f703aeb24e08694b0c14e0322ed32b',1,'carousel.c']]],
+  ['code_5fbits_13',['CODE_BITS',['../arith_8c.html#a251992bfb3b94a87075fee6e9e077c86',1,'arith.c']]],
+  ['ctl_5fdeaf_5foff_5fdb_14',['CTL_DEAF_OFF_DB',['../carousel_8c.html#a90fff80575df8fe5aa02a7db5dd201b8',1,'carousel.c']]],
+  ['ctl_5fdeaf_5fon_5fdb_15',['CTL_DEAF_ON_DB',['../carousel_8c.html#abe567b60b9b653d8726dd25cf522e5cd',1,'carousel.c']]],
+  ['ctl_5ffloor_5fmark_16',['CTL_FLOOR_MARK',['../carousel_8c.html#ac0b1a8b4a8c199f40f58732ea3e1c15f',1,'carousel.c']]],
+  ['ctl_5fseg_5fk1_17',['CTL_SEG_K1',['../carousel_8c.html#a64ca5436442ce09a314204cd61dfc475',1,'carousel.c']]]
 ];
