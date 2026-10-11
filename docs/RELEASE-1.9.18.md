@@ -42,6 +42,9 @@ The design is in [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md), the rules in
   decoder costing about 1 % of a Raspberry Pi 4 core. Idle LISTENING on a
   Pi 4 (estacao8, 60 s, two rounds, measured 2026-10-03): 1.9.17 30-31 % of
   one core, 1.9.18 33-34 %.
+- **Building the GUI from source needs Go 1.26.9** (`fyne-ui`,
+  `mercury-client`). Debian 13's `golang-go` 1.24 fetches it on first use
+  (`GOTOOLCHAIN`); see the README.
 - **Small interface changes.**
   - `MERCURY_CAROUSEL` no longer exists.
   - The UI's `peer_snr` always reads unknown: the carousel reports the rung
@@ -120,6 +123,11 @@ The design is in [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md), the rules in
 
 ## Fixes
 
+- The Mercury client's chat pane shows a received line that ends with a bare
+  CR, as many HF chat programs send them. Before, such a line was run
+  together with the next one, or not shown at all if no LF followed. Text
+  with no line ending is shown after 30 s of quiet, or when the session ends
+  (#340).
 - A DISCONNECT waits for undelivered data as long as a few exchanges take on
   the rung in use. The fixed 30 s dropped UUCP's last reply at the floor.
   ABORT skips that wait.
