@@ -179,8 +179,9 @@ CONNECT <mycall> <theircall>\r
 
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
-Mercury will transmit CALL frames on DATAC16 (the control mode), advertising
-the local BW token,
+Mercury will transmit CALL frames on DATAC16 (the control mode) -- the first
+two, then MFSK and DATAC16 alternately, so a station that cannot hear DATAC16
+is still reached -- advertising the local BW token,
 and wait for an ACCEPT carrying the negotiated session BW.
 On success, the asynchronous response
 `CONNECTED <sourcecall> <destcall> <bandwidth>\r` is sent on the control port,
@@ -236,8 +237,9 @@ ABORT\r
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
 `DISCONNECT` first delivers what is still queued: unsent bytes, and the
-last frame's ACK.  `ABORT` does not wait.  It discards the unsent TX data,
-the frames awaiting an ACK and received data not yet read, then sends the
+pieces the peer has not yet confirmed.  `ABORT` does not wait.  It discards
+the unsent TX data, the unconfirmed pieces and received data not yet read,
+then sends the
 DISCONNECT frames straight away (after any frame already on the air), so
 the peer is told rather than left to time out.  `DISCONNECTED\r` is sent
 on the control port at once, as for `DISCONNECT`.
@@ -303,7 +305,9 @@ Query the current throughput estimate.
 BITRATE\r
 ```
 
-**Response:** `BITRATE (<speed_level>) <bps> BPS\r` on the control port.
+**Response:** `BITRATE (<code>) <bps> BPS\r` on the control port.  `<code>`
+names the mode on the air: 1 DATAC1, 3 DATAC3, 4 DATAC4, 15 DATAC15,
+17 DATAC17, 25 QAM16C2, 100 MFSK.
 
 ---
 
@@ -360,20 +364,21 @@ for an index that is out of range or not switchable at runtime.
 Two limits are worth knowing:
 
 * **Only accepted while the ARQ link is idle** (disconnected or listening).
-  During a session the ARQ mode ladder owns the payload mode and would
+  During a session the carousel owns the payload mode and would
   overwrite an operator setting within one RX-loop iteration, so the command
   answers `BUSY\r` rather than silently accepting a setting that is about to
   be discarded.
 * **Only the pooled payload modes are runtime-switchable:** indexes 0
-  (DATAC1), 1 (DATAC3), 3 (DATAC4), 7 (DATAC15), 9 (DATAC17) and 10
-  (QAM16C2).  DATAC16 is the ARQ control mode, and DATAC0 / DATAC13 / DATAC14
-  / FSK_LDPC have no runtime pool slot — `-m` can still *start* on some of
-  those, but they cannot be selected later, and `MODE` answers `WRONG\r`.
+  (DATAC1), 1 (DATAC3), 3 (DATAC4), 7 (DATAC15), 9 (DATAC17), 10 (QAM16C2)
+  and 11 (MFSK).  DATAC16 is the ARQ control mode, and DATAC0 / DATAC13 /
+  DATAC14 / FSK_LDPC are not payload modes at runtime — `-m` can still
+  *start* on some of those, but they cannot be selected later, and `MODE`
+  answers `WRONG\r`.
 
 This does **not** change how ARQ connections behave.  Every session — inbound
-or outbound — resets its mode ladder to DATAC15 and climbs from there via
-OLLA, so a fast listen mode gives a later connection no head start, and a
-robust one costs it nothing.  Setting the listen mode is about *broadcast*
+or outbound — starts each direction on the rung the connect's SNR supports,
+so a fast listen mode gives a later connection no head start, and a robust
+one costs it nothing.  Setting the listen mode is about *broadcast*
 reception and transmission while idle.
 
 ---
@@ -410,9 +415,9 @@ purely additive.
 plain CRC: `CALL`/`ACCEPT` connect exchanges, `CQ` frames, `DISCONNECT`, and
 broadcast traffic.  A 1.9.x station's frames are shown as from "another
 protocol version".  It does **not** yet decode the **carousel** data plane
--- the only session type -- because every in-session carousel frame carries the session's
-CRC seed, which the monitor's decoders do not apply, so those frames fail CRC
-and are not reported.  Watching a pair of `mercuryv2` stations, the monitor
+(the only session type), because every in-session carousel frame carries
+the session's CRC seed, which the monitor's decoders do not apply, so those
+frames fail CRC and are not reported.  Watching a pair of `mercuryv2` stations, the monitor
 therefore shows the connect, the disconnect and any CQ/broadcast, but nothing
 of the data exchange in between.  Following carousel sessions (recovering the
 seed from the `CALL`/`ACCEPT` and decoding the carousel framing) is planned as
@@ -737,5 +742,6 @@ Client                          Mercury
 
 ## See Also
 
-- [ARQ Protocol & Architecture](ARQ.md) — Wire protocol, FSM, gear-shifting, tuning guide.
+- [The carousel data plane](CAROUSEL-ARQ.md) — the ARQ data link and its wire formats.
+- [ARQ Protocol & Architecture](ARQ.md) — the connection FSM; mostly the history of the 1.9.x data plane.
 - [Mercury README](../README.md) — Build instructions, CLI usage, project links.

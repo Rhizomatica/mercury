@@ -14,12 +14,13 @@ are appended after the audio-health fields:
 - `radio_frequency_hz`: the last successful read through Mercury's existing
   Hamlib session, or `null` when unavailable.
 - `radio_frequency_age_ms`: age of that cached frequency, or `null`.
-- `peer_snr`, `peer_snr_valid`: the SNR the far station reports for our
-  signal; `peer_snr_valid` is false (and `peer_snr` the -99.9 sentinel) until
-  a report arrives.  The carousel carries no dB value, so in a carousel
-  session these stay unset.
+- `peer_snr`, `peer_snr_valid`: kept for compatibility.  The carousel
+  carries no dB value for our signal, so `peer_snr_valid` is always false and
+  `peer_snr` the -99.9 sentinel; `peer_hears_mode` reports what the peer
+  hears instead.
 - `peer_hears_mode`: in a carousel session, the highest rung the far station
-  last reported its SNR supports for our signal (`MFSK` ... `QAM16C2`), from
+  last reported its SNR supports for our signal (`MFSK` ... `QAM16C2`, or
+  at most `DATAC3` in a BW500 session), from
   its ACCEPT or its polls; empty otherwise, and empty while it has not
   reported (a station that only receives gets no polls from its sender).
 

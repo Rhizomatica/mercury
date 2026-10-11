@@ -19,10 +19,12 @@ having — they are not updated as the code moves on.
 
 | Document | What it covers |
 |---|---|
-| [ARQ.md](ARQ.md) | The ARQ data link: state machine, frame formats, timers, mode ladder, and the OTA tuning guide. The main architecture document. |
-| [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md) | The carousel data plane that connected sessions use: erasure-coded rounds driven by the receiver, the MFSK floor, wire formats, and how mixed versions meet. |
+| [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md) | The ARQ data link: the connect (protocol version 1), the erasure-coded carousel that every session runs, the MFSK floor, the bandwidth caps, and the wire formats. The main architecture document. |
+| [CAROUSEL-SPEC.md](CAROUSEL-SPEC.md) | The carousel specified rule by rule, from the code: state, messages, timers, transitions and invariants. |
+| [CAROUSEL-TURNS.md](CAROUSEL-TURNS.md) | Who may key when: the caller's timers and the callee's slots, and the timed TLA+ model behind them. |
+| [ARQ.md](ARQ.md) | The connection FSM and the 1.9.x stop-and-wait data plane -- mostly history now; read CAROUSEL-ARQ.md for the current data link. |
 | [TNC.md](TNC.md) | Every TNC command and async status on the control socket. What you need to drive Mercury from your own software. |
-| [MODES.md](MODES.md) | All modulation modes with measured bandwidth, payload, FEC and delivery rates — including the Mercury-specific DATAC15/16/17 and QAM16C2. |
+| [MODES.md](MODES.md) | All modulation modes by index, where each is used, and measured bandwidth, payload, FEC and delivery rates — including the Mercury-specific DATAC15/16/17, MFSK and QAM16C2. |
 | [BROADCAST-WIRE-FORMAT.md](BROADCAST-WIRE-FORMAT.md) | The broadcast plane on the wire: frame layout, RaptorQ symbol sizing, and mode agreement. |
 | [watterson_model.md](watterson_model.md) | The HF channel simulator used for every measurement in these docs, and how its noise axis is calibrated. |
 
@@ -31,6 +33,7 @@ having — they are not updated as the code moves on.
 | Document | What it covers |
 |---|---|
 | [RETICULUM.md](RETICULUM.md) | Carrying a Reticulum mesh over HF, via the broadcast port or an ARQ backbone. |
+| [BROADCAST-FILE.md](BROADCAST-FILE.md) | Broadcasting a file to whoever is listening, with no return path: the RaptorQ carousel, `bcast_file_tool`, and which modes can carry it. |
 | [MACOS-UNIVERSAL.md](MACOS-UNIVERSAL.md) | Building the self-contained universal macOS app with vendored static Hamlib. |
 | [WINDOWS-SIGNING.md](WINDOWS-SIGNING.md) | Authenticode signing for Windows releases. |
 | [MACOS-VM-GLFW-SOFTWARE-OPENGL.md](MACOS-VM-GLFW-SOFTWARE-OPENGL.md) | Running the Fyne UI on a macOS VM with no GPU. |

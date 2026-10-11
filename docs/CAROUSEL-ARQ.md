@@ -95,7 +95,8 @@ keyed over it.  So below 0 dB (as a station hears its peer: the path is
 reciprocal) every keydown opens with a NAV header: a 0.64 s pattern whose
 tone list says how long the keydown lasts, in 12 classes from 2 s to 32 s.
 The peer holds the channel for that long, whether or not it can decode a
-frame of it; patterns are detected about 10 dB below DATAC16.  The detector
+frame of it; patterns are detected down to about −14 dB SNR3k on AWGN, where
+DATAC16 frames stop near −10 dB (`utils/pattern_probe`).  The detector
 (one FFT per 5 ms step, all lists scored by lookup) runs throughout a
 session, for about 1 % of an x86 core.  `MERCURY_NAV=0` turns headers off.
 
