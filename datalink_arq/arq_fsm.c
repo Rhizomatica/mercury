@@ -99,7 +99,6 @@ void arq_fsm_init(arq_session_t *sess)
     memset(sess, 0, sizeof(*sess));
     sess->car = car ? car : calloc(1, sizeof(car_t));
     sess->conn_state     = ARQ_CONN_DISCONNECTED;
-    sess->role           = ARQ_ROLE_NONE;
     sess->deadline_ms    = UINT64_MAX;
     sess->deadline_event = ARQ_EV_TIMER_RETRY;
     sess->control_mode        = ARQ_CONTROL_MODE;
@@ -831,7 +830,6 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         if (ev->session_id != sess->session_id ||
             ev->car_called_crc != arq_protocol_callsign_crc16(sess->remote_call))
             break;
-        sess->role = ARQ_ROLE_CALLER;
         sess->pending_disconnect = false;
         sess->car_peer_ctl_deaf = ev->car_level == ARQ_ACCEPT_LEVEL_CTL_DEAF;
         sess->car_tx_level = sess->car_peer_ctl_deaf ? 0 : ev->car_level;
@@ -906,7 +904,6 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
  * From ACCEPTING, or from LISTENING after the ACCEPT-exhaustion fallback. */
 static void car_connect_callee(arq_session_t *sess, const arq_event_t *ev)
 {
-    sess->role = ARQ_ROLE_CALLEE;
     sess->accept_fallback = false;
     sess->car_tx_level = -1;          /* the caller's frames will say */
     if (g_cbs.notify_connected)

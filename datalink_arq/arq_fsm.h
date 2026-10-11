@@ -34,17 +34,6 @@ typedef enum
 } arq_conn_state_t;
 
 /* ======================================================================
- * Caller/callee role (set at connect time, stays for session lifetime)
- * ====================================================================== */
-
-typedef enum
-{
-    ARQ_ROLE_NONE   = 0,
-    ARQ_ROLE_CALLER = 1,  /* originated the call (starts as ISS) */
-    ARQ_ROLE_CALLEE = 2   /* received the call   (starts as IRS) */
-} arq_role_t;
-
-/* ======================================================================
  * Events
  * ====================================================================== */
 
@@ -138,7 +127,6 @@ typedef struct
 {
     /* --- State machine fields --- */
     arq_conn_state_t  conn_state;      /* connection state                     */
-    arq_role_t        role;            /* CALLER or CALLEE                     */
 
     /* --- Identifiers --- */
     uint8_t  session_id;               /* random byte chosen by caller         */
