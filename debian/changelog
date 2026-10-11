@@ -1,3 +1,39 @@
+mercury (1.9.18-1) unstable; urgency=medium
+
+  * Release 1.9.18.
+  * arq: carousel data plane, with the MFSK floor.
+  * arq: older callers reach carousel stations (CALL marker); carousel report.
+  * utils: pattern_probe (pattern detector measurements); report the parked NAV work.
+  * mfsk: a listening station back to 1.9.17's idle CPU (Pi 4: 63 % -> 33 %).
+  * docs: release notes for 1.9.18, measured against 1.9.17.
+  * Carousel: protocol spec, TLA+ model of the block layer, exhaustive loss/sensing explorer.
+  * Carousel integrity: BREAK never retires, a check on every block (fail closed), a session nonce.
+  * Carousel control signals: streaming detector, session-bound ACK/BREAK, NAV header.
+  * carousel step 4: optimisation against a bound -- window-full patterns, probe confirmation, handover-repeat avoidance.
+  * modem: SNR calibration that holds above 12 dB, and a 16-QAM estimator for QAM16C2.
+  * carousel: one timing master per session -- collision-free turn rules (no carrier sense, no NAV).
+  * carousel: request/response wedge fix, inline polls (2 keydowns an exchange), lossy-round patterns.
+  * carousel: an ack waits a moment for the application's answer.
+  * Add timestamp to ARQ and broadcast chat messages.
+  * carousel: rounds grow on a rung's record; a silent round is one loss; liveness results.
+  * carousel: a session starting on the floor cuts 23-byte pieces.
+  * docs: carousel report brought up to #357.
+  * gui: right-click clears the ARQ and broadcast chat panes.
+  * mfsk: each decoder owns its LDPC workspace (concurrent decodes corrupted each other).
+  * feat: add monitor mode for passive decoding of all Mercury modes.
+  * ui: status follows the carousel -- MFSK named, per-direction modes, what the peer hears.
+  * Carousel only: versioned connect frames, stop-and-wait plane removed (breaks 1.9.x on air).
+  * arq: session bandwidth caps the carousel's rungs (BW500 stops at DATAC3).
+  * docs: revise every document for the carousel-only build (mode listings checked against the binary).
+  * docs: 1.9.18 release notes rewritten for the carousel-only release.
+  * docs/html: regenerate the Doxygen reference.
+  * go: 1.26.9 is the project's Go version.
+  * mercury-client: chat lines end at CR too; unterminated text is shown (fixes #340).
+  * docs: 1.9.18 release notes -- chat CR fix (#363), Go 1.26.9 (#369).
+  * docs: upgrading to 1.9.18 -- the on-air break, and what was tested before the release.
+
+ -- Rafael Diniz <rafael@riseup.net>  Sun, 11 Oct 2026 21:53:43 +0000
+
 mercury (1.9.17-1) unstable; urgency=medium
 
   * Release 1.9.17.
