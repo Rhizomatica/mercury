@@ -37,11 +37,17 @@ Multimedia Exchange System) project.
 It provides ARQ (Automatic Repeat reQuest) and broadcast data links over
 HF radio using FreeDV OFDM waveforms with LDPC forward error correction.
 .PP
-The ARQ link implements a half-duplex stop-and-wait protocol with adaptive
-gear-shifting between FreeDV modes (DATAC15, DATAC4, DATAC3, DATAC1,
-DATAC17, QAM16C2) based on measured channel SNR, providing per-direction
-mode selection and a reliability ladder that steps down immediately on
-errors and steps up after consecutive clean acknowledgements.
+The ARQ link is a half-duplex, receiver-driven erasure-coded
+\(lqcarousel\(rq: the application's bytes are cut into Reed-Solomon blocks,
+the receiver polls for what each block still needs, and any piece of a block
+replaces a lost one.
+Each direction runs on one of seven rungs \(em the 32-tone MFSK floor,
+DATAC15, DATAC4, DATAC3, DATAC1, DATAC17 and QAM16C2 \(em starting on the
+rung the connect's SNR supports and moving on measured delivery.
+The session bandwidth caps the rungs: BW500 uses MFSK through DATAC3.
+.PP
+Since the carousel-only build the connect frames carry a protocol version:
+Mercury 1.9.x stations do not connect to this version in either direction.
 .PP
 Mercury exposes a VARA-compatible TNC (Terminal Node Controller) TCP
 interface, allowing existing amateur radio software such as UUCP, Winlink,
@@ -70,10 +76,11 @@ Valid values:
 .BR coreaudio ,
 .BR aaudio ,
 .BR shm ,
-or
+.BR rtp ,
 .BR null ,
+.BR fifo ,
 or
-.BR fifo .
+.BR sock .
 Default is
 .B alsa
 on Linux and
@@ -87,6 +94,17 @@ is a developer/test backend using raw signed 32-bit little-endian PCM at 8 kHz v
 and
 .B \-o
 paths.
+.B sock
+is a framed, virtual-clock lockstep transport for tests
+(MERCURY_AUDIO_SOCK=\fIpath\fR).
+.B rtp
+exchanges the radio signal with hermes-radio-daemon as RTP multicast:
+.B \-i
+.IR "rx group" [, iface ]
+(default 239.255.72.1,lo),
+.B \-o
+.I "tx group"
+(default 239.255.72.2); PTT travels in the TX stream.
 .TP
 .BI \-k " channel"
 Capture input channel layout:
@@ -104,7 +122,8 @@ List all available sound cards for the selected audio subsystem and exit.
 .BI \-m " mode_index"
 Startup payload mode index (see
 .BR \-l ).
-Used for broadcast and idle/disconnected ARQ decode.
+Used for broadcast, the test modes, and what the payload decoder listens on
+while no ARQ session is up; it does not affect an ARQ session.
 Default is 1 (DATAC3).
 .TP
 .BI \-s " mode_index"
@@ -290,7 +309,14 @@ copy it to one of the places above and edit it for the radio.
 General settings are under
 .BR [main] ;
 PTT settings are under
-.BR [ptt] .
+.BR [ptt] ;
+the ARQ, audio, TNC, channel-busy and message-store settings under
+.BR [arq] ,
+.BR [audio] ,
+.BR [tnc] ,
+.B [channel]
+and
+.BR [store] .
 The principal recognized keys are:
 .PP
 .TS
@@ -319,7 +345,22 @@ ptt:device	(empty)	Serial device or Hamlib endpoint
 ptt:hamlib_model	\-1	Hamlib model ID
 ptt:hamlib_serial_speed	0	Serial baud rate (0=Hamlib default)
 ptt:hamlib_log_level	0	Hamlib debug level (0\-6)
+arq:disconnect_drain_timeout_s	45	Cap on draining after DISCONNECT
+arq:retry_stagger_ms	2000	Retry offset between the two peers
+audio:tx_gain_db	0.0	Modulator gain
+audio:tx_delay_ms	10	Delay from PTT on to audio
+channel:busy_detect	false	Channel-busy (BUSY ON/OFF) detector
 .TE
+.PP
+Keys that older versions read and this one ignores (the stop-and-wait ARQ's
+.BR no_progress_timeout_s ,
+.BR data_retry_slots ,
+.BR keepalive_interval_s
+and the like, and the guards
+.B channel_guard_ms
+and
+.BR iss_post_ack_guard_ms )
+are reported at startup with a warning; delete them from the file.
 .PP
 The
 .B ptt:hamlib_serial_speed
@@ -376,15 +417,34 @@ All buffers are flushed; the remote peer will time out.
 Set the channel bandwidth in Hz.
 Valid values:
 .B 500
-(narrow),
+(narrow: MFSK, DATAC15, DATAC4 and DATAC3),
 .B 2300
-(full), or
+(full: every rung), or
 .B 2750
-(tactical).
+(tactical: for now the same rungs as 2300).
 Default is 2300.
+A session runs at the lower of the two stations' values, and a change applies
+to the next session.
 .TP
 .BI "RETRIES " count
-Set the maximum number of retransmission attempts.
+Set how many times a CALL or an ACCEPT is repeated before the connect gives
+up (0 restores the default).
+.TP
+.BI "CALLINT " seconds
+Set the interval between CALL/ACCEPT repeats (0 restores the default, 8 s;
+at least 4).
+.TP
+.BI "MODE " index
+Set the idle (listen and broadcast) payload mode, in the index space of
+.BR \-l ;
+refused during a session.
+.B MODE
+alone reports it.
+.TP
+.B MONITOR ON|OFF
+Passive monitor: report every frame decoded on the air as a
+.B MONITOR
+line, without answering or keying.
 .TP
 .B BUFFER
 Query the number of bytes pending in the transmit buffer.
@@ -463,10 +523,20 @@ and
 ARQ link terminated.
 .TP
 .B PENDING
-Outgoing connection attempt in progress.
+An incoming connect request is being answered (also: an outgoing CQ frame
+started).
 .TP
 .B CANCELPENDING
-Outgoing connection attempt cancelled.
+That incoming connect did not complete (also: the outgoing CQ frame ended).
+.TP
+.B BUSY ON\fR, \fBBUSY OFF
+The channel-busy detector's transitions (when enabled).
+.TP
+.B IAMALIVE
+Heartbeat, sent periodically while idle.
+.TP
+.BI "REGISTERED " callsign
+The callsign set with MYCALL is registered.
 .TP
 .BI "BUFFER " bytes
 Number of bytes remaining in the transmit buffer.
@@ -475,38 +545,42 @@ Sent periodically and in response to BUFFER queries.
 .BI "SN " snr
 Current signal-to-noise ratio in dB (e.g., \(lqSN 12.5\(rq).
 .TP
-.BI "BITRATE (" speed_level ") " bps " BPS"
-Current bitrate in bits per second and the speed ladder level.
+.BI "BITRATE (" code ") " bps " BPS"
+Current bitrate in bits per second, and a code for the mode on the air:
+1 DATAC1, 3 DATAC3, 4 DATAC4, 15 DATAC15, 17 DATAC17, 25 QAM16C2, 100 MFSK.
 .TP
 .BI "CQFRAME " callsign " " bandwidth
 Received a CQ broadcast from
 .IR callsign .
-.SH FREEDV MODES
-Mercury uses the following FreeDV OFDM waveforms:
+.SH MODES
+.B mercury \-l
+lists the modes by index.
+Payload is the bytes a frame carries; bandwidth is the occupied carrier span.
 .PP
 .TS
-l l l l.
-Mode	Index	Usage	Notes
+l l l l l.
+Mode	Index	Payload	Bandwidth	Use
 _
-DATAC1	0	Payload	502 bytes/frame, +5 dB SNR
-DATAC3	1	Payload	118 bytes/frame, default startup mode
-DATAC0	2	Payload	6 bytes/frame
-DATAC4	3	Payload	46 bytes/frame, low SNR
-DATAC13	4	Broadcast	6 bytes/frame (replaced by DATAC16 in ARQ)
-DATAC14	5	Broadcast	1 byte/frame
-FSK_LDPC	6	Payload	22 bytes/frame
-DATAC15	7	Payload	22 bytes/frame, lowest SNR (ladder floor)
-DATAC16	8	Control	6 bytes/frame, ARQ control channel
-DATAC17	9	Payload	1172 bytes/frame, intermediate SNR (~+8 dB)
-QAM16C2	10	Payload	1205 bytes/frame, high SNR (~+15 dB)
+DATAC1	0	510 B	1687 Hz	ARQ rung 4
+DATAC3	1	126 B	562 Hz	ARQ rung 3; default \-m
+DATAC0	2	14 B	562 Hz	broadcast and tests only
+DATAC4	3	54 B	250 Hz	ARQ rung 2
+DATAC13	4	14 B	187 Hz	broadcast and monitor
+DATAC14	5	3 B	222 Hz	broadcast and tests only
+FSK_LDPC	6	30 B	\(em	experimental, tests only
+DATAC15	7	30 B	187 Hz	ARQ rung 1
+DATAC16	8	14 B	187 Hz	ARQ control
+DATAC17	9	1180 B	2062 Hz	ARQ rung 5
+QAM16C2	10	1213 B	2062 Hz	ARQ rung 6
+MFSK	11	98 B	1000 Hz	ARQ rung 0 (floor), CALLs and patterns there
 .TE
 .PP
-In ARQ mode, DATAC16 is always used for the control channel.
-The payload channel starts at DATAC15 and upgrades through DATAC4,
-DATAC3, DATAC1 and DATAC17 to QAM16C2 as channel conditions permit.
-See docs/MODES.md for measured per-mode performance curves.
-The dual-decoder architecture runs control and payload decoders
-simultaneously.
+In an ARQ session, control frames go on DATAC16 (on MFSK, or as tone
+patterns, when a station hears the other below DATAC16), and each direction's
+payload runs on rungs 0 to 6 \(em up to rung 3 in a BW500 session.
+DATAC15, DATAC16, DATAC17, QAM16C2 and MFSK are Mercury's own modes.
+See docs/MODES.md for measured per-mode performance and docs/CAROUSEL-ARQ.md
+for the data link.
 .SH DEFAULT PORTS
 .PP
 .TS
@@ -543,11 +617,12 @@ mercury \-i plughw:1,0 \-o plughw:1,0 \-R 2 \-A localhost:4532
 .fi
 .RE
 .PP
-Start with Hamlib radio control on a serial port (Yaesu FT-710 on Windows):
+Start with Hamlib radio control on a serial port (Yaesu FT-710 on Windows,
+default DirectSound devices):
 .PP
 .RS
 .nf
-mercury \-i dsound \-o dsound \-R 1049 \-A COM3
+mercury \-x dsound \-R 1049 \-A COM3
 .fi
 .RE
 .PP
@@ -555,7 +630,7 @@ Start with serial RTS PTT (for example DigiRig on Windows):
 .PP
 .RS
 .nf
-mercury \-i dsound \-o dsound \-P serial \-A COM7
+mercury \-x dsound \-P serial \-A COM7
 .fi
 .RE
 .PP
@@ -567,7 +642,7 @@ mercury \-i plughw:1,0 \-o plughw:1,0 \-S
 .fi
 .RE
 .PP
-Start with PulseAudio, narrow bandwidth, and GUI enabled over WSS:
+Start with PulseAudio, DATAC4 as the listen/broadcast mode, and the UI over WSS:
 .PP
 .RS
 .nf

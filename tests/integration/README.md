@@ -86,10 +86,11 @@ conditions (all optional; default is codec2 `ch` on an effectively clean link):
 | `MERCURY_CH_NO` | AWGN noise density dBHz (`ch`/`watterson`; SNR3k ≈ −No − 14.82). For `pathsim`, carries its native `--snr` dB instead |
 | `MERCURY_CH_FADING` | fading profile — `ch`: `mpg`/`mpp`/`mpd`; `watterson`: `good`/`moderate`/`poor`/`flutter`; `pathsim`: a preset name, e.g. `ccir-poor`, `midlat-dist-nvis` |
 | `MERCURY_CH_GAIN` | linear channel gain (default 1.0) |
-| `MERCURY_CH_NO_FWD` / `_REV` | per-direction noise override (asymmetric link: A→B forward data vs B→A reverse ACKs) |
+| `MERCURY_CH_NO_FWD` / `_REV` | per-direction noise override (asymmetric link: A→B forward data vs B→A reverse polls and patterns) |
 | `MERCURY_CH_FADING_FWD` / `_REV` | per-direction fading profile (`none` disables one direction) |
 | `MERCURY_TEST_PAYLOAD_KB` | transfer size in KB (default ~102 bytes = 3 DATAC15 frames) |
 | `MERCURY_TEST_LOGDIR` | directory to keep per-instance logs (default: temp, deleted) |
+| `MERCURY_TEST_BIN_A` / `_B` | run station A or B on another `mercury` binary, to compare two builds of the same protocol version (a 1.9.x binary does not connect to this one) |
 
 Every Mercury the tests start gets a private, temporary state directory
 (`XDG_STATE_HOME`, `LOCALAPPDATA`/`APPDATA`, and `HOME` on macOS; see

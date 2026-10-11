@@ -64,7 +64,8 @@ const arq_mode_timing_t arq_mode_table[] = {
     {  FREEDV_MODE_DATAC17,   7.40f,     15.0f,          1180 },
     {  FREEDV_MODE_QAM16C2,   3.70f,     12.0f,          1213 },
     /* The MFSK fringe rung: non-coherent 32-MFSK, a ~13.5 s burst of 98
-     * payload bytes, about 10 dB below DATAC15.  Its row also sets the
+     * payload bytes, below DATAC15 (50 % FER at -11.2 dB AWGN against
+     * DATAC15's -10.3, docs/MFSK-PORT.md).  Its row also sets the
      * longest burst, which sizes the modem's RX backlog: shorter, and the
      * backlog cap chopped MFSK bursts in half (mfsk-margin, 7feaadb). */
     {  MERCURY_MODE_MFSK,     13.50f,    18.0f,          98   },

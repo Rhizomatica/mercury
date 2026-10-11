@@ -109,6 +109,7 @@ mercury -m <index>          # see `mercury -l` for the list; default is 1 (DATAC
 | 8 | DATAC16 |   14 B |   36 |  187 Hz | |
 | 9 | DATAC17 | 1180 B | 1407 | 2062 Hz | |
 | 10| QAM16C2 | 1213 B | 3130 | 2062 Hz | |
+| 11| MFSK    |   98 B |   61 | 1000 Hz | *not a broadcast mode* (the ARQ floor; hermes-broadcast has no mapping for it) |
 
 All figures measured from the modems themselves, not quoted from a datasheet.
 The **Benchmarks** section below gives each mode's measured SNR floor and how

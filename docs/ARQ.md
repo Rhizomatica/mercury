@@ -576,6 +576,11 @@ jq 'select(.level == "TMG")' /tmp/mercury-session.log
 
 ## Tuning Guide
 
+*1.9.x.  The `[TMG]` lines, the ACK timeouts and most constants below belong
+to the stop-and-wait plane; today's `[TMG]` output is the connect and
+disconnect totals, and the carousel logs its own decisions (`carousel` lines
+at DEBUG).  The two guards are fixed constants now, not tunables.*
+
 Use the `[TMG]` timing lines from a real OTA session to verify and adjust
 the mode timing table in `arq_protocol.c`.
 

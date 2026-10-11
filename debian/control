@@ -16,9 +16,10 @@ Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: HF modem for store-and-forward communication
  Mercury is the modem component of the HERMES (High-Frequency Emergency
  and Rural Multimedia Exchange System) project. It provides ARQ and
- broadcast data links over HF radio using FreeDV OFDM waveforms
- (DATAC13/DATAC4/DATAC3/DATAC1) with adaptive gear-shifting, per-direction
- mode selection, and a VARA-compatible TCP TNC interface.
+ broadcast data links over HF radio: an erasure-coded ARQ that adapts each
+ direction across seven rungs, from a 32-tone MFSK floor through the FreeDV
+ OFDM modes (DATAC15/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2), and a
+ VARA-compatible TCP TNC interface.
 
 Package: mercury-ui
 Architecture: any
@@ -26,9 +27,10 @@ Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: HF modem for store-and-forward communication (GUI)
  Mercury is the modem component of the HERMES (High-Frequency Emergency
  and Rural Multimedia Exchange System) project. It provides ARQ and
- broadcast data links over HF radio using FreeDV OFDM waveforms
- (DATAC13/DATAC4/DATAC3/DATAC1) with adaptive gear-shifting, per-direction
- mode selection, and a VARA-compatible TCP TNC interface.
+ broadcast data links over HF radio: an erasure-coded ARQ that adapts each
+ direction across seven rungs, from a 32-tone MFSK floor through the FreeDV
+ OFDM modes (DATAC15/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2), and a
+ VARA-compatible TCP TNC interface.
  .
  This is the same Mercury as the mercury package, built as a single binary
  that links the C modem with a Fyne (Go) graphical user interface. Install

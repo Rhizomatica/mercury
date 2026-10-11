@@ -176,9 +176,10 @@ estimates and announce rate limiting behave sensibly.
 Use Mercury's ARQ plane — the VARA-compatible TNC ([TNC.md](TNC.md)) — as a
 **reliable byte pipe between two fixed stations**, and present it to
 Reticulum as an interface.  This is the same pattern the Reticulum ecosystem
-uses for VARA modems, and it is where Mercury's strengths live: OLLA link
-adaptation, HARQ soft combining, and ACK robustness on weak/asymmetric
-paths.
+uses for VARA modems, and it is where Mercury's strengths live: the
+erasure-coded carousel, which rides out fades without stalling, moves each
+direction's rung on measured delivery, and reaches down to the MFSK floor on
+weak/asymmetric paths.
 
 ```
 station A                                            station B
@@ -232,8 +233,8 @@ Trade-offs vs Architecture 1:
 | | Architecture 1 (broadcast/KISS) | Architecture 2 (ARQ bridge) |
 |---|---|---|
 | Topology | multipoint / mesh | fixed point-to-point |
-| Loss recovery | Reticulum end-to-end | Mercury ARQ + HARQ (fast, local) |
-| Modes | DATAC1/DATAC17/QAM16C2 only (MTU) | full adaptive ladder incl. DATAC15 fringe modes |
+| Loss recovery | Reticulum end-to-end | Mercury ARQ (fast, local) |
+| Modes | DATAC1/DATAC17/QAM16C2 only (MTU) | every rung, MFSK floor to QAM16C2 (MFSK..DATAC3 at BW500) |
 | Status | **verified working** | design pattern, needs a bridge implementation |
 | Best for | community mesh, several stations | maximum robustness on one marginal backbone hop |
 
@@ -276,7 +277,7 @@ Linux host with `sudo modprobe snd-aloop` (see `utils/loopsim/README.md`):
 - [TNC.md](TNC.md) — the VARA-compatible control/data protocol and the
   broadcast port framing details.
 - [MODES.md](MODES.md) — per-mode SNR performance, frame sizes, data rates.
-- [ARQ.md](ARQ.md) — the ARQ protocol Architecture 2 rides on.
+- [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md) — the ARQ data link Architecture 2 rides on.
 - [Reticulum manual — interfaces](https://markqvist.github.io/Reticulum/manual/interfaces.html)
 - [reticulum-over-hf](https://github.com/RFnexus/reticulum-over-hf) — HF
   practices for Reticulum (NVIS, antennas, expectations).
