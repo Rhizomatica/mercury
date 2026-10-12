@@ -480,6 +480,17 @@ The DATAC16 column reproduces the independent MPP table in `docs/MODES.md`
 (50 % at −9 dB against the documented 50), which is what licenses the
 comparison.
 
+> Note (2026-10-12): the two MPP channels in this comparison are not the same
+> channel. The "Watterson MPP" above is `chanutil`'s legacy Butterworth preset
+> (2 paths, 1 ms, 1 Hz cutoff, which is about a 2 Hz Doppler spread in the
+> CCIR/ITU-R sense); the MPP of `docs/MODES.md` is codec2 `ch`'s (2 ms,
+> Gaussian spectrum). The legacy preset is unchanged by the `channel-model`
+> change, so these rows still reproduce; the standard CCIR Poor is now
+> `ccir-poor`. The "Watterson 2 ms/1 Hz" and "2 ms/0.2 Hz" rows earlier in
+> this document were also measured on the old tool's Butterworth taps
+> (`--legacy --path ...` today). See `docs/CHANNEL-MODEL.md`, "Which document
+> was measured on which engine".
+
 **The directed pattern loses by roughly 3 dB under fading** — a ~5 dB swing
 from its AWGN advantage — for the same reason every short control frame has:
 960 ms spans about one fade at 1 Hz Doppler where DATAC16's 3.74 s spans four.
