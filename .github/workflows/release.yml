@@ -79,7 +79,13 @@ jobs:
         run: |
           V="${{ inputs.version }}"
           D=$(date -R)
-          { printf 'mercury (%s-1) unstable; urgency=medium\n\n  * Release %s.\n%b\n\n -- Rafael Diniz <rafael@riseup.net>  %s\n\n' "$V" "$V" "$PR_ENTRIES" "$D"; } | cat - debian/changelog > t && mv t debian/changelog
+          # A fresh dispatch of a version whose bump already landed (a later job
+          # failed) must not add its changelog entry twice.
+          if head -1 debian/changelog | grep -qF "mercury ($V-1)"; then
+            echo "debian/changelog already starts with $V"
+          else
+            { printf 'mercury (%s-1) unstable; urgency=medium\n\n  * Release %s.\n%b\n\n -- Rafael Diniz <rafael@riseup.net>  %s\n\n' "$V" "$V" "$PR_ENTRIES" "$D"; } | cat - debian/changelog > t && mv t debian/changelog
+          fi
           sed -i 's/#define VERSION__ "[^"]*"/#define VERSION__ "'"$V"'"/' main.c
           sed -i 's/#define MERCURY_VERSION "[^"]*"/#define MERCURY_VERSION "'"$V"'"/' common/mercury_version.h
           sed -i 's/"Mercury [0-9]*\.[0-9]*\.[0-9]*"/"Mercury '"$V"'"/' mercury.1
@@ -138,7 +144,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/reactiveui/certum-signer:latest
+      # Pinned, not :latest.  code-signing/sign-lib.sh logs in to SimplySign
+      # Desktop by clicking at positions calibrated for 2.9.14; the image's
+      # :latest moved to 2.9.15 on 2026-10-08, whose login form sits lower, and
+      # every login then failed with an empty form (the 1.9.18 release run).
+      # This digest is the image that signed 1.9.17: SimplySign 2.9.14,
+      # jsign 7.5.  Move it only together with a recalibration of the clicks.
+      image: ghcr.io/reactiveui/certum-signer@sha256:5b2b171610dd0fbc381e31368d1a801b11d654b74c850ab2b133e8b86334e15c
     timeout-minutes: 15
     steps:
       # Full checkout, not sparse: building the installer needs installer.iss,
