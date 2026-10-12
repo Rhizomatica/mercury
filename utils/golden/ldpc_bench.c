@@ -6,6 +6,10 @@
  *   ldpc_bench --code NAME --dec in.f32 out.u8 [--mi N] [--stats file]
  *       in: N float32 LLRs per frame, codec2 sign (positive = bit 0),
  *       out: N bytes per frame (decoded codeword), stats: "iters parity_ok hit_deadline" per frame
+ *       The summary line reports the decode time measured IN PROCESS around the
+ *       decoder calls only (ms per frame, us per iteration), so process start-up
+ *       and file I/O do not count; docs/ldpc-figures/data/decoder_timing.csv comes
+ *       from this line, median of three runs.
  *
  * Note: SumProduct() also halts when the decoded information bits are all zero
  * (run_ldpc_decoder passes a zero reference vector), so tests must use random
@@ -19,6 +23,7 @@
 #include <string.h>
 #include <stdint.h>
 #include "mpdecode_core.h"
+#include "ldpc_ctx.h"
 #include "ldpc_codes.h"
 
 static const char *opt(int argc, char **argv, const char *name)
@@ -78,20 +83,28 @@ int main(int argc, char **argv)
     } else {
         float *llr = malloc(sizeof(float) * N);
         uint8_t *ob = malloc(N);
-        long frames = 0, iters_tot = 0;
+        long frames = 0, iters_tot = 0, ok_tot = 0;
+        uint64_t decode_ns = 0;
         while (fread(llr, sizeof(float), N, fi) == (size_t) N) {
             int pcc = 0;
             ldpc_stats_t st;
             uint64_t deadline = deadline_ms > 0.0 ? ldpc_now_ns() + (uint64_t)(deadline_ms * 1e6) : 0;
+            uint64_t t0 = ldpc_now_ns();
             int it = run_ldpc_decoder_ex(&l, ob, llr, &pcc, deadline, &st);
+            decode_ns += ldpc_now_ns() - t0;
             fwrite(ob, 1, N, fo);
             if (fs) fprintf(fs, "%d %d %d\n", it, pcc == M, st.hit_deadline);
             iters_tot += it;
+            ok_tot += (pcc == M);
             frames++;
         }
-        fprintf(stderr, "%s: decoded %ld frames, alg=%d max_iter=%d, mean iters=%.2f\n",
-                l.name, frames, ldpc_get_default_alg(), l.max_iter, frames ? (double) iters_tot / frames : 0.0);
+        fprintf(stderr, "%s: decoded %ld frames, alg=%s max_iter=%d, mean iters=%.2f, parity ok %ld/%ld, "
+                        "decode %.3f ms/frame, %.2f us/iter (in-process, decoder calls only)\n",
+                l.name, frames, ldpc_alg_name(ldpc_get_default_alg()), l.max_iter,
+                frames ? (double) iters_tot / frames : 0.0, ok_tot, frames,
+                frames ? decode_ns / 1e6 / frames : 0.0, iters_tot ? decode_ns / 1e3 / iters_tot : 0.0);
         free(llr); free(ob);
+        ldpc_free_ctx(&l);
     }
     fclose(fi); fclose(fo);
     if (fs) fclose(fs);
