@@ -84,13 +84,21 @@ int main(int argc, char **argv)
      * OUTPUT of the channel, so the sweep axis becomes noise density and the
      * achieved SNR3k is measured and reported per row. */
     int    chan    = (argc > 5) ? chanutil_preset_from_name(argv[5]) : CHAN_AWGN;
-    if (chan < 0) { fprintf(stderr, "unknown channel '%s' (awgn|mpg|mpp|mpd)\n", argv[5]); return 1; }
+    if (chan < 0)
+    {
+        fprintf(stderr, "unknown channel '%s': awgn, awgnc, mpg, mpp, mpd (legacy Butterworth presets)\n"
+                        "or any watterson preset name, e.g. ccir-poor, itur-mm (case-insensitive;\n"
+                        "utils/watterson_test --list-presets prints them)\n", argv[5]);
+        return 1;
+    }
 
     int mode = mode_from_name(modename);
     if (mode < 0 || trials <= 0)
     {
-        fprintf(stderr, "usage: %s [MODE] [trials] [snr_lo] [snr_hi]\n"
-                        "  MODE: DATAC0/1/3/4/13/15/16/17, QAM16C2 (default DATAC16)\n", argv[0]);
+        fprintf(stderr, "usage: %s [MODE] [trials] [snr_lo] [snr_hi] [channel]\n"
+                        "  MODE: DATAC0/1/3/4/13/15/16/17, QAM16C2 (default DATAC16)\n"
+                        "  channel: awgn (default), awgnc, mpg, mpp, mpd, or any watterson preset\n"
+                        "           name, e.g. ccir-poor (utils/watterson_test --list-presets)\n", argv[0]);
         return 1;
     }
 

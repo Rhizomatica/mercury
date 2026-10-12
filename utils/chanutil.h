@@ -18,23 +18,39 @@
 
 #include <stdint.h>
 
-/* Channel presets, named as docs/MODES.md names them. */
+/* Channel presets.
+ *
+ * MPP, MPG and MPD are the LEGACY presets of common/watterson.c: two
+ * equal-power paths whose taps are shaped by the 2nd-order Butterworth filter
+ * the model shipped with up to and including release 1.9.18, with the quoted
+ * frequency as the filter's 3 dB cutoff.  That cutoff is the spectrum's rms
+ * width, so "1.0 Hz" here is a Doppler spread of about 2 Hz in the CCIR 520 /
+ * ITU-R F.1487 sense.  They are NOT the CCIR/ITU-R cases (use ccir-poor,
+ * itur-mm, ... for those; see watterson_presets()) and NOT the MPG/MPP/MPD of
+ * docs/MODES.md, which were measured on codec2's ch simulator (its MPP is
+ * 2 ms with a Gaussian spectrum).  They are kept so the Watterson-engine
+ * numbers in docs/FADE-CLIFF-DECISION.md and docs/MFSK-PORT.md stay on the
+ * channel they were measured on. */
 typedef enum {
-    CHAN_AWGN = 0,      /* no fading, AWGN only                        */
-    CHAN_MPP,           /* ITU "moderate": 2 paths, 1 ms, 1.0 Hz       */
-    CHAN_MPG,           /* ITU "good"/calm NVIS: 2 paths, 0.5 ms, 0.1 Hz */
-    CHAN_MPD,           /* ITU "disturbed": 2 paths, 2 ms, 2.0 Hz      */
+    CHAN_AWGN = 0,      /* no fading, AWGN only                                  */
+    CHAN_MPP,           /* legacy Butterworth: 2 paths, 1 ms, 1.0 Hz cutoff      */
+    CHAN_MPG,           /* legacy Butterworth: 2 paths, 0.5 ms, 0.1 Hz cutoff    */
+    CHAN_MPD,           /* legacy Butterworth: 2 paths, 2 ms, 2.0 Hz cutoff      */
     /* Calibration only: AWGN over a single STATIC path, i.e. the same
      * Hilbert -> Watterson -> Re{} pipeline as the fading presets but with no
      * fading.  Compare against a harness's own direct real-domain AWGN: any
      * difference is this pipeline's calibration error, not the channel's. */
     CHAN_AWGN_C,
-    /* CHAN_STD_BASE + i: the i-th entry of watterson_presets() (standard and
-     * legacy named presets; chanutil_preset_from_name accepts their names) */
+    /* CHAN_STD_BASE + i: the i-th entry of watterson_presets() (the CCIR 520-2
+     * and ITU-R F.1487 presets, ccir-poor, itur-mm, ..., and the legacy named
+     * presets; chanutil_preset_from_name accepts their names) */
     CHAN_STD_BASE = 100
 } chan_preset_t;
 
-int chanutil_preset_from_name(const char *s);   /* -1 if unknown */
+/* Name -> preset, case-insensitive: "awgn", "awgnc", "mpg", "mpp", "mpd" or
+ * any name from watterson_presets() (utils/watterson_test --list-presets
+ * prints them).  Returns -1 if unknown. */
+int chanutil_preset_from_name(const char *s);
 const char *chanutil_preset_name(int preset);
 
 /* Persistent channel.
