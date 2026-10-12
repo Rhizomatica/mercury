@@ -400,11 +400,11 @@ void test_noise_no_false_ack(void)
 }
 
 /* The pattern as a radio df Hz off would hear it: its analytic signal, from
- * a DFT over the MFSK band only (1-3 kHz; the tones sit at 1.5-2.5 kHz),
+ * a DFT over the MFSK band only (0.5-2.5 kHz; the tones sit at 1.0-2.0 kHz),
  * moved df up and taken back to real. */
 static void shift_passband(const int16_t *in, int n, double df, int16_t *out)
 {
-    int k0 = (int)(1000.0 * n / 8000.0), k1 = (int)(3000.0 * n / 8000.0);
+    int k0 = (int)(500.0 * n / 8000.0), k1 = (int)(2500.0 * n / 8000.0);
     double complex *X = (double complex *)calloc((size_t)(k1 - k0 + 1), sizeof(double complex));
     for (int k = k0; k <= k1; k++) {
         double complex acc = 0;

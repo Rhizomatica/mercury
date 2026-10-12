@@ -16,6 +16,9 @@
 #include <string.h>
 #include <math.h>
 
+/* Where the MFSK tones sit: the centre of every codec2 mode. */
+#define MFSK_CENTRE_HZ 1500.0
+
 static const modem_backend_t *be;
 static void *ctx;
 
@@ -584,7 +587,10 @@ void test_mfsk_modem_reported_bandwidth_matches_emitted_spectrum(void)
     /* And it has to fit where an SSB radio can pass it. */
     TEST_ASSERT_TRUE_MESSAGE(reported > 0 && reported <= 2400,
         "MFSK occupies more than an SSB passband");
-    TEST_ASSERT_TRUE_MESSAGE(fabs(centre_hz - 2000.0) <= 150.0, msg);
+    /* Centred on 1500 Hz, like the codec2 modes, so one passband setting
+     * suits every rung.  Through 1.9.18 it sat around 2016 Hz (tones
+     * 1531..2500 Hz), which operators read, rightly, as off-centre. */
+    TEST_ASSERT_TRUE_MESSAGE(fabs(centre_hz - MFSK_CENTRE_HZ) <= 20.0, msg);
 
     free(psd); free(dat); free(frame);
 }
@@ -728,14 +734,14 @@ void test_mfsk_modem_out_of_band_emission(void)
     int fs = be->sample_rate(ctx);
     double half = be->bandwidth_hz(ctx) / 2.0;
     char msg[128];
-    double burst = worst_oob_db(x, n, fs, 2000.0 - half, 2000.0 + half);
+    double burst = worst_oob_db(x, n, fs, MFSK_CENTRE_HZ - half, MFSK_CENTRE_HZ + half);
     snprintf(msg, sizeof msg, "burst: %.1f dB out of band", burst);
     TEST_ASSERT_TRUE_MESSAGE(burst <= -45.0, msg);
 
     for (int kind = 0; kind < 2; kind++) {
         int16_t *p = calloc(mfsk_pattern_max_tx_samples(), 2);
         int np = mfsk_pattern_tx(p, kind);
-        double pat = worst_oob_db(p, np, fs, 2000.0 - half, 2000.0 + half);
+        double pat = worst_oob_db(p, np, fs, MFSK_CENTRE_HZ - half, MFSK_CENTRE_HZ + half);
         snprintf(msg, sizeof msg, "pattern %d: %.1f dB out of band", kind, pat);
         TEST_ASSERT_TRUE_MESSAGE(pat <= -45.0, msg);
         free(p);

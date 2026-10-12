@@ -80,7 +80,7 @@ typedef struct {
 struct mfsk_stream_det;
 typedef struct {
     struct mfsk_stream_det *det;   /* created on the first push */
-    double  hist[64];              /* the low-pass filter's last inputs, signed by the downmix */
+    double  hist_re[64], hist_im[64]; /* the low-pass filter's last inputs, downmixed */
     int     hist_pos;
     long long n;                   /* samples pushed since the reset */
     unsigned gen;                  /* the pattern lists it scores (mfsk_pattern_set_session) */

@@ -44,7 +44,7 @@
 #include "chanutil.h"
 
 #define FS        8000.0
-#define FC        2000.0
+#define FC        1484.375          /* modem_mfsk.c's MFSK_FC: tones on 1500 Hz */
 #define NFFT      256
 #define NCAR      50
 #define GI        0.25

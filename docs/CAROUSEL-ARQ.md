@@ -126,12 +126,12 @@ POLL / HANDOVER / STATUS, in DATAC16 (14 bytes):
 | 12 | handover round's frames (4), its id (4) |
 | 13 | highest block opened (4), data not yet cut (1) |
 
-CALL and ACCEPT, protocol version 1: 14 bytes (a DATAC16 frame), padded to
+CALL and ACCEPT, protocol version 2: 14 bytes (a DATAC16 frame), padded to
 the frame on MFSK.
 
 | byte | CALL | ACCEPT |
 |---|---|---|
-| 0 | framer: type CALL (3 bits); extension: bandwidth token (2), protocol version (2, = 1), carousel (1) | the same |
+| 0 | framer: type CALL (3 bits); extension: bandwidth token (2), protocol version (2, = 2), carousel (1) | the same |
 | 1 | 0, session id (7) | 1, session id (7) |
 | 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
 | 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |
@@ -139,9 +139,15 @@ the frame on MFSK.
 | 8 | | the caller's start rung (3 bits; 7: the callee hears it below the control mode, so the floor), 5 bits zero |
 | 9-13 | | zero |
 
-- A station takes a CALL or ACCEPT only with version 1 and the carousel bit
+- A station takes a CALL or ACCEPT only with version 2 and the carousel bit
   set; a 1.9.x station reads that extension as an unknown bandwidth token
   and drops the frame.  The versions do not connect to each other.
+- Version 1 was 1.9.18, whose MFSK sat at 1531-2500 Hz.  Version 2 centres
+  MFSK on 1500 Hz (1015.6-1984.4 Hz), like the codec2 modes.  The frames are
+  unchanged; the version only keeps 1.9.18 and later stations apart, which
+  would otherwise connect on DATAC16 and then never hear each other at the
+  floor.  A station logs a CALL for it from another version ("another
+  protocol version (Mercury 1.9.18 or older?)") and does not answer.
 - An ACCEPT with a reserved bit set is dropped.  The caller takes an ACCEPT
   only if its session id, its own CRC and the called station's CRC all
   match: 39 bits, and every one of them full.

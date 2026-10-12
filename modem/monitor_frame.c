@@ -66,7 +66,7 @@ void process_monitor_frame(const uint8_t *data, size_t nbytes_out,
     {
         bool is_accept = (data[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG) != 0;
         if (!arq_protocol_connect_version_ok(data, payload_nbytes))
-            snprintf(detail, sizeof(detail), "another protocol version (Mercury 1.9.x?)");
+            snprintf(detail, sizeof(detail), "another protocol version (Mercury 1.9.18 or older?)");
         else if (is_accept)
         {
             /* An ACCEPT names neither callsign in full: both are CRCs. */
@@ -117,7 +117,7 @@ void process_monitor_frame(const uint8_t *data, size_t nbytes_out,
         }
         else
             tnc_send_monitor(mode_name, frame_type == PACKET_TYPE_ARQ_DATA ? "DATA" : "CONTROL",
-                             "another protocol version (Mercury 1.9.x?)", snr_est);
+                             "another protocol version (Mercury 1.9.18 or older?)", snr_est);
         break;
     }
     case PACKET_TYPE_BROADCAST_CONTROL:

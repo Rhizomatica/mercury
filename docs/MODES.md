@@ -8,6 +8,12 @@ QAM16C2's codeword, for intermediate SNR), all defined in
 with its own backend (`modem/mfsk/`, [MFSK-PORT.md](MFSK-PORT.md)).
 `QAM16C2` is ported from the Rhizomatica codec2 fork.
 
+Every mode is centred on 1500 Hz audio, so one passband setting on the radio
+suits them all.  MFSK's 32 tones, 31.25 Hz apart, span 1015.6-1984.4 Hz.  Up to
+1.9.18 they sat at 1531-2500 Hz (a 2000 Hz carrier), which does not interoperate
+with this placement; see "Protocol versions" in
+[CAROUSEL-ARQ.md](CAROUSEL-ARQ.md).
+
 ## Where each mode is used
 
 `mercury -l` lists the modes by index; `-m` and the TNC `MODE` command take

@@ -31,8 +31,9 @@ Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
 
 **On-air compatibility.** Since the carousel-only build, Mercury's connect
 frames carry a protocol version, and Mercury 1.9.x stations do not connect to
-it in either direction.  Both ends of a session must run a release from the
-same protocol version; see
+it in either direction.  The version changed again after 1.9.18, when MFSK
+moved to 1500 Hz, so 1.9.18 does not connect to later releases either.  Both
+ends of a session must run a release from the same protocol version; see
 [docs/UPGRADING-TO-1.9.18.md](docs/UPGRADING-TO-1.9.18.md) before upgrading.
 
 ## Command-line reference
