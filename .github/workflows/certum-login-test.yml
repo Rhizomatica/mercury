@@ -1,0 +1,73 @@
+# Certum SimplySign login test: ONE login, every step captured, nothing signed.
+#
+# The release's signing logs in to SimplySign Desktop by driving its GUI
+# (code-signing/sign-lib.sh), so a change to the login form breaks a release
+# with nothing but "token did not come online".  This runs that same login
+# once, in the same image as release.yml, with SS_DEBUG=1 (a screenshot after
+# filling the form and after submitting it) and SS_LOGIN_TRIES=1 (each failed
+# login counts against the Certum account), then logs out.  Run it after
+# touching sign-lib.sh, or before a release when signing is in doubt.
+name: Certum login test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [certum-login-test]
+
+jobs:
+  login:
+    name: One SimplySign login
+    runs-on: ubuntu-latest
+    container:
+      # The image release.yml signs with.
+      image: ghcr.io/reactiveui/certum-signer@sha256:5b2b171610dd0fbc381e31368d1a801b11d654b74c850ab2b133e8b86334e15c
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: code-signing
+
+      - name: Install tools the signer image lacks
+        run: |
+          set -eu
+          PKGS=""
+          command -v import  >/dev/null || PKGS="$PKGS imagemagick"
+          command -v python3 >/dev/null || PKGS="$PKGS python3"
+          if [ -n "$PKGS" ]; then
+            apt-get update
+            # shellcheck disable=SC2086
+            apt-get install -y --no-install-recommends $PKGS
+          fi
+
+      - name: Log in once
+        env:
+          CERTUM_EMAIL:   ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP_URI: ${{ secrets.CERTUM_OTP_URI }}
+          SS_DEBUG: "1"
+          SS_LOGIN_TRIES: "1"
+        shell: bash
+        run: |
+          set -u
+          source code-signing/sign-lib.sh
+          if ss_login; then
+            echo "::notice::SimplySign login works: the token is online"
+          else
+            echo "::error::SimplySign login failed; see the certum-login-diagnostics artifact"
+            exit 1
+          fi
+
+      - name: Log out
+        if: always()
+        env:
+          CERTUM_EMAIL:   ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP_URI: ${{ secrets.CERTUM_OTP_URI }}
+        run: code-signing/sign-logout.sh || true
+
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: certum-login-diagnostics
+          path: /tmp/mercury-signing-diag
+          if-no-files-found: ignore
+          retention-days: 14
