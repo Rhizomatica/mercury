@@ -83,7 +83,9 @@ The ported core (mfsk.c + mfsk_ofdm.c + mfsk_sync.c) was wired into a real
 passband pipeline — TX: framing → baseband → carrier-mix to real passband int16;
 `ch` (AWGN / MPP fading, so SNR3k is measured exactly as for DATAC15); RX:
 downmix + lowpass FIR → `mfsk_sync` acquisition → OFDM demod → `mfsk_demod`.
-Config: Fs 8000, Nfft 256, Nc 50 (~1.5 kHz occupied), carrier 2000 Hz, CP 8 ms
+Config: Fs 8000, Nfft 256, Nc 50 (~1.5 kHz occupied), carrier 2000 Hz (moved
+after 1.9.18 to 1484.375 Hz, centring the tones on 1500 Hz like the codec2
+modes; see modem/modem_mfsk.c), CP 8 ms
 (> the 2 ms MPP delay, so ISI-safe). 32-MFSK, **uncoded** (no LDPC yet —
 conservative).
 

@@ -327,7 +327,7 @@ void test_callsign_too_long_is_refused_not_truncated(void)
      * defensive, and asserting it would only pin an unreachable branch. */
 }
 
-/* CALL and ACCEPT, protocol version 1 (docs/CAROUSEL-ARQ.md, "Wire
+/* CALL and ACCEPT, protocol version 2 (docs/CAROUSEL-ARQ.md, "Wire
  * formats"): every field reads back as written, a 1.9.x station reads the
  * extension as an unknown bandwidth token (and drops the frame), and a frame
  * of another version, or with a reserved bit set, is refused. */
@@ -392,15 +392,17 @@ void test_connect_v1_accept(void)
                                                            "PU2UIT-3", "PU2UIT", 2300, -1, 0));
 }
 
-/* A 1.9.x CALL (bandwidth token alone in the extension), or another version:
- * not ours -- the versions do not connect. */
+/* A 1.9.x CALL (bandwidth token alone in the extension), or another version
+ * -- 1 is 1.9.18's, whose MFSK sat at 2000 Hz: not ours, the versions do not
+ * connect. */
 void test_connect_other_version_refused(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
     TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame), 0x21,
                                                             "PU2UIT", "PU2UIT-3", 2300));
     uint8_t ext = frame_header_extension(frame[0]);
-    uint8_t versions[] = { 0, 2, 3 };
+    TEST_ASSERT_EQUAL_INT(2, ARQ_CONNECT_VERSION);
+    uint8_t versions[] = { 0, 1, 3 };
     for (unsigned v = 0; v < sizeof(versions); v++)
     {
         uint8_t other[INT_BUFFER_SIZE];

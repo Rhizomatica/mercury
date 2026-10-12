@@ -29,8 +29,24 @@
 
 /* Passband geometry — matches the validated offline harness (docs/MFSK-PORT.md). */
 #define MFSK_FS       8000.0
-#define MFSK_FC       2000.0
 #define MFSK_NFFT     256
+/* Carrier.  The 32 tones are the middle 32 of the 50 DC-centred subcarriers,
+ * bins -16..+15 at baseband.  mfsk_synth takes the real part against the
+ * conjugate carrier, which mirrors the spectrum: on the air they are bins
+ * -15..+16 around the carrier, centred half a bin (15.625 Hz) ABOVE it.  Half
+ * a bin below 1500 Hz therefore puts them on 1500 Hz, where every codec2 mode
+ * is centred: 1015.6..1984.4 Hz.  Through 1.9.18 the carrier was 2000 Hz,
+ * carried over from the offline harness, which put the tones on 1531..2500 Hz
+ * -- off-centre in the radio's passband, and away from every other mode.
+ *
+ * MFSK_FC / MFSK_FS = 95/512, so the carrier phasor repeats every
+ * MFSK_FC_PERIOD samples and is read from a table (fc_phasor): no
+ * trigonometry per sample, which on a Pi 4 is a sizeable share of what a
+ * listening station spends.  The period must stay a power of two holding a
+ * whole number of carrier cycles, or the phase jumps every period and no
+ * burst decodes (test_mfsk_modem's round trips). */
+#define MFSK_FC        (1500.0 - 0.5 * MFSK_FS / MFSK_NFFT)   /* 1484.375 Hz */
+#define MFSK_FC_PERIOD 512
 #define MFSK_NCAR     50
 #define MFSK_GI       0.25
 #define MFSK_M        32
@@ -91,7 +107,6 @@ typedef struct {
     size_t frame_bytes;             /* K/8 (payload + CRC16) */
 
     double lpf[MFSK_LPF_TAPS];
-    double w;                       /* carrier radians/sample */
     long tx_n;                      /* TX carrier phase counter (per burst) */
     double complex tx_tail[MFSK_XFADE]; /* last symbol's faded-out suffix */
     int      tx_have_tail;          /* ...to add to the next symbol's head */
@@ -169,6 +184,25 @@ static void mklpf(double *lpf, double fc)
     for (int i = 0; i < MFSK_LPF_TAPS; i++) lpf[i] /= s;
 }
 
+/* The carrier phasor e^(j*2*pi*MFSK_FC*n/MFSK_FS), one period of it. */
+static double complex g_fc_ph[MFSK_FC_PERIOD];
+static pthread_once_t g_fc_once = PTHREAD_ONCE_INIT;
+
+static void fc_table_init(void)
+{
+    for (int n = 0; n < MFSK_FC_PERIOD; n++)
+    {
+        double ph = 2.0 * M_PI * MFSK_FC / MFSK_FS * (double)n;
+        g_fc_ph[n] = cos(ph) + I * sin(ph);
+    }
+}
+
+/* n is an absolute sample index (never negative). */
+static inline double complex fc_phasor(long n)
+{
+    return g_fc_ph[n & (MFSK_FC_PERIOD - 1)];
+}
+
 /* ---- lifecycle -------------------------------------------------------- */
 
 static void mfsk_be_close(void *ctx);
@@ -193,7 +227,7 @@ static void *mfsk_be_open(int mode)
     h->bps   = mfsk_bits_per_symbol(&h->m);
     h->NPAY  = (h->code->N + h->bps - 1) / h->bps;
     h->frame_bytes = (size_t)h->code->K / 8;
-    h->w     = 2.0 * M_PI * MFSK_FC / MFSK_FS;
+    pthread_once(&g_fc_once, fc_table_init);
     mklpf(h->lpf, MFSK_LPF_FC);
 
     /* RX window: one full burst (pre + data + post) plus a few symbols slack. */
@@ -344,7 +378,7 @@ static uint64_t mfsk_now_ms(void)
  * *tx_n is the carrier phase counter (absolute sample index in the burst);
  * tail/have_tail carry the pending fade-out across calls, so preamble, data
  * and postamble join as smoothly as symbols do. */
-static int mfsk_synth(const ofdm_frame_t *o, double w, int nofdm, const mfsk_cplx *syms, int nsym,
+static int mfsk_synth(const ofdm_frame_t *o, int nofdm, const mfsk_cplx *syms, int nsym,
                       int16_t *out, long *tx_n, double complex *tail, int *have_tail, int last)
 {
     static double rise[MFSK_XFADE];
@@ -374,8 +408,8 @@ static int mfsk_synth(const ofdm_frame_t *o, double w, int nofdm, const mfsk_cpl
         *have_tail = !(last && s == nsym - 1);
         for (int n = 0; n < nofdm; n++)
         {
-            double ph = w * (double)(*tx_n)++;
-            double v = MFSK_TXAMP * (creal(cp[n]) * cos(ph) + cimag(cp[n]) * sin(ph));
+            double complex p = fc_phasor((*tx_n)++);
+            double v = MFSK_TXAMP * (creal(cp[n]) * creal(p) + cimag(cp[n]) * cimag(p));
             if (v > 32767.0) v = 32767.0; else if (v < -32768.0) v = -32768.0;
             out[written++] = (int16_t)lrint(v);
         }
@@ -385,7 +419,7 @@ static int mfsk_synth(const ofdm_frame_t *o, double w, int nofdm, const mfsk_cpl
 
 static int mfsk_emit(mfsk_modem_t *h, const mfsk_cplx *syms, int nsym, int16_t *out, int last)
 {
-    return mfsk_synth(&h->o, h->w, h->Nofdm, syms, nsym, out, &h->tx_n,
+    return mfsk_synth(&h->o, h->Nofdm, syms, nsym, out, &h->tx_n,
                       h->tx_tail, &h->tx_have_tail, last);
 }
 
@@ -466,30 +500,8 @@ static void mfsk_downmix(mfsk_modem_t *h)
      *
      * The carrier phase is taken from the ABSOLUTE sample index (n_abs), so
      * sliding the buffer does not rotate previously computed samples. */
-    /* At the carrier's a quarter of the sample rate (2 kHz at 8 kHz) the
-     * phasor only ever takes 1, j, -1, -j: no trigonometry per sample, which
-     * on a Pi 4 was a sizeable share of what a listening station spends. */
-    if (MFSK_FC * 4.0 == MFSK_FS)
-    {
-        for (int i = h->bb_len; i < h->rxlen; i++)
-        {
-            double x = 2.0 * (double)h->rxbuf[i];
-            switch ((int)((h->n_abs + (long)i) & 3))
-            {
-            case 0:  h->bb[i] = x;      break;
-            case 1:  h->bb[i] = I * x;  break;
-            case 2:  h->bb[i] = -x;     break;
-            default: h->bb[i] = -I * x; break;
-            }
-        }
-    }
-    else
     for (int i = h->bb_len; i < h->rxlen; i++)
-    {
-        double x  = (double)h->rxbuf[i];
-        double ph = h->w * (double)(h->n_abs + (long)i);
-        h->bb[i] = 2.0 * x * cos(ph) + I * 2.0 * x * sin(ph);
-    }
+        h->bb[i] = 2.0 * (double)h->rxbuf[i] * fc_phasor(h->n_abs + (long)i);
     h->bb_len = h->rxlen;
 
     /* bf[i] needs bb up to i + TAPS/2, so it is final only once that has
@@ -1015,7 +1027,6 @@ static int mfsk_be_get_rx_status(void *ctx) { (void)ctx; return 0; }
 static mfsk_t       g_pat_m;
 static ofdm_frame_t g_pat_o;
 static double       g_pat_lpf[MFSK_LPF_TAPS];
-static double       g_pat_w;
 static int          g_pat_nofdm;
 static bool         g_pat_ready = false;
 /* The ACK and BREAK lists in use: the session's while a carousel session
@@ -1031,7 +1042,7 @@ static void mfsk_pattern_lazy_init(void)
     mfsk_init(&g_pat_m, MFSK_M, MFSK_NCAR, 1);
     ofdm_frame_init(&g_pat_o, MFSK_NFFT, MFSK_NCAR, MFSK_GI, 0);
     g_pat_nofdm = ofdm_frame_nofdm(&g_pat_o);
-    g_pat_w     = 2.0 * M_PI * MFSK_FC / MFSK_FS;
+    pthread_once(&g_fc_once, fc_table_init);
     mklpf(g_pat_lpf, MFSK_LPF_FC);
     g_pat_ready = true;
 }
@@ -1104,7 +1115,7 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind)
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
     int have_tail = 0;
-    int written = mfsk_synth(&g_pat_o, g_pat_w, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    int written = mfsk_synth(&g_pat_o, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
     free(bins);
     return written;
 }
@@ -1123,7 +1134,7 @@ int mfsk_nav_tx(int16_t *out, int cls)
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
     int have_tail = 0;
-    int written = mfsk_synth(&g_pat_o, g_pat_w, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    int written = mfsk_synth(&g_pat_o, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
     free(bins);
     return written;
 }
@@ -1143,8 +1154,7 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
     for (int i = 0; i < n; i++)
     {
         double x = (double)pb[i];
-        double ph = g_pat_w * (double)i;
-        bb[i] = 2.0 * x * cos(ph) + I * 2.0 * x * sin(ph);
+        bb[i] = 2.0 * x * fc_phasor(i);
     }
     for (int i = 0; i < n; i++)
     {
@@ -1287,26 +1297,21 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
         w->gen = gen;
     }
 
-    /* Downmix by FC = FS/4 and low-pass, one sample at a time: the filter
+    /* Downmix and low-pass, one sample at a time: the filter
      * mfsk_pattern_detect() applies to a whole buffer, causal here, so the
-     * stream runs MFSK_LPF_TAPS/2 samples late.  The 1, j, -1, -j phasor puts
-     * an input sample wholly in the real part (even n) or the imaginary part
-     * (odd n), signed by n & 2: one ring of signed samples, and each tap
-     * feeds the real or the imaginary output by the parity of the sample it
-     * reads -- 63 multiply-adds a sample, not 126. */
+     * stream runs MFSK_LPF_TAPS/2 samples late. */
     int nout = 0;
     for (int i = 0; i < n; i++)
     {
-        double x = 2.0 * (double)pcm[i];
-        long long sn = w->n++;
-        w->hist[w->hist_pos] = (sn & 2) ? -x : x;
+        double complex x = 2.0 * (double)pcm[i] * fc_phasor(w->n++);
+        w->hist_re[w->hist_pos] = creal(x);
+        w->hist_im[w->hist_pos] = cimag(x);
         double ar = 0.0, ai = 0.0;
         int h = w->hist_pos;
         for (int k = 0; k < MFSK_LPF_TAPS; k++)
         {
-            /* the sample k back is sn - k: real part if even */
-            if (((sn - k) & 1) == 0) ar += g_pat_lpf[k] * w->hist[h];
-            else                     ai += g_pat_lpf[k] * w->hist[h];
+            ar += g_pat_lpf[k] * w->hist_re[h];
+            ai += g_pat_lpf[k] * w->hist_im[h];
             h = h ? h - 1 : MFSK_LPF_TAPS - 1;
         }
         w->hist_pos = (w->hist_pos + 1) % MFSK_LPF_TAPS;
@@ -1374,7 +1379,8 @@ void mfsk_pattern_window_reset(mfsk_pattern_window_t *w)
 {
     if (!w) return;
     if (w->det) mfsk_stream_det_reset(w->det);
-    memset(w->hist, 0, sizeof(w->hist));
+    memset(w->hist_re, 0, sizeof(w->hist_re));
+    memset(w->hist_im, 0, sizeof(w->hist_im));
     w->npend = 0;
     w->last_start = 0;
     w->last_score = 0;

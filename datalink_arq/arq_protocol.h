@@ -348,7 +348,7 @@ uint16_t arq_protocol_callsign_crc16(const char *callsign);
 int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                                    uint8_t session_id, uint8_t snr_raw);
 
-/* --- CALL/ACCEPT, protocol version 1 (PACKET_TYPE_ARQ_CALL) ---
+/* --- CALL/ACCEPT, protocol version 2 (PACKET_TYPE_ARQ_CALL) ---
  *
  * 14 bytes (a DATAC16 frame), padded to the frame on MFSK.  Byte 0 is the
  * framer: type CALL, and in its extension the bandwidth token (2 bits), the
@@ -357,13 +357,18 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  * extension as an unknown bandwidth token and drops it, so the versions do
  * not connect (docs/CAROUSEL-ARQ.md, "Wire formats").
  *
+ * Version 1 was 1.9.18.  Version 2 moved MFSK's tones from 1531..2500 Hz to
+ * 1015.6..1984.4 Hz, centred on 1500 Hz like the codec2 modes; the frames are
+ * the same, but a pair of versions 1 and 2 would connect on DATAC16 and then
+ * never hear each other at the floor, so the version keeps them apart.
+ *
  *   CALL    1: 0 | session id   2-3: CRC16 of the called callsign
  *           4-13: the caller's callsign, arithmetic-coded
  *   ACCEPT  1: 1 | session id   2-3: CRC16 of the caller's callsign
  *           4-5: CRC16 of the called callsign   6-7: the callee's nonce
  *           8: the caller's start rung (3 bits; 7 = ARQ_ACCEPT_LEVEL_CTL_DEAF),
  *              5 bits zero      9-13: zero */
-#define ARQ_CONNECT_VERSION           1
+#define ARQ_CONNECT_VERSION           2
 #define ARQ_CONNECT_EXT_BW_MASK       0x03
 #define ARQ_CONNECT_EXT_VERSION_SHIFT 2
 #define ARQ_CONNECT_EXT_VERSION_MASK  0x0C

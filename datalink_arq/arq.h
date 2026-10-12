@@ -254,7 +254,7 @@ int arq_set_listen_mode(int mode);
 void arq_set_active_modem_mode(int mode, size_t frame_size);
 
 /**
- * @brief Handle an incoming CALL/ACCEPT frame (protocol version 1).
+ * @brief Handle an incoming CALL/ACCEPT frame (protocol version 2).
  * @param data Frame bytes.
  * @param frame_size Frame length in bytes.
  * @param rx_snr SNR the frame was decoded at (dB); sets the start rung.

@@ -837,10 +837,10 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     if (rc == -2)
     {
         /* Bytes 2-3 are the called CRC in every version, so this is a call
-         * for us from a 1.9.x station or another protocol version: the
+         * for us from an older release, 1.9.18 or 1.9.x: the
          * versions do not connect (docs/CAROUSEL-ARQ.md, "Wire formats"). */
         if (!is_accept)
-            HLOGW(LOG_COMP, "CALL for %s from another protocol version (Mercury 1.9.x?): not answered",
+            HLOGW(LOG_COMP, "CALL for %s from another protocol version (Mercury 1.9.18 or older?): not answered",
                   dialed_call);
         return false;
     }

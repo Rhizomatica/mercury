@@ -293,11 +293,11 @@ RX demux (`car_on_frame`, C:1602-1626):
 
 ### 3.4 Connect frames (generic FSM, carousel-relevant fields only)
 
-**[carousel-only]** Protocol version 1; the byte layout is in
+**[carousel-only]** Protocol version 2 (1 was 1.9.18; see §16); the byte layout is in
 docs/CAROUSEL-ARQ.md, "Wire formats".
 
 - Both frames: framer extension = bandwidth token (2 bits), version (2 bits,
-  = 1), carousel bit. A frame with another version or without the bit is
+  = 2), carousel bit. A frame with another version or without the bit is
   dropped (`arq_protocol_connect_version_ok`); a CALL from another version
   addressed to this station is logged, not answered. 1.9.x and earlier
   carousel builds therefore do not connect to this one.
@@ -865,3 +865,10 @@ calibration needs points above 12 dB.
 |---|---|---|
 | The session's negotiated bandwidth caps both directions' rungs: BW500 at DATAC3 (MFSK, DATAC15, DATAC4, DATAC3), BW2300 and BW2750 at QAM16C2.  Since the stop-and-wait plane's mode ladder went, nothing enforced BW500, and a narrow session climbed to DATAC1, DATAC17 and QAM16C2. | 1.3, S1, S3, I-BW | none to the TLA+ models: `CarouselBlocks` abstracts rungs away, and `CarouselTurns` proves no overlap for every keydown length, which a cap only restricts |
 
+---
+
+## 16. MFSK centred on 1500 Hz (branch mfsk-centre-1500)
+
+| Change | Where | Risks |
+|---|---|---|
+| MFSK's carrier moves from 2000 Hz to 1484.375 Hz, so its tones sit at 1015.6-1984.4 Hz, centred on 1500 Hz like the codec2 modes (they were at 1531-2500 Hz).  Connect frames carry protocol version 2: a 1.9.18 station (version 1) and a later one would connect on DATAC16 and then never hear each other at the floor. | 3.4, `modem_mfsk.c`, `arq_protocol.h` | none to the rules or the TLA+ models: the floor's timing and frames are unchanged |

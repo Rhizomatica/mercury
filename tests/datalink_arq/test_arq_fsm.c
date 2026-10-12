@@ -66,7 +66,7 @@ static arq_event_t make_event(arq_event_id_t id)
 }
 
 /* An ACCEPT a test builds by hand comes from the station it called: the
- * FSM takes an ACCEPT only with that station's CRC (protocol version 1). */
+ * FSM takes an ACCEPT only with that station's CRC (protocol version 2). */
 static void test_dispatch(arq_session_t *s, arq_event_t *e)
 {
     /* The caller's first frame is seeded, so it can only follow our ACCEPT:
