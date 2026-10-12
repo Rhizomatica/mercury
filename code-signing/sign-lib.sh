@@ -157,6 +157,12 @@ ss_snap() {
     png="$SS_DIAG_DIR/$stamp-$tag.png"
     if ss_have import; then
         DISPLAY=$DISPLAY_NR import -window root "$png" 2>/dev/null && ss_log "diag: screenshot $png"
+        # Once the e-mail is typed, black out all but its first letters: these
+        # screenshots are uploaded as CI artifacts, which anyone can download
+        # from a public repository.  Enough stays visible to see it landed.
+        if [ -n "${SS_REDACT_BOX:-}" ] && [ -f "$png" ] && ss_have mogrify; then
+            mogrify -fill black -draw "rectangle $SS_REDACT_BOX" "$png" 2>/dev/null || rm -f "$png"
+        fi
     elif ss_have xwd; then
         DISPLAY=$DISPLAY_NR xwd -root -silent > "${png%.png}.xwd" 2>/dev/null && \
             ss_log "diag: screenshot ${png%.png}.xwd (apt install imagemagick for PNG)"
@@ -235,17 +241,26 @@ ss_wait_form_ready() {
 # freshly rendered dialog: once SimplySign adds its "There are errors in the
 # form" banner the fields shift down and these coordinates miss.  That is why a
 # retry relaunches the app instead of reusing the errored dialog.
+# Everything after the click into the e-mail box is keyboard: Tab to the code,
+# Enter to submit -- no second position to keep calibrated.
+#
+# SS_EMAIL_PCT: where the e-mail box sits, in % of the window height.  45 on the
+# form served since October 2026 (the box at 480-498 px of a 510 px window, the
+# heading wrapped onto three lines).  The old 39 % lands on that heading, the
+# typing goes nowhere and the form stays empty (the 1.9.18 release run).
 ss_fill_login() {
-    local totp="$1"
+    local totp="$1" pct="${SS_EMAIL_PCT:-45}"
     DISPLAY=$DISPLAY_NR xdotool windowactivate --sync "$WID" 2>/dev/null || true
     DISPLAY=$DISPLAY_NR xdotool windowraise "$WID" 2>/dev/null || true; sleep 1
-    DISPLAY=$DISPLAY_NR xdotool mousemove $((BX + BW/2)) $((BY + BH*39/100)) click 1; sleep 1
+    DISPLAY=$DISPLAY_NR xdotool mousemove $((BX + BW/2)) $((BY + BH*pct/100)) click 1; sleep 1
+    # The e-mail box's row, from just after its first letters to its right edge.
+    SS_REDACT_BOX="$((BX + 56)),$((BY + BH*pct/100 - 12)) $((BX + BW - 20)),$((BY + BH*pct/100 + 12))"
     DISPLAY=$DISPLAY_NR xdotool key --clearmodifiers ctrl+a
     DISPLAY=$DISPLAY_NR xdotool type --clearmodifiers --delay 50 "$CERTUM_EMAIL"; sleep 1
     DISPLAY=$DISPLAY_NR xdotool key Tab; sleep 1
     DISPLAY=$DISPLAY_NR xdotool type --clearmodifiers --delay 50 "$totp"; sleep 1
     ss_snap_debug "02-filled"
-    DISPLAY=$DISPLAY_NR xdotool mousemove $((BX + BW/2)) $((BY + BH*76/100)) click 1; sleep 8
+    DISPLAY=$DISPLAY_NR xdotool key --clearmodifiers Return; sleep 8
     ss_snap_debug "03-after-login-click"
     # dismiss the "Logon successful" dialog (Close button, bottom-centre)
     if ss_find_window; then
@@ -387,8 +402,8 @@ ss_login() {
     ss_log "       Usual causes, in order:"
     ss_log "        1. wrong e-mail, wrong/stale otpauth seed, or a clock skew > 30 s"
     ss_log "        2. the account holds no cloud certificate (right password, wrong account)"
-    ss_log "        3. a SimplySign Desktop other than 2.9.14: the dialog layout moved, so the"
-    ss_log "           blind clicks at 39%/76%/94% of the window hit the wrong widgets"
+    ss_log "        3. the login form's layout moved, so the click into the e-mail box"
+    ss_log "           (SS_EMAIL_PCT, ${SS_EMAIL_PCT:-45}% of the window) misses it"
     ss_log "       Compare the attempt-*.png frames: if the e-mail and the code are NOT in"
     ss_log "       their own boxes, it is the layout (3); if they are, it is (1) or (2)."
     ss_log "       Re-run with SS_DEBUG=1 to capture every step into $SS_DIAG_DIR,"
