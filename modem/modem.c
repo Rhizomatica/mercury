@@ -1081,6 +1081,9 @@ int run_tests_rx(generic_modem_t *g_modem)
             if ((j + 1) % 16 == 0) printf("\n");
         }
         printf("\n");
+        /* Each frame as it decodes: redirected to a file, stdout is fully
+         * buffered, and a killed test used to lose every frame it had. */
+        fflush(stdout);
         usleep(RX_IDLE_SLEEP_US);
     }
 
@@ -1714,6 +1717,16 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     // When nin == 0, FreeDV has buffered enough samples and will process internally
     if (nin > 0)
     {
+        /* Never block on the capture ring.  The RX test (run_tests_rx) calls
+         * this on the main thread, before the modem threads and the shutdown
+         * path that wakes the rings exist: a blocking read there sat forever
+         * once SIGINT stopped the capture thread, and `mercury -r` never
+         * exited.  Come back empty-handed until a whole chunk has arrived. */
+        if (size_buffer(capture_buffer) < sizeof(int32_t) * nin)
+        {
+            *nbytes_out = 0;
+            return 0;
+        }
         read_buffer(capture_buffer, (uint8_t *) buffer_in, sizeof(int32_t) * nin);
 
         // converting from s32le to s16le
@@ -1736,11 +1749,14 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     if (nin == 0 && *nbytes_out == 0)
         idle_spin_sleep = true;
 
+    /* No sync gate on the bytes: every backend returns them only for a
+     * CRC-valid frame (freedv's data modes set FREEDV_RX_BITS only when the
+     * CRC passes), as the decoder workers rely on.  The gate dropped every
+     * MFSK frame, whose sync means "a burst is still arriving" and so is
+     * clear at the very call that decodes one. */
     int sync = 0;
     float snr_est = 0.0;
     codec.be->get_stats(codec.ctx, &sync, &snr_est);
-    if (!sync)
-        *nbytes_out = 0;
 
     if (*nbytes_out > 0)
     {
