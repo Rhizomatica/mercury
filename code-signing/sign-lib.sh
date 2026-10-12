@@ -157,6 +157,12 @@ ss_snap() {
     png="$SS_DIAG_DIR/$stamp-$tag.png"
     if ss_have import; then
         DISPLAY=$DISPLAY_NR import -window root "$png" 2>/dev/null && ss_log "diag: screenshot $png"
+        # Once the e-mail is typed, black out all but its first letters: these
+        # screenshots are uploaded as CI artifacts, which anyone can download
+        # from a public repository.  Enough stays visible to see it landed.
+        if [ -n "${SS_REDACT_BOX:-}" ] && [ -f "$png" ] && ss_have mogrify; then
+            mogrify -fill black -draw "rectangle $SS_REDACT_BOX" "$png" 2>/dev/null || rm -f "$png"
+        fi
     elif ss_have xwd; then
         DISPLAY=$DISPLAY_NR xwd -root -silent > "${png%.png}.xwd" 2>/dev/null && \
             ss_log "diag: screenshot ${png%.png}.xwd (apt install imagemagick for PNG)"
@@ -247,6 +253,8 @@ ss_fill_login() {
     DISPLAY=$DISPLAY_NR xdotool windowactivate --sync "$WID" 2>/dev/null || true
     DISPLAY=$DISPLAY_NR xdotool windowraise "$WID" 2>/dev/null || true; sleep 1
     DISPLAY=$DISPLAY_NR xdotool mousemove $((BX + BW/2)) $((BY + BH*pct/100)) click 1; sleep 1
+    # The e-mail box's row, from just after its first letters to its right edge.
+    SS_REDACT_BOX="$((BX + 56)),$((BY + BH*pct/100 - 12)) $((BX + BW - 20)),$((BY + BH*pct/100 + 12))"
     DISPLAY=$DISPLAY_NR xdotool key --clearmodifiers ctrl+a
     DISPLAY=$DISPLAY_NR xdotool type --clearmodifiers --delay 50 "$CERTUM_EMAIL"; sleep 1
     DISPLAY=$DISPLAY_NR xdotool key Tab; sleep 1
