@@ -108,3 +108,4 @@ tests/integration/seed-history.log
 ios/*.o
 ios/*.d
 ios/Mercury.app/
+ios/MercuryUI.app/
