@@ -60,6 +60,11 @@ arq_tcp_base_port = 8300
 ; Broadcast TCP port (default: 8100)
 broadcast_tcp_port = 8100
 
+; Default station callsign, used every startup until a connected client sends
+; its own MYCALL.  Leave empty (the default) for none, in which case the
+; embedded chat client falls back to "NOCALL".  Up to 15 characters.
+;callsign = PU2UIT
+
 ; Verbose mode (default: false)
 verbose = false
 

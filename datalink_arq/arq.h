@@ -165,6 +165,11 @@ int  arq_get_bw(void);
  * always NUL-terminated. */
 void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bufsz);
 
+/* Set the primary callsign (the station's own), thread-safe.  Mirrors the
+ * MYCALL command: clears any secondary callsigns.  Used to install the
+ * configured default callsign at engine startup before any client connects. */
+void arq_set_callsign(const char *callsign);
+
 /* Wake the ARQ event loop so it re-reads time_now_ms().  Called by the
  * -x sock virtual-clock transport after advancing signal time; harmless
  * (a spurious wakeup) from any other context. */

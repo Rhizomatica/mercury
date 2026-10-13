@@ -293,6 +293,11 @@ int mercury_engine_init(const mercury_config *cfg,
         return -1;
     }
 
+    /* Install the configured default callsign (if any) before any client can
+     * connect, so the UI shows it and CQ frames carry it on first keydown. */
+    if (cfg->callsign[0])
+        arq_set_callsign(cfg->callsign);
+
     /* ---- broadcast ---- */
     broadcast_run(&g_modem);
 

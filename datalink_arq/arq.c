@@ -435,6 +435,18 @@ void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bu
     pthread_mutex_unlock(&g_conn_lock);
 }
 
+void arq_set_callsign(const char *callsign)
+{
+    pthread_mutex_lock(&g_conn_lock);
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s",
+             callsign ? callsign : "");
+    /* Setting a new primary callsign clears all secondary callsigns. */
+    memset(arq_conn.secondary_calls, 0, sizeof(arq_conn.secondary_calls));
+    arq_conn.secondary_call_count = 0;
+    pthread_mutex_unlock(&g_conn_lock);
+    HLOGI(LOG_COMP, "My callsign: %s", arq_conn.my_call_sign);
+}
+
 int arq_get_bw(void)
 {
     pthread_mutex_lock(&g_conn_lock);
