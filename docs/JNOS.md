@@ -85,6 +85,17 @@ make clean            # the repo tracks 241 prebuilt .o files: do not link them
 ```
 
 `TNCALL` (`ax25 tncall`) is already enabled in the shipped `config.h`.
+`make clean` also removes `configure.okay`, so run `./configure` again after
+it; otherwise `make` stops at "you have to run './configure' first".
+
+Our fork's `main` (from `4850ff3`) adds two fixes found on this bench:
+- **`vara bw <interface> [500|2300|2750]`.** The bandwidth JNOS asks of the
+  modem was fixed at BW500, and the default still is.
+- **The VARA transmit process survives a data-channel error.** Before, one
+  failed write ended it for good.
+
+`jnos-2.0q-vara-bw-and-tx.patch`, the same change relative to the 2.0q
+source, is being offered to Maiko upstream.
 
 ### Runtime tree
 
@@ -143,6 +154,8 @@ ifconfig jtun ipaddress 192.168.44.2
 ifconfig jtun netmask 255.255.255.255
 route add 192.168.44.1 jtun
 attach vara vara 256 192.168.44.1 8300
+# ask the modem for 2300 Hz: BW500 keeps a Mercury session on its narrow modes (needs jnos2 4850ff3)
+vara bw vara 2300
 ifconfig vara ipaddress 10.44.0.1
 vara cmddebug on
 vara debug on
@@ -152,8 +165,9 @@ start vara
 ```
 
 On attach, JNOS sends Mercury `VERSION`, `MYCALL PU2UIT-10 PU2UIT PU2UIT-13`,
-`BW500`, `COMPRESSION ON` and `LISTEN ON`. Mercury answers with a `REGISTERED`
-for each callsign.
+the bandwidth (`BW2300` with `vara bw vara 2300`, `BW500` without it),
+`COMPRESSION ON` and `LISTEN ON`. Mercury answers with a `REGISTERED` for each
+callsign.
 
 ### Linux telnetd for `tncall`
 
@@ -251,7 +265,15 @@ Linux 6.18.39+rpt-rpi-v8 (estacao.hermes.radio) (pts/1)
 estacao login:
 ```
 
-### 3. IP over the air (PPP over VARA) — not pursued
+### 3. BBS at 2300 Hz — works
+
+The same BBS session as test 1, with `vara bw vara 2300` on both stations (the
+patched JNOS). Mercury received `BW2300`, and the session came up as
+`CONNECTED PU2UIT-15 PU2UIT-2 2300`. The remote BBS's help text (`H`) came back
+on QAM16C2, and the gateway sent on DATAC1. Neither mode is allowed in a BW500
+session, which stops at DATAC3.
+
+### 4. IP over the air (PPP over VARA) — not pursued
 
 `vara pppmode vara on` turns the VARA interface into a PPP link. JNOS sources
 `ppp.nos` when Mercury reports `CONNECTED`, to open LCP and IPCP. The radio
@@ -281,8 +303,9 @@ restarts it):
 
 - `B` leaves a remote BBS and returns you to your own. Ctrl-T is the BBS
   gateway's escape character.
-- Expect tens of seconds per turn: every line is a Mercury keydown, and JNOS's
-  BW500 keeps the session at DATAC3 or below (see below).
+- Expect tens of seconds per turn: every line is a Mercury keydown. Without
+  `vara bw vara 2300`, JNOS asks for BW500 and the session stays at DATAC3
+  or below.
 - The BBS passwords are in each station's `/home/pi/jnos/rte/ftpusers`.
 
 **Giving the stations back to HERMES.** While JNOS holds Mercury's TNC ports,
@@ -296,12 +319,13 @@ restarts `uucpd` (and `caller` on the gateway). It leaves `jnostun` and the
 
 ### In Mercury
 
-- **JNOS asks for BW500 and cannot be told otherwise.** `vara_initinterface()`
-  hard-codes it, and there is no command to change it. Mercury sets a session's
-  bandwidth to the narrower of the two ends. Since 1.9.18 BW500 also caps the
-  rungs at DATAC3, so **every JNOS session stops at DATAC3**, even on a link
-  that carries QAM16C2. Through 1.9.17 BW500 was not enforced. The fix belongs
-  in JNOS: a `vara bw` command, or a BW2300 default.
+- **Stock JNOS asks for BW500 and cannot be told otherwise.**
+  `vara_initinterface()` hard-codes it. Mercury sets a session's bandwidth to
+  the narrower of the two ends, and since 1.9.18 BW500 also caps the rungs at
+  DATAC3. So **every session with a stock JNOS end stops at DATAC3**, even on a
+  link that carries QAM16C2. Through 1.9.17 BW500 was not enforced. **Fixed in
+  our fork** with `vara bw` (above). Both ends need it: one BW500 end narrows
+  the whole session.
 - **The CALL carries the primary `MYCALL`, not `CONNECT`'s source.**
   `CONNECT PU2UIT-15 PU2UIT-2` went out as PU2UIT-10, and estacao2 reported
   `CONNECTED PU2UIT-10 PU2UIT-2`. The calling side still echoes
@@ -314,7 +338,10 @@ restarts `uucpd` (and `caller` on the gateway). It leaves `jnostun` and the
 - **A failed write to the data port ends VARA transmit for good.** On
   `vara_sendstream()` returning -1, `vara_tx()` returns and is never restarted:
   the interface receives but never sends again until JNOS restarts. It was hit
-  here after a killed JNOS left stale TCP state behind.
+  here after a killed JNOS left stale TCP state behind. **Fixed in our fork:**
+  the buffer is dropped and logged, and transmission carries on. The station
+  kernel cannot kill a socket on demand (`ss -K`), so this was not reproduced
+  deliberately.
 - **`127.0.0.1` in `attach vara` is JNOS's own loopback.** Mercury on the same
   host must be reached through a tun (above).
 - **The attach is tried only briefly.** If Mercury is not listening yet, JNOS
