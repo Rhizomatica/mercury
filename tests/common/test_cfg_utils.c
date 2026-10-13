@@ -395,6 +395,37 @@ void test_config_without_tls_keys_keeps_the_defaults(void)
     TEST_ASSERT_EQUAL_STRING(CFG_SSL_KEY,  r.tls_key);
 }
 
+/* The default station callsign persists across restarts via [main] callsign. */
+void test_callsign_defaults_empty_and_roundtrips(void)
+{
+    mercury_config c;
+    cfg_set_defaults(&c);
+    TEST_ASSERT_EQUAL_STRING("", c.callsign);   /* unset by default */
+
+    mercury_config w, r;
+    cfg_set_defaults(&w);
+    snprintf(w.callsign, sizeof(w.callsign), "PU2UIT-3");
+    TEST_ASSERT_TRUE(cfg_write(&w, TMP));
+
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_STRING("PU2UIT-3", r.callsign);
+}
+
+/* An over-long callsign is truncated to the ARQ slot (15 chars + NUL). */
+void test_callsign_truncates_to_slot_size(void)
+{
+    FILE *f = fopen(TMP, "w");
+    TEST_ASSERT_NOT_NULL(f);
+    fputs("[main]\ncallsign = ABCDEFGHIJKLMNOPQRSTUVWXYZ\n", f);
+    fclose(f);
+
+    mercury_config r;
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_STRING("ABCDEFGHIJKLMNO", r.callsign);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -402,6 +433,8 @@ int main(void)
     RUN_TEST(test_tls_cert_paths_default_to_the_system_locations);
     RUN_TEST(test_tls_settings_roundtrip);
     RUN_TEST(test_config_without_tls_keys_keeps_the_defaults);
+    RUN_TEST(test_callsign_defaults_empty_and_roundtrips);
+    RUN_TEST(test_callsign_truncates_to_slot_size);
     RUN_TEST(test_arq_tunables_roundtrip);
     RUN_TEST(test_arq_tunables_clamp_rejects_garbage);
     RUN_TEST(test_removed_arq_keys_are_flagged_not_fatal);

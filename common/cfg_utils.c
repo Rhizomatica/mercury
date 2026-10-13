@@ -56,6 +56,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->sound_system       = -1;  /* auto: resolved by audioio_pick_default_subsystem() */
     cfg->arq_tcp_base_port  = DEFAULT_ARQ_PORT;       /* 8300   */
     cfg->broadcast_tcp_port = DEFAULT_BROADCAST_PORT; /* 8100  */
+    cfg->callsign[0]        = '\0';                   /* unset: no default callsign */
     cfg->verbose            = false;
     cfg->freedv_verbosity   = 0;
     cfg->disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
@@ -370,6 +371,12 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_BROADCAST_TCP_PORT, cfg->broadcast_tcp_port);
     cfg->broadcast_tcp_port = i;
 
+    s = iniparser_getstring(ini, CFG_KEY_CALLSIGN, NULL);
+    if (s) {
+        strncpy(cfg->callsign, s, sizeof(cfg->callsign) - 1);
+        cfg->callsign[sizeof(cfg->callsign) - 1] = '\0';
+    }
+
     b = iniparser_getboolean(ini, CFG_KEY_VERBOSE, cfg->verbose ? 1 : 0);
     cfg->verbose = (bool) b;
 
@@ -503,6 +510,8 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "sound_system = %s\n",     cfg_sound_system_name(cfg->sound_system));
     fprintf(f, "arq_tcp_base_port = %d\n", cfg->arq_tcp_base_port);
     fprintf(f, "broadcast_tcp_port = %d\n", cfg->broadcast_tcp_port);
+    cfg_escape_str(escaped, sizeof(escaped), cfg->callsign);
+    fprintf(f, "callsign = \"%s\"\n", escaped);
     fprintf(f, "verbose = %s\n",           cfg->verbose ? "true" : "false");
     fprintf(f, "freedv_verbosity = %d\n",  cfg->freedv_verbosity);
     fprintf(f, "\n[ptt]\n");
