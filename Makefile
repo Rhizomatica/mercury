@@ -218,7 +218,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: ios-app fyne-ui-ios
+.PHONY: ios-app fyne-ui-ios fyne-ui-ios-ipa
 .PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg sign-macos-bin macos-notarize-dmg fyne-ui-windows windows-installer test integration-test integration-test-random FORCE
 
 prefix ?= /usr
@@ -648,6 +648,60 @@ endif
 	codesign --force --sign - $(IOS_UI_APP)
 	@echo "  -> $(IOS_UI_APP)  ($(IOS_PLATFORM), $(TARGET_GOARCH))"
 
+# The device build as an .ipa for App Store Connect (and from there Apple's
+# notarization for alternative distribution, e.g. AltStore PAL): fyne-ui-ios
+# built with the iphoneos compiler, plus what Xcode would add -- the icon
+# compiled into an asset catalog, the SDK keys App Store Connect checks, the
+# privacy manifest, the embedded provisioning profile -- signed for
+# distribution.
+#   make fyne-ui-ios-ipa CC="xcrun -sdk iphoneos clang -arch arm64 -miphoneos-version-min=17.0" \
+#        IOS_SIGN_IDENTITY="Apple Distribution: ..." IOS_PROFILE=path/to/profile.mobileprovision \
+#        [IOS_BUILD=<build number>]
+# IOS_BUILD is CFBundleVersion: every upload of the same version needs a new one.
+IOS_IPA ?= Mercury-$(MERCURY_VERSION).ipa
+IOS_BUILD ?= $(MERCURY_VERSION)
+IOS_ASSETS = ios/build-assets
+
+fyne-ui-ios-ipa: fyne-ui-ios
+ifeq ($(TARGET_IOS_SIM),1)
+	$(error an .ipa is a device build: use the iphoneos compiler)
+endif
+	@test -n "$(IOS_SIGN_IDENTITY)" -a -f "$(IOS_PROFILE)" || { \
+		echo "error: set IOS_SIGN_IDENTITY (an Apple Distribution identity) and IOS_PROFILE (its .mobileprovision)"; exit 1; }
+	rm -rf $(IOS_ASSETS) && mkdir -p $(IOS_ASSETS)/Assets.xcassets/AppIcon.appiconset
+	cp ios/AppIcon.appiconset/Contents.json $(FYNE_UI_DIR)/mercury-ui.png $(IOS_ASSETS)/Assets.xcassets/AppIcon.appiconset/
+	xcrun actool --compile $(IOS_UI_APP) --platform iphoneos --minimum-deployment-target 17.0 \
+		--app-icon AppIcon --target-device iphone --target-device ipad \
+		--output-partial-info-plist $(IOS_ASSETS)/icon.plist $(IOS_ASSETS)/Assets.xcassets >/dev/null
+	$(PLIST_BUDDY) -c "Merge $(IOS_ASSETS)/icon.plist" $(IOS_UI_APP)/Info.plist
+	# The SDK and toolchain keys Xcode writes into every app; App Store Connect
+	# rejects an upload without them.
+	P=$(IOS_UI_APP)/Info.plist; V=$$(xcrun --sdk iphoneos --show-sdk-version); B=$$(xcrun --sdk iphoneos --show-sdk-build-version); \
+	XV=$$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\)\.\([0-9]*\).*/\1\20/p'); XB=$$(xcodebuild -version | sed -n 's/^Build version //p'); \
+	$(PLIST_BUDDY) -c "Add :DTPlatformName string iphoneos" -c "Add :DTPlatformVersion string $$V" \
+		-c "Add :DTSDKName string iphoneos$$V" -c "Add :DTSDKBuild string $$B" -c "Add :DTPlatformBuild string $$B" \
+		-c "Add :DTXcode string $$XV" -c "Add :DTXcodeBuild string $$XB" \
+		-c "Add :DTCompiler string com.apple.compilers.llvm.clang.1_0" \
+		-c "Add :BuildMachineOSBuild string $$(sw_vers -buildVersion)" \
+		-c "Add :UIRequiredDeviceCapabilities array" -c "Add :UIRequiredDeviceCapabilities:0 string arm64" \
+		-c "Set :CFBundleVersion $(IOS_BUILD)" $$P
+	cp ios/PrivacyInfo.xcprivacy $(IOS_UI_APP)/
+	cp "$(IOS_PROFILE)" $(IOS_UI_APP)/embedded.mobileprovision
+	# Entitlements from the profile's app ID and team.  The profile's own
+	# keychain group is a wildcard (TEAM.*), which is not valid in an app's
+	# signature, so it is not copied.
+	security cms -D -i "$(IOS_PROFILE)" > $(IOS_ASSETS)/profile.plist
+	A=$$($(PLIST_BUDDY) -c "Print :Entitlements:application-identifier" $(IOS_ASSETS)/profile.plist); \
+	T=$$($(PLIST_BUDDY) -c "Print :TeamIdentifier:0" $(IOS_ASSETS)/profile.plist); \
+	E=$(IOS_ASSETS)/entitlements.plist; rm -f $$E; \
+	$(PLIST_BUDDY) -c "Add :application-identifier string $$A" -c "Add :com.apple.developer.team-identifier string $$T" \
+		-c "Add :get-task-allow bool false" -c "Add :beta-reports-active bool true" $$E >/dev/null
+	codesign --force --sign "$(IOS_SIGN_IDENTITY)" --entitlements $(IOS_ASSETS)/entitlements.plist $(IOS_UI_APP)
+	codesign --verify --deep --strict $(IOS_UI_APP)
+	mkdir -p $(IOS_ASSETS)/Payload && cp -R $(IOS_UI_APP) $(IOS_ASSETS)/Payload/
+	rm -f $(IOS_IPA) && cd $(IOS_ASSETS) && zip -qry $(abspath $(IOS_IPA)) Payload
+	@echo "  -> $(IOS_IPA)  (version $(MERCURY_VERSION), build $(IOS_BUILD))"
+
 # Sign an already-built artifact by hand (binary, .app or .dmg):
 #   make sign-macos-bin BIN=mercury MACOS_SIGN_P12=cert.p12 MACOS_SIGN_P12_PASSWORD=...
 sign-macos-bin:
@@ -1035,7 +1089,7 @@ windows-installer: windows fyne-ui-windows windows-installer-stage
 clean:
 	rm -f mercury mercury.exe *.o *.d .git_hash_stamp .mercury_host mercury-*.zip libmercury_core.a libmercury_core_w64.a libmercury_host.a
 	rm -f host/*.o host/*.d
-	rm -rf ios/*.o ios/*.d ios/Mercury.app ios/MercuryUI.app
+	rm -rf ios/*.o ios/*.d ios/Mercury.app ios/MercuryUI.app ios/build-assets Mercury-*.ipa
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
