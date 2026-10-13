@@ -98,3 +98,5 @@ ios/*.o
 ios/*.d
 ios/Mercury.app/
 ios/MercuryUI.app/
+ios/build-assets/
+Mercury-*.ipa
