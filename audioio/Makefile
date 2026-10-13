@@ -44,7 +44,13 @@ else
         endif
     endif
     ifeq ($(UNAME_S),Darwin)
+        ifeq ($(TARGET_IOS),1)
+               # iOS has no CoreAudio HAL: a RemoteIO unit on the current
+               # route, and the audio session (Objective-C) beside it.
+               OBJS=ffaudio/ffaudio/coreaudio-ios.o ffaudio/ffaudio/coreaudio-ios-session.o
+        else
                OBJS=ffaudio/ffaudio/coreaudio.o
+        endif
     endif
     ifeq ($(UNAME_S),FreeBSD)
                OBJS=ffaudio/ffaudio/oss.o
@@ -65,6 +71,12 @@ ffaudio/ffaudio/dsound.o: ffaudio/ffaudio/dsound.c
 
 ffaudio/ffaudio/coreaudio.o: ffaudio/ffaudio/coreaudio.c
 	$(CC) $(CFLAGS) -std=gnu11 -c ffaudio/ffaudio/coreaudio.c -o ffaudio/ffaudio/coreaudio.o
+
+ffaudio/ffaudio/coreaudio-ios.o: ffaudio/ffaudio/coreaudio-ios.c
+	$(CC) $(CFLAGS) -std=gnu11 -c ffaudio/ffaudio/coreaudio-ios.c -o ffaudio/ffaudio/coreaudio-ios.o
+
+ffaudio/ffaudio/coreaudio-ios-session.o: ffaudio/ffaudio/coreaudio-ios-session.m
+	$(CC) $(CFLAGS) -fobjc-arc -c ffaudio/ffaudio/coreaudio-ios-session.m -o ffaudio/ffaudio/coreaudio-ios-session.o
 
 ffaudio/ffaudio/pulse.o: ffaudio/ffaudio/pulse.c
 	$(CC) $(CFLAGS) -std=gnu11 -c ffaudio/ffaudio/pulse.c -o ffaudio/ffaudio/pulse.o
