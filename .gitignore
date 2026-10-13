@@ -103,3 +103,8 @@ utils/mfsk_puncture_sweep
 
 # Go harness: the seeds random-seed runs used (tests/integration/README.md)
 tests/integration/seed-history.log
+
+# iOS app build
+ios/*.o
+ios/*.d
+ios/Mercury.app/
