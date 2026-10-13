@@ -1,4 +1,4 @@
-//go:build darwin && mercury_embedded
+//go:build darwin && !ios && mercury_embedded
 
 package main
 

@@ -107,6 +107,9 @@ ifneq ($(findstring apple,$(TARGET_MACHINE)),)
   ifneq ($(findstring __APPLE_EMBEDDED_SIMULATOR__,$(APPLE_MACROS)),)
     TARGET_IOS_SIM := 1
   endif
+  # The architecture, for Go (GOARCH): an Intel Mac's simulator is x86_64,
+  # everything else arm64.
+  TARGET_GOARCH := $(if $(findstring __x86_64__,$(APPLE_MACROS)),amd64,arm64)
 endif
 
 # --- Platform-specific flags for aarch64 targets ---

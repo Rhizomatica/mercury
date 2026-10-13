@@ -97,3 +97,4 @@ utils/mfsk_puncture_sweep
 ios/*.o
 ios/*.d
 ios/Mercury.app/
+ios/MercuryUI.app/

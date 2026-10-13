@@ -203,7 +203,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: ios-app
+.PHONY: ios-app fyne-ui-ios
 .PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg sign-macos-bin macos-notarize-dmg fyne-ui-windows windows-installer test integration-test FORCE
 
 prefix ?= /usr
@@ -573,6 +573,28 @@ endif
 		ios/Info.plist.in > $(IOS_APP)/Info.plist
 	codesign --force --sign - $(IOS_APP)
 	@echo "  -> $(IOS_APP)  ($(IOS_PLATFORM))"
+
+# Mercury for iOS with its GUI: the Fyne UI with the engine embedded, the iOS
+# counterpart of fyne-ui-macos.  Same compiler arguments as ios-app.  It is
+# built with go build (GOOS=ios) and bundled here rather than with
+# `fyne package -os ios`, which insists on a signing identity even for the
+# simulator; a device build still needs signing before it installs.
+IOS_UI_APP ?= ios/MercuryUI.app
+
+fyne-ui-ios:
+ifneq ($(TARGET_IOS),1)
+	$(error fyne-ui-ios needs an iOS compiler: CC="xcrun -sdk iphonesimulator clang ...")
+endif
+	$(MAKE) libmercury_core.a
+	mkdir -p $(IOS_UI_APP)
+	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 GOOS=ios GOARCH=$(TARGET_GOARCH) CC="$(CC)" CXX="$(CC)" \
+		go build -tags mercury_embedded \
+		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
+		-o $(abspath $(IOS_UI_APP))/Mercury .
+	sed -e 's/@VERSION@/$(MERCURY_VERSION)/' -e 's/@PLATFORM@/$(IOS_PLATFORM)/' \
+		ios/Info.plist.in > $(IOS_UI_APP)/Info.plist
+	codesign --force --sign - $(IOS_UI_APP)
+	@echo "  -> $(IOS_UI_APP)  ($(IOS_PLATFORM), $(TARGET_GOARCH))"
 
 # Sign an already-built artifact by hand (binary, .app or .dmg):
 #   make sign-macos-bin BIN=mercury MACOS_SIGN_P12=cert.p12 MACOS_SIGN_P12_PASSWORD=...
@@ -960,7 +982,7 @@ windows-installer: windows fyne-ui-windows windows-installer-stage
 
 clean:
 	rm -f mercury mercury.exe *.o *.d .git_hash_stamp mercury-*.zip libmercury_core.a libmercury_core_w64.a
-	rm -rf ios/*.o ios/*.d ios/Mercury.app
+	rm -rf ios/*.o ios/*.d ios/Mercury.app ios/MercuryUI.app
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
