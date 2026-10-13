@@ -13,6 +13,7 @@
 #include "mfsk_ofdm.h"
 #include "mfsk_sync.h"
 #include "mfsk_ldpc.h"
+#include "mercury_prng.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -255,14 +256,15 @@ void test_ldpc_encode_decode(void)
 /* Two decoders at once, as the modem runs them (the call listener beside the
  * payload decoder, a monitor beside either): each with its own workspace,
  * every valid codeword decodes.  With the workspace shared, 792 of 800
- * such decodes failed. */
-typedef struct { unsigned seed; int ok, wrong; mfsk_ldpc_ws_t *ws; } ldpc_job_t;
-
-static double gauss_r(unsigned *s)
-{
-    double u1 = (rand_r(s) + 1.0) / (RAND_MAX + 2.0), u2 = (rand_r(s) + 1.0) / (RAND_MAX + 2.0);
-    return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
-}
+ * such decodes failed.
+ *
+ * The noise comes from mercury_prng, not rand_r(): rand_r() is a different
+ * generator in glibc and in Apple's libc, so the same seed gave each platform
+ * different codewords, and on macOS and iOS one of the 150 needed more than 50
+ * iterations (149 of 150, every run) -- a test that held only for glibc's
+ * noise.  One generator for every platform gives every platform the same
+ * codewords. */
+typedef struct { mercury_prng_t rng; int ok, wrong; mfsk_ldpc_ws_t *ws; } ldpc_job_t;
 
 static void *ldpc_job(void *arg)
 {
@@ -272,12 +274,12 @@ static void *ldpc_job(void *arg)
     float llr[MFSK_LDPC_MAXN];
     for (int t = 0; t < 150; t++)
     {
-        for (int i = 0; i < c->K; i++) info[i] = rand_r(&j->seed) & 1;
+        for (int i = 0; i < c->K; i++) info[i] = (int)(mercury_prng_u31(&j->rng) & 1);
         mfsk_ldpc_encode(c, info, coded);
         /* noisy enough to take several iterations, clean enough to decode */
         for (int i = 0; i < c->N; i++)
         {
-            double x = (coded[i] ? -1.0 : 1.0) + 0.75 * gauss_r(&j->seed);
+            double x = (coded[i] ? -1.0 : 1.0) + 0.75 * mercury_prng_gaussian(&j->rng);
             llr[i] = (float)(2.0 * x / (0.75 * 0.75));
         }
         int conv = j->ws ? mfsk_ldpc_decode_ws(j->ws, c, llr, out, 50)
@@ -293,7 +295,9 @@ void test_ldpc_concurrent_decoders(void)
 {
     for (int own = 0; own < 2; own++)   /* per-thread default, then owned workspaces */
     {
-        ldpc_job_t a = { 1, 0, 0, NULL }, b = { 2, 0, 0, NULL };
+        ldpc_job_t a = { .ws = NULL }, b = { .ws = NULL };
+        mercury_prng_seed(&a.rng, 1);
+        mercury_prng_seed(&b.rng, 2);
         if (own) { a.ws = mfsk_ldpc_ws_new(); b.ws = mfsk_ldpc_ws_new(); }
         pthread_t ta, tb;
         pthread_create(&ta, NULL, ldpc_job, &a);
