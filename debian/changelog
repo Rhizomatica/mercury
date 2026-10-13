@@ -1,3 +1,14 @@
+mercury (1.9.19-1) unstable; urgency=medium
+
+  * Release 1.9.19.
+  * signing: fill the SimplySign login by keyboard (fixes 1.9.18 signing); a one-login test workflow.
+  * mfsk: centre the tones on 1500 Hz, like every codec2 mode; protocol version 2.
+  * modem: fix `mercury -r` -- it decoded no MFSK, hung on SIGINT, lost its output.
+  * docs: JNOS 2.0 over Mercury -- bench setup, tests and problems found.
+  * docs: release notes for 1.9.19.
+
+ -- Rafael Diniz <rafael@riseup.net>  Tue, 13 Oct 2026 00:40:07 +0000
+
 mercury (1.9.18-1) unstable; urgency=medium
 
   * Release 1.9.18.
