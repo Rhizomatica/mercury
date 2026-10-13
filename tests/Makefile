@@ -90,7 +90,7 @@ test: $(TEST_BINS)
 	@echo "\n=== All Tests Passed ===\n"
 
 # Common module tests
-test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_1_16.c ../modem/mfsk/mfsk_ldpc_2_16.c ../modem/mfsk/mfsk_ldpc_3_16.c ../modem/mfsk/mfsk_ldpc_5_16.c ../modem/mfsk/mfsk_ldpc_8_16.c
+test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../common/mercury_prng.c ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_1_16.c ../modem/mfsk/mfsk_ldpc_2_16.c ../modem/mfsk/mfsk_ldpc_3_16.c ../modem/mfsk/mfsk_ldpc_5_16.c ../modem/mfsk/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 test_ring_buffer: common/test_ring_buffer.c $(UNITY_SRC) ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c
