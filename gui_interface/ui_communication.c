@@ -347,6 +347,17 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
         pthread_mutex_unlock(&ctx->cfg_mutex);
 
+    } else if (strcmp(cmd->command, "set_callsign") == 0) {
+        /* The embedded client persists its "My callsign" here so the operator's
+         * callsign survives a restart instead of falling back to "NOCALL"
+         * (issue #381). */
+        pthread_mutex_lock(&ctx->cfg_mutex);
+        strncpy(ctx->cfg.callsign, cmd->value, sizeof(ctx->cfg.callsign) - 1);
+        ctx->cfg.callsign[sizeof(ctx->cfg.callsign) - 1] = '\0';
+        if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
+            HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+        pthread_mutex_unlock(&ctx->cfg_mutex);
+
     } else {
         HLOGW(UI_LOG_TAG, "Unknown UI command: %s", cmd->command);
         return -1;

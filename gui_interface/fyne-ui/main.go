@@ -1189,7 +1189,16 @@ func main() {
 		if useRemote {
 			tcpHost = wsHost
 		}
-		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort, history, tcpHost)
+		// The chat window's "My callsign" is saved back to the engine config
+		// so it is remembered on the next start (issue #381).  It goes through
+		// the same command path as every other setting, so it reaches whichever
+		// engine this UI is attached to (local or remote).
+		persistCallsign := func(callsign string) {
+			if err := sendWSCommand("set_callsign", callsign, "", "", "", "", "", ""); err != nil {
+				appendLog(fmt.Sprintf("Failed to persist callsign: %v\n", err))
+			}
+		}
+		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort, history, tcpHost, persistCallsign)
 	})
 
 	// The master switch for the embedded client.

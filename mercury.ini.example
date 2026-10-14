@@ -63,6 +63,8 @@ broadcast_tcp_port = 8100
 ; Default station callsign, used every startup until a connected client sends
 ; its own MYCALL.  Leave empty (the default) for none, in which case the
 ; embedded chat client falls back to "NOCALL".  Up to 15 characters.
+; The embedded chat client saves the callsign you type back here, so it does
+; not need to be edited by hand (issue #381).
 ;callsign = PU2UIT
 
 ; Verbose mode (default: false)
