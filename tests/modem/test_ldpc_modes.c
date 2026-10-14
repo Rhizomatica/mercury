@@ -35,7 +35,7 @@ void test_voice_modes_are_bounded_by_their_frame_period(void)
 
 /* DATAC1 (H_4096_8192_3d) is a data mode: no budget until the host sets one
  * from its ARQ timing; the policy table decides the algorithm, and for this
- * code that is sum-product (min-sum is 1.4x worse above FER 10 %, review of
+ * code that is sum-product (min-sum is 1.7x worse above FER 10 %, review of
  * #359).  Min-sum stays only on the short codes (DATAC13 here). */
 void test_data_mode_follows_the_policy_table(void)
 {

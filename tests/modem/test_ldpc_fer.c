@@ -5,7 +5,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * Every frame set comes from mercury_prng on one pinned seed, so the counts
- * below are the same on every platform: random info bits, codec2 encode(),
+ * below are reproducible on this host (seed 1 also matches Linux gcc; other
+ * compilers move a frame on some seeds, so every gate carries a margin): random info bits, codec2 encode(),
  * BPSK (bit 0 -> +1) over AWGN at a stated Es/N0, exact LLRs 4 EsNo y
  * (positive = bit 0, codec2 convention).  Every decoder under test sees the
  * same frames, so the comparisons are paired.
@@ -178,9 +179,12 @@ static void test_sp_reproduces_legacy_at_the_cliff(void)
     /* on the cliff: FER between 2.5 % and 30 % (measured 6 % to 16.5 %) */
     TEST_ASSERT_GREATER_OR_EQUAL_INT(5, fe_sp);
     TEST_ASSERT_LESS_OR_EQUAL_INT(60, fe_sp);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, outcome_differs, "sp and legacy disagree on a frame's outcome");
-    TEST_ASSERT_EQUAL_INT(fe_leg, fe_sp);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, converged_differ, "sp and legacy both converged to different bits");
+    /* Not exact: the legacy loop tests parity on the previous pass's extrinsic
+     * signs, the context on its hard decisions, so near the cap the two can end
+     * a frame differently (seeds 32 and 83 of 100 each move one frame).  The
+     * record's "0.00 dB" is a frame-error-rate statement, gated here as counts. */
+    TEST_ASSERT_LESS_OR_EQUAL_INT_MESSAGE(3, outcome_differs, "sp and legacy disagree on more frames than measured");
+    TEST_ASSERT_INT_WITHIN(3, fe_leg, fe_sp);
     TEST_ASSERT_LESS_OR_EQUAL_INT_MESSAGE(2, bits_differ, "more cap-boundary frames than measured");
     free(o_leg); free(o_sp);
     ldpc_ctx_destroy(c);
@@ -270,7 +274,10 @@ static void test_nms16_tracks_nms_and_float_nms_is_scale_invariant(void)
     TEST_ASSERT_INT_WITHIN(COUNT_TOL, fe_nms, fe_nms16);
     TEST_ASSERT_LESS_OR_EQUAL_INT(DISAGREE_TOL, dis);
 
-    static const float scales[] = {0.37f, 2.5f};
+    /* Powers of two only: scaling a float by 2^k is exact, so float min-sum's
+     * scale invariance holds bit for bit.  Other factors round differently on
+     * a frame here and there (0.37 and 2.5 moved one frame on 5 of 100 seeds). */
+    static const float scales[] = {0.25f, 4.0f};
     uint8_t *o1 = malloc(F.N), *o2 = malloc(F.N);
     TEST_ASSERT_NOT_NULL(o1); TEST_ASSERT_NOT_NULL(o2);
     ldpc_ctx_set_alg(c, LDPC_ALG_NMS, 0.0f);
