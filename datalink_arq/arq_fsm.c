@@ -441,8 +441,21 @@ bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now)
     return sess->car_active && sess->car && car_expect_pattern(sess->car);
 }
 
-/* Silence while data is in flight after which the peer is gone. */
+/* Silence after which the peer is gone -- idle or not.  An idle session hears
+ * its peer at least once per idle poll (one every ~90 s at most), so 240 s is
+ * two or more polls unanswered.  It used to apply only with data in flight,
+ * and an idle session whose peer had left polled it for ever (#384: 10 min,
+ * until the operator aborted). */
 #define ARQ_CAR_PEER_LOST_MS 240000
+/* Silence after which a DISCONNECT is not worth repeating: the peer misses
+ * one, and its own lost-peer watchdog ends the session (#384: three tries,
+ * 61 s, for a peer gone 10 min). */
+#define ARQ_CAR_PEER_QUIET_MS 120000
+
+static bool car_peer_quiet(const arq_session_t *sess, uint64_t now)
+{
+    return sess->car_session && now - sess->car_last_rx_ms >= ARQ_CAR_PEER_QUIET_MS;
+}
 
 static void car_io_keydown(void *ctx, const car_frame_t *fr, int n)
 {
@@ -659,10 +672,25 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
 {
     sess->pending_disconnect = false;
     sess->disconnect_deadline_ms = 0;
-    sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
+    bool quiet = car_peer_quiet(sess, now);
+    sess->tx_retries_left = quiet ? 0 : ARQ_DISCONNECT_RETRY_SLOTS;
     if (car_is_master(sess->car))
     {
+        if (quiet)
+            HLOGI(LOG_COMP, "nothing from the peer in %llu s: one DISCONNECT, no retries",
+                  (unsigned long long)((now - sess->car_last_rx_ms) / 1000));
         sess_enter(sess, ARQ_CONN_DISCONNECTING, now + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+        return;
+    }
+    /* The callee keys only in slots of the caller's keydowns: with none heard
+     * in this long there is no slot to wait for. */
+    if (quiet)
+    {
+        HLOGI(LOG_COMP, "Disconnect finalized (nothing from the caller in %llu s)",
+              (unsigned long long)((now - sess->car_last_rx_ms) / 1000));
+        notify_session_ended(sess);
+        if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
+        enter_idle_after_call(sess);
         return;
     }
     sess->car_ending = true;
@@ -1378,10 +1406,10 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         car_on_app_data(sess->car, now);
         break;
     case ARQ_EV_TIMER_CAROUSEL:
-        if (!car_is_idle(sess->car) && now - sess->car_last_rx_ms >= ARQ_CAR_PEER_LOST_MS)
+        if (now - sess->car_last_rx_ms >= ARQ_CAR_PEER_LOST_MS)
         {
-            HLOGW(LOG_COMP, "carousel: nothing from the peer in %d s with data in flight — link lost",
-                  ARQ_CAR_PEER_LOST_MS / 1000);
+            HLOGW(LOG_COMP, "carousel: nothing from the peer in %d s%s — link lost",
+                  ARQ_CAR_PEER_LOST_MS / 1000, car_is_idle(sess->car) ? "" : " with data in flight");
             if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
             notify_session_ended(sess);
             enter_idle_after_call(sess);
@@ -1402,6 +1430,8 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
          * DISCONNECT off a keydown on the air (disconnect_must_wait). */
         if (ev->abort)
             HLOGI(LOG_COMP, "ABORT: dropping what the carousel has not delivered");
+        else if (car_peer_quiet(sess, now) && !car_drained(sess))
+            HLOGI(LOG_COMP, "DISCONNECT: the peer is silent, not waiting to deliver");
         else if (!car_drained(sess) || sess->tx_active)
         {
             /* The configured drain is the least it gets; the carousel's
@@ -1624,7 +1654,7 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     {
         sess->tx_inflight_bytes = (int)car_tx_inflight(sess->car);
         uint64_t d = car_next_deadline(sess->car);
-        if (!car_is_idle(sess->car) && sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS < d)
+        if (sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS < d)
             d = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
         if (sess->pending_disconnect && sess->disconnect_deadline_ms &&
             sess->disconnect_deadline_ms < d)

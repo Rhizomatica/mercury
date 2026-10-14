@@ -148,6 +148,9 @@ typedef struct {
     uint64_t deadline[CAR_NTIMERS]; /* 0 = disarmed */
     uint64_t last_carrier_ms;       /* the peer was last heard on the air */
     bool     tx_busy;               /* our keydown is on the air */
+    uint8_t  held;                  /* why the planned keydown waits (HELD_*):
+                                     * logged once per hold */
+    uint64_t held_since;            /* ...since when, for a busy channel */
 
     /* M: the turn */
     int      phase;                 /* sending my data, polling the peer's, or idle */
