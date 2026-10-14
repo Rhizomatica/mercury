@@ -1918,13 +1918,19 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
         mode_changed = state->codec.ctx != codec.ctx || state->mode != mode;
         if (mode_changed)
         {
-            /* Do NOT reset sync here.  The new mode's decoder is already in
-             * search mode from its last use (or init).  A forced UNSYNC would
-             * zero its rxbuf, starving the preamble correlation normalizer
-             * (same as the was_tx regression).  Stale rxbuf content is
-             * harmless: it won't correlate with the new mode's preamble
-             * pattern, and the non-zero energy keeps the normalizer well
-             * conditioned. */
+            /* Stale rxbuf content is harmless -- it won't correlate with a
+             * new preamble.  A stale sync is not: a decoder left synced
+             * part-way into a frame (switched away mid-burst, or latched
+             * onto a foreign one) comes back still demodulating it, and
+             * steps over the preamble of the next real frame -- every time,
+             * in every mode (test_ofdm_acq).  On air that lost the DATAC17
+             * round that came 0.8 s after the receiver moved to its rung:
+             * missed live, decoded offline from the recorded audio (SNR 7.3,
+             * 6 LDPC iterations).  So a decoder that holds a sync loses it
+             * here.  UNSYNC also zeroes its rxbuf, which once starved the
+             * preamble normaliser (the was_tx regression); it cost no burst
+             * in the test, down to one starting at once, and a decoder not
+             * synced is left exactly as it was. */
             state->demod_count = 0;
 
             /* HARQ Chase soft-combining on the RX decoder.  Every ARQ burst
@@ -1941,6 +1947,12 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
              * pool's.  Nested pool->instance, the documented order. */
             pthread_mutex_t *bl = modem_inst_lock_for(codec.ctx);
             pthread_mutex_lock(bl);
+            int held = 0;
+            float snr_unused;
+            if (codec.be->get_stats)
+                codec.be->get_stats(codec.ctx, &held, &snr_unused);
+            if (held && codec.be->unsync)
+                codec.be->unsync(codec.ctx);
             if (codec.be->harq_reset)
                 codec.be->harq_reset(codec.ctx);
             if (codec.be->set_harq)

@@ -48,28 +48,21 @@ static double gauss(void)
 void setUp(void)    { s_rng = 0xACC0; }
 void tearDown(void) { }
 
-/* Push one noisy burst through a decoder and report what happened.
- * acquired: reached full sync.  delivered: frame out with the CRC intact. */
-static void run_one(int mode, bool fft_en, double snr_db, unsigned seed,
-                    int *acquired, int *delivered)
+/* One burst (preamble, a frame of random payload with its CRC, postamble) of
+ * `mode`, scaled clear of the int16 rail, with noise for `snr_db` (SNR3k)
+ * added.  Returns its length; *sigma is the noise's, for the audio around it. */
+static int make_burst(int mode, double snr_db, unsigned seed, short **out, double *sigma)
 {
     struct freedv *tx = freedv_open(mode);
-    struct freedv *rx = freedv_open(mode);
     TEST_ASSERT_NOT_NULL(tx);
-    TEST_ASSERT_NOT_NULL(rx);
     freedv_set_frames_per_burst(tx, 1);
-    freedv_set_frames_per_burst(rx, 1);
-    freedv_set_acq_fft_enable(rx, fft_en);
 
     int nbytes = freedv_get_bits_per_modem_frame(tx) / 8;
     int ntx    = freedv_get_n_tx_modem_samples(tx);
     int npre   = freedv_get_n_tx_preamble_modem_samples(tx);
     int npost  = freedv_get_n_tx_postamble_modem_samples(tx);
-    int n      = npre + ntx + npost;
-
-    short *burst = malloc(sizeof(short) * (size_t)(n + 8));
+    short *burst = malloc(sizeof(short) * (size_t)(npre + ntx + npost + 8));
     unsigned char *payload = malloc((size_t)nbytes);
-    unsigned char *out = malloc((size_t)nbytes + 8);
     TEST_ASSERT_NOT_NULL(burst);
 
     s_rng = seed;
@@ -98,13 +91,42 @@ static void run_one(int mode, bool fft_en, double snr_db, unsigned seed,
     for (int i = 0; i < k; i++) burst[i] = (short)lrint(burst[i] * g);
     ps *= g * g;
 
-    double sigma = sqrt(ps / (pow(10.0, snr_db / 10.0) * (3000.0 / (FS / 2.0))));
+    *sigma = sqrt(ps / (pow(10.0, snr_db / 10.0) * (3000.0 / (FS / 2.0))));
     for (int i = 0; i < k; i++) {
-        double v = burst[i] + sigma * gauss();
+        double v = burst[i] + *sigma * gauss();
         if (v >  32767.0) v =  32767.0;
         if (v < -32768.0) v = -32768.0;
         burst[i] = (short)lrint(v);
     }
+    free(payload);
+    freedv_close(tx);
+    *out = burst;
+    return k;
+}
+
+static short noise_sample(double sigma)
+{
+    double v = sigma * gauss();
+    if (v >  32767.0) v =  32767.0;
+    if (v < -32768.0) v = -32768.0;
+    return (short)lrint(v);
+}
+
+/* Push one noisy burst through a decoder and report what happened.
+ * acquired: reached full sync.  delivered: frame out with the CRC intact. */
+static void run_one(int mode, bool fft_en, double snr_db, unsigned seed,
+                    int *acquired, int *delivered)
+{
+    struct freedv *rx = freedv_open(mode);
+    TEST_ASSERT_NOT_NULL(rx);
+    freedv_set_frames_per_burst(rx, 1);
+    freedv_set_acq_fft_enable(rx, fft_en);
+
+    short *burst;
+    double sigma;
+    int k = make_burst(mode, snr_db, seed, &burst, &sigma);
+    int n = k;
+    unsigned char *out = malloc((size_t)freedv_get_bits_per_modem_frame(rx) / 8 + 8);
 
     freedv_set_sync(rx, FREEDV_SYNC_UNSYNC);
     int pos = 0, sync = 0, got = 0;
@@ -112,15 +134,8 @@ static void run_one(int mode, bool fft_en, double snr_db, unsigned seed,
         int nin = freedv_nin(rx);
         short chunk[8192];
         if (nin <= 0 || nin > (int)(sizeof(chunk) / sizeof(chunk[0]))) break;
-        for (int i = 0; i < nin; i++) {
-            if (pos + i < k) chunk[i] = burst[pos + i];
-            else {
-                double v = sigma * gauss();
-                if (v >  32767.0) v =  32767.0;
-                if (v < -32768.0) v = -32768.0;
-                chunk[i] = (short)lrint(v);
-            }
-        }
+        for (int i = 0; i < nin; i++)
+            chunk[i] = pos + i < k ? burst[pos + i] : noise_sample(sigma);
         pos += nin;
         int nb = (int)freedv_rawdatarx(rx, out, chunk);
         int st = freedv_get_rx_status(rx);
@@ -130,8 +145,8 @@ static void run_one(int mode, bool fft_en, double snr_db, unsigned seed,
 
     *acquired = sync;
     *delivered = got;
-    free(burst); free(payload); free(out);
-    freedv_close(tx); freedv_close(rx);
+    free(burst); free(out);
+    freedv_close(rx);
 }
 
 /* Across modes and down to where acquisition is genuinely failing, the two
@@ -163,9 +178,78 @@ void test_acq_fft_matches_brute_force(void)
     }
 }
 
+/* A receiver left synced part-way into a burst -- a payload decoder switched
+ * away to another mode mid-frame, then switched back -- resumes demodulating
+ * that frame with whatever audio comes next.  When the next real burst starts
+ * within the rest of the stale frame, its preamble goes by unseen.  On air
+ * that lost a DATAC17 round the recording decodes at SNR 7.3: the round came
+ * 0.8 s after the receiver moved to its rung.  The modem now unsyncs a
+ * decoder that holds a sync when it binds it (rx_decoder_bind_mode), as here.
+ *
+ * Burst A is cut 30 % in, then burst B after `gap` of noise.  B must arrive
+ * after the unsync in every case, down to no gap at all (UNSYNC zeroes rxbuf,
+ * which once starved acquisition) -- and, without it, be lost in at least
+ * one, or this test would not be testing anything. */
+static int stale_then_burst(int mode, unsigned seed, bool unsync, int gap)
+{
+    struct freedv *rx = freedv_open(mode);
+    TEST_ASSERT_NOT_NULL(rx);
+    freedv_set_frames_per_burst(rx, 1);
+    short *a, *b;
+    double sa, sb;
+    int ka = make_burst(mode, 10.0, seed, &a, &sa);
+    int kb = make_burst(mode, 10.0, seed + 1, &b, &sb);
+    int cut = ka * 3 / 10, tail = FS * 2;
+    int total = cut + gap + kb + tail;
+    short *audio = malloc(sizeof(short) * (size_t)total);
+    TEST_ASSERT_NOT_NULL(audio);
+    for (int i = 0; i < total; i++) {
+        int j = i - cut - gap;
+        audio[i] = i < cut ? a[i] : j >= 0 && j < kb ? b[j] : noise_sample(sb);
+    }
+    unsigned char *out = malloc((size_t)freedv_get_bits_per_modem_frame(rx) / 8 + 8);
+    int pos = 0, got = 0;
+    bool rebound = false;
+    while (pos < total) {
+        if (!rebound && pos >= cut) {           /* the receiver comes back to this mode */
+            int held = 0;
+            freedv_get_modem_stats(rx, &held, NULL);
+            if (unsync && held) freedv_set_sync(rx, FREEDV_SYNC_UNSYNC);
+            rebound = true;
+        }
+        int nin = freedv_nin(rx);
+        if (nin <= 0 || pos + nin > total) break;
+        int nb = (int)freedv_rawdatarx(rx, out, audio + pos);
+        pos += nin;
+        if (pos > cut + gap && nb > 0 && !(freedv_get_rx_status(rx) & FREEDV_RX_BIT_ERRORS))
+            got = 1;
+    }
+    free(a); free(b); free(audio); free(out);
+    freedv_close(rx);
+    return got;
+}
+
+void test_unsync_after_a_stale_sync_finds_the_next_burst(void)
+{
+    const int modes[] = { FREEDV_MODE_DATAC3, FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17 };
+    const int gaps[] = { 0, FS * 8 / 10 };   /* none, and the on-air turnaround */
+    int lost_without = 0;
+    for (unsigned m = 0; m < sizeof(modes) / sizeof(modes[0]); m++) {
+        for (unsigned g = 0; g < sizeof(gaps) / sizeof(gaps[0]); g++) {
+            unsigned seed = 0x57A1E + g * 131u + m * 17u;
+            char msg[96];
+            snprintf(msg, sizeof(msg), "mode idx %u, gap %d: burst lost after the unsync", m, gaps[g]);
+            TEST_ASSERT_TRUE_MESSAGE(stale_then_burst(modes[m], seed, true, gaps[g]), msg);
+            lost_without += !stale_then_burst(modes[m], seed, false, gaps[g]);
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(lost_without > 0, "a stale sync never lost the burst: the test proves nothing");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_acq_fft_matches_brute_force);
+    RUN_TEST(test_unsync_after_a_stale_sync_finds_the_next_burst);
     return UNITY_END();
 }
