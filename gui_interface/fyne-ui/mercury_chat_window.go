@@ -62,13 +62,13 @@ func closeMercuryClientWindow() {
 	}
 }
 
-func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string) {
+func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string, persistCallsign func(string)) {
 	if mercuryClientSingleton != nil {
 		mercuryClientSingleton.win.RequestFocus()
 		return
 	}
 	cw := &chatWindow{}
-	cw.build(app, telemetry, arqPort, broadcastPort, history, tcpHost)
+	cw.build(app, telemetry, arqPort, broadcastPort, history, tcpHost, persistCallsign)
 	mercuryClientSingleton = cw
 }
 
@@ -96,6 +96,10 @@ type chatWindow struct {
 	arqPort   *widget.Entry
 	bcastPort *widget.Entry
 	bandwidth *widget.Select
+
+	// persistCallsign, when set, saves the operator's "My callsign" back to
+	// the engine config so it is remembered on the next start (issue #381).
+	persistCallsign func(string)
 
 	connectBtn    *widget.Button
 	disconnectBtn *widget.Button
@@ -149,9 +153,10 @@ func (c *clearableChatBox) TappedSecondary(ev *fyne.PointEvent) {
 	widget.ShowPopUpMenuAtPosition(menu, c.canvas, ev.AbsolutePosition)
 }
 
-func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string) {
+func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string, persistCallsign func(string)) {
 	cw.win = app.NewWindow("Mercury Client")
 	cw.history = history
+	cw.persistCallsign = persistCallsign
 
 	cw.myCall = widget.NewEntry()
 	// The limit includes the callsign, so it moves when the callsign does.
@@ -560,6 +565,11 @@ func (cw *chatWindow) onConnect() {
 		ARQPort:        arqPort,
 		BroadcastPort:  bcastPort,
 		BandwidthHz:    bandwidthFromLabel(cw.bandwidth.Selected),
+	}
+	// Remember the callsign for the next start: the operator set it here, and
+	// without this it falls back to "NOCALL" every time (issue #381).
+	if cw.persistCallsign != nil && strings.TrimSpace(cw.myCall.Text) != "" {
+		cw.persistCallsign(cw.myCall.Text)
 	}
 	mc := client.New(cfg)
 	if err := mc.Connect(); err != nil {

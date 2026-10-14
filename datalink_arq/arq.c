@@ -444,7 +444,9 @@ void arq_set_callsign(const char *callsign)
     memset(arq_conn.secondary_calls, 0, sizeof(arq_conn.secondary_calls));
     arq_conn.secondary_call_count = 0;
     pthread_mutex_unlock(&g_conn_lock);
-    HLOGI(LOG_COMP, "My callsign: %s", arq_conn.my_call_sign);
+    /* Log the argument, not the shared field: the field may have changed by
+     * the time the lock is released. */
+    HLOGI(LOG_COMP, "My callsign: %s", callsign ? callsign : "");
 }
 
 int arq_get_bw(void)
@@ -466,13 +468,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
     switch (msg->type)
     {
     case ARQ_CMD_SET_CALLSIGN:
-        pthread_mutex_lock(&g_conn_lock);
-        snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
-        /* Setting a new primary callsign clears all secondary callsigns */
-        memset(arq_conn.secondary_calls, 0, sizeof(arq_conn.secondary_calls));
-        arq_conn.secondary_call_count = 0;
-        pthread_mutex_unlock(&g_conn_lock);
-        HLOGI(LOG_COMP, "My callsign: %s", msg->arg0);   /* log msg->arg0, not the shared field */
+        arq_set_callsign(msg->arg0);
         /* REGISTERED for this path is sent by the MYCALL handler itself, so it
          * cannot overtake the OK that answers the command -- see
          * data_interfaces/tcp_interfaces.c.  Reconnect still notifies below. */

@@ -33,6 +33,12 @@
 #include "virtual_clock.h"
 #include "message_store.h"
 
+/* cfg_utils.h and arq.h each define their own callsign size; they must stay
+ * equal or the config could hold a callsign longer than the ARQ slot it is
+ * later copied into. */
+_Static_assert(CFG_CALLSIGN_MAX_SIZE == CALLSIGN_MAX_SIZE,
+               "CFG_CALLSIGN_MAX_SIZE must equal CALLSIGN_MAX_SIZE");
+
 /* ---- shared globals ---- */
 _Atomic bool shutdown_ = false;
 static generic_modem_t g_modem;

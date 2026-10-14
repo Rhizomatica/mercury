@@ -242,6 +242,30 @@ void test_legacy_set_radio_config_is_refused(void)
     TEST_ASSERT_EQUAL_STRING("/dev/ttyACM0", r.ptt.device);
 }
 
+/* The embedded chat client persists its "My callsign" with set_callsign so it
+ * is remembered on the next start instead of falling back to "NOCALL". */
+void test_set_callsign_is_saved(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, send_cmd("set_callsign", "PU2UIT-3",
+                                      "", "", "", "", "", ""));
+
+    mercury_config r = reload();
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("PU2UIT-3", r.callsign,
+        "callsign was accepted but not saved: it is lost on restart");
+}
+
+/* Clearing the callsign from the chat window must also persist. */
+void test_set_callsign_clear_is_saved(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, send_cmd("set_callsign", "PU2UIT",
+                                      "", "", "", "", "", ""));
+    TEST_ASSERT_EQUAL_INT(0, send_cmd("set_callsign", "",
+                                      "", "", "", "", "", ""));
+
+    mercury_config r = reload();
+    TEST_ASSERT_EQUAL_STRING("", r.callsign);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -250,5 +274,7 @@ int main(void)
     RUN_TEST(test_set_ptt_config_cm108_is_saved);
     RUN_TEST(test_rejected_set_ptt_config_does_not_touch_the_ini);
     RUN_TEST(test_legacy_set_radio_config_is_refused);
+    RUN_TEST(test_set_callsign_is_saved);
+    RUN_TEST(test_set_callsign_clear_is_saved);
     return UNITY_END();
 }
