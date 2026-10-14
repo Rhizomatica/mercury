@@ -80,6 +80,20 @@
  * station that warns third parties. */
 static uint32_t g_nav_ms;
 void car_set_nav_ms(uint32_t ms) { g_nav_ms = ms; }
+
+/* Small backlogs on the shortest rung (#384).  A poll names the rung for the
+ * whole round, and the best rung for goodput is the wrong one for a short
+ * message: a 40-byte request/response went out in one 7.4 s DATAC17 frame
+ * where one DATAC3 frame, 3.8 s, holds it.  So each end says in its control
+ * frames roughly how much it holds (BL_*, bits 0-1 of byte 13, with bit 2
+ * saying it speaks this), and a poll for a small backlog takes the rung, at
+ * or below the chosen one, whose round carrying it is shortest.  Bits an
+ * older peer leaves zero: it is never asked to do anything new. */
+static bool g_short_rung = true;
+void car_set_short_rung(bool on) { g_short_rung = on; }
+enum { BL_NONE, BL_SMALL, BL_MEDIUM, BL_LARGE };
+#define BL_SMALL_BYTES  90    /* one DATAC3 frame's pieces, with the check and a margin */
+#define BL_MEDIUM_BYTES 460   /* ...one DATAC1 frame's */
 static float g_nav_below_db = 99.0f;
 static double g_nav_loss = 0.3;
 void car_set_nav_below_db(float db) { g_nav_below_db = db; }
@@ -184,6 +198,15 @@ size_t car_tx_inflight(const car_t *c)
 }
 
 const char *car_failed(const car_t *c) { return c->failed; }
+/* Every block heard of has decoded and passed its check.  Data pieces reach
+ * the application as they arrive, ahead of the check (spec: fail closed), so
+ * a transfer is verified only when this holds as well. */
+bool car_rx_verified(const car_t *c)
+{
+    for (int o = 0; o < CAR_WIN; o++)
+        if (c->rb[o].known && !c->rb[o].done) return false;
+    return true;
+}
 int car_overruns(const car_t *c) { return c->overruns; }
 
 static uint64_t mslot_lo(const car_t *c, const car_mlog_t *l, int i);
@@ -298,6 +321,7 @@ static int keydown_cap(int lv);
 static int round_n(const car_t *c);
 static bool both_ok(const car_t *c, int lv);
 static bool offer_both(car_t *c, uint64_t now);
+static size_t m_peer_expect(const car_t *c);
 static uint64_t turn_quantum(int lv)
 {
     uint64_t two = 2 * round_air(lv, keydown_cap(lv));
@@ -332,6 +356,8 @@ typedef struct {
     int      slot;                  /* DATA: the slot it went in */
     bool     pat_anchor;            /* DATA: ...of a pattern of M's */
     bool     has_ctl;               /* DATA: an inline poll rides in it */
+    bool     short_rung;            /* CTL: the sender speaks the backlog hint */
+    uint8_t  backlog;               /* CTL: ...and holds about this much (BL_*) */
     uint8_t  ctl[CAR_POLL_BYTES];
     uint64_t inline_end;            /* POLL: inline, its keydown ends then */
 } msg_t;
@@ -351,7 +377,8 @@ static void encode_ctl(const msg_t *m, uint8_t *b)
     b[10] = (uint8_t)(m->gap < 0 ? 255 : m->gap);
     b[11] = (uint8_t)((m->snr_level & 7) << 5 | (m->h_level & 7) << 2);
     b[12] = (uint8_t)((m->h_n & 0x0F) << 4 | (m->h_id & 0x0F));
-    b[13] = (uint8_t)((m->hi & 0x0F) << 4 | (m->unopened ? 1 : 0) << 3);
+    b[13] = (uint8_t)((m->hi & 0x0F) << 4 | (m->unopened ? 1 : 0) << 3 | (m->short_rung ? 1 : 0) << 2 |
+                      (m->backlog & 3));
 }
 
 /* A control frame: on the control mode, or on MFSK behind CTL_FLOOR_MARK to a
@@ -400,6 +427,8 @@ static bool decode_ctl(const uint8_t *b, size_t len, msg_t *m)
     m->h_id = b[12] & 0x0F;
     m->hi = b[13] >> 4;
     m->unopened = (b[13] >> 3) & 1;
+    m->short_rung = (b[13] >> 2) & 1;
+    m->backlog = b[13] & 3;
     if (m->level >= CAR_NLEVELS || m->h_level >= CAR_NLEVELS || m->snr_level >= CAR_NLEVELS) return false;
     /* ...and so do more frames than a keydown on the rung can hold: a poll
      * read with its size flipped had S key five MFSK frames, 72 s, into a
@@ -1201,6 +1230,7 @@ static void deliver_in_order(car_t *c)
             for (int off = r->delivered; off < upto; off++, n++)
                 buf[n] = r->piece[off / P][off % P];
             if (c->io.deliver) c->io.deliver(c->io.ctx, buf, (size_t)n);
+            c->rx_run += (size_t)n;
             r->delivered = upto;
             c->deliver_seq++;
         }
@@ -1214,6 +1244,59 @@ static void deliver_in_order(car_t *c)
 static bool peer_direction_done(const car_t *c)
 {
     return c->status_seen || (!c->peer_unopened && peer_outstanding(c) == 0);
+}
+
+/* What I hold, as the hint says it: the application's bytes not yet in a
+ * block and what the receiver still needs of the open ones. */
+static uint8_t my_backlog(const car_t *c)
+{
+    size_t b = c->io.tx_pending ? c->io.tx_pending(c->io.ctx) : 0;
+    for (int i = 0; i < c->nsb; i++) b += (size_t)c->sb[i].need * (size_t)piece_of(c);
+    return !b ? BL_NONE : b <= BL_SMALL_BYTES ? BL_SMALL : b <= BL_MEDIUM_BYTES ? BL_MEDIUM : BL_LARGE;
+}
+static void stamp_hint(const car_t *c, msg_t *m)
+{
+    if (!g_short_rung) return;
+    m->short_rung = true;
+    m->backlog = my_backlog(c);
+}
+
+/* The rung at or below lv whose round carrying bytes is shortest, and that
+ * round's frames in *pn; lv itself (and *pn untouched) when none beats it.
+ * Never the floor: MFSK is the longest frame there is. */
+static int short_rung(const car_t *c, int lv, size_t bytes, int *pn)
+{
+    if (lv <= 1 || !bytes) return lv;
+    double margin = c->loss_est * 1.3 + 0.05;
+    int P = piece_of(c);
+    int pieces = (int)ceil((double)(bytes + BLOCK_CHECK) / P * (1.0 + margin));
+    int best = lv, best_n = 0;
+    uint64_t best_air = UINT64_MAX;
+    for (int l = lv; l >= 1; l--) {
+        if (l != lv && !level_allowed(c, l)) continue;
+        int ppf = pieces_per_frame(c, l);
+        if (ppf < 1) continue;
+        int n = (pieces + ppf - 1) / ppf;
+        if (n > keydown_cap(l)) continue;
+        uint64_t a = round_air(l, n);
+        if (a < best_air) { best_air = a; best = l; best_n = n; }
+    }
+    if (best != lv) *pn = best_n;
+    return best;
+}
+/* The peer's next message, before it says: as long as its last one -- a
+ * request/response application's messages run to a size -- or, none yet,
+ * a short one.  0 (no guess) past what a short rung carries. */
+static size_t peer_next_guess(const car_t *c)
+{
+    size_t b = c->peer_last_msg ? c->peer_last_msg : BL_SMALL_BYTES;
+    return b <= BL_MEDIUM_BYTES ? b : 0;
+}
+/* The peer's backlog as it last said, in bytes: 0 when unknown or large. */
+static size_t peer_backlog_bytes(const car_t *c)
+{
+    if (!g_short_rung || !c->peer_short) return 0;
+    return c->peer_backlog == BL_SMALL ? BL_SMALL_BYTES : c->peer_backlog == BL_MEDIUM ? BL_MEDIUM_BYTES : 0;
 }
 
 static void fill_poll(car_t *c, msg_t *m)
@@ -1237,6 +1320,7 @@ static void fill_poll(car_t *c, msg_t *m)
     m->has_data = has_data(c);
     m->snr_level = c->snr_level;
     m->ctl_deaf = c->ctl_deaf;
+    stamp_hint(c, m);
 }
 
 static void take_pieces(car_t *c, const msg_t *m)
@@ -1471,6 +1555,11 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
     c->rx_break = false; c->floor_patterns = 0;
     c->floor_streaming = false;
     if (n) { c->poll_level = lv; c->poll_n = n; bind_rx(c, lv); }
+    else if (c->name_lv > 0) {                /* an ack saying where I listen next */
+        m.level = c->name_lv;
+        c->poll_level = c->name_lv; bind_rx(c, c->name_lv);
+    }
+    c->name_lv = 0;
     c->round_seen = 0; c->round_frames = n; c->status_seen = false;
     c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
     int nd = 0;
@@ -1533,6 +1622,7 @@ static void send_status(car_t *c, uint8_t id)
     m.hi = (uint8_t)(c->next_blk_id - 1); m.snr_level = c->snr_level;
     m.ctl_deaf = c->ctl_deaf;
     m.has_data = has_data(c); m.unopened = unopened(c);
+    stamp_hint(c, &m);
     put_ctl(c, &fr[0], &m);
     keydown(c, fr, 1);
 }
@@ -1582,6 +1672,7 @@ static void send_req(car_t *c, uint8_t id)
     m.level = c->last_lv >= 0 ? c->last_lv : 0; m.n = c->last_nf; m.h_id = c->last_mk;
     m.has_data = has_data(c); m.unopened = unopened(c);
     m.hi = (uint8_t)(c->next_blk_id - 1); m.snr_level = c->snr_level; m.ctl_deaf = c->ctl_deaf;
+    stamp_hint(c, &m);
     put_ctl(c, &fr[0], &m);
     keydown(c, fr, 1);
 }
@@ -1662,9 +1753,31 @@ static void rx_measure(car_t *c, int lv, uint64_t now)
 }
 
 /* What to ask the sender next: KD_POLL (lv, n), a pattern, or KD_DONE. */
+/* What S expects of M's next round: all of what M still has to send, when
+ * every block is known here and M has nothing unopened; else as M said. */
+static size_t s_peer_expect(const car_t *c)
+{
+    if (!g_short_rung) return 0;
+    int out = peer_outstanding(c);
+    if (out >= 0 && !c->peer_unopened) {
+        size_t want = 0;
+        for (int o = 0; o < out; o++) {
+            const car_rblock_t *r = &c->rb[(uint8_t)(c->rbase + o) % CAR_WIN];
+            if (!r->known) return peer_backlog_bytes(c);
+            if (!r->done) want += (size_t)(r->K - r->have) * (size_t)piece_of(c);
+        }
+        if (want) return want;
+    }
+    return peer_backlog_bytes(c);
+}
+
 static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
 {
-    if (peer_direction_done(c)) { car_trace(c, "rx -> done"); return KD_DONE; }
+    if (peer_direction_done(c)) {
+        car_trace(c, "rx -> done");
+        if (c->rx_run) { c->peer_last_msg = c->rx_run; c->rx_run = 0; }
+        return KD_DONE;
+    }
     bool floor = c->poll_level == 0 && c->io.pattern;
     int lv = choose_level(c, now);
     /* Leave the floor only when a poll can reach the sender: asking for
@@ -1689,6 +1802,11 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
         return c->rx_break ? KD_PATTERN_BREAK : KD_PATTERN_ACK;
     }
     int n = poll_size(c, lv, now);
+    {
+        int sl = short_rung(c, lv, s_peer_expect(c), &n);
+        if (sl != lv) car_trace(c, "rx: a small backlog -- lv=%d n=%d, not lv=%d", sl, n, lv);
+        lv = sl;
+    }
     /* Above the floor a round to be followed by the same again is answered
      * by a pattern: 0.64 s that reach the sender ~10 dB below a poll, where
      * a lost poll costs a REQ and another poll (NVIS: one poll in four, ~11 s
@@ -1937,13 +2055,27 @@ static bool both_ok(const car_t *c, int lv)
            c->loss_est < 0.3 && c->tx_loss < 0.3;
 }
 
+/* What M expects S to send, for the rung of a poll: the backlog S last said
+ * -- and, idle, nothing said yet, a small answer: a request/response
+ * application's.  One that turns out large costs a short round, then the
+ * poll after it is sized for it. */
+static size_t m_peer_expect(const car_t *c)
+{
+    if (!g_short_rung || !c->peer_short) return 0;
+    if (c->peer_backlog == BL_NONE) return peer_next_guess(c);
+    return peer_backlog_bytes(c);
+}
+
 static void m_start_recv(car_t *c, uint64_t now)
 {
     m_enter(c, PH_RECV, now);
     c->silent_polls = 0;
     int lv = choose_level(c, now);
     if (c->ctl_deaf && c->io.pattern) lv = 0;
-    m_plan(c, has_data(c) && both_ok(c, lv) ? KD_BOTH : KD_POLL, lv, poll_size(c, lv, now));
+    int n = poll_size(c, lv, now);
+    int sl = short_rung(c, lv, m_peer_expect(c), &n);
+    if (sl != lv) car_trace(c, "rx: a small backlog -- lv=%d n=%d, not lv=%d", sl, n, lv);
+    m_plan(c, has_data(c) && both_ok(c, lv) ? KD_BOTH : KD_POLL, sl, n);
 }
 
 static void m_decide_idle(car_t *c, uint64_t now)
@@ -1996,7 +2128,9 @@ static bool offer_both(car_t *c, uint64_t now)
     m_enter(c, PH_RECV, now);
     c->silent_polls = 0;
     c->offered = true;
-    m_plan(c, KD_BOTH, lv, poll_size(c, lv, now));
+    int n = poll_size(c, lv, now);
+    lv = short_rung(c, lv, m_peer_expect(c), &n);
+    m_plan(c, KD_BOTH, lv, n);
     return true;
 }
 
@@ -2160,6 +2294,13 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
         c->floor_waiting = c->pat_waiting = false;
         c->ok_lv = c->last_lv; c->fell_back = false;
         if (m->n) { c->tx_level = cap_level(c, m->level); c->tx_n = m->n; }
+        else if (g_short_rung && m->short_rung && m->level > 0) {
+            /* S's ack names where it listens for my next round */
+            int nl = cap_level(c, m->level);
+            if (nl != c->tx_level) c->tx_n = 1;   /* the size it asked for was another rung's */
+            c->tx_level = nl;
+            c->ok_lv = c->tx_level;
+        }
         car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
         c->s_answered = true;
         /* Polled for its round as well, it answered with no round: it had
@@ -2208,6 +2349,23 @@ static void s_heard_m(car_t *c, uint64_t now)
     c->deadline[CAR_T_W] = 0;
 }
 
+/* M's direction is done: its next round, when its application writes one,
+ * is most likely a short message (a request, a reply).  Listen for it on the
+ * shortest rung that carries one, and say so in the ack -- to a peer that
+ * speaks the hint, and above the floor.  A long one costs a short first
+ * round; the poll after it is sized for it. */
+static int s_idle_rung(car_t *c, uint64_t now)
+{
+    if (!g_short_rung || !c->peer_short) return 0;
+    if (c->io.pattern && (c->ctl_deaf || c->poll_level == 0)) return 0;
+    /* From the rung M's rounds last came on, not a probe: an ack is no place
+     * to try a rung out. */
+    int lv = c->s_prev_lv >= 1 ? c->s_prev_lv : choose_level(c, now), n = 1;
+    size_t guess = peer_next_guess(c);
+    if (lv <= 1 || !guess) return 0;
+    return short_rung(c, lv, guess, &n);
+}
+
 /* S answers M's round (or its REQ about one) as its receiver. */
 static void s_answer(car_t *c, uint64_t now, bool req)
 {
@@ -2225,7 +2383,8 @@ static void s_answer(car_t *c, uint64_t now, bool req)
     int lv = 0, n = 0;
     int kind = rx_next(c, now, &lv, &n);
     switch (kind) {
-    case KD_DONE:          send_poll(c, 0, 0, c->anc.mk); break;    /* ack only */
+    case KD_DONE:          c->name_lv = s_idle_rung(c, now);
+                           send_poll(c, 0, 0, c->anc.mk); break;    /* ack only */
     case KD_PATTERN_ACK:   send_pattern(c, CAR_PATTERN_ACK); break;
     case KD_PATTERN_BREAK: send_pattern(c, CAR_PATTERN_BREAK); break;
     default:
@@ -2246,7 +2405,7 @@ static void s_answer_both(car_t *c, uint64_t now)
     rx_trace(c);
     int lv = 0, n = 0;
     int kind = rx_next(c, now, &lv, &n);
-    if (kind == KD_DONE) { lv = 0; n = 0; }
+    if (kind == KD_DONE) { lv = 0; n = 0; c->name_lv = s_idle_rung(c, now); }
     else if (kind != KD_POLL) { lv = c->poll_level; n = c->poll_n; }   /* a pattern carries no round */
     if (n && c->ctl_deaf && c->io.pattern) lv = 0;
     c->s_asked_new = n && c->s_prev_lv >= 0 && lv != c->s_prev_lv;
@@ -2540,6 +2699,7 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     if (control || ctl) {
         if (!ctl) return;
         note_peer_ctl_deaf(c, m.ctl_deaf);
+        c->peer_short = m.short_rung; c->peer_backlog = m.backlog;
         if (c->master) m_on_ctl(c, now, &m);
         else           s_on_ctl(c, now, &m, control ? ARQ_CONTROL_MODE : mode);
         return;
@@ -2552,6 +2712,7 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     if (m.has_ctl && lv == c->rx_level && decode_ctl(m.ctl, CAR_POLL_BYTES, &k) && k.type == M_POLL && k.h_n) {
         /* the poll first: it says what the round it rides in is */
         k.inline_end = now + (uint64_t)m.left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS;
+        c->peer_short = k.short_rung; c->peer_backlog = k.backlog;
         if (c->master) m_on_ctl(c, now, &k);
         else           s_on_ctl(c, now, &k, mode);
     }

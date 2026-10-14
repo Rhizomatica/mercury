@@ -428,6 +428,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
     nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
     car_set_nav_ms(nav_air);
+    car_set_short_rung(!(getenv("CAR_SHORT") && !strcmp(getenv("CAR_SHORT"), "0")));   /* A/B */
     car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
     car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
     snr_biased = getenv("CAR_SNR_BIAS") != NULL;
@@ -550,7 +551,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         }
         for (int i = 0; i < 2; i++) car_on_time(&S[i].car, now_ms);
         if (car_failed(&S[0].car) || car_failed(&S[1].car)) break;   /* the session ends */
+        /* Done when everything has arrived and been checked: data reaches the
+         * application ahead of its block's check, and a corrupt piece in a
+         * block whose check piece had not come yet passed as a completed
+         * transfer. */
         if (S[1].rx_len >= S[0].tx_len && S[0].rx_len >= S[1].tx_len &&
+            car_rx_verified(&S[0].car) && car_rx_verified(&S[1].car) &&
             (!chat_n || (chat_sent[0] == chat_n && chat_sent[1] == chat_n))) { done_ms = now_ms; break; }
     }
     while (nev) { event_t e; pop(&e); free(e.bytes); }
