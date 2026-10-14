@@ -241,6 +241,11 @@ typedef struct {
     bool     status_seen;
     int      silent_polls;
     bool     peer_unopened;
+    bool     peer_short;            /* the peer speaks the backlog hint (car_set_short_rung) */
+    uint8_t  peer_backlog;          /* ...and what it last said it holds (BL_*) */
+    int      name_lv;               /* S: the rung my next ack says I listen on (0: none) */
+    size_t   rx_run;                /* bytes delivered since the peer's direction last completed */
+    size_t   peer_last_msg;         /* ...and that size, the last time it did */
     uint8_t  peer_hi;
     uint8_t  polled_base;           /* the window base my last poll reported */
     bool     round_fresh;           /* this round carried a block I do not have yet */
@@ -312,6 +317,7 @@ int  car_ui_rx_mode(const car_t *c);
 int  car_ui_peer_mode(const car_t *c);
 bool car_is_idle(const car_t *c);
 bool car_is_drained(const car_t *c);   /* delivered both ways (a DISCONNECT may go) */
+bool car_rx_verified(const car_t *c);  /* every block heard of has passed its check */
 /* The session can no longer be trusted: a block failed its check, or did not
  * decode.  What it carried may already be partly delivered (the stream runs
  * ahead of the check), so the session must end -- never carry on.  NULL: fine. */
@@ -325,6 +331,7 @@ bool car_slot_reserved(const car_t *m, uint64_t start, uint64_t end);
 /* Every keydown of mine opens with a NAV header this long (0: none), where
  * car_wants_nav() says the peer may not sense it otherwise (car_set_nav_below_db). */
 void car_set_nav_ms(uint32_t ms);
+void car_set_short_rung(bool on);   /* small backlogs on the shortest rung (default on) */
 void car_set_nav_below_db(float db);
 void car_set_nav_loss(double loss);   /* ...or at this loss estimate (default 0.3) */
 bool car_wants_nav(const car_t *c);

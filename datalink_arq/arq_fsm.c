@@ -622,6 +622,11 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     car_set_nav_ms(nav_on ? ARQ_NAV_LEAD_MS : 0);
     HLOGI(LOG_COMP, "carousel: NAV headers %s", nav_on ? "below 0 dB" : "off (MERCURY_NAV=0)");
     car_set_nav_below_db(0.0f);
+    /* Small backlogs on the shortest rung (#384); MERCURY_SHORT_RUNG=0 turns
+     * it off (A/B on air).  Off, the hint bits stay zero: the peer sees an
+     * older station. */
+    const char *sr_env = getenv("MERCURY_SHORT_RUNG");
+    car_set_short_rung(!(sr_env && !strcmp(sr_env, "0")));
     car_set_nav_loss(2.0);
     sess->nav_busy_until_ms = 0;
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);

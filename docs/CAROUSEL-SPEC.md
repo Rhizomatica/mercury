@@ -251,7 +251,7 @@ Encoder `encode_ctl` (C:225-241); decoder `decode_ctl` (C:262-291).
 | b10 | gap = first missing **data** piece of the base block; 255 = none |
 | b11 | [7:5] snr_level, [4:2] h_level, [1:0] 0 |
 | b12 | [7:4] h_n, [3:0] h_id |
-| b13 | [7:4] hi, [3] unopened, [2:0] 0 |
+| b13 | [7:4] hi, [3] unopened, [2] short_rung, [1:0] backlog (0 none, 1 ≤ 90 B, 2 ≤ 460 B, 3 more) |
 
 Reject if `level`, `h_level` or `snr_level` ≥ 7 (C:289). Reserved bits are not checked.
 
@@ -260,13 +260,20 @@ Field use per type:
 | Field | POLL (receiver → sender) | HANDOVER (receiver taking the turn) | STATUS (sender, polled, nothing to send) |
 |---|---|---|---|
 | poll_id | new id (or same id on a repeat) (C:1131-1132) | `heard_poll_id`: last poll **I heard** from the peer (C:1113) | the poll it answers (C:680) |
-| level, n | rung and frame count asked; n=0 = "ack only, done" | 0 (unset) | 0 |
+| level, n | rung and frame count asked; n=0 = "ack only, done", where `level` > 0 with `short_rung` names the rung I listen on next (`s_idle_rung`) | 0 (unset) | 0 |
 | base, need[], gap, loss16 | my receive window (`fill_poll`, C:1042-1062) | same | 0 (unset) |
 | has_data | I have data to send (C:1059) | same (true) | 0 |
 | snr_level | my `snr_level` | same | sender's `snr_level` |
 | ctl_deaf | my `ctl_deaf` | same | same |
 | h_level, h_n, h_id | 0 | rung, frames and poll id of my round that follows in this keydown (C:1108) | 0 |
 | hi, unopened | 0 | my `next_blk_id-1`, `unopened()` (C:1109-1110) | `next_blk_id-1`, 0 (C:681) |
+| short_rung, backlog | `stamp_hint`: 1 and `my_backlog()`, or 0 and 0 with `MERCURY_SHORT_RUNG=0` | same | same |
+
+**Backlog hint [since #386].** A station that sets `short_rung` sizes a poll
+for a small backlog on the rung at or below the chosen one whose round
+carrying it is shortest (`short_rung()`), never the floor. Bits 0-2 are zero
+from 1.9.19 and older, which never read them: such a peer is never asked for
+anything new, and a peer that sends zeros gets the old behaviour.
 
 Carrier: `put_ctl` (C:245-260): if `ctl_on_floor(c)` (pattern-capable and the
 peer reported `ctl_deaf`), the frame goes on **MFSK**, full 98-byte payload:
