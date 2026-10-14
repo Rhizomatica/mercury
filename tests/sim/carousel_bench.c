@@ -5,6 +5,8 @@
  *
  *   CAR_TRACE=1  print every keydown
  *   SIM_STATS=1  frames and airtime per mode
+ *   CAR_CHAT, CAR_SCRIPT, CAR_KBD, CAR_PACE   application traffic (carousel_sim.c);
+ *                each message's delay, written to delivered, is reported
  *
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -32,5 +34,15 @@ int main(int argc, char **argv)
            (unsigned long long)seed, argv[2], bidir ? "bidir" : "oneway", r.a2b, r.b2a,
            r.intact ? "OK" : "CORRUPT", (unsigned long long)r.done_ms, r.collisions, r.overruns,
            r.stalled ? " STALLED" : "");
+    if (r.msgs) {
+        /* delays in order, mean, the slowest, and the air both stations used */
+        uint64_t d[CAR_SIM_MSGS], sum = 0;
+        int n = 0;
+        for (int k = 0; k < r.msgs; k++) if (r.msg_delay_ms[k] != UINT64_MAX) { d[n++] = r.msg_delay_ms[k]; sum += d[n - 1]; }
+        for (int i = 1; i < n; i++) for (int j = i; j > 0 && d[j] < d[j - 1]; j--) { uint64_t x = d[j]; d[j] = d[j - 1]; d[j - 1] = x; }
+        printf("msgs=%d delivered=%d delay_mean=%.1f delay_p90=%.1f delay_max=%.1f air=%.1f+%.1f\n", r.msgs, n,
+               n ? sum / 1000.0 / n : 0.0, n ? d[(n * 9 + 9) / 10 - 1] / 1000.0 : 0.0, n ? d[n - 1] / 1000.0 : 0.0,
+               r.air_ms[0] / 1000.0, r.air_ms[1] / 1000.0);
+    }
     return r.intact ? 0 : 2;
 }

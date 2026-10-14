@@ -12,6 +12,7 @@
 #ifndef CAR_SIM_BYTES
 #define CAR_SIM_BYTES 8192        /* each direction */
 #endif
+#define CAR_SIM_MSGS 64           /* a traffic script's messages (carousel_sim.c) */
 
 typedef struct {
     size_t   a2b, b2a;            /* bytes delivered each way */
@@ -27,6 +28,9 @@ typedef struct {
     int      kd_overlaps;         /* keydowns that started while the peer was on the air */
     int      kd_unexplained;      /* ... over a keydown of the peer that could be sensed */
     const char *failed;           /* a station failed the session (car_failed), or NULL */
+    uint64_t air_ms[2];           /* each station on the air */
+    int      msgs;                /* a traffic script's messages (0: a transfer) */
+    uint64_t msg_delay_ms[CAR_SIM_MSGS];   /* ...each from written to delivered (UINT64_MAX: never) */
 } car_sim_result_t;
 
 /* Exploration: from the next run on, no random loss -- the frames (and
