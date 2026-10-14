@@ -260,7 +260,7 @@ Field use per type:
 | Field | POLL (receiver → sender) | HANDOVER (receiver taking the turn) | STATUS (sender, polled, nothing to send) |
 |---|---|---|---|
 | poll_id | new id (or same id on a repeat) (C:1131-1132) | `heard_poll_id`: last poll **I heard** from the peer (C:1113) | the poll it answers (C:680) |
-| level, n | rung and frame count asked; n=0 = "ack only, done", where `level` > 0 with `short_rung` names the rung I listen on next (`s_idle_rung`) | 0 (unset) | 0 |
+| level, n | rung and frame count asked; n=0 = "ack only, done", where `level` > 0 with `short_rung` names the rung I listen on next (`s_idle_rung`), or else the one I listen on now: every ack to a peer that speaks the hint names one (`specs/rungs`) | 0 (unset) | 0 |
 | base, need[], gap, loss16 | my receive window (`fill_poll`, C:1042-1062) | same | 0 (unset) |
 | has_data | I have data to send (C:1059) | same (true) | 0 |
 | snr_level | my `snr_level` | same | sender's `snr_level` |
@@ -271,7 +271,10 @@ Field use per type:
 
 **Backlog hint [since #386].** A station that sets `short_rung` sizes a poll
 for a small backlog on the rung at or below the chosen one whose round
-carrying it is shortest (`short_rung()`), never the floor. Bits 0-2 are zero
+carrying it is shortest (`short_rung()`), never the floor; so is the
+caller's idle poll, for a reply the size of the callee's last message.  A
+rung an ack names becomes the callee's `s_prev_lv`, where its fallback
+(`CAR_T_W`) returns, as the caller's (`ok_lv`) does. Bits 0-2 are zero
 from 1.9.19 and older, which never read them: such a peer is never asked for
 anything new, and a peer that sends zeros gets the old behaviour.
 

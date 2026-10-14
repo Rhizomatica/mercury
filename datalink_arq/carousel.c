@@ -1558,7 +1558,14 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
     else if (c->name_lv > 0) {                /* an ack saying where I listen next */
         m.level = c->name_lv;
         c->poll_level = c->name_lv; bind_rx(c, c->name_lv);
-    }
+        /* ...the rung M's rounds come on now, as M takes it (its ok_lv): a
+         * later poll's fallback (CAR_T_W) comes back here, where M's does */
+        c->s_prev_lv = c->name_lv;
+    } else if (!c->master && g_short_rung && c->peer_short && c->rx_level > 0)
+        /* ...or where I listen now: every ack says, or a repeat of one that
+         * was lost, naming nothing, left M on a rung I had left
+         * (specs/rungs/RungAgreement.tla, Agree) */
+        m.level = c->rx_level;
     c->name_lv = 0;
     c->round_seen = 0; c->round_frames = n; c->status_seen = false;
     c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
@@ -2258,7 +2265,9 @@ static void m_timer(car_t *c, uint64_t now)
         /* Idle: ask whether S has data, for one frame on its rung. */
         m_enter(c, PH_RECV, now);
         c->idle_poll = true;
-        m_plan(c, KD_POLL, c->poll_level, 1);
+        /* ...sized for what S would send: a line typed at its end, a reply */
+        int n = 1, lv = short_rung(c, c->poll_level, m_peer_expect(c), &n);
+        m_plan(c, KD_POLL, lv, n);
         m_try(c, now);
         return;
     }
@@ -2292,6 +2301,11 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
         c->peer_has_data = m->has_data;
         c->tx_loss = m->loss16 / 15.0;
         c->floor_waiting = c->pat_waiting = false;
+        /* Taken as heard on last_lv even when this answers a REQ about a
+         * round S missed: then a lost round after it can go once more where
+         * S is not listening, without bound (specs/rungs, OkOnReq).  Taking
+         * it only from answers to rounds bounds that at one, but cost more
+         * than it saved in the sim (nvis: chat -5 %, a UUCP-like mix +9 %). */
         c->ok_lv = c->last_lv; c->fell_back = false;
         if (m->n) { c->tx_level = cap_level(c, m->level); c->tx_n = m->n; }
         else if (g_short_rung && m->short_rung && m->level > 0) {
