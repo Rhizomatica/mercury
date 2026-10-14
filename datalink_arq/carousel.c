@@ -167,6 +167,14 @@ bool car_is_idle(const car_t *c)
 {
     return c->master ? c->idle : !has_data(c) && peer_direction_done(c);
 }
+/* Everything delivered both ways: mine retired, and all the peer opened
+ * here.  The caller's idle comes only after its ack and an idle poll; a
+ * DISCONNECT that waited for it went 32 s after the application's (sim,
+ * Winlink FF/FQ: the B2 client forces the disconnect at 30 s, #384). */
+bool car_is_drained(const car_t *c)
+{
+    return !has_data(c) && peer_direction_done(c);
+}
 
 size_t car_tx_inflight(const car_t *c)
 {

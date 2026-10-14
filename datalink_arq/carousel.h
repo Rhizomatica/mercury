@@ -311,6 +311,7 @@ int  car_ui_tx_mode(const car_t *c);
 int  car_ui_rx_mode(const car_t *c);
 int  car_ui_peer_mode(const car_t *c);
 bool car_is_idle(const car_t *c);
+bool car_is_drained(const car_t *c);   /* delivered both ways (a DISCONNECT may go) */
 /* The session can no longer be trusted: a block failed its check, or did not
  * decode.  What it carried may already be partly delivered (the stream runs
  * ahead of the check), so the session must end -- never carry on.  NULL: fine. */

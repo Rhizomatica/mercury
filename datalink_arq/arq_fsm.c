@@ -720,7 +720,7 @@ static bool car_disconnect_must_wait(arq_session_t *sess, const arq_event_t *ev,
  * can go. */
 static bool car_drained(const arq_session_t *sess)
 {
-    return car_is_idle(sess->car) && session_tx_backlog(sess) == 0;
+    return car_is_drained(sess->car) && session_tx_backlog(sess) == 0;
 }
 
 static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
