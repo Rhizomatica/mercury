@@ -26,6 +26,7 @@ having — they are not updated as the code moves on.
 | [CAROUSEL-TURNS.md](CAROUSEL-TURNS.md) | Who may key when: the caller's timers and the callee's slots, and the timed TLA+ model behind them. |
 | [ARQ.md](ARQ.md) | The connection FSM and the 1.9.x stop-and-wait data plane -- mostly history now; read CAROUSEL-ARQ.md for the current data link. |
 | [TNC.md](TNC.md) | Every TNC command and async status on the control socket. What you need to drive Mercury from your own software. |
+| [WEBSOCKET_API.md](WEBSOCKET_API.md) | The WebSocket UI API end to end: transport, every command, every event, reply and error, and the binary waterfall frame. |
 | [MODES.md](MODES.md) | All modulation modes by index, where each is used, and measured bandwidth, payload, FEC and delivery rates — including the Mercury-specific DATAC15/16/17, MFSK and QAM16C2. |
 | [BROADCAST-WIRE-FORMAT.md](BROADCAST-WIRE-FORMAT.md) | The broadcast plane on the wire: frame layout, RaptorQ symbol sizing, and mode agreement. |
 | [watterson_model.md](watterson_model.md) | The HF channel simulator used for every measurement in these docs, and how its noise axis is calibrated. |
