@@ -89,17 +89,19 @@ int ldpc_ctx_row_indices(const struct LDPC *l, int i, int *idx)
     return count;
 }
 
-/* Per-code algorithm and normalised-min-sum scaling, from the MATLAB sweep
- * against belief propagation (docs/LDPC-DECODER.md).  Min-sum is kept only
- * where its whole FER curve tracks sum-product, not just the 10 % and 1 %
- * crossings: the four short codes.  Codes not listed use the default. */
+/* Per-code algorithm and normalised-min-sum scale.  Both come from the
+ * per-code FER sweep recorded in docs/LDPC-DECODER.md, made with
+ * utils/golden/ldpc_sweep.  Min-sum is kept only where its whole FER curve
+ * tracks sum-product, not just the 10 % and 1 % crossings: the four short
+ * codes.  Codes not listed use the default. */
 static const struct { const char *name; int alg; float scale; } policy_table[] = {
     {"H_256_768_22",   LDPC_ALG_NMS16, 0.85f}, /* DATAC15/16: 0.85 = BP; 0.75 cost 0.3-0.4 dB      */
     {"H_4096_8192_3d", LDPC_ALG_SPT,   0.85f}, /* DATAC1: min-sum matches sp at the 10 % / 1 % crossings
-                                                 but is 1.4x worse above them, where fading lives
-                                                 (review of #359, reproduced); sum-product keeps the
-                                                 steep waterfall                                    */
-    {"H_256_512_4",    LDPC_ALG_NMS16, 0.80f}, /* DATAC13: MATLAB nms within 0.1 dB of BP           */
+                                                 but is 1.7x worse above them, where fading lives
+                                                 (nms16 FER 0.410 against sp 0.244 at Eb/N0 1.25 dB,
+                                                 2000 frames; review of #359, reproduced);
+                                                 sum-product keeps the steep waterfall              */
+    {"H_256_512_4",    LDPC_ALG_NMS16, 0.80f}, /* DATAC13: spt within 0.1 dB of nms16 at FER 10 %   */
     {"H_128_256_5",    LDPC_ALG_NMS16, 0.80f}, /* DATAC0                                            */
     {"HRA_56_56",      LDPC_ALG_NMS16, 0.80f}, /* DATAC14                                           */
     {"H_1024_2048_4f", LDPC_ALG_SPT,   0.70f}, /* DATAC3/4: col weight 54, min-sum +0.1-0.2 dB; SPT gate passed */

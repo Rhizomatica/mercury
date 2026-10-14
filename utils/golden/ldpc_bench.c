@@ -1,18 +1,22 @@
-/* ldpc_bench — drive codec2's LDPC encoder and SumProduct decoder on files, with
- * a controllable iteration budget, for the MATLAB golden tests.
+/* ldpc_bench — run codec2's LDPC encoder and the decoders on frames from files,
+ * with an iteration cap, a choice of algorithm and a per-frame deadline, and
+ * time the decoder in process.  It is the timing tool of the record
+ * (docs/LDPC-DECODER.md); the curves come from ldpc_sweep.
  *
  *   ldpc_bench --code NAME --enc in.u8 out.u8
  *       in: K bytes per frame (0/1), out: N bytes per frame (info then parity)
- *   ldpc_bench --code NAME --dec in.f32 out.u8 [--mi N] [--stats file]
+ *   ldpc_bench --code NAME --dec in.f32 out.u8 [--mi N] [--alg A] [--deadline-ms T] [--stats file]
  *       in: N float32 LLRs per frame, codec2 sign (positive = bit 0),
  *       out: N bytes per frame (decoded codeword), stats: "iters parity_ok hit_deadline" per frame
+ *       A is legacy, sp, spt, nms, nms16 or auto (the per-code policy).
  *       The summary line reports the decode time measured IN PROCESS around the
  *       decoder calls only (ms per frame, us per iteration), so process start-up
- *       and file I/O do not count; docs/ldpc-figures/data/decoder_timing.csv comes
- *       from this line, median of three runs.
+ *       and file I/O do not count.  docs/ldpc-figures/data/decoder_timing.csv is
+ *       this line, median of three runs, on the cliff fixtures that
+ *       ldpc_sweep --fixture writes (make sweep puts them in fixtures/llr).
  *
  * Note: SumProduct() also halts when the decoded information bits are all zero
- * (run_ldpc_decoder passes a zero reference vector), so tests must use random
+ * (run_ldpc_decoder passes a zero reference vector), so callers must use random
  * payloads.
  *
  * Copyright (C) 2026 Joseph Freivald
@@ -44,7 +48,7 @@ int main(int argc, char **argv)
     const char *dec = opt(argc, argv, "--dec");
     const char *mi = opt(argc, argv, "--mi");
     const char *stats = opt(argc, argv, "--stats");
-    const char *alg = opt(argc, argv, "--alg");          /* legacy | sp | nms */
+    const char *alg = opt(argc, argv, "--alg");          /* legacy | sp | spt | nms | nms16 | auto */
     const char *dl = opt(argc, argv, "--deadline-ms");   /* per-frame decode deadline */
     if (!code || (!enc && !dec) || has(argc, argv, "--help")) {
         fprintf(stderr, "usage: %s --code NAME --enc in.u8 out.u8 | --dec in.f32 out.u8 [--mi N] [--alg legacy|sp|spt|nms|nms16|auto] [--deadline-ms T] [--stats f]\n", argv[0]);

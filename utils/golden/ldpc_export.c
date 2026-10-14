@@ -5,11 +5,15 @@
  * (NumberRowsHcols != CodeLength) the parity part is an implied staircase that
  * init_c_v_nodes() (mpdecode_core.c) materialises as check-node indices.  This
  * tool mirrors that index arithmetic exactly, so the exported H is the matrix
- * the C decoder actually uses.  MATLAB verifies it against codewords from the
- * C encoder (H*c = 0).
+ * the C decoder actually uses.  The unit tests check it:
+ * tests/modem/test_ldpc_ctx.c pins the edge count and five rows of
+ * H_256_768_22 from the exported file against ldpc_ctx_row_indices(), the
+ * decoder's own view of the graph.  Any reader of the .rows file can check a
+ * codeword from the C encoder with H*c = 0.
  *
  * Output per code: <dir>/<name>.rows  — line 1 "N M", then M lines of 1-based
  * column indices; and <dir>/codes.txt — one summary line per code.
+ * make export writes them to fixtures/ldpc.
  *
  * Copyright (C) 2026 Joseph Freivald
  * SPDX-License-Identifier: GPL-3.0-or-later

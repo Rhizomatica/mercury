@@ -205,13 +205,16 @@ busy_hang_ms = 1500
 ; LDPC decoder for the OFDM data modes (DATAC*, QAM16C2).
 ; max_iter: iteration cap. Early exit on parity means a clean frame costs
 ;   2-3 iterations whatever the cap; the cap only bounds frames at the
-;   mode's SNR cliff (default 100, the code tables' own limit; the cap of 10 that
-;   codec2 applies under __EMBEDDED__ costs 0.3-1.6 dB, see docs/LDPC-DECODER.md).
+;   mode's SNR cliff (default 100, the code tables' own limit). The cap of 10
+;   that codec2 applies under __EMBEDDED__ costs 0.4 to 0.6 dB at the code
+;   level on its own, and an embedded build with that cap is 0.5 to 1.8 dB
+;   behind the new decoder at FER 10 % (see docs/LDPC-DECODER.md).
 ; budget_ms: wall-clock budget per decode. 0 derives it per mode as
 ;   min(budget_guard_frac * ARQ channel guard, budget_air_frac * frame airtime)
 ;   so a slow host returns its best decision in time for the ACK.
-; alg: auto (per-code choice from the MATLAB sweep), spt (table sum-product),
-;   sp (exact sum-product), nms16 (int16 min-sum), nms, legacy.
+; alg: auto (per-code choice from the FER sweep in docs/LDPC-DECODER.md),
+;   spt (table sum-product), sp (exact sum-product), nms16 (int16 min-sum),
+;   nms, legacy.
 ; Run `mercury -B` to measure iterations per millisecond on this CPU.
 max_iter = 100
 budget_ms = 0

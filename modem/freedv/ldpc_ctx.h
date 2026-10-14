@@ -69,8 +69,9 @@ int ldpc_ctx_decode(ldpc_ctx_t *ctx, const float *llr, uint8_t *bits,
 
 uint64_t ldpc_now_ns(void);
 
-/* Per-code default algorithm (NMS16 where the MATLAB sweep shows it matches
- * belief propagation, table sum-product elsewhere) and its min-sum scale. */
+/* Per-code default algorithm (NMS16 where the per-code FER sweep in
+ * docs/LDPC-DECODER.md shows its whole curve tracks sum-product, table
+ * sum-product elsewhere) and its min-sum scale. */
 int   ldpc_ctx_policy_alg(const char *code_name);
 int   ldpc_alg_from_name(const char *s);   /* "auto"|"sp"|"spt"|"nms"|"nms16"|"legacy", -2 if unknown */
 const char *ldpc_alg_name(int alg);
