@@ -8,36 +8,44 @@ compiles and behaves as before unless it opts in.
 
 ## Why
 
-Measured against MATLAB belief propagation (Communications Toolbox) on all
-seven data-mode codes, BPSK/AWGN, 600 frames per point (`tests/matlab/TestLdpc.m`).
+Measured with `utils/golden/ldpc_sweep`, in C, on all seven data-mode codes:
+BPSK over AWGN, 600 frames per point or 30 errors per variant, every variant
+decoding the same frames (data in `docs/ldpc-figures/data/ldpc_fer_*.csv`;
+`ldpc_sweep --crossings FILE` prints every number below from a file). A
+MATLAB-driven run of the same sweep on 2026-10-09, kept as dated data in
+`docs/ldpc-figures/data/matlab-2026-10-09/`, agreed on the headline column
+within 0.1 dB on the six longer codes and put MATLAB's own belief propagation
+within 0.04 dB of the C sum-product.
 "Deployed" is what a desktop Mercury runs: codec2's SumProduct at the code
 tables' limit of 100 iterations with LLRs scaled by the per-mode constant
 `EsNodB` (3 dB, 10 dB for the 16200-bit code).  The 10-iteration cap in
 `freedv_700.c` ("limit CPU load") is under `#ifdef __EMBEDDED__` and applies
 only to embedded builds; the last column is the TOTAL for such a build
-(cap-10 deployed -> new), of which the cap itself is 0.4-0.6 dB on every
-code.  "New" here is the policy decoder fed correctly scaled LLRs, which is
+(cap-10 deployed -> new), of which the cap itself is 0.4 to 0.65 dB on the five longer
+codes and 0.24 dB on HRA_56_56.  "New" here is the policy decoder fed correctly scaled LLRs, which is
 the opt-in configuration (see "LLR scale"); crossings are read off a 0.5 dB
 grid by log-linear interpolation, +-0.1 dB.
 
 | code (modes) | deployed -> new, FER 1e-1 | FER 1e-2 | of which LLR scale | embedded build (cap 10) -> new, FER 1e-1 |
 |---|---|---|---|---|
-| HRA_56_56 (DATAC14) | 0.0 dB | 0.0 | 0.07 | 0.49 |
-| H_128_256_5 (DATAC0) | 0.15 | 0.25 | 0.16 | 0.57 |
-| H_256_512_4 (DATAC13) | 0.23 | 0.07 | 0.21 | 0.74 |
-| H_256_768_22 (DATAC15/16) | **1.00** | **1.53** | 0.99 | 1.50 |
-| H_1024_2048_4f (DATAC3/4) | 0.68 | 0.59 | 0.67 | 1.18 |
-| H_4096_8192_3d (DATAC1) | **1.19** | **1.15** | 1.07 | 1.82 |
-| H_16200_9720 (DATAC17/QAM16C2) | n/a in BPSK (its 10 dB constant never decodes; equal to legacy given exact LLRs) | | 0.42 at 16-QAM, from `llr_scale_cost` | 1.21 |
+| HRA_56_56 (DATAC14) | −0.03 dB | −0.07 | 0.07 | 0.21 |
+| H_128_256_5 (DATAC0) | 0.15 | 0.13 | 0.12 | 0.55 |
+| H_256_512_4 (DATAC13) | 0.14 | 0.27 | 0.13 | 0.79 |
+| H_256_768_22 (DATAC15/16) | **1.08** | **1.37** | 1.04 | 1.47 |
+| H_1024_2048_4f (DATAC3/4) | 0.74 | 0.82 | 0.70 | 1.22 |
+| H_4096_8192_3d (DATAC1) | **1.19** | **1.31** | 1.11 | 1.78 |
+| H_16200_9720 (DATAC17/QAM16C2) | n/a in BPSK (its 10 dB constant never decodes; equal to legacy given exact LLRs) | | 0.33 at 16-QAM (0.17 at FER 1e-2), from `llr_scale_H_16200_9720.csv` | 1.33, exact LLRs on both sides because the constant never decodes |
 
-The SumProduct implementation itself is correct (at 50 iterations with exact
-LLRs it tracks MATLAB within 0.04 dB on every code).  On a desktop the loss is
+The SumProduct implementation itself is correct (the context sum-product is
+within 0.02 dB of the legacy loop on every code, and the dated MATLAB run put
+MATLAB's belief propagation within 0.04 dB of it at 50 iterations with exact
+LLRs).  On a desktop the loss is
 the LLR scale: the fixed `EsNodB` is right at one operating point only, and a
 sum-product decoder fed over-confident LLRs converges to the wrong codeword
 rather than slowly, so more iterations do not recover it (the "of which"
-column is the whole gain on every code).  It costs 0.6-1.5 dB at FER 1e-2 on
-the four codes that carry the ARQ ladder.  On an embedded build the cap adds
-another 0.4-0.6 dB.
+column is the whole gain on every code).  It costs 0.8 to 1.4 dB at FER 1e-2 on
+the three QPSK codes that carry the ARQ ladder and 0.2 to 0.3 dB at 16-QAM.
+On an embedded build the cap adds another 0.4 to 0.65 dB.
 
 That scale gain is a code-level number, measured with the TRUE Es/No.  Taking
 the scale from the receiver's own Es/No estimate is a different thing, and it
@@ -69,16 +77,23 @@ path (ASan/UBSan clean).  Four algorithms share the layout:
 | `nms` | normalised min-sum, float | reference for `nms16` |
 | `nms16` | normalised min-sum, int16 1/16-LLR fixed point, check pass in 8-lane 128-bit vectors (compiler vector extensions: SSE2 on x86-64; NEON on arm64, and on armv7 only with `-mfpu=neon`, which `config.mk` does not pass, so 32-bit Pi builds get correct scalar code) | default on the four short data codes (HRA_56_56, H_128_256_5, H_256_512_4, H_256_768_22) and two 2020 codes |
 
-Per-code policy and min-sum scale come from a MATLAB sweep against BP@50.
+Per-code policy and min-sum scale come from the C sweep (`ldpc_sweep --fer`
+and `--nms-scale`, data under `docs/ldpc-figures/data/`).
 Min-sum is kept only where its WHOLE FER curve tracks sum-product, not just
 the 10 % and 1 % crossings.  On H_4096_8192_3d (DATAC1) the crossings match,
 but above 10 % FER, where a fading channel spends its time, min-sum is 1.7x
-worse (Eb/N0 1.25 dB, 50 iterations, 2000 frames, exact LLRs: `sp` 0.244,
-`spt` 0.226, `nms` 0.383, `nms16` 0.410, each +-0.01), and end to end it cost
+worse (Eb/N0 1.25 dB, 50 iterations, 2000 frames, exact LLRs: `sp` 0.232,
+`spt` 0.214, `nms` 0.378, `nms16` 0.407, each +-0.01;
+`docs/ldpc-figures/data/above_cliff_H_4096_8192_3d.csv`), and end to end it cost
 DATAC1 2 to 5 frames in 200 in
 moderate fading (review of #359, reproduced).  An earlier comment, "0.85
 beats BP@50", compared crossings, not curves; the code runs `spt`.  The
-min-sum scales (0.85 / 0.70 / 0.80) stay for anyone forcing `nms`.
+min-sum scales (0.85 / 0.70 / 0.80) stay for anyone forcing `nms`; the C
+scale sweep (`nms_scale_c.txt`, float `nms` against `sp` at 50 iterations)
+puts 0.85 within 0.01 dB of sum-product on H_256_768_22 (0.75 costs
+0.3 dB) and within 0.06 dB on H_4096_8192_3d, while on H_1024_2048_4f every
+scale trails by at least 0.2 dB at FER 10 % (0.70 least) and on
+H_16200_9720 by 0.5 dB, which is why those two run `spt`.
 `LDPC_ALG=auto|sp|spt|nms|nms16|legacy` or `ldpc_set_default_alg()` select;
 the environment is read once (`pthread_once`), and an explicit
 `ldpc_set_default_alg()` wins.
@@ -87,10 +102,10 @@ the environment is read once (`pthread_once`), and an explicit
 for is in the policy table with a measured entry, voice included: the seven
 data-mode codes, the two voice codes HRA_112_112 (700D) and HRA_56_56
 (700E), and the 2020 codes HRAb_396_504, HRAa_1536_512 and
-H_2064_516_sparse all went through the same MATLAB sweep. The short voice
+H_2064_516_sparse all went through the same C sweep. The short voice
 codes favour the table sum-product (0.1 to 0.2 dB over min-sum at FER 10 %,
-and equal to the legacy loop to 0.00 and −0.02 dB); the 2020 codes are equal
-across algorithms within 0.04 dB and take the fastest. Curves in
+and within 0.01 dB of the legacy loop); the 2020 codes are equal across
+algorithms within 0.07 dB and take the fastest. Curves in
 `ldpc-figures/data/`. A code not in the table decodes with `sp`. The legacy
 loop stays reachable process-wide (`LDPC_ALG=legacy`) for A/B until the team
 retires it.
@@ -139,8 +154,10 @@ host.
 
 Demapper (`mpdecode_core.c`): `llr_from_qam()` is a generic max-log demapper
 over any constellation table with per-symbol amplitude and an Es/No scale;
-`qam_constellations.h` holds MATLAB-generated unit-power tables for 32
-(cross), 64, 128 (cross) and 256-QAM; `symbols_to_llrs()` and
+`qam_constellations.h` holds unit-power tables for 32 (cross), 64, 128
+(cross) and 256-QAM, generated once with MATLAB's `qammod` and checked in C
+by `tests/modem/test_llr_qam.c` (unit power and the nearest-neighbour
+Hamming histogram of each table); `symbols_to_llrs()` and
 `psk_modulate_frame()` accept 5-8 bits per symbol, the QPSK and 16-QAM paths
 are untouched.  The "decoded information bits all zero" early exit of the old
 loop (a test hook fed a zero reference vector in production) is gone.
@@ -197,7 +214,8 @@ a decision-free estimate from the pilot error vectors, smoothed over frames
 decoder near the cliff), and the ladder's SNR re-calibrated per mode on the
 standard presets.  Third, validation by FER rather than by estimate accuracy:
 per mode and per preset, the gap between the FER curve with the new estimate
-and the curve with the true noise variance (MATLAB gives that reference)
+and the curve with the true noise variance (`ldpc_sweep --llr-scale` gives
+that reference at the code level)
 decides where the calibration is turned on, paired with the per-rung ladder
 re-tune because the thresholds were tuned against today's estimate.  The sweep
 records `snr_modem` next to the channel's truth for this purpose.  Until then
@@ -206,21 +224,23 @@ changes.
 
 ## Measured
 
-Per iteration, Apple M5 Pro, cliff fixtures (`tests/matlab/fixtures/llr`):
+Per iteration, Apple M5 Pro, cliff fixtures (`utils/golden/fixtures/llr`,
+written by `ldpc_sweep --fixture`: 100 frames per code at Es/N0 −3.0, −1.5,
+−1.4 and −0.9 dB):
 
 | code | legacy us/iter | spt | nms16 | policy | ms per frame, cap 50, legacy -> policy |
 |---|---|---|---|---|---|
-| H_256_768_22 | 25.9 | 9.1 | 2.3 | nms16 | 0.61 -> 0.031 |
-| H_1024_2048_4f | 83.9 | 33.9 | 8.7 | spt | 2.30 -> 0.58 |
-| H_4096_8192_3d | 310 | 99.7 | 28.9 | spt | 10.2 -> 2.24 |
-| H_16200_9720 | 670 | 288 | 114 | spt | 26.3 -> 8.97 |
+| H_256_768_22 | 25.8 | 9.2 | 2.3 | nms16 | 0.59 -> 0.029 |
+| H_1024_2048_4f | 84.5 | 33.1 | 8.7 | spt | 2.22 -> 0.56 |
+| H_4096_8192_3d | 299 | 100 | 29.1 | spt | 9.89 -> 2.19 |
+| H_16200_9720 | 659 | 288 | 114 | spt | 26.3 -> 9.17 |
 
 Method: `utils/golden/ldpc_bench --mi 50` on the 100-frame cliff fixtures,
 timing the decoder calls in process (file I/O and start-up excluded), median
 of three runs after a warm-up run; run to run spread under 3 %.  The
 per-frame gain exceeds the per-iteration gain because parity is tested on the
-hard decisions, so a decode stops when it has the codeword (legacy 23-39
-iterations per frame on these fixtures, the context 12-31).  An earlier
+hard decisions, so a decode stops when it has the codeword (legacy 23 to 40
+iterations per frame on these fixtures, the context 12 to 32).  An earlier
 version of this table timed the whole process, which inflated the small
 code's numbers.
 
@@ -238,16 +258,22 @@ Statistical resolution of the curves: 600 frames per point with an adaptive
 stop, so a point at FER 1e-2 rests on about 6 errors (+-40 % relative) and a
 crossing read off the 0.5 dB grid carries about +-0.1 dB; equivalence claims
 (`sp` vs legacy, `nms16` vs `nms`) compare the same frames, so they are exact
-where they say 0.00 dB.  In the end-to-end table below, 150 frames per point
+where they say 0.00 dB. Two independent 600-frame runs of the sweep, the C
+run recorded here and the dated MATLAB-driven run, agree on the
+deployed-to-new column within 0.1 dB on the six longer codes and within
+0.3 dB on HRA_56_56, whose curve is shallow.  In the end-to-end table below, 150 frames per point
 put +-0.04 on a delivery of 0.5, and the "1 to 2 %" tail at 12 to 18 dB is 14
 failures in 900 frames against none, not any single point.
 
-MATLAB gates (`tests/matlab`, all passing): context `sp` vs legacy 0.00 dB
-on every code; `spt` vs `sp` within 0.04 dB; `nms16` vs float `nms` within
-0.04 dB; `nms` immune to the LLR scale (0.00 dB); max-log demapper vs MATLAB
-approximate-LLR demodulator, relative error 2e-7 for 2-8 bits per symbol;
-fixed-EsNo scale cost at the real modulation 0.19 dB (DATAC15/16, QPSK),
-0.05 dB (DATAC1, QPSK), 0.42 dB (QAM16C2, 16-QAM; 0.38 dB at FER 1e-2).
+Sweep results (`ldpc_sweep`, crossings at FER 10 % unless stated): context
+`sp` vs legacy within 0.02 dB on every code; `spt` vs `sp` within 0.04 dB,
+and never worse at FER 1 %; `nms16` vs float `nms` within 0.02 dB (0.05 at
+FER 1 %); `nms` immune to the LLR scale (0.00 dB on every code); fixed-EsNo
+scale cost at the real modulation 0.19 dB (DATAC15/16, QPSK), 0.05 dB
+(DATAC1, QPSK), 0.33 dB (QAM16C2, 16-QAM; 0.17 dB at FER 1e-2). The max-log
+demapper matches an independent max-log reference in `test_llr_qam.c` to a
+relative error below 2e-7 for 2 to 8 bits per symbol; the dated MATLAB run
+also matched MATLAB's approximate-LLR demodulator to 2e-7.
 
 Unit tests: `tests/modem/test_ldpc_ctx.c` (11: graph, legacy equivalence on
 the shipped vector, min-sum, one-iteration clean decode, deadline, wrapper
@@ -256,17 +282,28 @@ extreme LLRs (+-1e9, +-inf, NaN) saturate instead of wrapping, min-sum scale
 clamp, eight concurrent first decodes through the wrapper; ASan+UBSan and TSan
 clean), `tests/modem/test_ldpc_modes.c` (5: voice frame-period budgets, the
 policy per code, the cap/budget rule, calibration off unless enabled,
-`LDPC_ALG` read once), `tests/modem/test_llr_qam.c` (tables, sign
-correctness, Somap agreement, high-order modulate/demap round trip);
+`LDPC_ALG` read once), `tests/modem/test_llr_qam.c` (6: tables, sign
+correctness, Somap agreement, high-order modulate/demap round trip, the
+nearest-neighbour Hamming histogram of every table, max-log against an
+independent reference); `tests/modem/test_ldpc_fer.c` (6, on pinned frames
+from `mercury_prng`, under 1 s: `sp` and legacy agree on H_256_768_22 at its
+cliff within 3 frames of 200, `spt` and `nms16` within 6, float `nms` is
+bit-exact under power-of-two LLR scaling, the fixed-EsNo constant costs
+frames where exact LLRs decode, every code's codewords satisfy every check
+row of `ldpc_ctx_row_indices` and are systematic, and the legacy loop's
+all-zero halt is pinned);
 `tests/modem/test_freedv_harq.c` unchanged and passing;
 `tests/gui_interface/test_ui_status.c` pins the appended fields.
 
 
 ## Figures
 
-Generated from the committed curves in `docs/ldpc-figures/data/` by
-`tests/matlab/plot_ldpc_figures.m` (MATLAB R2026a).  Every waterfall is
-600 frames per point, BPSK over AWGN, exact LLRs unless stated.
+Drawn on 2026-10-09 by a MATLAB script from the dated run's curves
+(`docs/ldpc-figures/data/matlab-2026-10-09/`) and kept as drawn: the C sweep
+reproduces those curves within the scatter stated above, so the figures are
+not regenerated. The series "MATLAB belief propagation" in the waterfalls is
+MATLAB's own decoder, which has no C counterpart. Every waterfall is 600
+frames per point, BPSK over AWGN, exact LLRs unless stated.
 
 ![Coding gain returned per code](ldpc-figures/gain_summary.svg)
 
@@ -330,7 +367,7 @@ What this says, honestly:
 - Against what a desktop Mercury ships today, the calibrated LLR scale (the
   `new` arm here; opt-in now) is within the seed-to-seed spread at every
   point: no resolvable gain or loss on AWGN with eight seeds.  Code-level
-  it is worth 0.6-1.5 dB; the ARQ ladder spends its rungs with margin above
+  it is worth 0.8 to 1.4 dB on the QPSK ladder codes; the ARQ ladder spends its rungs with margin above
   the code cliffs, so that margin is not spent here.  With the defaults the
   decoder's decisions are trunk's.  The ladder's
   thresholds are hard-coded, so a better decoder cannot climb earlier; it
@@ -360,7 +397,7 @@ So the default build is not bit-identical to trunk end to end, and the
 reason is known: the policy decoder for DATAC1 is the table sum-product
 (`spt`), whose two-segment phi table is within 0.04 dB of the exact `phi0()`
 but not the same function; at the DATAC1 cliff it converges on slightly more
-frames (FER 0.226 against 0.244 at Eb/N0 1.25 dB, 2000 frames, about two
+frames (FER 0.214 against 0.232 at Eb/N0 1.25 dB, 2000 frames, about two
 standard errors), and on the four +1.0 dB seeds it decoded all nine DATAC1
 frames where the legacy loop missed one and bought a retransmission round.
 At +0.1 dB the DATAC3/DATAC1 probes sit on their cliff and one seed went each
@@ -389,18 +426,18 @@ Desktop builds have always run the code tables' limit of 100.
 
 Reproduce: `tests/integration/ab_sweep.sh OUT PARALLEL "trunk new emul" "NO_LIST"
 "SEEDS" PAYLOAD_KB` with `MERCURY_TRUNK_BIN` pointing at a trunk build;
-`tests/matlab/plot_ab_figure.m` draws the figure from the aggregated runs in
-`docs/ldpc-figures/data/ab_runs.csv`.
+the figure `end_to_end_ab.svg` was drawn on 2026-10-09 by a MATLAB script
+from `docs/ldpc-figures/data/ab_runs.csv` and is kept as drawn.
 
 ## Running it
 
 ```sh
-make && make -C tests test_ldpc_ctx test_ldpc_modes test_llr_qam test_freedv_harq && ./tests/test_ldpc_ctx && ./tests/test_ldpc_modes
+make && make -C tests test_ldpc_ctx test_ldpc_modes test_llr_qam test_ldpc_fer test_freedv_harq && ./tests/test_ldpc_ctx && ./tests/test_ldpc_modes && ./tests/test_ldpc_fer
 LDPC_LLR_CALIBRATED=1 ./mercury ...               # opt in to the estimate-driven LLR scale
 ./mercury -B                              # ns per iteration per code on this host
-make -C utils/golden all export           # exporter, ldpc_bench, llr_bench; writes tests/matlab/fixtures
-# MATLAB R2026a + Communications Toolbox:
-#   cd tests/matlab; run_all
+make -C utils/golden all                  # ldpc_sweep, ldpc_bench, llr_bench, ldpc_export
+make -C utils/golden -j4 sweep            # every curve under docs/ldpc-figures/data, about 6 minutes
+utils/golden/ldpc_sweep --crossings docs/ldpc-figures/data/ldpc_fer_H_256_768_22.csv   # one curve's crossings
 ```
 
 ## Follow-ups (not in this change)
@@ -408,11 +445,12 @@ make -C utils/golden all export           # exporter, ldpc_bench, llr_bench; wri
 The LLR scale, in a future change, as laid out under "LLR scale": standard
 channel presets first, then a decision-free pilot-based noise-variance
 estimate for the decoder and a re-calibrated ladder SNR, then FER validation
-per mode and preset (0.6-1.5 dB at the code level is available when the
-estimate is right); trim the `[ldpc]` INI and environment
+per mode and preset (0.8 to 1.4 dB at the code level on the QPSK ladder
+codes is available when the estimate is right); trim the `[ldpc]` INI and environment
 surface to the chosen defaults once settled; allocate only the active path's
-message buffers; offset min-sum per code (0.4 offset beats BP on the two
-codes where min-sum trails); layered scheduling (half the iterations); fold
+message buffers; offset min-sum per code (not in the C decoder; the dated MATLAB sweep
+`matlab-2026-10-09/nms_tuning.txt` put a 0.4 offset at or slightly better
+than belief propagation on H_4096_8192_3d and H_256_768_22 only); layered scheduling (half the iterations); fold
 the MFSK backend's own min-sum decoder into this context;
 VOLK for the OFDM acquisition correlators and the resampler, which are the
 remaining Pi 4 CPU cost; higher-rate / rate-compatible codes for the 32-256
