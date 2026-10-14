@@ -196,6 +196,9 @@ What the rules became in `carousel.c`, beyond §2-§4:
   FreeFor.  S's frames name the keydown they answer (poll id) and the slot
   (3 bits in the data header, a pattern-anchor flag): M closes that slot and
   every slot of older keydowns, which S has abandoned.
+  A status saying S has nothing closes all of its poll's slots: S continues
+  only after a round of its own, and it sent none (#384: idle polls at the
+  floor were held ~87 s apart for continuations S would never use).
 - **S's anchor** (`anc`): on any decoded M keydown; slot 0 answers, floor
   continuations (K = 2) carry on a stream when nothing is heard.  A frame
   decoded later than its mode's D anchors nothing (R4, `car_on_frame`'s
@@ -212,7 +215,9 @@ What the rules became in `carousel.c`, beyond §2-§4:
   carries M's round after it, S answers with its poll and its round.  At
   the floor, or lossy, M takes turns of at least two rounds.
 - **Teardown**: the caller's DISCONNECT is keyed clear of S's slots and its
-  reply slot logged; the callee sends its own only in a slot.
+  reply slot logged; the callee sends its own only in a slot.  With nothing heard from the peer in 120 s, the caller sends one
+  DISCONNECT, not three, and the callee, with no slot to send in, ends at
+  once: the peer's own lost-peer watchdog (240 s, idle or not) ends its end.
 - **NAV headers** are not sent in a session; the bounds count a 300 ms lead
   margin.
 - **Inline polls** (branch carousel-nvis): a poll may ride in the first frame

@@ -167,6 +167,14 @@ bool car_is_idle(const car_t *c)
 {
     return c->master ? c->idle : !has_data(c) && peer_direction_done(c);
 }
+/* Everything delivered both ways: mine retired, and all the peer opened
+ * here.  The caller's idle comes only after its ack and an idle poll; a
+ * DISCONNECT that waited for it went 32 s after the application's (sim,
+ * Winlink FF/FQ: the B2 client forces the disconnect at 30 s, #384). */
+bool car_is_drained(const car_t *c)
+{
+    return !has_data(c) && peer_direction_done(c);
+}
 
 size_t car_tx_inflight(const car_t *c)
 {
@@ -488,11 +496,38 @@ static bool peer_keyed(car_t *c, uint64_t now)
     return k;
 }
 
+/* Why a planned keydown is waiting, said once per hold: a log that shows
+ * "polling the peer" and then nothing for a minute reads as a hang (#384).
+ * Not the carrier of an ordinary turnaround: only a hold past HELD_SAY_MS. */
+#define HELD_SAY_MS 2000
+enum { HELD_NONE, HELD_SLOTS, HELD_CARRIER, HELD_CARRIER_SAID };
+static void note_held(car_t *c, int why, uint64_t now, uint64_t ms)
+{
+    if (why == HELD_SLOTS) {
+        if (c->held != HELD_SLOTS && ms >= HELD_SAY_MS)
+            car_trace(c, "tx: held %llu ms, clear of the peer's slots", (unsigned long long)ms);
+        c->held = HELD_SLOTS;
+        return;
+    }
+    if (c->held != HELD_CARRIER && c->held != HELD_CARRIER_SAID) {
+        c->held = HELD_CARRIER;
+        c->held_since = now;
+    } else if (c->held == HELD_CARRIER && now - c->held_since >= HELD_SAY_MS) {
+        c->held = HELD_CARRIER_SAID;
+        car_trace(c, "tx: held %llu ms so far, the channel is busy", (unsigned long long)(now - c->held_since));
+    }
+}
+
 /* Listen before talk: true (and the timer re-armed) when we must wait for the
  * peer to be off the air for a guard. */
 static bool defer_if_busy(car_t *c, int t, uint64_t now)
 {
-    if (c->tx_busy || peer_keyed(c, now)) { arm(c, t, now + CARRIER_CHECK_MS); return true; }
+    if (c->tx_busy) { arm(c, t, now + CARRIER_CHECK_MS); return true; }
+    if (peer_keyed(c, now)) {
+        note_held(c, HELD_CARRIER, now, 0);
+        arm(c, t, now + CARRIER_CHECK_MS);
+        return true;
+    }
     if (c->last_carrier_ms && now < c->last_carrier_ms + GUARD_MS) {
         arm(c, t, c->last_carrier_ms + GUARD_MS);
         return true;
@@ -1395,6 +1430,27 @@ static void m_close_slot(car_t *c, uint64_t te, int mk, bool pat, int slot)
     if (hits == 1) c->mlog[hj].done |= (uint8_t)(1u << hi_);
 }
 
+/* S answered my poll with a status saying it has nothing: it sent no round on
+ * that anchor, and S continues only after a round of its own (s_slot), so
+ * none of the poll's continuation slots will be used.  Close them all; held
+ * open, an idle poll at the floor kept my next keydown off the air ~87 s
+ * after it, answered or not (#384).  Only the one poll the status can be the
+ * answer to: a status in its response slot, by keydown id. */
+static void m_close_spent(car_t *c, uint64_t te, int mk)
+{
+    uint32_t ds = c->io.pattern ? D_MFSK_MS : D_OFDM_MS;
+    int hj = -1, hits = 0;
+    for (int j = 0; j < c->nmlog; j++) {
+        const car_mlog_t *l = &c->mlog[j];
+        if (l->pat || l->mk != mk) continue;
+        if (mslot_lo(c, l, 0) <= te && te <= mslot_hi(c, l, 0) + ds) { hits++; hj = j; }
+    }
+    if (hits != 1 || c->mlog[hj].done == 0xFF) return;
+    if (c->mlog[hj].k) car_trace(c, "rx: the peer has nothing -- its %d continuation slots are free", c->mlog[hj].k);
+    m_close_from(c, hj, 0);
+    c->mlog[hj].done = 0xFF;
+}
+
 /* ---- keydowns, either end ---- */
 /* A poll: what I still need of the peer's blocks, and its next round --
  * with my own round after it, in the same keydown, when with_round and I have
@@ -1863,8 +1919,9 @@ static void m_try(car_t *c, uint64_t now)
             at = best;
         }
     }
-    if (at > now) { arm(c, CAR_T_M, at); return; }
+    if (at > now) { note_held(c, HELD_SLOTS, now, at - now); arm(c, CAR_T_M, at); return; }
     if (defer_if_busy(c, CAR_T_M, now)) return;     /* another station on the channel */
+    c->held = HELD_NONE;
     m_key_plan(c);
 }
 
@@ -2121,6 +2178,7 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
         c->peer_has_data = m->has_data;
         c->peer_hi = resolve16(c->rbase, m->hi);
         c->peer_hi_known = true; c->peer_unopened = m->unopened;
+        if (!m->has_data) m_close_spent(c, now + TAIL_MS, (int)m->poll_id);
     } else {
         return;                              /* a REQ: only M sends one */
     }

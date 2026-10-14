@@ -148,6 +148,9 @@ typedef struct {
     uint64_t deadline[CAR_NTIMERS]; /* 0 = disarmed */
     uint64_t last_carrier_ms;       /* the peer was last heard on the air */
     bool     tx_busy;               /* our keydown is on the air */
+    uint8_t  held;                  /* why the planned keydown waits (HELD_*):
+                                     * logged once per hold */
+    uint64_t held_since;            /* ...since when, for a busy channel */
 
     /* M: the turn */
     int      phase;                 /* sending my data, polling the peer's, or idle */
@@ -308,6 +311,7 @@ int  car_ui_tx_mode(const car_t *c);
 int  car_ui_rx_mode(const car_t *c);
 int  car_ui_peer_mode(const car_t *c);
 bool car_is_idle(const car_t *c);
+bool car_is_drained(const car_t *c);   /* delivered both ways (a DISCONNECT may go) */
 /* The session can no longer be trusted: a block failed its check, or did not
  * decode.  What it carried may already be partly delivered (the stream runs
  * ahead of the check), so the session must end -- never carry on.  NULL: fine. */

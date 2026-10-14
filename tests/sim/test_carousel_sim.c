@@ -161,6 +161,90 @@ void test_car_peer_loss_disconnects(void)
     sim_destroy(s);
 }
 
+/* Run for ms of virtual time; the keydowns ep began in it. */
+static int keydowns_in(sim_t *s, sim_endpoint_t *ep, uint64_t ms)
+{
+    int n = 0;
+    bool was = sim_keyed(s, ep);
+    for (uint64_t t = 0; t < ms; t += 100) {
+        sim_run_until_idle(s, 100);
+        bool k = sim_keyed(s, ep);
+        if (k && !was) n++;
+        was = k;
+    }
+    return n;
+}
+
+/* Connected both ends, nothing queued either way, at snr_db. */
+static sim_t *idle_session(uint64_t seed, double snr_db)
+{
+    sim_t *s = make_sim(seed, 0.0);
+    sim_set_snr(s, snr_db);
+    connect_ab(s);
+    for (int i = 0; i < 1200 && !(state(sim_a(s)) == ARQ_CONN_CONNECTED &&
+                                  state(sim_b(s)) == ARQ_CONN_CONNECTED); i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_b(s)));
+    return s;
+}
+
+/* #384: the peer leaves an idle session.  The lost-peer watchdog ran only
+ * with data in flight, and the caller polled the vanished peer for 10 min,
+ * until the operator aborted. */
+void test_car_idle_peer_loss_disconnects(void)
+{
+    sim_t *s = idle_session(9, 10.0);
+    sim_set_per(s, 1.0);
+    sim_run_until_idle(s, 300000);
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
+    sim_destroy(s);
+}
+
+/* #384: DISCONNECT after the peer has gone quiet: one try, not three. */
+void test_car_disconnect_quiet_peer_one_try(void)
+{
+    sim_t *s = idle_session(9, 10.0);
+    sim_set_per(s, 1.0);
+    sim_run_until_idle(s, 150000);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+    sim_inject(s, sim_a(s), &disc);
+    int n = keydowns_in(s, sim_a(s), 120000);
+    TEST_ASSERT_EQUAL_INT(1, n);
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_DISCONNECTING, state(sim_a(s)));
+    sim_destroy(s);
+}
+
+/* #384: Winlink's tail -- the client sends FF, the RMS answers FQ, and the
+ * client hangs up as FQ arrives.  Everything was delivered, but the caller's
+ * DISCONNECT waited for its carousel to go idle, after an ack and an idle
+ * poll: 41 s, past the B2 client's 30 s before it forces the disconnect. */
+void test_car_disconnect_after_reply_is_prompt(void)
+{
+    sim_t *s = idle_session(1, 10.0);
+    uint8_t ff[40], fq[8];
+    memset(ff, 'F', sizeof(ff)); memset(fq, 'Q', sizeof(fq));
+    static uint8_t rx[256];
+    queue(s, sim_a(s), ff, sizeof(ff));
+    for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)) < sizeof(ff); i++)
+        sim_run_until_idle(s, 100);
+    queue(s, sim_b(s), fq, sizeof(fq));
+    for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)) < sizeof(fq); i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_EQUAL_size_t(sizeof(fq), sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)));
+    arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+    sim_inject(s, sim_a(s), &disc);
+    sim_run_until_idle(s, 20000);
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_DISCONNECTING, state(sim_a(s)));
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
+    TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+    sim_destroy(s);
+}
+
 /* The callee's ACCEPTs never reach the caller: it falls back to LISTENING
  * still seeded, to catch the caller's first round in case the caller did
  * connect.  The caller never comes, and the seed must not outlive the wait:
@@ -360,6 +444,9 @@ int main(void)
     RUN_TEST(test_car_lossy);
     RUN_TEST(test_car_peer_loss_disconnects);
     RUN_TEST(test_car_accept_fallback_seed_expires);
+    RUN_TEST(test_car_idle_peer_loss_disconnects);
+    RUN_TEST(test_car_disconnect_quiet_peer_one_try);
+    RUN_TEST(test_car_disconnect_after_reply_is_prompt);
     RUN_TEST(test_car_disconnect_after_transfer);
     RUN_TEST(test_car_abort_skips_the_drain);
     RUN_TEST(test_car_reply_during_final_poll);
