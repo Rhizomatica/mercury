@@ -716,6 +716,40 @@ static void publish_link_bitrate(const modem_codec_t *codec, int mode)
                      compute_bitrate_bps_locked(codec));
 }
 
+/* MERCURY_RX_DUMP=<file>: every chunk the decoders are handed, raw s16le at
+ * 8 kHz, so a frame missed on the air can be decoded offline.  TX periods are
+ * not in it (the RX loop skips them); a log line once a second ties the sample
+ * count to the log's clock.  Off unless the variable is set. */
+static void rx_dump_chunk(const int16_t *s, int n)
+{
+    static FILE *f;
+    static bool tried;
+    static uint64_t total, next_mark;
+    if (!tried)
+    {
+        tried = true;
+        const char *path = getenv("MERCURY_RX_DUMP");
+        if (path && *path)
+        {
+            f = fopen(path, "wb");
+            if (f)
+                HLOGI("modem-rx", "RX dump to %s (s16le, 8 kHz)", path);
+            else
+                HLOGW("modem-rx", "MERCURY_RX_DUMP: cannot open %s", path);
+        }
+    }
+    if (!f)
+        return;
+    if (total >= next_mark)
+    {
+        HLOGI("modem-rx", "rx-dump sample=%llu", (unsigned long long)total);
+        fflush(f);
+        next_mark = total + 8000;
+    }
+    fwrite(s, sizeof(int16_t), (size_t)n, f);
+    total += (uint64_t)n;
+}
+
 static int select_payload_rx_mode(const arq_runtime_snapshot_t *snapshot, bool ready)
 {
     int mode = FREEDV_MODE_DATAC15;
@@ -3021,6 +3055,7 @@ void *rx_thread(void *g_modem)
         {
             capture_i16[i] = (int16_t)(capture_i32[i] >> 16);
         }
+        rx_dump_chunk(capture_i16, chunk_samples);
 
         /* Tee the chunk to both planes.  A worker that has fallen behind
          * overflows its own ring: drop there and log, never block the
