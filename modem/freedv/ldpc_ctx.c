@@ -90,8 +90,8 @@ int ldpc_ctx_row_indices(const struct LDPC *l, int i, int *idx)
 }
 
 /* Per-code algorithm and normalised-min-sum scale.  Both come from the
- * per-code FER sweep recorded in docs/LDPC-DECODER.md, made with
- * utils/golden/ldpc_sweep.  Min-sum is kept only where its whole FER curve
+ * per-code FER sweep recorded in docs/LDPC-DECODER.md (reproduce with
+ * utils/golden/ldpc_sweep).  Min-sum is kept only where its whole FER curve
  * tracks sum-product, not just the 10 % and 1 % crossings: the four short
  * codes.  Codes not listed use the default. */
 static const struct { const char *name; int alg; float scale; } policy_table[] = {

@@ -94,9 +94,10 @@ utils/hail_suffix_sweep
 utils/mfsk_puncture_sweep
 
 
-# utils/golden: the C bench tools (binaries) and the fixtures they generate
+# utils/golden: the C bench tools (binaries) and the fixtures and results they generate
 utils/golden/ldpc_export
 utils/golden/ldpc_bench
 utils/golden/llr_bench
 utils/golden/ldpc_sweep
 utils/golden/fixtures/
+utils/golden/results/

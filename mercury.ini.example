@@ -208,7 +208,8 @@ busy_hang_ms = 1500
 ;   mode's SNR cliff (default 100, the code tables' own limit). The cap of 10
 ;   that codec2 applies under __EMBEDDED__ costs 0.4 to 0.6 dB at the code
 ;   level on its own, and an embedded build with that cap is 0.5 to 1.8 dB
-;   behind the new decoder at FER 10 % (see docs/LDPC-DECODER.md).
+;   behind the new decoder fed correctly scaled LLRs (opt-in) at FER 10 %
+;   (see docs/LDPC-DECODER.md).
 ; budget_ms: wall-clock budget per decode. 0 derives it per mode as
 ;   min(budget_guard_frac * ARQ channel guard, budget_air_frac * frame airtime)
 ;   so a slow host returns its best decision in time for the ACK.

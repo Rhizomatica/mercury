@@ -44,7 +44,7 @@ enum {
 /* Iteration cap used by the data modes: the code tables' own limit.  codec2
  * caps at 10 only under __EMBEDDED__; early exit on parity means clean frames
  * cost 2-3 iterations whatever the cap, and a deadline bounds the worst case on
- * slow hardware instead of a cap that costs 0.3-1.6 dB at the cliff. */
+ * slow hardware instead of a cap that costs 0.4-0.6 dB at the cliff. */
 #define LDPC_MAX_ITER_DEFAULT 100
 /* Voice modes bound a decode by a fraction of their own modem frame period
    (700D 160 ms -> 40 ms, 700E 80 ms -> 20 ms): a decode that outlasts its frame

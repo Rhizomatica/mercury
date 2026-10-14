@@ -4,9 +4,9 @@
  * 256); quasi-Gray for the cross sizes (32, 128), where a perfect Gray map does
  * not exist.  Index = integer label; bit k of the label is bit k of the symbol
  * (LSB first), matching qam16_mod().  They are checked in C by
- * tests/modem/test_llr_qam.c: unit average power, the minimum distance and the
- * nearest-neighbour Hamming histogram stated above each table (counts over
- * ordered pairs of points at the minimum distance).  Do not edit by hand.
+ * tests/modem/test_llr_qam.c: unit average power and the nearest-neighbour
+ * Hamming histogram stated above each table (counts over ordered pairs of
+ * points at the minimum distance).  Do not edit by hand.
  *
  * Copyright (C) 2026 Joseph Freivald
  * SPDX-License-Identifier: GPL-3.0-or-later
