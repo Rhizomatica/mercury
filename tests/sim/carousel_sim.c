@@ -94,6 +94,7 @@ typedef struct {
      * when the peer's detector reports it. */
     bool     nav_ok, nav_sent;
     uint64_t nav_from;
+    uint64_t air_ms;               /* on the air, all keydowns */
 } station_t;
 
 static station_t S[2];
@@ -278,6 +279,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
         t += air;
     }
     s->tx_end = t + TAIL_MS;
+    s->air_ms += s->tx_end - s->tx_start;
     if (trace) printf("  until %.1f\n", s->tx_end / 1000.0);
     check_slot(s);
     event_t e = { .t = s->tx_end, .type = EV_TXEND, .st = s->id };
@@ -380,6 +382,139 @@ static void io_deliver(void *ctx, const uint8_t *buf, size_t len)
 /* ---- run ------------------------------------------------------------------ */
 #define CHAT_REPLY_MS (getenv("CAR_CHAT_REPLY_MS") ? (uint64_t)atoi(getenv("CAR_CHAT_REPLY_MS")) : 200)
 
+/* ---- application traffic ---------------------------------------------------
+ * A script of messages, each written by one end: a gap after the one before it
+ * was delivered, when the other end wrote that one (it is read first), or
+ * after it was written, when the same end did (the operator types on).
+ *
+ *   CAR_CHAT=<exchanges>:<bytes>   request/response, as UUCP's: A, B, A, ...
+ *                                  CAR_CHAT_REPLY_MS apart (default 200)
+ *   CAR_SCRIPT=A30,B30,A5632+200,B20   these messages, +<gap ms> each (default
+ *                                  CAR_CHAT_REPLY_MS; the first, 0)
+ *   CAR_KBD=<lines>:<bytes>:<think s>[:<same %>]   keyboard to keyboard: lines
+ *                                  of bytes/2..3*bytes/2, the next by the same
+ *                                  end <same %> of the time (default 30), each
+ *                                  after an exponential think time
+ *   CAR_PACE=<bytes>:<ms>          an application that writes at most this
+ *                                  much this often (uucpd: 4096:1000)
+ */
+typedef struct {
+    int      side;
+    size_t   bytes, put, end;     /* end: the writer's bytes through this one */
+    uint64_t gap_ms, due, written, delivered;
+    bool     armed;
+} smsg_t;
+static smsg_t sc[CAR_SIM_MSGS];
+static int sc_n, sc_k;            /* messages; the next to write */
+static size_t pace_bytes;
+static uint64_t pace_ms;
+
+static uint64_t sc_rand(uint64_t *x)   /* splitmix64 */
+{
+    uint64_t z = (*x += 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+static bool sc_add(int side, size_t bytes, uint64_t gap)
+{
+    if (sc_n >= CAR_SIM_MSGS || !bytes) return false;
+    size_t end = bytes;
+    for (int k = sc_n - 1; k >= 0; k--) if (sc[k].side == side) { end += sc[k].end; break; }
+    if (end > CAR_SIM_BYTES) return false;
+    sc[sc_n++] = (smsg_t){ .side = side, .bytes = bytes, .end = end, .gap_ms = gap };
+    return true;
+}
+/* The script for this run, from the environment; false: none (a transfer). */
+static bool sc_parse(uint64_t seed)
+{
+    sc_n = sc_k = 0;
+    pace_bytes = 0; pace_ms = 0;
+    const char *e;
+    uint64_t reply = CHAT_REPLY_MS;
+    bool ok = true;
+    int n, b;
+    if ((e = getenv("CAR_PACE"))) {
+        unsigned long pb = 0, pm = 0;
+        if (sscanf(e, "%lu:%lu", &pb, &pm) == 2 && pb && pm) { pace_bytes = pb; pace_ms = pm; }
+    }
+    if ((e = getenv("CAR_SCRIPT"))) {
+        for (const char *p = e; *p && ok; ) {
+            int side = *p == 'A' ? 0 : *p == 'B' ? 1 : -1;
+            char *q;
+            unsigned long by = strtoul(p + 1, &q, 10), gap = sc_n ? reply : 0;
+            if (*q == '+') gap = strtoul(q + 1, &q, 10);
+            ok = side >= 0 && sc_add(side, by, gap) && (*q == ',' || !*q);
+            p = *q ? q + 1 : q;
+        }
+    } else if ((e = getenv("CAR_KBD"))) {
+        double think = 0; int same = 30;
+        uint64_t x = seed * 0x5851F42D4C957F2DULL + 1;
+        ok = sscanf(e, "%d:%d:%lf:%d", &n, &b, &think, &same) >= 3 && n > 0 && b > 1 && think >= 0;
+        for (int k = 0, side = 0; ok && k < n; k++) {
+            if (k && (int)(sc_rand(&x) % 100) >= same) side ^= 1;
+            size_t by = (size_t)(b / 2 + (int)(sc_rand(&x) % (uint64_t)(b + 1)));
+            double u = ((sc_rand(&x) >> 11) + 0.5) / 9007199254740992.0;
+            double t = -log(u) * think;
+            if (t > 5 * think) t = 5 * think;
+            ok = sc_add(side, by, k ? (uint64_t)(t * 1000.0) : 0);
+        }
+    } else if ((e = getenv("CAR_CHAT"))) {
+        ok = sscanf(e, "%d:%d", &n, &b) == 2 && n > 0 && b > 0;
+        for (int k = 0; ok && k < 2 * n; k++) ok = sc_add(k & 1, (size_t)b, k ? reply : 0);
+    } else
+        return false;
+    if (!ok) {
+        fprintf(stderr, "traffic script ignored (%s): at most %d messages, %d bytes each way\n",
+                getenv("CAR_SCRIPT") ? "CAR_SCRIPT" : getenv("CAR_KBD") ? "CAR_KBD" : "CAR_CHAT",
+                CAR_SIM_MSGS, CAR_SIM_BYTES);
+        sc_n = 0;
+    }
+    return sc_n > 0;
+}
+static uint64_t sc_next(void)
+{
+    return sc_k < sc_n && sc[sc_k].armed ? sc[sc_k].due : UINT64_MAX;
+}
+/* Mark deliveries, then write what is due. */
+static void sc_step(uint64_t now)
+{
+    for (int k = 0; k < sc_k; k++) {
+        smsg_t *m = &sc[k];
+        if (m->put == m->bytes && !m->delivered && S[m->side ^ 1].rx_len >= m->end) {
+            m->delivered = now;
+            if (trace) printf("%9.1f %c's message %d delivered (%.1f s)\n", now / 1000.0, 'A' + m->side,
+                              k + 1, (now - m->written) / 1000.0);
+        }
+    }
+    if (sc_k >= sc_n) return;
+    smsg_t *m = &sc[sc_k];
+    if (!m->armed) {
+        const smsg_t *p = sc_k ? &sc[sc_k - 1] : NULL;
+        if (!p) { m->armed = true; m->due = m->gap_ms; }
+        else if (p->side == m->side ? p->put == p->bytes : p->delivered != 0) {
+            m->armed = true;
+            m->due = (p->side == m->side ? p->written : p->delivered) + m->gap_ms;
+            if (m->due < now) m->due = now;
+        }
+    }
+    if (!m->armed || now < m->due) return;
+    size_t c = m->bytes - m->put;
+    if (pace_bytes && c > pace_bytes) c = pace_bytes;
+    if (!m->put) m->written = now;
+    m->put += c;
+    S[m->side].tx_len += c;
+    if (trace) printf("%9.1f %c app writes %zu (message %d, %zu bytes)\n", now / 1000.0, 'A' + m->side, c,
+                      sc_k + 1, m->bytes);
+    if (m->put < m->bytes) m->due = now + pace_ms;
+    else sc_k++;
+}
+static bool sc_done(void)
+{
+    for (int k = 0; k < sc_n; k++) if (!sc[k].delivered) return false;
+    return true;
+}
+
 /* The channel a run uses, by name (see carousel_sim_run); *snr_out gets the
  * SNR the ends are told at connect.  Also used for bounds. */
 sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr_out)
@@ -469,22 +604,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     }
     S[0].tx_len = CAR_SIM_BYTES;
     S[1].tx_len = bidir ? CAR_SIM_BYTES : 0;
-    /* CAR_CHAT=<exchanges>:<bytes>: request/response traffic, as UUCP's.  A
-     * writes a message; B's application answers it CHAT_REPLY_MS after the
-     * last of it is delivered, and A writes the next as long after the
-     * answer -- the applications' own turnaround, which on air lands inside
-     * the modem's. */
-    int chat_n = 0, chat_bytes = 0, chat_sent[2] = {0, 0};
-    uint64_t chat_due[2] = {0, 0};
-    if (getenv("CAR_CHAT") && sscanf(getenv("CAR_CHAT"), "%d:%d", &chat_n, &chat_bytes) == 2 &&
-        chat_n > 0 && chat_bytes > 0 && (size_t)chat_n * (size_t)chat_bytes <= CAR_SIM_BYTES) {
-        S[0].tx_len = (size_t)chat_bytes; S[1].tx_len = 0;
-        chat_sent[0] = 1;
-    } else {
-        if (getenv("CAR_CHAT"))
-            fprintf(stderr, "CAR_CHAT=%s ignored: <exchanges>:<bytes>, at most %d bytes in all\n",
-                    getenv("CAR_CHAT"), CAR_SIM_BYTES);
-        chat_n = 0;
+    /* A script of messages (CAR_CHAT, CAR_SCRIPT, CAR_KBD), or one transfer.
+     * The first message, at 0, is there when the session starts. */
+    bool script = sc_parse(seed);
+    if (script) {
+        S[0].tx_len = S[1].tx_len = 0;
+        sc_step(0);
     }
 
     now_ms = 0;
@@ -497,8 +622,8 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         for (int i = 0; i < 2; i++) {
             uint64_t d = car_next_deadline(&S[i].car);
             if (d < t) t = d;
-            if (chat_due[i] && chat_due[i] < t) t = chat_due[i];
         }
+        if (script && sc_next() < t) t = sc_next();
         if (t == UINT64_MAX || t > limit_ms) break;
         now_ms = t;
         if (step_at_s >= 0 && now_ms >= (uint64_t)(step_at_s * 1000.0)) {
@@ -535,19 +660,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             }
             free(e.bytes);
         }
-        for (int i = 0; i < 2 && chat_n; i++) {
-            if (chat_due[i] && now_ms >= chat_due[i]) {
-                chat_due[i] = 0;
-                S[i].tx_len += (size_t)chat_bytes;
-                chat_sent[i]++;
-                if (trace) printf("%9.1f %c app writes message %d\n", now_ms / 1000.0, 'A' + i, chat_sent[i]);
-                car_on_app_data(&S[i].car, now_ms);
-            }
-            /* B answers each of A's messages; A writes the next on the answer */
-            int j = 1 - i;
-            bool got = S[i].rx_len >= (size_t)chat_sent[j] * (size_t)chat_bytes && chat_sent[j] > 0;
-            bool turn = i == 1 ? chat_sent[1] < chat_sent[0] : chat_sent[0] == chat_sent[1] && chat_sent[0] < chat_n;
-            if (got && turn && !chat_due[i]) chat_due[i] = now_ms + CHAT_REPLY_MS;
+        if (script) {
+            size_t len[2] = { S[0].tx_len, S[1].tx_len };
+            sc_step(now_ms);
+            for (int i = 0; i < 2; i++) if (S[i].tx_len != len[i]) car_on_app_data(&S[i].car, now_ms);
         }
         for (int i = 0; i < 2; i++) car_on_time(&S[i].car, now_ms);
         if (car_failed(&S[0].car) || car_failed(&S[1].car)) break;   /* the session ends */
@@ -557,7 +673,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
          * transfer. */
         if (S[1].rx_len >= S[0].tx_len && S[0].rx_len >= S[1].tx_len &&
             car_rx_verified(&S[0].car) && car_rx_verified(&S[1].car) &&
-            (!chat_n || (chat_sent[0] == chat_n && chat_sent[1] == chat_n))) { done_ms = now_ms; break; }
+            (!script || sc_done())) { done_ms = now_ms; break; }
     }
     while (nev) { event_t e; pop(&e); free(e.bytes); }
 
@@ -566,6 +682,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->intact = !memcmp(S[1].rx, S[0].tx, S[1].rx_len < S[0].tx_len ? S[1].rx_len : S[0].tx_len) &&
                   !memcmp(S[0].rx, S[1].tx, S[0].rx_len < S[1].tx_len ? S[0].rx_len : S[1].tx_len);
     res->done_ms = done_ms;
+    res->air_ms[0] = S[0].air_ms; res->air_ms[1] = S[1].air_ms;
+    res->msgs = script ? sc_n : 0;
+    for (int k = 0; k < res->msgs; k++)
+        res->msg_delay_ms[k] = sc[k].delivered ? sc[k].delivered - sc[k].written : UINT64_MAX;
     res->collisions = collisions;
     res->frames = frame_no;
     res->keydowns = keydown_no;
