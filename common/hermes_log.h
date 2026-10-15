@@ -26,6 +26,19 @@ int  hermes_log_init(size_t capacity);
 void hermes_log_shutdown(void);
 void hermes_log_set_level(hermes_log_level_t level);
 void hermes_log_set_component_level(const char *component, hermes_log_level_t level);
+
+/**
+ * @brief Add (or replace) the file sink, opened for appending.
+ *
+ * @param path      Log file path; relative paths are resolved against the
+ *                  process's current working directory.
+ * @param min_level Lowest level written to the file.
+ * @param jsonl     Write JSONL records instead of the human-readable format.
+ *
+ * @return 0 on success; -1 if @p path is NULL or cannot be opened, in which
+ *         case a diagnostic naming the path and the errno reason is written
+ *         to stderr and file logging stays disabled.
+ */
 int  hermes_log_set_file(const char *path, hermes_log_level_t min_level, bool jsonl);
 void hermes_log_close_file(void);
 unsigned long hermes_log_dropped_count(void);

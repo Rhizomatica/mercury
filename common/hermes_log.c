@@ -13,6 +13,7 @@
 #define localtime_r(timep, result) localtime_s((result), (timep))
 #endif
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -395,7 +396,17 @@ int hermes_log_set_file(const char *path, hermes_log_level_t min_level, bool jso
 
     FILE *fp = fopen(path, "a");
     if (!fp)
+    {
+        /* The whole point of a file sink is to survive where nobody is
+         * watching the terminal, so a silent failure here is the worst
+         * outcome: the operator believes the run is being recorded and only
+         * finds out when there is nothing to send.  Say it, with the path and
+         * the reason, on the one stream that does not depend on the log file.
+         * Keep the return value so callers can react if they ever need to. */
+        fprintf(stderr, "hermes_log: cannot open log file '%s': %s; "
+                        "file logging disabled\n", path, strerror(errno));
         return -1;
+    }
 
     pthread_mutex_lock(&g_log.lock);
     /* Defer close of old file until shutdown (worker may still have queued entries). */

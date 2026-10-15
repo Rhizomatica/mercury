@@ -69,7 +69,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
             test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
             test_message_store test_ui_history test_ws_protocol \
-            test_monitor_frame
+            test_monitor_frame test_hermes_log
 
 .PHONY: all test clean
 
@@ -210,6 +210,10 @@ test_cfg_utils: common/test_cfg_utils.c $(UNITY_SRC) \
                 ../common/hermes_log.c \
                 ../common/iniparser/iniparser.c ../common/iniparser/dictionary.c
 	$(CC) $(CFLAGS) -I../radio_io -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# A -L path that cannot be opened must say so, not fail silently.
+test_hermes_log: common/test_hermes_log.c $(UNITY_SRC) ../common/hermes_log.c
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # ARQ→TNC seam test (standalone TU, no threads/bus)
 test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
