@@ -29,7 +29,8 @@
 
 /* Passband geometry — matches the validated offline harness (docs/MFSK-PORT.md). */
 #define MFSK_FS       8000.0
-#define MFSK_NFFT     256
+#define MFSK_NFFT     256          /* the floor's; the 500 Hz modes vary it */
+#define MFSK_NFFT_MAX 512
 /* Carrier.  The 32 tones are the middle 32 of the 50 DC-centred subcarriers,
  * bins -16..+15 at baseband.  mfsk_synth takes the real part against the
  * conjugate carrier, which mirrors the spectrum: on the air they are bins
@@ -46,7 +47,9 @@
  * whole number of carrier cycles, or the phase jumps every period and no
  * burst decodes (test_mfsk_modem's round trips). */
 #define MFSK_FC        (1500.0 - 0.5 * MFSK_FS / MFSK_NFFT)   /* 1484.375 Hz */
-#define MFSK_FC_PERIOD 512
+/* 1024 holds a whole number of cycles of both carriers: 1484.375 Hz (190
+ * cycles) and, for the 15.625 Hz-spaced mode, 1492.1875 Hz (191). */
+#define MFSK_FC_PERIOD 1024
 #define MFSK_NCAR     50
 #define MFSK_GI       0.25
 #define MFSK_M        32
@@ -93,12 +96,20 @@
  * tuned link pays for exactly one correlation, as before. */
 #define MFSK_FREQ_HYPS   13
 #define MFSK_FREQ_HYP_LO (-6)          /* in half-bins */
+/* At half the spacing the same +/-94 Hz takes twice the hypotheses. */
+#define MFSK_FREQ_HYPS_MAX 25
 
 #define MFSK_LPF_TAPS 63
+/* The payload decoder's filter may be longer (MERCURY_MFSK_LPF_HZ, below). */
+#define MFSK_LPF_TAPS_MAX 127
 #define MFSK_LPF_FC   1000.0
 
 typedef struct {
     int mode;
+    int nfft;                       /* MFSK_NFFT, or 512 for 15.625 Hz tones */
+    int fcg;                        /* carrier table: 0 = MFSK_FC, 1 = the 512-point one */
+    int nhyp, hyp_lo;               /* frequency hypotheses, in half-bins */
+    double snr_bin_to_3k_db;        /* one bin's width against 3 kHz */
     mfsk_t m;
     ofdm_frame_t o;
     const mfsk_ldpc_code_t *code;   /* rate 8/16 */
@@ -106,7 +117,8 @@ typedef struct {
     int Nofdm, P, bps, NPAY;
     size_t frame_bytes;             /* K/8 (payload + CRC16) */
 
-    double lpf[MFSK_LPF_TAPS];
+    double lpf[MFSK_LPF_TAPS_MAX];
+    int    lpf_taps;
     long tx_n;                      /* TX carrier phase counter (per burst) */
     double complex tx_tail[MFSK_XFADE]; /* last symbol's faded-out suffix */
     int      tx_have_tail;          /* ...to add to the next symbol's head */
@@ -142,7 +154,7 @@ typedef struct {
      * error shifts every tone; beyond half a subcarrier (15.6 Hz here) the
      * nominal FFT bins see nothing and the mode goes stone deaf. Measured on
      * the unmodified decoder: 12 Hz decoded 10/10, 16 Hz decoded 0/10. */
-    double complex *preT_hyp[MFSK_FREQ_HYPS];
+    double complex *preT_hyp[MFSK_FREQ_HYPS_MAX];
     int             freq_hb;        /* latched hypothesis, in HALF subcarriers */
     int             freq_locked;    /* a decode confirmed freq_hb            */
     double          preE[MFSK_MAX_PREAMBLE_SYMB], pstE[MFSK_MAX_PREAMBLE_SYMB];
@@ -170,38 +182,47 @@ typedef struct {
 } mfsk_modem_t;
 
 /* Windowed-sinc low-pass (matches the harness). */
-static void mklpf(double *lpf, double fc)
+static void mklpf_n(double *lpf, double fc, int taps)
 {
     double s = 0.0;
-    for (int i = 0; i < MFSK_LPF_TAPS; i++)
+    for (int i = 0; i < taps; i++)
     {
-        int k = i - MFSK_LPF_TAPS / 2;
+        int k = i - taps / 2;
         double h = (k == 0) ? 2.0 * M_PI * fc / MFSK_FS
                             : sin(2.0 * M_PI * fc / MFSK_FS * k) / (M_PI * k);
-        h *= 0.54 - 0.46 * cos(2.0 * M_PI * i / (MFSK_LPF_TAPS - 1));
+        h *= 0.54 - 0.46 * cos(2.0 * M_PI * i / (taps - 1));
         lpf[i] = h; s += h;
     }
-    for (int i = 0; i < MFSK_LPF_TAPS; i++) lpf[i] /= s;
+    for (int i = 0; i < taps; i++) lpf[i] /= s;
 }
 
-/* The carrier phasor e^(j*2*pi*MFSK_FC*n/MFSK_FS), one period of it. */
-static double complex g_fc_ph[MFSK_FC_PERIOD];
+static void mklpf(double *lpf, double fc) { mklpf_n(lpf, fc, MFSK_LPF_TAPS); }
+
+/* The carrier phasor e^(j*2*pi*fc*n/MFSK_FS), one period of it, for the
+ * 256-point geometry (g 0) and the 512-point one (g 1).  Either way the tones
+ * are centred on 1500 Hz: fc sits half a bin below it. */
+static double complex g_fc_ph[2][MFSK_FC_PERIOD];
 static pthread_once_t g_fc_once = PTHREAD_ONCE_INIT;
 
 static void fc_table_init(void)
 {
-    for (int n = 0; n < MFSK_FC_PERIOD; n++)
+    for (int g = 0; g < 2; g++)
     {
-        double ph = 2.0 * M_PI * MFSK_FC / MFSK_FS * (double)n;
-        g_fc_ph[n] = cos(ph) + I * sin(ph);
+        double fc = 1500.0 - 0.5 * MFSK_FS / (double)(MFSK_NFFT << g);
+        for (int n = 0; n < MFSK_FC_PERIOD; n++)
+        {
+            double ph = 2.0 * M_PI * fc / MFSK_FS * (double)n;
+            g_fc_ph[g][n] = cos(ph) + I * sin(ph);
+        }
     }
 }
 
 /* n is an absolute sample index (never negative). */
-static inline double complex fc_phasor(long n)
+static inline double complex fc_phasor_g(int g, long n)
 {
-    return g_fc_ph[n & (MFSK_FC_PERIOD - 1)];
+    return g_fc_ph[g][n & (MFSK_FC_PERIOD - 1)];
 }
+static inline double complex fc_phasor(long n) { return fc_phasor_g(0, n); }
 
 /* ---- lifecycle -------------------------------------------------------- */
 
@@ -213,8 +234,16 @@ static void *mfsk_be_open(int mode)
     if (!h) return NULL;
 
     h->mode = mode;
-    mfsk_init(&h->m, MFSK_M, MFSK_NCAR, 1);
-    ofdm_frame_init(&h->o, MFSK_NFFT, MFSK_NCAR, MFSK_GI, 0);
+    int M = MFSK_M;
+    h->nfft = MFSK_NFFT;
+    if (mode == MERCURY_MODE_MFSK_N16) M = 16;
+    if (mode == MERCURY_MODE_MFSK_N32) h->nfft = 2 * MFSK_NFFT;
+    h->fcg = h->nfft == MFSK_NFFT ? 0 : 1;
+    h->hyp_lo = MFSK_FREQ_HYP_LO * (h->nfft / MFSK_NFFT);
+    h->nhyp = 1 - 2 * h->hyp_lo;
+    h->snr_bin_to_3k_db = MFSK_SNR_BIN_TO_3K_DB - 10.0 * log10((double)h->nfft / MFSK_NFFT);
+    mfsk_init(&h->m, M, MFSK_NCAR, 1);
+    ofdm_frame_init(&h->o, h->nfft, MFSK_NCAR, MFSK_GI, 0);
     /* Code rate.  All five ported codes share N=1600, so the burst is 13.5 s
      * whatever the rate -- a lower rate costs payload, not airtime.  Measured
      * anyway: with acquisition fixed, rate 1/8 buys only ~0.5 dB over rate 1/2
@@ -228,7 +257,16 @@ static void *mfsk_be_open(int mode)
     h->NPAY  = (h->code->N + h->bps - 1) / h->bps;
     h->frame_bytes = (size_t)h->code->K / 8;
     pthread_once(&g_fc_once, fc_table_init);
-    mklpf(h->lpf, MFSK_LPF_FC);
+    /* Experiment: MERCURY_MFSK_LPF_HZ narrows the baseband filter (127 taps,
+     * a ~200 Hz transition) to the mode's tones.  The sync statistic divides
+     * by the energy the filter passes, so noise outside the tones costs
+     * acquisition. */
+    h->lpf_taps = MFSK_LPF_TAPS;
+    if (getenv("MERCURY_MFSK_LPF_HZ")) {
+        h->lpf_taps = MFSK_LPF_TAPS_MAX;
+        mklpf_n(h->lpf, atof(getenv("MERCURY_MFSK_LPF_HZ")), h->lpf_taps);
+    } else
+        mklpf(h->lpf, MFSK_LPF_FC);
 
     /* RX window: one full burst (pre + data + post) plus a few symbols slack. */
     /* Two bursts of window, not one.
@@ -287,15 +325,15 @@ static void *mfsk_be_open(int mode)
      * received signal shifted by +k bins, and costs nothing at run time beyond
      * the extra correlations. Rotation is continuous across the whole template
      * because the received burst is. */
-    for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++)
+    for (int hy = 0; hy < h->nhyp; hy++)
     {
-        int hb = MFSK_FREQ_HYP_LO + hy;   /* half-bins */
+        int hb = h->hyp_lo + hy;          /* half-bins */
         h->preT_hyp[hy] = (double complex *)malloc((size_t)h->preN * h->Nofdm *
                                                    sizeof(double complex));
         if (!h->preT_hyp[hy]) { mfsk_be_close(h); return NULL; }
         for (int n = 0; n < h->preN * h->Nofdm; n++)
         {
-            double ph = M_PI * (double)hb * (double)n / (double)MFSK_NFFT;
+            double ph = M_PI * (double)hb * (double)n / (double)h->nfft;
             h->preT_hyp[hy][n] = h->preT[n] * (cos(ph) + I * sin(ph));
         }
     }
@@ -311,7 +349,7 @@ static void mfsk_be_close(void *ctx)
     if (!h) return;
     /* bb was never freed here: it is rxcap complex doubles (~3.4 MB), leaked on
      * every open/close cycle. */
-    for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++) free(h->preT_hyp[hy]);
+    for (int hy = 0; hy < h->nhyp; hy++) free(h->preT_hyp[hy]);
     free(h->rxbuf); free(h->bf); free(h->bb); free(h->rb);
     free(h->llr); free(h->llr_di); free(h->llr_acc); free(h->ilv);
     free(h->info); mfsk_ldpc_ws_free(h->ldpc); free(h->preT); free(h->pstT); free(h);
@@ -343,7 +381,7 @@ static int mfsk_be_sample_rate(void *ctx)   { (void)ctx; return (int)MFSK_FS; }
 static int mfsk_be_bandwidth_hz(void *ctx)
 {
     const mfsk_t *m = &((mfsk_modem_t *)ctx)->m;
-    double spacing = MFSK_FS / (double)MFSK_NFFT;
+    double spacing = MFSK_FS / (double)((mfsk_modem_t *)ctx)->nfft;
     return (int)((double)(m->nStreams * m->M) * spacing + 0.5);
 }
 
@@ -378,7 +416,7 @@ static uint64_t mfsk_now_ms(void)
  * *tx_n is the carrier phase counter (absolute sample index in the burst);
  * tail/have_tail carry the pending fade-out across calls, so preamble, data
  * and postamble join as smoothly as symbols do. */
-static int mfsk_synth(const ofdm_frame_t *o, int nofdm, const mfsk_cplx *syms, int nsym,
+static int mfsk_synth(const ofdm_frame_t *o, int g, int nofdm, const mfsk_cplx *syms, int nsym,
                       int16_t *out, long *tx_n, double complex *tail, int *have_tail, int last)
 {
     static double rise[MFSK_XFADE];
@@ -391,7 +429,7 @@ static int mfsk_synth(const ofdm_frame_t *o, int nofdm, const mfsk_cplx *syms, i
     int written = 0;
     for (int s = 0; s < nsym; s++)
     {
-        double complex bins[MFSK_NCAR], pad[MFSK_NFFT], t[MFSK_NFFT], cp[MFSK_NFFT + 128];
+        double complex bins[MFSK_NCAR], pad[MFSK_NFFT_MAX], t[MFSK_NFFT_MAX], cp[MFSK_NFFT_MAX * 2];
         for (int k = 0; k < MFSK_NCAR; k++)
             bins[k] = syms[s * MFSK_NCAR + k].re + syms[s * MFSK_NCAR + k].im * I;
         ofdm_zero_padder(o, bins, pad);
@@ -408,7 +446,7 @@ static int mfsk_synth(const ofdm_frame_t *o, int nofdm, const mfsk_cplx *syms, i
         *have_tail = !(last && s == nsym - 1);
         for (int n = 0; n < nofdm; n++)
         {
-            double complex p = fc_phasor((*tx_n)++);
+            double complex p = fc_phasor_g(g, (*tx_n)++);
             double v = MFSK_TXAMP * (creal(cp[n]) * creal(p) + cimag(cp[n]) * cimag(p));
             if (v > 32767.0) v = 32767.0; else if (v < -32768.0) v = -32768.0;
             out[written++] = (int16_t)lrint(v);
@@ -419,7 +457,7 @@ static int mfsk_synth(const ofdm_frame_t *o, int nofdm, const mfsk_cplx *syms, i
 
 static int mfsk_emit(mfsk_modem_t *h, const mfsk_cplx *syms, int nsym, int16_t *out, int last)
 {
-    return mfsk_synth(&h->o, h->Nofdm, syms, nsym, out, &h->tx_n,
+    return mfsk_synth(&h->o, h->fcg, h->Nofdm, syms, nsym, out, &h->tx_n,
                       h->tx_tail, &h->tx_have_tail, last);
 }
 
@@ -501,20 +539,20 @@ static void mfsk_downmix(mfsk_modem_t *h)
      * The carrier phase is taken from the ABSOLUTE sample index (n_abs), so
      * sliding the buffer does not rotate previously computed samples. */
     for (int i = h->bb_len; i < h->rxlen; i++)
-        h->bb[i] = 2.0 * (double)h->rxbuf[i] * fc_phasor(h->n_abs + (long)i);
+        h->bb[i] = 2.0 * (double)h->rxbuf[i] * fc_phasor_g(h->fcg, h->n_abs + (long)i);
     h->bb_len = h->rxlen;
 
     /* bf[i] needs bb up to i + TAPS/2, so it is final only once that has
      * arrived.  Everything below bf_len is already final and is never
      * recomputed. */
-    int last = h->bb_len - MFSK_LPF_TAPS / 2;
+    int last = h->bb_len - h->lpf_taps / 2;
     if (last > h->rxlen) last = h->rxlen;
     for (int i = h->bf_len; i < last; i++)
     {
         double complex a = 0;
-        for (int k = 0; k < MFSK_LPF_TAPS; k++)
+        for (int k = 0; k < h->lpf_taps; k++)
         {
-            int j = i - k + MFSK_LPF_TAPS / 2;
+            int j = i - k + h->lpf_taps / 2;
             if (j >= 0 && j < h->bb_len) a += h->lpf[k] * h->bb[j];
         }
         h->bf[i] = a;
@@ -538,8 +576,8 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
     for (int s = 0; s < h->NPAY; s++)
     {
         int b = payoff + s * h->Nofdm;
-        double complex rmv[MFSK_NFFT], ff[MFSK_NFFT], dep[MFSK_NCAR];
-        double complex sym[MFSK_NFFT * 2];
+        double complex rmv[MFSK_NFFT_MAX], ff[MFSK_NFFT_MAX], dep[MFSK_NCAR];
+        double complex sym[MFSK_NFFT_MAX * 2];
         const double complex *src = &h->bf[b];
         if (h->freq_hb != 0)
         {
@@ -549,7 +587,7 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
             for (int n = 0; n < h->Nofdm; n++)
             {
                 double ph = -M_PI * (double)h->freq_hb * (double)n /
-                            (double)MFSK_NFFT;
+                            (double)h->nfft;
                 sym[n] = h->bf[b + n] * (cos(ph) + I * sin(ph));
             }
             src = sym;
@@ -678,7 +716,7 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
     {
         double lin = snr_n > 0.0 ? snr_s / snr_n * h->m.nStreams : 0.0;
         if (lin < 1e-4) lin = 1e-4;
-        h->last_snr = (float)(10.0 * log10(lin) + MFSK_SNR_BIN_TO_3K_DB + MFSK_SNR_CAL_DB);
+        h->last_snr = (float)(10.0 * log10(lin) + h->snr_bin_to_3k_db + MFSK_SNR_CAL_DB);
     }
     (void)sig;
     return (int)nbytes;
@@ -718,8 +756,8 @@ static int mfsk_carrier_sense(mfsk_modem_t *h, int search_len)
         return 0;
     int best = -1;
     double best_metric = -1.0;
-    for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++) {
-        if (h->freq_locked && hy != h->freq_hb - MFSK_FREQ_HYP_LO) continue;
+    for (int hy = 0; hy < h->nhyp; hy++) {
+        if (h->freq_locked && hy != h->freq_hb - h->hyp_lo) continue;
         double m = 0.0;
         int o = mfsk_sync_search(h->bf + base, len, 1, h->preT_hyp[hy], h->preE,
                                  h->preN, h->Nofdm, 0, &m);
@@ -854,8 +892,8 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
          * fails CRC, so a wrong latch cannot wedge the decoder. */
         if (h->freq_locked)
         {
-            int hy = h->freq_hb - MFSK_FREQ_HYP_LO;
-            if (hy >= 0 && hy < MFSK_FREQ_HYPS)
+            int hy = h->freq_hb - h->hyp_lo;
+            if (hy >= 0 && hy < h->nhyp)
                 off = mfsk_sync_search(h->bf, search_len, 1, h->preT_hyp[hy],
                                        h->preE, h->preN, h->Nofdm, start_symb,
                                        &metric);
@@ -866,7 +904,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
         {
             double best_metric = -1.0;
             int    best_off = -1, best_hb = h->freq_hb;
-            for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++)
+            for (int hy = 0; hy < h->nhyp; hy++)
             {
                 double m = 0.0;
                 int o = mfsk_sync_search(h->bf, search_len, 1, h->preT_hyp[hy],
@@ -876,7 +914,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
                 {
                     best_metric = m;
                     best_off    = o;
-                    best_hb     = MFSK_FREQ_HYP_LO + hy;
+                    best_hb     = h->hyp_lo + hy;
                 }
             }
             if (best_off >= 0)
@@ -1028,6 +1066,7 @@ static mfsk_t       g_pat_m;
 static ofdm_frame_t g_pat_o;
 static double       g_pat_lpf[MFSK_LPF_TAPS];
 static int          g_pat_nofdm;
+static int          g_pat_fcg;      /* carrier table, as mfsk_modem_t.fcg */
 static bool         g_pat_ready = false;
 /* The ACK and BREAK lists in use: the session's while a carousel session
  * seeds the modem (mfsk_pattern_set_session), the global ones otherwise. */
@@ -1036,15 +1075,31 @@ static int          g_pat_ack[MFSK_MAX_ACK_TONES], g_pat_brk[MFSK_MAX_ACK_TONES]
 static bool         g_pat_lists_set = false;
 static _Atomic unsigned g_pat_gen = 1;     /* bumped on every change */
 
-static void mfsk_pattern_lazy_init(void)
+static void mfsk_pattern_init_geometry(int mode)
 {
-    if (g_pat_ready) return;
-    mfsk_init(&g_pat_m, MFSK_M, MFSK_NCAR, 1);
-    ofdm_frame_init(&g_pat_o, MFSK_NFFT, MFSK_NCAR, MFSK_GI, 0);
+    int nfft = mode == MERCURY_MODE_MFSK_N32 ? 2 * MFSK_NFFT : MFSK_NFFT;
+    mfsk_init(&g_pat_m, mode == MERCURY_MODE_MFSK_N16 ? 16 : MFSK_M, MFSK_NCAR, 1);
+    ofdm_frame_init(&g_pat_o, nfft, MFSK_NCAR, MFSK_GI, 0);
     g_pat_nofdm = ofdm_frame_nofdm(&g_pat_o);
+    g_pat_fcg = nfft == MFSK_NFFT ? 0 : 1;
     pthread_once(&g_fc_once, fc_table_init);
     mklpf(g_pat_lpf, MFSK_LPF_FC);
     g_pat_ready = true;
+}
+
+static void mfsk_pattern_lazy_init(void)
+{
+    if (g_pat_ready) return;
+    mfsk_pattern_init_geometry(MERCURY_MODE_MFSK);
+}
+
+void mfsk_pattern_set_geometry(int mode)
+{
+    mfsk_pattern_init_geometry(mode);
+    pthread_mutex_lock(&g_pat_lists_mtx);
+    g_pat_lists_set = false;            /* back to this geometry's global lists */
+    pthread_mutex_unlock(&g_pat_lists_mtx);
+    atomic_fetch_add(&g_pat_gen, 1);
 }
 
 static void pat_lists(int *ack, int *brk)
@@ -1115,7 +1170,7 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind)
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
     int have_tail = 0;
-    int written = mfsk_synth(&g_pat_o, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    int written = mfsk_synth(&g_pat_o, g_pat_fcg, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
     free(bins);
     return written;
 }
@@ -1134,7 +1189,7 @@ int mfsk_nav_tx(int16_t *out, int cls)
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
     int have_tail = 0;
-    int written = mfsk_synth(&g_pat_o, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    int written = mfsk_synth(&g_pat_o, g_pat_fcg, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
     free(bins);
     return written;
 }
@@ -1154,7 +1209,7 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
     for (int i = 0; i < n; i++)
     {
         double x = (double)pb[i];
-        bb[i] = 2.0 * x * fc_phasor(i);
+        bb[i] = 2.0 * x * fc_phasor_g(g_pat_fcg, i);
     }
     for (int i = 0; i < n; i++)
     {
@@ -1303,7 +1358,7 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
     int nout = 0;
     for (int i = 0; i < n; i++)
     {
-        double complex x = 2.0 * (double)pcm[i] * fc_phasor(w->n++);
+        double complex x = 2.0 * (double)pcm[i] * fc_phasor_g(g_pat_fcg, w->n++);
         w->hist_re[w->hist_pos] = creal(x);
         w->hist_im[w->hist_pos] = cimag(x);
         double ar = 0.0, ai = 0.0;
