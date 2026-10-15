@@ -217,10 +217,19 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
  * offset, decoded the same station's frames.  Counting a symbol only when its
  * tone is the peak bin holds to +/-15 Hz, half a tone spacing; so each FFT is
  * read again shifted by whole bins, +/-MFSK_PAT_SHIFT_MAX of them (+/-78 Hz at
- * 31.25 Hz spacing), and the best shift scored.  The FFT, the costly part, is
- * still done once. */
+ * 31.25 Hz spacing), and the best shift scored.
+ *
+ * Whole bins leave a pattern up to half a bin between two shifts, where its
+ * tone's energy splits across two bins and the peak often lands on the wrong
+ * one: half a bin off cost every geometry 3-4 dB (pattern_probe; the floor's
+ * 50 % point moved from -14.3 to -11.0 dB SNR3k at 15.6 Hz off, the
+ * 15.625 Hz geometry's from -17.3 to -13.6 at 7.8 Hz).  So the block is also
+ * read rotated down by half a bin, and the shifts step by half bins:
+ * shift index si is (si - MFSK_PAT_SHIFT_MAX * 2 - 1) half bins, odd ones read
+ * from the rotated FFT.  Two FFTs a position instead of one. */
 #define MFSK_PAT_SHIFT_MAX 2
-#define MFSK_PAT_SHIFTS    (2 * MFSK_PAT_SHIFT_MAX + 1)
+#define MFSK_PAT_SHIFT_HB  (2 * MFSK_PAT_SHIFT_MAX + 1)       /* +/-2.5 bins */
+#define MFSK_PAT_SHIFTS    (2 * MFSK_PAT_SHIFT_HB + 1)
 
 /* ofdm_zero_depadder, reading every bin s bins up (a signal s bins high). */
 static void depad_shifted(const ofdm_frame_t *o, const double complex *in, double complex *out, int s)
@@ -228,6 +237,28 @@ static void depad_shifted(const ofdm_frame_t *o, const double complex *in, doubl
     int Nfft = o->Nfft, Nc = o->Nc, ss = o->start_shift;
     for (int j = 0; j < Nc / 2; j++) out[j] = in[((j + Nfft - Nc / 2 + s) % Nfft + Nfft) % Nfft];
     for (int j = Nc / 2; j < Nc; j++) out[j] = in[((j - Nc / 2 + ss + s) % Nfft + Nfft) % Nfft];
+}
+
+/* The block's FFT as read and rotated down by half a bin: fftd[0] and fftd[1]. */
+static void pat_ffts(const ofdm_frame_t *o, const double complex *blk, int Nofdm,
+                     double complex fftd[2][2048])
+{
+    double complex rmv[2048], rot[2048];
+    ofdm_gi_remover(o, blk, rmv);
+    ofdm_fft(o, rmv, fftd[0]);
+    double ph = -M_PI / (double)o->Nfft;
+    double complex w = cos(ph) + I * sin(ph), r = 1.0;
+    for (int n = 0; n < Nofdm; n++, r *= w) rot[n] = blk[n] * r;
+    ofdm_gi_remover(o, rot, rmv);
+    ofdm_fft(o, rmv, fftd[1]);
+}
+
+/* The bins at shift index si (see MFSK_PAT_SHIFTS). */
+static void pat_bins(const ofdm_frame_t *o, double complex fftd[2][2048], int si, double complex *bins)
+{
+    int hb = si - MFSK_PAT_SHIFT_HB;                 /* half bins */
+    int odd = hb & 1;
+    depad_shifted(o, fftd[odd], bins, (hb - odd) / 2);
 }
 
 void mfsk_detect_patterns(const mfsk_t *m, const ofdm_frame_t *o,
@@ -261,7 +292,7 @@ void mfsk_detect_patterns(const mfsk_t *m, const ofdm_frame_t *o,
         best_matched[l] = -1; best_pos[l] = -1; best_metric[l] = -1.0;
     }
 
-    double complex blk[2048], rmv[2048], fftd[2048], bins[1024];
+    double complex blk[2048], fftd[2][2048], bins[1024];
 
     for (int base = 0; base <= last_base; base += step)
     {
@@ -274,11 +305,10 @@ void mfsk_detect_patterns(const mfsk_t *m, const ofdm_frame_t *o,
              * depends only on (base, p), never on which tones we hoped for. */
             int rbase = base + p * Nofdm;
             for (int n = 0; n < Nofdm; n++) blk[n] = rx[rbase + n];
-            ofdm_gi_remover(o, blk, rmv);
-            ofdm_fft(o, rmv, fftd);
+            pat_ffts(o, blk, Nofdm, fftd);
           for (int si = 0; si < MFSK_PAT_SHIFTS; si++)
           {
-            depad_shifted(o, fftd, bins, si - MFSK_PAT_SHIFT_MAX);
+            pat_bins(o, fftd, si, bins);
 
             double e_total = 0.0;
             for (int k = 0; k < o->Nc; k++)
@@ -455,14 +485,13 @@ static void stream_fft(mfsk_stream_det_t *d, long long k)
 {
     const ofdm_frame_t *o = d->o;
     const mfsk_t *m = d->m;
-    double complex blk[2048], rmv[2048], fftd[2048], bins[1024];
+    double complex blk[2048], fftd[2][2048], bins[1024];
     long long s0 = k * d->step;
     for (int n = 0; n < d->Nofdm; n++) blk[n] = d->bb[(s0 + n) % d->bb_cap];
-    ofdm_gi_remover(o, blk, rmv);
-    ofdm_fft(o, rmv, fftd);
+    pat_ffts(o, blk, d->Nofdm, fftd);
     int slot = (int)(k % d->ring);
     for (int si = 0; si < MFSK_PAT_SHIFTS; si++) {
-        depad_shifted(o, fftd, bins, si - MFSK_PAT_SHIFT_MAX);
+        pat_bins(o, fftd, si, bins);
         double e_total = 0.0;
         for (int c = 0; c < o->Nc; c++) {
             double complex v = bins[c];
