@@ -21,6 +21,12 @@
  * mode enum (which currently tops out at QAM16C2=25) so it can never collide
  * with a codec2 mode; backend_for_mode() routes it to the MFSK backend. */
 #define MERCURY_MODE_MFSK 100
+/* Experimental 500 Hz geometries of the same burst (same code, frame and
+ * patterns' tone lists), for measurement only -- no ladder uses them:
+ *   102  16 tones at 31.25 Hz (4 bits a 40 ms symbol)
+ *   103  32 tones at 15.625 Hz (5 bits an 80 ms symbol) */
+#define MERCURY_MODE_MFSK_N16 102
+#define MERCURY_MODE_MFSK_N32 103
 
 extern const modem_backend_t modem_backend_mfsk;
 
@@ -28,6 +34,11 @@ extern const modem_backend_t modem_backend_mfsk;
  * A pattern ACK is a short tone burst — no preamble, no LDPC.  The datalink
  * layer (ARQ) emits one via send_pattern_ack() and detects incoming ones in
  * the RX baseband.  pattern_kind: 0 = plain ACK, 1 = ACK+TURN (break). */
+
+/* Measurement only (utils/pattern_probe): the patterns at another MFSK
+ * mode's geometry, MERCURY_MODE_MFSK_N16 or _N32, with its global lists.  Not
+ * thread-safe: call before any pattern is sent or detected. */
+void mfsk_pattern_set_geometry(int mode);
 
 /* Number of pattern symbols (for buffer sizing / airtime). */
 int mfsk_pattern_nsymb(void);
