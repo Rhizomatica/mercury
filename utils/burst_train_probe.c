@@ -37,10 +37,14 @@
  *   RX_AFTER=keep|resync|reopen  what the train's decoder does after each
  *                          frame it decodes: nothing (default), UNSYNC, or
  *                          close and open a fresh instance
- *   CHAN=AWGN|MPG|MPP|MPD  channel (default AWGN).  On AWGN `level` is the
- *                          SNR3k in dB; on the fading presets it is the noise
- *                          density No in dB/Hz for common/watterson.c, and
- *                          the achieved SNR3k is printed.
+ *   CHAN=name              channel (default AWGN): AWGN, AWGNC, MPG, MPP, MPD
+ *                          (the legacy Butterworth presets) or any watterson
+ *                          preset name, e.g. ccir-poor, itur-mm (case does
+ *                          not matter; utils/watterson_test --list-presets
+ *                          prints them).  On AWGN `level` is the SNR3k in dB;
+ *                          on the fading presets it is the noise density No
+ *                          in dB/Hz for common/watterson.c, and the achieved
+ *                          SNR3k is printed.
  *
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -172,7 +176,10 @@ int main(int argc, char **argv)
     int mode = mode_from_name(pname);
     if (mode < 0 || trials <= 0 || N < 1 || N > MAX_N || preset < 0)
     {
-        fprintf(stderr, "usage: %s [MODE] [snr_db|No] [trials] [N] [gap_s...]  (CHAN=AWGN|MPG|MPP|MPD)\n", argv[0]);
+        fprintf(stderr, "usage: %s [MODE] [snr_db|No] [trials] [N] [gap_s...]\n"
+                        "  CHAN=AWGN (default), AWGNC, MPG, MPP, MPD (legacy Butterworth presets), or any\n"
+                        "  watterson preset name, e.g. ccir-poor (utils/watterson_test --list-presets)\n", argv[0]);
+        if (preset < 0) fprintf(stderr, "unknown channel '%s'\n", cname);
         return 1;
     }
 

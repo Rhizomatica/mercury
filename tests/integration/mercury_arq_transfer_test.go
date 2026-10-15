@@ -46,9 +46,11 @@ func TestMercuryARQTransfer(t *testing.T) {
 	// AE4JY pathsim reference (MERCURY_CH_ENGINE=pathsim, streaming-mode
 	// binary pointed at by MERCURY_PATHSIM_BIN; MERCURY_CH_NO then carries the
 	// pathsim-native --snr dB, and MERCURY_CH_FADING one of its presets, e.g.
-	// ccir-poor or midlat-dist-nvis).  The Watterson model gives controllable
-	// slow/deep fades (ITU-R good/moderate/poor) that reach the gear-shift
-	// oscillation regime ch --mpp cannot.
+	// ccir-poor or midlat-dist-nvis).  For watterson, MERCURY_CH_FADING is any
+	// name from utils/watterson_test --list-presets, e.g. ccir-poor or itur-mm
+	// (standard), or the legacy good/moderate/poor/flutter/mpg/mpp/mpd
+	// (Butterworth taps).  The Watterson model gives controllable slow/deep
+	// fades that reach the gear-shift oscillation regime ch --mpp cannot.
 	var chBin string
 	var err error
 	switch os.Getenv("MERCURY_CH_ENGINE") {
@@ -322,6 +324,18 @@ func TestMercuryARQTransfer(t *testing.T) {
 		unit := "MERCURY-DATAC15-PAYLOAD-0123456789"
 		payload = []byte(strings.Repeat(unit, nb/len(unit)+1))[:nb]
 	}
+	// MERCURY_TEST_PAYLOAD_RANDOM=1: incompressible bytes from a fixed PRNG, so
+	// the throughput measured is the link's raw rate (a repeated string
+	// compresses to a few frames and overstates it).  Same bytes every run.
+	if os.Getenv("MERCURY_TEST_PAYLOAD_RANDOM") != "" {
+		var x uint32 = 0x9E3779B9
+		for i := range payload {
+			x ^= x << 13
+			x ^= x >> 17
+			x ^= x << 5
+			payload[i] = byte(x)
+		}
+	}
 	if _, err := dataA.Write(payload); err != nil {
 		failWithLogs("write payload: %v", err)
 	}
@@ -424,5 +438,9 @@ func TestMercuryARQTransfer(t *testing.T) {
 		}
 		t.Logf("%s heard %s's DISCONNECT after %.1f s", name, by, time.Since(t0).Seconds())
 	}
-	t.Logf("ARQ transfer complete over ch (No=%.1f dB): %d bytes delivered", params.No_dBHz, len(payload))
+	engine := params.Engine
+	if engine == "" {
+		engine = "ch"
+	}
+	t.Logf("ARQ transfer complete over %s (No=%.1f dB): %d bytes delivered", engine, params.No_dBHz, len(payload))
 }

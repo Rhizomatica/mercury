@@ -6,10 +6,21 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * Implements the Watterson narrowband HF ionospheric channel model per
- * ITU-R Recommendation F.1487. Each propagation path is modelled as a
- * tapped-delay-line with its own delay, Doppler spread, frequency offset,
- * and gain. The Doppler spread is shaped using a 2nd-order Butterworth
- * IIR low-pass filter driven by complex white Gaussian noise.
+ * ITU-R Recommendation F.1487 / CCIR 520. Each propagation path is modelled
+ * as a tapped-delay-line with its own delay, Doppler spread, frequency
+ * offset, and gain.  Each tap is a complex Gaussian process with a Gaussian
+ * Doppler power spectrum whose "spread" (ITU-R F.1487: twice the standard
+ * deviation) is the path's doppler_hz: white complex Gaussian noise at a low
+ * rate, shaped by a Gaussian FIR, interpolated to the sample rate.
+ *
+ * Up to and including release 1.9.18 the taps were shaped by a 2nd-order
+ * Butterworth IIR run at the sample rate with its cutoff at doppler_hz.
+ * Measured against the standard that is both the wrong shape (22 % of the tap
+ * power beyond the nominal width against 4.6 % for the Gaussian) and the
+ * wrong width (the cutoff is the spectrum's rms width, so "1 Hz" fades at the
+ * rate of a 2 Hz CCIR spread).  It also places poles within 1e-4 of the unit
+ * circle at 48 kHz.  It is kept as WATTERSON_SPECTRUM_LEGACY so existing
+ * results reproduce; see docs/CHANNEL-MODEL.md.
  */
 
 #include <assert.h>
@@ -102,9 +113,110 @@ int watterson_init(watterson_t *w, int sample_rate)
     w->awgn_en = 0;
     w->noise_var = 0.0f;
     w->chan_norm = 1.0f;
+    w->spectrum = WATTERSON_SPECTRUM_GAUSSIAN;
     watterson_seed_auto(w);
 
     return 0;
+}
+
+int watterson_set_spectrum(watterson_t *w, int spectrum)
+{
+    assert(w != NULL);
+    if (spectrum != WATTERSON_SPECTRUM_GAUSSIAN && spectrum != WATTERSON_SPECTRUM_LEGACY)
+        return -1;
+    w->spectrum = spectrum;
+    return 0;
+}
+
+/* Range limits for watterson_add_path(), see the contract in watterson.h.
+ *
+ * The Gaussian tap is produced once every R = floor(fs / (64 * doppler_hz))
+ * samples.  Converting that ratio to int is undefined once it exceeds
+ * INT_MAX, which happens below about fs / (64 * 2^31) Hz (6e-8 Hz at 8 kHz);
+ * what the cast then yields depends on the target (wrap-around on one, a
+ * saturated INT_MAX on another), and either way the path is built without any
+ * error being reported.  The ratio is therefore computed in double and a
+ * spread that would need more than WATTERSON_MAX_INTERP samples per tap
+ * sample is rejected before anything is allocated. */
+#define WATTERSON_MAX_INTERP     1073741824.0   /* 2^30 output samples per tap sample */
+#define WATTERSON_MAX_FIR_HALF   4096.0         /* the formula gives 2..124; a defensive bound */
+#define WATTERSON_MAX_DELAY_MS   10000.0f       /* 10 s; HF multipath is a few ms */
+
+static double gaussian_interp_ratio(double fs, double doppler_hz)
+{
+    return floor(fs / (64.0 * doppler_hz));
+}
+
+/* Gaussian Doppler tap generator.
+ *
+ * The tap process is sampled at fs/R with R chosen so the low rate is about
+ * 64 times the spread (at least 1 sample per output sample).  The FIR is the
+ * sampled impulse response exp(-4 pi^2 sigma^2 t^2), truncated where it has
+ * fallen to 1e-4, and scaled so that unit-variance complex white noise in
+ * gives E[|tap|^2] = 1 out.  The history is pre-filled with noise so the
+ * tap starts in its steady-state distribution rather than ramping from zero. */
+static int gaussian_tap_setup(watterson_t *w, watterson_path_t *p)
+{
+    double sigma = 0.5 * (double)p->doppler_hz;             /* ITU-R F.1487: spread = 2 sigma */
+    double fs = (double)w->sample_rate;
+    double Rd = gaussian_interp_ratio(fs, (double)p->doppler_hz);
+    if (!(Rd <= WATTERSON_MAX_INTERP)) return -1;           /* checked by the caller too; NaN lands here */
+    int R = (int)Rd;
+    if (R < 1) R = 1;
+    double fsd = fs / (double)R;
+    /* half-length where exp(-4 pi^2 sigma^2 t^2) = 1e-4.  fsd is between 64
+     * and 128 times the spread (R is floored) unless R clamps to 1, so the
+     * result is 2 to 124 taps a side for any accepted spread; the bound only
+     * keeps the cast defined. */
+    double t_half = sqrt(log(1e4)) / (2.0 * M_PI * sigma);
+    double half_d = ceil(t_half * fsd);
+    if (!(half_d <= WATTERSON_MAX_FIR_HALF)) return -1;
+    int half = (int)half_d;
+    if (half < 2) half = 2;
+    int len = 2 * half + 1;
+    float *fir = (float *)malloc((size_t)len * sizeof(float));
+    COMP  *hist = (COMP *)calloc((size_t)len, sizeof(COMP));
+    if (!fir || !hist) { free(fir); free(hist); return -1; }
+    double e = 0.0;
+    for (int k = 0; k < len; k++)
+    {
+        double t = (double)(k - half) / fsd;
+        double h = exp(-4.0 * M_PI * M_PI * sigma * sigma * t * t);
+        fir[k] = (float)h;
+        e += h * h;
+    }
+    /* per-component noise variance is 1, so E[|tap|^2] = 2 * sum(h^2) * g^2 = 1 */
+    float g = (float)(1.0 / sqrt(2.0 * e));
+    for (int k = 0; k < len; k++) fir[k] *= g;
+    p->fir = fir; p->fir_len = len; p->fir_hist = hist; p->fir_idx = 0;
+    p->interp_ratio = R; p->interp_phase = 0;
+    for (int k = 0; k < len; k++)
+    {
+        hist[k].real = gaussian(w);
+        hist[k].imag = gaussian(w);
+    }
+    p->tap_norm = 1.0f;
+    return 0;
+}
+
+/* Next low-rate tap sample: push one complex noise draw, run the FIR. */
+static COMP gaussian_tap_next(watterson_t *w, watterson_path_t *p)
+{
+    p->fir_hist[p->fir_idx].real = gaussian(w);
+    p->fir_hist[p->fir_idx].imag = gaussian(w);
+    p->fir_idx++;
+    if (p->fir_idx >= p->fir_len) p->fir_idx = 0;
+    double re = 0.0, im = 0.0;
+    int idx = p->fir_idx;                 /* oldest sample first */
+    for (int k = 0; k < p->fir_len; k++)
+    {
+        re += (double)p->fir[k] * p->fir_hist[idx].real;
+        im += (double)p->fir[k] * p->fir_hist[idx].imag;
+        idx++;
+        if (idx >= p->fir_len) idx = 0;
+    }
+    COMP t; t.real = (float)re; t.imag = (float)im;
+    return t;
 }
 
 void watterson_seed(watterson_t *w, unsigned int seed)
@@ -139,6 +251,8 @@ void watterson_dispose(watterson_t *w)
             free(w->paths[i].delay_buf);
             w->paths[i].delay_buf = NULL;
         }
+        free(w->paths[i].fir);      w->paths[i].fir = NULL;
+        free(w->paths[i].fir_hist); w->paths[i].fir_hist = NULL;
     }
     memset(w, 0, sizeof(*w));
 }
@@ -150,9 +264,22 @@ int watterson_add_path(watterson_t *w, float delay_ms, float doppler_hz,
     int idx;
 
     assert(w != NULL);
-    assert(delay_ms >= 0.0f);
-    assert(doppler_hz >= 0.0f);
-    assert(gain >= 0.0f && gain <= 1.0f);
+
+    /* Range checks are returns, not asserts: the command-line tool hands user
+     * values straight here, and asserts vanish under NDEBUG. */
+    if (!isfinite(delay_ms) || delay_ms < 0.0f || delay_ms > WATTERSON_MAX_DELAY_MS)
+        return -1;
+    if (!isfinite(doppler_hz) || doppler_hz < 0.0f)
+        return -1;
+    if (!isfinite(freq_hz))
+        return -1;
+    if (!isfinite(gain) || gain < 0.0f || gain > 1.0f)
+        return -1;
+    /* A positive spread below about sample_rate / 2^36: see the limits above.
+     * Applied to both spectra so the contract does not depend on the mode. */
+    if (doppler_hz > 0.0f &&
+        !(gaussian_interp_ratio((double)w->sample_rate, (double)doppler_hz) <= WATTERSON_MAX_INTERP))
+        return -1;
 
     if (w->num_paths >= WATTERSON_MAX_PATHS)
         return -1;
@@ -169,6 +296,11 @@ int watterson_add_path(watterson_t *w, float delay_ms, float doppler_hz,
 
     /* Allocate delay line buffer */
     p->delay_samples = (int)ceilf(delay_ms * w->sample_rate / 1000.0f);
+    /* The line was one sample short up to and including release 1.9.18 (see
+     * watterson_process); the legacy spectrum keeps that so a pinned seed
+     * reproduces the old channel. */
+    if (w->spectrum == WATTERSON_SPECTRUM_LEGACY && p->delay_samples > 0)
+        p->delay_samples -= 1;
     if (p->delay_samples > 0)
     {
         p->delay_buf = (COMP *)calloc(p->delay_samples, sizeof(COMP));
@@ -181,18 +313,25 @@ int watterson_add_path(watterson_t *w, float delay_ms, float doppler_hz,
     }
     p->delay_idx = 0;
 
-    /* Compute Butterworth IIR coefficients for Doppler shaping.
-     * The 3 dB cutoff of the Butterworth filter is set to the Doppler
-     * spread σ, which yields a good approximation of the Gaussian
-     * power spectrum.
-     *
-     * For σ = 0 (zero Doppler spread, i.e. a static path), we
-     * effectively bypass the filter. */
-    if (p->doppler_hz > 0.0f)
+    p->spectrum = w->spectrum;
+
+    if (p->doppler_hz > 0.0f && p->spectrum == WATTERSON_SPECTRUM_GAUSSIAN)
     {
-        /* The filter bandwidth is matched to the Doppler spread.
-         * A Butterworth LPF with fc = σ provides a reasonable
-         * approximation of the Gaussian spectrum. */
+        if (gaussian_tap_setup(w, p) < 0)
+        {
+            free(p->delay_buf);
+            p->delay_buf = NULL;
+            return -1;
+        }
+        /* prime the interpolator with two consecutive low-rate samples */
+        p->tap_prev = gaussian_tap_next(w, p);
+        p->tap_next = gaussian_tap_next(w, p);
+    }
+    else if (p->doppler_hz > 0.0f)
+    {
+        /* LEGACY: 2nd-order Butterworth IIR at the sample rate, 3 dB cutoff at
+         * doppler_hz (which is the resulting spectrum's rms width, not the
+         * ITU-R spread).  Bypassed for a static path. */
         double fc = p->doppler_hz;
 
         butterworth_2nd_lp(fc, (double)w->sample_rate,
@@ -267,6 +406,91 @@ int watterson_add_path(watterson_t *w, float delay_ms, float doppler_hz,
     }
 
     return idx;
+}
+
+/* ---- named presets -------------------------------------------------------
+ *
+ * ITU-R F.1487 gives each case as two equal-power Rayleigh paths with a delay
+ * spread and a Doppler spread, which it defines as 2 sigma of the Gaussian
+ * Doppler spectrum.  The itur-* values are those of F.1487 Annex 3.  The
+ * ccir-good/moderate/poor values are the commonly published CCIR 520-2
+ * numbers, which equal F.1487's mid-latitude quiet, moderate and disturbed
+ * cases; ccir-flutter is the CCIR 520-2 flutter channel, which F.1487 does
+ * not have (no copy of CCIR 520-2 was available, so no clause is cited).
+ * See docs/CHANNEL-MODEL.md, "Sources".
+ * tests/common/test_watterson.c checks every preset in this table through
+ * the preset itself: an impulse comes out at the delay the row states, and
+ * the Gaussian spectrum's tails and -10 dB fade rate match their closed
+ * forms where the legacy Butterworth's do not.  There is no second copy of
+ * the table anywhere. */
+#define G WATTERSON_SPECTRUM_GAUSSIAN
+#define L WATTERSON_SPECTRUM_LEGACY
+#define P2(d, s) 2, {{0.0f, (s), 0.70710678f}, {(d), (s), 0.70710678f}}
+static const watterson_preset_t presets[] = {
+    {"ccir-good",     "CCIR 520 Good: 0.5 ms, 0.1 Hz",                      G, P2(0.5f, 0.1f)},
+    {"ccir-moderate", "CCIR 520 Moderate: 1 ms, 0.5 Hz",                    G, P2(1.0f, 0.5f)},
+    {"ccir-poor",     "CCIR 520 Poor: 2 ms, 1 Hz",                          G, P2(2.0f, 1.0f)},
+    {"ccir-flutter",  "CCIR 520 Flutter: 0.5 ms, 10 Hz",                    G, P2(0.5f, 10.0f)},
+    {"itur-lq",       "ITU-R F.1487 low latitude, quiet: 0.5 ms, 0.5 Hz",    G, P2(0.5f, 0.5f)},
+    {"itur-lm",       "ITU-R F.1487 low latitude, moderate: 2 ms, 1.5 Hz",   G, P2(2.0f, 1.5f)},
+    {"itur-ld",       "ITU-R F.1487 low latitude, disturbed: 6 ms, 10 Hz",   G, P2(6.0f, 10.0f)},
+    {"itur-mq",       "ITU-R F.1487 mid latitude, quiet: 0.5 ms, 0.1 Hz",    G, P2(0.5f, 0.1f)},
+    {"itur-mm",       "ITU-R F.1487 mid latitude, moderate: 1 ms, 0.5 Hz",   G, P2(1.0f, 0.5f)},
+    {"itur-md",       "ITU-R F.1487 mid latitude, disturbed: 2 ms, 1 Hz",    G, P2(2.0f, 1.0f)},
+    {"itur-mdv",      "ITU-R F.1487 mid latitude, disturbed NVIS: 7 ms, 1 Hz", G, P2(7.0f, 1.0f)},
+    {"itur-hq",       "ITU-R F.1487 high latitude, quiet: 1 ms, 0.5 Hz",     G, P2(1.0f, 0.5f)},
+    {"itur-hm",       "ITU-R F.1487 high latitude, moderate: 3 ms, 10 Hz",   G, P2(3.0f, 10.0f)},
+    {"itur-hd",       "ITU-R F.1487 high latitude, disturbed: 7 ms, 30 Hz",  G, P2(7.0f, 30.0f)},
+    /* legacy: Butterworth taps, doppler_hz is the filter cutoff (rms width) */
+    {"good",     "legacy Good: 1 path, 0.1 Hz cutoff (Butterworth)",            L, 1, {{0.0f, 0.1f, 0.8f}}},
+    {"moderate", "legacy Moderate: 2 paths, 1 ms, 1.0 Hz cutoff (Butterworth)", L, 2, {{0.0f, 1.0f, 0.7f}, {1.0f, 1.0f, 0.7f}}},
+    {"poor",     "legacy Poor: 2 paths, 2 ms, 1.0 Hz cutoff (Butterworth)",     L, 2, {{0.0f, 1.0f, 0.7f}, {2.0f, 1.0f, 0.7f}}},
+    {"flutter",  "legacy Flutter: 2 paths, 2 ms, 10 Hz cutoff (Butterworth)",   L, 2, {{0.0f, 10.0f, 0.7f}, {2.0f, 10.0f, 0.7f}}},
+    {"mpg",      "legacy MPG: 2 paths, 0.5 ms, 0.1 Hz cutoff (Butterworth)",    L, 2, {{0.0f, 0.1f, 0.7f}, {0.5f, 0.1f, 0.7f}}},
+    {"mpp",      "legacy MPP: 2 paths, 1 ms, 1.0 Hz cutoff (Butterworth)",      L, 2, {{0.0f, 1.0f, 0.7f}, {1.0f, 1.0f, 0.7f}}},
+    {"mpd",      "legacy MPD: 2 paths, 2 ms, 2.0 Hz cutoff (Butterworth)",      L, 2, {{0.0f, 2.0f, 0.7f}, {2.0f, 2.0f, 0.7f}}},
+};
+#undef G
+#undef L
+#undef P2
+
+const watterson_preset_t *watterson_presets(int *count)
+{
+    if (count) *count = (int)(sizeof(presets) / sizeof(presets[0]));
+    return presets;
+}
+
+const watterson_preset_t *watterson_preset_find(const char *name)
+{
+    if (!name) return NULL;
+    for (size_t i = 0; i < sizeof(presets) / sizeof(presets[0]); i++)
+        if (strcmp(presets[i].name, name) == 0) return &presets[i];
+    return NULL;
+}
+
+int watterson_apply_preset(watterson_t *w, const watterson_preset_t *preset)
+{
+    assert(w != NULL);
+    if (!preset) return -1;
+    /* drop any paths already present, keep the sample rate, noise and rng */
+    for (int i = 0; i < w->num_paths; i++)
+    {
+        free(w->paths[i].delay_buf); free(w->paths[i].fir); free(w->paths[i].fir_hist);
+    }
+    memset(w->paths, 0, sizeof(w->paths));
+    w->num_paths = 0;
+    w->chan_norm = 1.0f;
+    /* Build with the preset's spectrum, then put back the caller's selection
+     * so a path added after the preset is not silently given the preset's
+     * tap filter. */
+    int saved_spectrum = w->spectrum;
+    int rc = 0;
+    w->spectrum = preset->spectrum;
+    for (int i = 0; i < preset->npaths && rc == 0; i++)
+        if (watterson_add_path(w, preset->path[i].delay_ms, preset->path[i].doppler_hz, 0.0f, preset->path[i].gain) < 0)
+            rc = -1;
+    w->spectrum = saved_spectrum;
+    return rc;
 }
 
 void watterson_set_noise(watterson_t *w, float nodb)
@@ -356,7 +580,21 @@ void watterson_process(watterson_t *w, COMP *samples, int n)
              *
              * For a static path (doppler_hz == 0), the IIR filter
              * coefficients are set so the output is 1.0 + j0.0. */
-            if (wp->doppler_hz > 0.0f)
+            if (wp->doppler_hz > 0.0f && wp->spectrum == WATTERSON_SPECTRUM_GAUSSIAN)
+            {
+                /* linear interpolation between consecutive low-rate samples */
+                float a = (float)wp->interp_phase / (float)wp->interp_ratio;
+                tap.real = wp->tap_prev.real + a * (wp->tap_next.real - wp->tap_prev.real);
+                tap.imag = wp->tap_prev.imag + a * (wp->tap_next.imag - wp->tap_prev.imag);
+                wp->interp_phase++;
+                if (wp->interp_phase >= wp->interp_ratio)
+                {
+                    wp->interp_phase = 0;
+                    wp->tap_prev = wp->tap_next;
+                    wp->tap_next = gaussian_tap_next(w, wp);
+                }
+            }
+            else if (wp->doppler_hz > 0.0f)
             {
                 float xn_i = gaussian(w);
                 float xn_q = gaussian(w);
@@ -377,31 +615,23 @@ void watterson_process(watterson_t *w, COMP *samples, int n)
              * average power is gain^2 (E[|tap|^2] = 1). */
             tap = fcmult(wp->gain * wp->tap_norm, tap);
 
-            /* Write current sample into delay line */
-            if (wp->delay_buf != NULL)
-            {
-                wp->delay_buf[wp->delay_idx] = samples[i];
-            }
-
-            /* Read delayed sample from delay line */
+            /* Delay line: read the slot first (written delay_samples iterations
+             * ago), then overwrite it with the current sample.  Writing first and
+             * reading the next slot, as this did up to and including release
+             * 1.9.18, delivers one sample LESS than configured (and no delay at
+             * all for a one-sample line); the legacy spectrum compensates in
+             * watterson_add_path() so its realisations are unchanged. */
             if (wp->delay_samples > 0)
             {
-                int read_idx = wp->delay_idx + 1;
-                if (read_idx >= wp->delay_samples)
-                    read_idx -= wp->delay_samples;
-                delayed = wp->delay_buf[read_idx];
+                delayed = wp->delay_buf[wp->delay_idx];
+                wp->delay_buf[wp->delay_idx] = samples[i];
+                wp->delay_idx++;
+                if (wp->delay_idx >= wp->delay_samples)
+                    wp->delay_idx = 0;
             }
             else
             {
                 delayed = samples[i];
-            }
-
-            /* Advance delay line write pointer */
-            if (wp->delay_buf != NULL)
-            {
-                wp->delay_idx++;
-                if (wp->delay_idx >= wp->delay_samples)
-                    wp->delay_idx = 0;
             }
 
             /* Multiply delayed signal by tap coefficient (fading) */

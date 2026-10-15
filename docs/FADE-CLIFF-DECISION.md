@@ -187,7 +187,12 @@ validated — the NVIS numbers above come from the validated offline path).
 # deterministic suite (includes the cliff + peer-loss guards)
 make -C tests test_arq_sim && ./tests/test_arq_sim
 
-# Watterson A/B (per build: set MERCURY_BIN)
+# Watterson A/B (per build: set MERCURY_BIN).  Note (2026-10-12): "poor" and
+# "moderate" here are the LEGACY Butterworth presets of utils/watterson_test
+# (about a 2 Hz Doppler spread in the CCIR sense), kept unchanged by the
+# channel-model change; the standard CCIR Poor is --ccir-poor.  These runs were
+# unseeded (see section 2), so they cannot be replayed sample for sample; set
+# MERCURY_WATTERSON_SEED to pin a run.  See docs/CHANNEL-MODEL.md.
 MERCURY_CH_ENGINE=watterson MERCURY_CH_FADING=poor MERCURY_CH_NO=-13 \
 MERCURY_TEST_PAYLOAD_KB=1 go test -C tests/integration -run TestMercuryARQTransfer$
 
