@@ -100,8 +100,10 @@
 #define MFSK_FREQ_HYPS_MAX 25
 
 #define MFSK_LPF_TAPS 63
-/* The payload decoder's filter may be longer (MERCURY_MFSK_LPF_HZ, below). */
-#define MFSK_LPF_TAPS_MAX 127
+/* The 500 Hz modes' payload decoder filters to their tones (see mfsk_be_open). */
+#define MFSK_LPF_NARROW_FC   400.0
+#define MFSK_LPF_NARROW_TAPS 191
+#define MFSK_LPF_TAPS_MAX    MFSK_LPF_NARROW_TAPS
 #define MFSK_LPF_FC   1000.0
 
 typedef struct {
@@ -257,15 +259,24 @@ static void *mfsk_be_open(int mode)
     h->NPAY  = (h->code->N + h->bps - 1) / h->bps;
     h->frame_bytes = (size_t)h->code->K / 8;
     pthread_once(&g_fc_once, fc_table_init);
-    /* Experiment: MERCURY_MFSK_LPF_HZ narrows the baseband filter (127 taps,
-     * a ~200 Hz transition) to the mode's tones.  The sync statistic divides
-     * by the energy the filter passes, so noise outside the tones costs
-     * acquisition. */
+    /* The 500 Hz modes filter to their tones.  The sync statistic divides
+     * by the energy the filter passes (mfsk_sync_search), so noise outside the
+     * tones costs acquisition: at 15.625 Hz spacing, where the code needs 3 dB
+     * less than the floor's, acquisition was the limit, and passing 2 kHz of
+     * noise for 500 Hz of tones cost 2.5 dB (AWGN 50 % at -12.3 dB SNR3k, -14.6
+     * filtered to 360 Hz).  400 Hz keeps the outer tones of a burst at the
+     * edge of the +/-94 Hz dial search, and 191 taps keep the band edge sharp:
+     * it measured as well as 360 Hz over 127 taps on frequency, and better
+     * (37/40 against 31/40 at 500 Hz and 0/40 unfiltered, -13 dB) 90 Hz off.
+     * A narrower band raises what noise alone scores; 360 Hz still gave 0
+     * false syncs in 1296 s of noise. */
     h->lpf_taps = MFSK_LPF_TAPS;
-    if (getenv("MERCURY_MFSK_LPF_HZ")) {
-        h->lpf_taps = MFSK_LPF_TAPS_MAX;
-        mklpf_n(h->lpf, atof(getenv("MERCURY_MFSK_LPF_HZ")), h->lpf_taps);
-    } else
+    if (h->m.M * MFSK_FS / h->nfft <= 500.0)
+    {
+        h->lpf_taps = MFSK_LPF_NARROW_TAPS;
+        mklpf_n(h->lpf, MFSK_LPF_NARROW_FC, h->lpf_taps);
+    }
+    else
         mklpf(h->lpf, MFSK_LPF_FC);
 
     /* RX window: one full burst (pre + data + post) plus a few symbols slack. */
@@ -560,12 +571,73 @@ static void mfsk_downmix(mfsk_modem_t *h)
     if (last > h->bf_len) h->bf_len = last;
 }
 
+/* One symbol's depadded bins, from bf[b], with a dial offset of hb half
+ * subcarriers undone so the tones land back on their nominal bins.  The phase
+ * restarts each symbol, which is harmless: the demod is non-coherent, only
+ * the frequency matters. */
+static void mfsk_sym_bins(const mfsk_modem_t *h, int b, double hb, double complex *dep)
+{
+    double complex rmv[MFSK_NFFT_MAX], ff[MFSK_NFFT_MAX], sym[MFSK_NFFT_MAX * 2];
+    const double complex *src = &h->bf[b];
+    if (hb != 0.0)
+    {
+        double ph = -M_PI * hb / (double)h->nfft;
+        double complex w = cos(ph) + I * sin(ph), p = 1.0;
+        for (int n = 0; n < h->Nofdm; n++, p *= w)
+            sym[n] = h->bf[b + n] * p;
+        src = sym;
+    }
+    ofdm_gi_remover(&h->o, src, rmv);
+    ofdm_fft(&h->o, rmv, ff);
+    ofdm_zero_depadder(&h->o, ff, dep);
+}
+
+/* The dial offset to an eighth of a subcarrier.
+ *
+ * Acquisition picks among hypotheses half a subcarrier apart, which leaves up
+ * to a quarter of one between the burst and the bins it is read on.  That
+ * quarter costs a lot: the tone's energy leaks into its neighbours, and at
+ * SNR3k -14 dB the 15.625 Hz geometry delivered 37/40 bursts on a hypothesis
+ * and 14/40 between two (the 31.25 Hz one loses the same way at its own floor).
+ * So the payload is read at the hypothesis and at a quarter and an eighth of
+ * a subcarrier either side, and the offset whose strongest tones carry the
+ * most energy over the whole payload wins: hundreds of symbols choose it
+ * reliably where the preamble's few could not. */
+static double mfsk_refine_hb(const mfsk_modem_t *h, int payoff)
+{
+    double best_e = -1.0, best_hb = h->freq_hb;
+    for (int k = -2; k <= 2; k++)
+    {
+        double hb = h->freq_hb + 0.25 * k, e = 0.0;
+        for (int s = 0; s < h->NPAY; s++)
+        {
+            double complex dep[MFSK_NCAR];
+            mfsk_sym_bins(h, payoff + s * h->Nofdm, hb, dep);
+            for (int st = 0; st < h->m.nStreams; st++)
+            {
+                double emax = 0.0;
+                for (int t = 0; t < h->m.M; t++)
+                {
+                    double complex v = dep[h->m.stream_offsets[st] + t];
+                    double en = creal(v * conj(v));
+                    if (en > emax) emax = en;
+                }
+                e += emax;
+            }
+        }
+        if (e > best_e) { best_e = e; best_hb = hb; }
+    }
+    return best_hb;
+}
+
 /* Demod one MFSK burst whose payload symbols start at bf[payoff], decode LDPC,
  * verify CRC16. Returns frame_bytes on success (bytes_out filled), else 0. */
 static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
 {
     if (payoff < 0 || payoff + h->NPAY * h->Nofdm > h->bf_len)
         return 0;
+
+    double hb = mfsk_refine_hb(h, payoff);
 
     double sig = 0.0;                /* LLR magnitude, for HARQ below */
     /* SNR: per symbol, the strongest tone bin of each stream (signal + noise)
@@ -575,26 +647,8 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
     int band_hi = h->m.stream_offsets[h->m.nStreams - 1] + h->m.M;
     for (int s = 0; s < h->NPAY; s++)
     {
-        int b = payoff + s * h->Nofdm;
-        double complex rmv[MFSK_NFFT_MAX], ff[MFSK_NFFT_MAX], dep[MFSK_NCAR];
-        double complex sym[MFSK_NFFT_MAX * 2];
-        const double complex *src = &h->bf[b];
-        if (h->freq_hb != 0)
-        {
-            /* Undo the dial offset the acquisition found, so the tones land
-             * back on their nominal bins. Phase restarts each symbol, which is
-             * harmless: the demod is non-coherent, only the frequency matters. */
-            for (int n = 0; n < h->Nofdm; n++)
-            {
-                double ph = -M_PI * (double)h->freq_hb * (double)n /
-                            (double)h->nfft;
-                sym[n] = h->bf[b + n] * (cos(ph) + I * sin(ph));
-            }
-            src = sym;
-        }
-        ofdm_gi_remover(&h->o, src, rmv);
-        ofdm_fft(&h->o, rmv, ff);
-        ofdm_zero_depadder(&h->o, ff, dep);
+        double complex dep[MFSK_NCAR];
+        mfsk_sym_bins(h, payoff + s * h->Nofdm, hb, dep);
         for (int k = 0; k < MFSK_NCAR; k++)
         {
             h->rb[s * MFSK_NCAR + k].re = creal(dep[k]);
