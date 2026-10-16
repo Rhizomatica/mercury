@@ -5,7 +5,8 @@ the embedded and published web UIs, and the Fyne client. It doubles as a small
 static HTTP server for the bundled web pages.
 
 - **Default URL:** `ws://<host>:10000/websocket` (plain) or
-  `wss://<host>:10000/websocket` (TLS, negotiated at connect).
+  `wss://<host>:10000/websocket` (TLS). Which one is served is chosen at
+  startup (`-T` / `ui_protocol`), not negotiated at connect.
 - **Direction:** client → server **commands**, server → client **events** and
   **binary spectrum frames**, plus a per-command acknowledgement.
 - **Encoding:** commands and events are JSON **text** frames; the waterfall is
@@ -23,7 +24,7 @@ remote clients cannot diverge in behaviour.
 | Endpoint path | `/websocket` | `gui_interface/websocket/mercury_websocket.c:138` |
 | Default port | `10000` (`UI_DEFAULT_PORT`) | `gui_interface/ui_communication.h:37` |
 | Bind address | `0.0.0.0` | `mercury_websocket.c:137` |
-| Plain / TLS | `ws` or `wss` (build must have OpenSSL) | `mercury.ini.example:20-23` |
+| Plain / TLS | `ws` or `wss`, chosen at startup (`ui_protocol` / `-T`); `wss` needs OpenSSL | `mercury.ini.example:20-23` |
 | Max concurrent connections | 32 | `ws_server.c:50` |
 | Max inbound message | 8192 bytes (`WS_MAX_MESSAGE_SIZE`) | `gui_interface/websocket/mercury_websocket.h:24` |
 | TLS certificate / key | PEM files (`ui_tls_cert` / `ui_tls_key`) | `mercury.ini.example:25-29` |
@@ -40,14 +41,16 @@ The server also answers HTTP so a browser can load the UI. It accepts
 |---|---|
 | `101 Switching Protocols` | Valid WebSocket upgrade |
 | `200 OK` | Static asset fetch (`/` → `index.html`, etc.) |
-| `400 Bad Request` | Malformed request / missing `Upgrade: websocket` / missing `Sec-WebSocket-Key` / bad path |
+| `400 Bad Request` | Malformed request / missing `Connection: upgrade` / missing `Sec-WebSocket-Key` / target containing `..` or too long |
 | `404 Not Found` | Unknown asset |
 | `405 Method Not Allowed` | Method other than `GET`/`HEAD` (`Allow: GET, HEAD`) |
-| `426 Upgrade Required` | Missing/invalid `Upgrade` or `Sec-WebSocket-Version: 13` |
+| `426 Upgrade Required` | Missing/invalid `Upgrade: websocket` or `Sec-WebSocket-Version: 13` |
 | `431 Request Header Fields Too Large` | Oversized request header block |
 
 Static pages are compiled into the binary (`gui_interface/websocket/web_assets.h`,
 `web_packed.c`): `index.html`, `mercury.html`, `waterfall.html`, `test.html`.
+`web_packed.c` is generated at build time by `pack_web.sh` from
+`websocket/web/` and is not in the repository.
 
 ---
 
@@ -77,7 +80,8 @@ walker (`ws_json_find_key()`, `ws_json.c:233-305`) that decodes JSON escapes
 including `\uXXXX` and surrogate pairs. A malformed object returns -1.
 
 Limits: `command` ≤ 63 chars, each `valueN` ≤ 255 chars; the whole message must
-be ≤ 8192 bytes. Unknown commands log a warning and return an error.
+be ≤ 8192 bytes. Oversized strings are truncated, not rejected. Unknown
+commands log a warning and return an error.
 
 ---
 
@@ -96,12 +100,14 @@ success.
 |---|---|---|
 | `value` | Capture (input) device id | Device id (e.g. `plughw:0,0`); empty = leave current |
 | `value2` | Playback (output) device id | Device id; empty = leave current |
-| `value3` | Input channel | `left` (default), `right`, `stereo` |
+| `value3` | Input channel | `left` (default), `right`, `stereo`; any other value silently becomes `left` |
 | `value4` | Audio subsystem (optional) | `alsa`, `pulse`, `dsound`, `wasapi`, `oss`, `coreaudio`, `aaudio`, `shm`, `null`, `fifo`, `sock`, `rtp` |
 
 If the subsystem changes and no device is supplied for it, the stale device id
 is cleared so the new subsystem resolves its own default. Invalid subsystem →
-error. Source: `ui_communication.c:171-277`.
+error. Only a bad subsystem name returns an error: the reply is
+`{"status":"ok"}` even when the audio fails to start or times out, in which
+case the config is simply not persisted. Source: `ui_communication.c:171-277`.
 
 ### 3.2 `set_ptt_config`
 
@@ -119,7 +125,8 @@ republishes the radio list.
 | `value7` | CM108 GPIO pin | Integer 1–4 |
 
 Validation: `hamlib` requires `value3 > 0`; `serial` requires a non-empty
-`value2`. Omitted advanced fields (`value3`–`value7`) retain their current
+`value2`. `value2` always replaces the device path, so an empty one clears it;
+only the omitted advanced fields (`value3`–`value7`) retain their current
 values. Source: `ui_communication.c:278-326`.
 
 ### 3.3 `set_waterfall`
@@ -186,7 +193,13 @@ Sent to every connected client via `ws_broadcast_json()` /
 | `audio_system` | text JSON | On connect / after an audio change |
 | `radio_list` | text JSON | On connect / after a PTT change |
 | `history` | text JSON | On connect |
-| spectrum | **binary** | Every 50 ms (~20 fps), when waterfall enabled |
+| spectrum | **binary** | Polled every 50 ms; sent only when a new spectrum is available |
+
+The "on connect" lists are produced by the 500 ms publisher loop: a new client
+sets a pending flag on connect (`ui_communication.c:106-113`) and the next
+publish cycle broadcasts the device lists, `radio_list` and `history` to every
+connected client, not just the newcomer, within up to 500 ms
+(`ui_communication.c:740-896`).
 
 ### 5.1 `status`
 
@@ -282,7 +295,7 @@ Source: `ui_communication.c:796-800`.
  "ptt_line":"rts",
  "ptt_invert":"none",
  "cm108_gpio":1,
- "list":[{"name":"None","id":"0"}]}
+ "list":[{"name":"None","id":"-1"}]}
 ```
 
 `list` is the Hamlib model list with `None` first. Source:
@@ -307,12 +320,13 @@ Message fields: `ts` (epoch seconds), `ms` (milliseconds), `plane`
 
 ### 5.7 Binary spectrum / waterfall frame
 
-Sent at ~20 fps while the waterfall is enabled
+Sent while the waterfall is enabled. The publisher polls the modem every 50 ms
+and emits a frame only when a new spectrum is available
 (`ui_communication.c:909-962`). All multi-byte fields are **little-endian**.
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 4 | Magic, `uint32` = `0x4D435259` (`"YCRM"`) |
+| 0 | 4 | Magic, `uint32` = `0x4D435259` (bytes `59 52 43 4D` = `"YRCM"`) |
 | 4 | 2 | FFT size (`uint16`), number of bins |
 | 6 | 2 | Sample rate (`uint16`) |
 | 8 | `fft_size × 4` | `float32` dB bins |
@@ -329,10 +343,11 @@ Handled by `gui_interface/websocket/ws_frame.c` and `ws_server.c`. Opcodes
 
 - Fragmented messages are reassembled (continuation frames supported).
 - `Ping` → `Pong` is answered automatically.
-- `Close` is echoed back; reserved codes `1005`, `1006`, `1015` are normalised.
+- `Close` is echoed back; codes below `1000` and the reserved `1005`, `1006`,
+  `1015` are normalised to `1000`.
 - Protocol violations close the connection with **1002** (unknown opcode,
   continuation without a start frame, interleaved fragments, unmasked client
-  frame).
+  frame, oversized or fragmented control frame).
 - A message larger than the limit closes with **1009**.
 - Server-to-client frames are never masked (RFC 6455).
 
@@ -347,12 +362,12 @@ INI (`mercury.ini.example:11-32`):
 | `ui_enabled` | `false` | Enable the WebSocket server |
 | `ui_port` | `10000` | Listen port |
 | `ui_protocol` | `ws` | `ws` (plain) or `wss` (TLS) |
-| `ui_tls_cert` | — | PEM certificate for `wss` |
-| `ui_tls_key` | — | PEM private key for `wss` |
+| `ui_tls_cert` | `/etc/ssl/certs/hermes.radio.crt` | PEM certificate for `wss` |
+| `ui_tls_key` | `/etc/ssl/private/hermes.radio.key` | PEM private key for `wss` |
 | `waterfall_enabled` | `true` | Start the spectrum feed |
 
 CLI flags: `-G` enable UI WebSocket, `-U <port>` set the port, `-T` enable
-WSS/TLS (see `mercury.1`).
+WSS/TLS, `-W` disable the waterfall (see `mercury.1`).
 
 ---
 
@@ -366,8 +381,8 @@ WSS/TLS (see `mercury.1`).
 # Set 10 dB TX gain
 {"command":"set_tx_gain","value":"10"}            -> {"status":"ok"}
 
-# Bad gain (rejected by validation)
-{"command":"set_ptt_config","value":"hamlib"}     -> {"status":"error","code":-1}
+# Bad PTT config: hamlib requires a positive model id
+{"command":"set_ptt_config","value":"hamlib","value3":"0"}  -> {"status":"error","code":-1}
 
 # Unknown command
 {"command":"frobnicate"}                          -> {"status":"error","code":-1}
