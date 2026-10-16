@@ -169,16 +169,17 @@
     \begin{tikzpicture}
       \begin{axis}[ybar,width=8.6cm,height=5.4cm,bar width=13pt,
           ymin=0,ymax=560,ylabel={seconds (lower is better)},
-          symbolic x coords={+10 dB,0 dB,$-7$ dB,$-10$ dB},xtick=data,
+          symbolic x coords={p10,z0,m7,m10},xtick={p10,z0,m7,m10},
+          xticklabels={$+10$ dB,0 dB,$-7$ dB,$-10$ dB},
           enlarge x limits=0.18,legend style={at={(0.02,0.98)},anchor=north west,fill=hcream,draw=none,font=\small},
           axis background/.style={fill=hcream},axis line style={hblack},tick label style={font=\small},
           nodes near coords,every node near coord/.append style={font=\scriptsize},
           ymajorgrids,grid style={hcreamdk}]
-        \addplot[fill=hmauve,draw=hdkmauve] coordinates {(+10 dB,76) (0 dB,268)};
-        \addplot[fill=hgreen,draw=hdkgreen] coordinates {(+10 dB,34) (0 dB,146) ($-7$ dB,458) ($-10$ dB,417)};
+        \addplot[fill=hmauve,draw=hdkmauve] coordinates {(p10,76) (z0,268)};
+        \addplot[fill=hgreen,draw=hdkgreen] coordinates {(p10,34) (z0,146) (m7,458) (m10,417)};
         \legend{1.9.17,1.9.18}
-        \node[font=\scriptsize\bfseries,text=hdkmauve,rotate=90,anchor=west,xshift=-7pt] at (axis cs:$-7$ dB,15) {1.9.17 failed};
-        \node[font=\scriptsize\bfseries,text=hdkmauve,rotate=90,anchor=west,xshift=-7pt] at (axis cs:$-10$ dB,15) {1.9.17 failed};
+        \node[font=\scriptsize\bfseries,text=hdkmauve,rotate=90,anchor=west] at ([xshift=-7.5pt]axis cs:m7,8) {1.9.17 failed};
+        \node[font=\scriptsize\bfseries,text=hdkmauve,rotate=90,anchor=west] at ([xshift=-7.5pt]axis cs:m10,8) {1.9.17 failed};
       \end{axis}
     \end{tikzpicture}
     \column{0.38\textwidth}
@@ -357,7 +358,7 @@
   \begin{columns}[c]
     \column{0.62\textwidth}
     \begin{tikzpicture}
-      \begin{axis}[xbar,width=8.8cm,height=5.6cm,bar width=7pt,xmin=-16.5,xmax=5,
+      \begin{axis}[xbar,width=8.8cm,height=5.6cm,bar width=7pt,xmin=-16.5,xmax=9,
           symbolic y coords={DATAC3,DATAC4,DATAC15,MFSK floor,MFSK 500 Hz},ytick=data,
           xlabel={SNR3k for 90 \% delivery, dB (equal peak power)},
           legend style={at={(0.5,1.02)},anchor=south,legend columns=2,font=\scriptsize,fill=hcream,draw=none},
@@ -365,13 +366,13 @@
           nodes near coords,every node near coord/.append style={font=\tiny},xmajorgrids,grid style={hcreamdk},
           enlarge y limits=0.14]
         \addplot[fill=hgreen,draw=hdkgreen] coordinates {(0.2,DATAC3) (-4.3,DATAC4) (-6.1,DATAC15) (-11.1,MFSK floor) (-14.1,MFSK 500 Hz)};
-        \addplot[fill=hmauve,draw=hdkmauve] coordinates {(2.3,DATAC15) (-6.8,MFSK floor) (-10.4,MFSK 500 Hz)};
+        \addplot[fill=hmauve,draw=hdkmauve] coordinates {(6.4,DATAC3) (0.6,DATAC4) (2.3,DATAC15) (-7.3,MFSK floor) (-10.4,MFSK 500 Hz)};
         \legend{AWGN,moderate fading}
       \end{axis}
     \end{tikzpicture}
     \column{0.36\textwidth}
     \begin{itemize}
-      \item MFSK operates \hl{5 to 9 dB} below DATAC15
+      \item MFSK operates \hl{5 to 8 dB} below DATAC15 on AWGN, \hl{10 to 13 dB} under moderate fading
       \item Against modem73's coherent RFDM modes: 2.7 dB better per bit on AWGN, a tie under fading
     \end{itemize}
   \end{columns}
@@ -386,7 +387,7 @@
       \begin{itemize}
         \item The 1 kHz MFSK cannot be decoded behind a 500 Hz filter
         \item 32 tones 15.625 Hz apart, 80 ms symbols, 26~s frames
-        \item 90 \%: {\bfseries $-14.1$~dB} AWGN, $-10.4$~dB moderate fading, behind the filter too
+        \item 90 \%: \hl{$-14.1$~dB} AWGN, $-10.4$~dB moderate fading, behind the filter too
         \item Searches at 2 kHz: idle receive \textbf{cheaper} than the 1 kHz floor
         \item BW2300 and BW2750 keep the 1 kHz floor; air-protocol version 3
       \end{itemize}
@@ -401,7 +402,7 @@
       \end{itemize}
     \end{block}
     \begin{exampleblock}{On air, two bench stations}
-      \footnotesize Every complete MFSK500 frame decoded, both ways, underrun-hit frames included; BW500 sessions on the floor answered by its patterns
+      \footnotesize Every complete MFSK500 frame was decoded in both directions, including frames hit by underruns. BW500 sessions on the floor were answered by its patterns.
     \end{exampleblock}
   \end{columns}
   \src{Source: PR \#390 (draft), measurements 2026-10-15/16}
