@@ -18,7 +18,10 @@ What it models:
 - Either end, hearing the peer's DISCONNECT, ends.  A connected end replies
   one guard later.  An ending end replies only if its own had not gone out
   (the crossed case).
-- An ending end that hears its peer CALL again ends and takes the CALL.
+- An ending end that hears its peer CALL again ends and takes the CALL.  A
+  callee whose DISCONNECT is out, waiting only for the answer, takes a CALL
+  for it from any callsign: a station calls with another MYCALL per
+  application (`CALLS`).
 - Silence ends a connected session.
 - The caller may call again once it has ended (a deferred CONNECT), up to
   `NS` sessions.  Session ids come from `SIDS`, so consecutive sessions may
@@ -43,17 +46,24 @@ Properties:
   is answered.
 - `Mutual` (liveness): once one end has finished a session, eventually
   neither end is in it.
+- `Answered`: a callee that is idle, or ending with its DISCONNECT out,
+  never drops a CALL for it.
 
 Results:
 
-- `SessionTeardown.cfg`: the code's rules, lossless, 2 sessions.  No error,
-  827 distinct states.
+- `SessionTeardown.cfg`: the code's rules, lossless, 2 sessions, 2 caller
+  callsigns.  No error, 1 957 distinct states.
 - `SessionTeardown_lossy.cfg`: the same with any frame lost.  No error,
-  23 581 distinct states.  `Clean` does not apply here.
+  51 705 distinct states.  `Clean` does not apply here.
 - `Mut_crossedsilent.cfg`: an ending end that hears the peer's DISCONNECT
   before its own went out ends without a reply.  The code did this before
   the crossed-DISCONNECT fix (car24).  It violates `Clean`, because the peer
   retries until it times out.
+- `Mut_samecall.cfg`: an ending callee takes a CALL only from the callsign
+  of the session being torn down, as the code did until 2026-10-16.  It
+  violates `Answered`.  On air, a UUCP session's teardown lost the
+  callee's answer, and the gateway's NNCP, calling as PU2UIT-3 where UUCP
+  had called as PU2UIT, was ignored for the callee's 180 s end wait.
 - `Foreign.cfg`: another station's DISCONNECT with a matching 6-bit session
   id.  It violates `NoKill`.  This is a residual risk: 1 in 64 foreign
   DISCONNECTs heard ends the session.  A DISCONNECT seeded like the
