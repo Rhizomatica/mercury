@@ -303,21 +303,22 @@ RX demux (`car_on_frame`, C:1602-1626):
 
 ### 3.4 Connect frames (generic FSM, carousel-relevant fields only)
 
-**[carousel-only]** Protocol version 3 (1 was 1.9.18, 2 was 1.9.19; see §16, §17); the byte layout is in
+**[2.0]** Their own packet type, CALL2 (see §18; 1.9.x carried a 2-bit
+version, 3 its last value: §16, §17); the byte layout is in
 docs/CAROUSEL-ARQ.md, "Wire formats".
 
-- Both frames: framer extension = bandwidth token (2 bits), version (2 bits,
-  = 3), carousel bit. A frame with another version or without the bit is
-  dropped (`arq_protocol_connect_version_ok`); a CALL from another version
-  addressed to this station is logged, not answered. 1.9.x and earlier
-  carousel builds therefore do not connect to this one.
+- Both frames: packet type CALL2, framer extension = bandwidth token (2
+  bits), 2.x minor revision (3 bits). A frame of another type is dropped
+  (`arq_protocol_connect_version_ok`); a 1.9.x CALL addressed to this
+  station is logged, not answered. 1.9.x therefore does not connect to
+  this one.
 - CALL: session id, CRC16 of the called callsign, the caller's callsign
   (arithmetic-coded). No marker.
 - ACCEPT (callee → caller) **is the first POLL**: session id, CRC16 of the
   caller, CRC16 of the called callsign, the callee's 16-bit session nonce,
-  and the caller's start rung (3 bits; **7 = "level 0, and I hear you below
-  the control mode"**, `ARQ_ACCEPT_LEVEL_CTL_DEAF`). Reserved bits must be
-  zero. The caller takes it only if session id, its own CRC and the called
+  the caller's start rung (3 bits), **whether the callee hears the caller
+  below the control mode** (1 bit; the rung is then the floor) and the SNR
+  it read the CALL at (dB). Reserved bits must be zero. The caller takes it only if session id, its own CRC and the called
   CRC all match. Plain CRC.
 - DISCONNECT: plain CRC, session-id bound (7 bits, F:3929-3937); on MFSK to a peer the carousel last saw as control-deaf (`session_ctl_mode`, F:963-969).
 
@@ -890,3 +891,14 @@ calibration needs points above 12 dB.
 | Change | Where | Risks |
 |---|---|---|
 | A BW500 session's rung 0 is the 500 Hz MFSK (mode 103, 26.2 s frames, one a keydown); BW2300 and BW2750 keep the 1 kHz floor.  Each end takes the floor from the negotiated bandwidth when the session's seed is set (`arq_floor_mode`), and everything at the floor follows it: data rounds, control frames to a control-deaf peer and their `CTL_FLOOR_MARK` frame, the session's DISCONNECT, ACK/BREAK patterns and NAV headers.  A caller's MFSK CALLs go on the floor of its own bandwidth; the idle MFSK listener decodes the floor of the station's own.  Connect frames carry protocol version 3: a 1.9.19 station (version 2) at BW500 would sit on the 1 kHz floor. | 1.3, 3.4, S1, I-BW, `carousel.c` (`lmode`), `arq_fsm.c`, `modem.c` | timing: the floor's keydown and the callee's ACCEPT window grow by 13.5 s, and a decode on a Pi 4 ends ~0.25 s later, inside `D_MFSK_MS`; the turn model is re-checked at the longer frame (`specs/turns/CarouselTurns_mfsk500.cfg`).  `CarouselBlocks` abstracts rungs away |
+
+---
+
+## 18. Mercury 2.0: the wire, silence, direct probes (branch arch-2.0)
+
+| Change | Where | Risks |
+|---|---|---|
+| Connect frames take their own packet type, CALL2 (0x06), with a 3-bit minor revision; the ACCEPT says apart whether the callee hears the caller below the control mode (1.9.x: "rung 7") and carries the SNR it read the CALL at.  Control frames carry the SNR their sender hears the peer at now (6 bits, dB) where 1.9.x carried the connect's start rung; the peer starts its own direction on the rung that SNR would start a session on. | 3.4, `arq_protocol.[ch]`, `encode_ctl`/`decode_ctl` | none measured: the sim set was byte-identical |
+| Silence: a keydown that ends with nothing of the peer's decoded for 90 s (`SILENT_MS`) takes both directions below the control mode, so control goes on the floor, where the peer listens after `S_FALLBACK_MS`; a receiver so fallen back stays at the floor through its round timer (CAR_T_W). | `car_on_tx_done`, `car_on_time` | at 30 s NVIS went to a floor it did not need; at 90 s NVIS 50 KB +1.9 %, BW500 fade:-5 +1.3 %; after step:10:-12 the floor is reached in 124 s (917) |
+| A receiver answers with a pattern only a round that came on the rung it asked for: a sender that missed the poll kept on at the floor, answered "for" the faster rung. | `rx_next` | none |
+| Above the best rung, the receiver probes where the SNR would start a session (`car_start_level`), not the next rung: the floor to DATAC17 took four probes. | `choose_level` | 90th percentile to DATAC1 after step:-12:10 86 s (219); every other run identical but NVIS (-3.6 % .. +1.0 %) |

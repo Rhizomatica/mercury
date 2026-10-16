@@ -24,12 +24,13 @@
  *   POLL / REQ / STATUS, CAR_POLL_BYTES, in the control mode -- or on
  *   MFSK behind a byte CTL_FLOOR_MARK when the peer is control-deaf:
  *     b0  type (2) | has data (1) | poll id (4) | control-deaf (1)
- *     b1  level (3) | frames asked for (4) | 0
+ *     b1  level (3) | frames asked for (4) | SNR bit 0
  *     b2  loss (4) | window base, mod 16 (4)
  *     b3..b9   pieces each block from the base still needs, 7 bits each
  *              (127: none seen)
  *     b10 the first data piece missing from the base block (255: none)
- *     b11 the start rung for the peer (3) | handover round's level (3) | 0 (2)
+ *     b11 SNR bits 5-3 (3) | handover round's level (3) | SNR bits 2-1 (2)
+ *         (the SNR the sender hears the peer at: dB + 24, 0..62; 63 none)
  *     b12 handover round's frames (4) | its id (4)
  *     b13 highest block opened (4) | data not yet cut (1) | 0 (3)
  *   The session id costs no bytes: the modem seeds the frame CRC with it.

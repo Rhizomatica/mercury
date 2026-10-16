@@ -8,11 +8,10 @@ carousel's first poll, and a DISCONNECT ends it.
 [CAROUSEL-SPEC.md](CAROUSEL-SPEC.md) specifies the protocol state by state,
 from the code; this page is the overview.
 
-The connect frames carry a protocol version (3) and the carousel bit in the
-framer extension (see Wire formats).  1.9.x stations, and earlier carousel
-builds, do not connect to this one in either direction: each drops the
-other's CALL and ACCEPT.  A CALL from another version that is addressed to
-this station is logged ("from another protocol version") and not answered.
+The connect frames of Mercury 2.0 have their own packet type (see Wire
+formats).  1.9.x stations do not connect to this one in either direction:
+each drops the other's CALL and ACCEPT.  A 1.9.x CALL addressed to this
+station is logged ("from another protocol version") and not answered.
 
 ## How it works
 
@@ -139,39 +138,40 @@ POLL / HANDOVER / STATUS, in DATAC16 (14 bytes):
 | byte | field |
 |---|---|
 | 0 | type (2), has data (1), poll id (4), control-deaf (1) |
-| 1 | mode rung (3), frames asked for (4) |
+| 1 | mode rung (3), frames asked for (4), SNR bit 0 |
 | 2 | loss (4), window base mod 16 (4) |
 | 3-9 | pieces each block from the base still needs, 8 x 7 bits (127: none seen) |
 | 10 | the first data piece missing from the base block (255: none) |
-| 11 | start rung for the peer (3), handover round's rung (3) |
+| 11 | SNR bits 5-3 (3), handover round's rung (3), SNR bits 2-1 (2) |
 | 12 | handover round's frames (4), its id (4) |
 | 13 | highest block opened (4), data not yet cut (1) |
 
-CALL and ACCEPT, protocol version 3: 14 bytes (a DATAC16 frame), padded to
-the frame on MFSK.
+The SNR is how the frame's sender hears the peer now: 6 bits, dB + 24 from
+-24 to +38 dB, 63 before any reading.  The peer starts its own direction on
+the rung that SNR would start a session on (in 1.9.x the field held that
+rung, fixed at connect).
+
+CALL and ACCEPT of Mercury 2.0: 14 bytes (a DATAC16 frame), padded to the
+frame on MFSK.
 
 | byte | CALL | ACCEPT |
 |---|---|---|
-| 0 | framer: type CALL (3 bits); extension: bandwidth token (2), protocol version (2, = 3), carousel (1) | the same |
+| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (3, = 0) | the same |
 | 1 | 0, session id (7) | 1, session id (7) |
 | 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
 | 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |
 | 6-7 | | the callee's session nonce |
-| 8 | | the caller's start rung (3 bits; 7: the callee hears it below the control mode, so the floor), 5 bits zero |
-| 9-13 | | zero |
+| 8 | | the caller's start rung (3 bits, 0-6), the callee hears the caller below the control mode (1; the rung is then the floor), 4 bits zero |
+| 9 | | the SNR the callee read the CALL at, dB + 128 (0: unknown) |
+| 10-13 | | zero |
 
-- A station takes a CALL or ACCEPT only with version 3 and the carousel bit
-  set; a 1.9.x station reads that extension as an unknown bandwidth token
-  and drops the frame.  The versions do not connect to each other.
-- Version 1 was 1.9.18, whose MFSK sat at 1531-2500 Hz.  Version 2 centres
-  MFSK on 1500 Hz (1015.6-1984.4 Hz), like the codec2 modes.  The frames are
-  unchanged; the version only keeps 1.9.18 and later stations apart, which
-  would otherwise connect on DATAC16 and then never hear each other at the
-  floor.  Version 3 (after 1.9.19) gives a BW500 session its own floor, the
-  500 Hz MFSK (see "The BW500 floor"); at BW500 a version-2 station would
-  sit on the 1 kHz one.  3 is the last value the field holds.  A station
-  logs a CALL for it from another version ("another protocol version
-  (Mercury 1.9.19 or older?)") and does not answer.
+- A station takes a CALL or ACCEPT only of type CALL2, any 2.x minor
+  revision; every 1.9.x release drops the type.  The versions do not
+  connect to each other.  A 1.9.x CALL (type CALL) for this station is
+  logged ("another protocol version (Mercury 1.9.x?)") and not answered.
+- 1.9.x carried a 2-bit protocol version in type CALL's extension: 1 was
+  1.9.18 (MFSK at 1531-2500 Hz), 2 was 1.9.19 (MFSK centred on 1500 Hz), 3
+  gave a BW500 session its own floor; 3 was the last value it held.
 - An ACCEPT with a reserved bit set is dropped.  The caller takes an ACCEPT
   only if its session id, its own CRC and the called station's CRC all
   match: 39 bits, and every one of them full.
