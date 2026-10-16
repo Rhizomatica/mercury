@@ -21,6 +21,9 @@
  *              and the curve (N trials) of three classes, with confusions.
  *
  * PATTERN_KEY=<seed> measures a session's lists (mfsk_pattern_set_session).
+ * PATTERN_FOFF=<Hz> sets the second offset (default +25 Hz).
+ * PATTERN_GEOM=<mode> measures the patterns at another MFSK mode's geometry
+ * (102: 16 tones at 31.25 Hz, 103: 32 tones at 15.625 Hz).
  *
  * usage: pattern_probe [curve|wcurve N|fading|noise HOURS|signals|cpu|all]
  */
@@ -59,6 +62,9 @@ static void shift(const int16_t *in, int n, double df, int16_t *out)
     free(X);
 }
 
+/* The second offset the curves measure (PATTERN_FOFF, Hz). */
+static double g_foff = 25.0;
+
 static double power(const int16_t *x, int n) { double p = 0; for (int i = 0; i < n; i++) p += (double)x[i] * x[i]; return p / n; }
 
 /* Noise power for a given SNR in 3 kHz: the noise spans fs/2 = 4 kHz. */
@@ -83,7 +89,7 @@ static void curve(int trials)
     for (int snr = SNR_LO; snr <= SNR_HI; snr++) {
         double pd[2]; int conf = 0;
         for (int oi = 0; oi < 2; oi++) {
-            shift(pat, n, oi ? 25.0 : 0.0, sh);
+            shift(pat, n, oi ? g_foff : 0.0, sh);
             double sigma = sigma_for(ps, snr);
             int hit = 0;
             for (int i = 0; i < trials; i++) {
@@ -119,7 +125,7 @@ static void wcurve(int trials)
     for (int snr = SNR_LO; snr <= SNR_HI; snr++) {
         double pd[2]; int conf = 0;
         for (int oi = 0; oi < 2; oi++) {
-            shift(pat, n, oi ? 25.0 : 0.0, sh);
+            shift(pat, n, oi ? g_foff : 0.0, sh);
             double sigma = sigma_for(ps, snr);
             int hit = 0;
             for (int i = 0; i < trials; i++) {
@@ -240,7 +246,7 @@ static void nav(double hours, int trials)
             int n = mfsk_nav_tx(pat, cls[ci]);
             double ps = power(pat, n);
             for (int oi = 0; oi < 2; oi++) {
-                shift(pat, n, oi ? 25.0 : 0.0, sh);
+                shift(pat, n, oi ? g_foff : 0.0, sh);
                 double sigma = sigma_for(ps, snr);
                 int hit = 0;
                 for (int i = 0; i < trials; i++) {
@@ -290,7 +296,7 @@ static void xread(int nkeys)
         for (int kind = 0; kind < 2; kind++) {
             int n = mfsk_pattern_tx(pat, kind);
             for (int oi = 0; oi < 2; oi++) {
-                shift(pat, n, oi ? 25.0 : 0.0, sh);
+                shift(pat, n, oi ? g_foff : 0.0, sh);
                 for (int t = 0; t < total; t++) x[t] = (int16_t)(30.0 * gauss() + ((t >= n_pat && t < n_pat + n) ? sh[t - n_pat] : 0));
                 mfsk_pattern_window_t w = {0};
                 mfsk_pattern_ev_t ev[16];
@@ -396,6 +402,12 @@ static void cpu(void)
 int main(int argc, char **argv)
 {
     const char *what = argc > 1 ? argv[1] : "all";
+    if (getenv("PATTERN_FOFF")) g_foff = atof(getenv("PATTERN_FOFF"));
+    if (getenv("PATTERN_GEOM")) {
+        mfsk_pattern_set_geometry(atoi(getenv("PATTERN_GEOM")));
+        printf("# geometry of mode %s: %d symbols, %d samples\n", getenv("PATTERN_GEOM"),
+               mfsk_pattern_nsymb(), mfsk_pattern_max_tx_samples());
+    }
     /* PATTERN_KEY: measure a session's patterns instead of the global ones */
     /* PATTERN_LIST="t0,t1,...,t7": an explicit ACK list (experiments) */
     if (getenv("PATTERN_LIST")) {

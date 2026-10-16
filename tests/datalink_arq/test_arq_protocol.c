@@ -17,6 +17,7 @@
 #include "arq.h"
 #include "framer.h"
 #include "freedv/freedv_api.h"
+#include "modem_mfsk.h"
 
 extern void mock_set_uptime_ms(uint64_t ms);
 
@@ -239,12 +240,30 @@ void test_mode_timing_fast_modes(void)
     TEST_ASSERT_NOT_NULL(tq);
     TEST_ASSERT_EQUAL(1213, tq->payload_bytes);
 
-    /* Frame sizes must stay pairwise unique across the whole table — the
-     * RX path infers the peer's TX mode from frame size alone. */
+    /* Frame sizes stay pairwise unique across the OFDM rungs, where the
+     * stop-and-wait plane once inferred the peer's TX mode from the size.
+     * The two MFSK floors carry the same frame: a frame's mode is the
+     * decoder's that produced it. */
     for (int i = 0; i < arq_mode_table_count; i++)
         for (int j = i + 1; j < arq_mode_table_count; j++)
-            TEST_ASSERT_NOT_EQUAL(arq_mode_table[i].payload_bytes,
-                                  arq_mode_table[j].payload_bytes);
+            if (!mercury_mode_is_mfsk(arq_mode_table[i].freedv_mode) ||
+                !mercury_mode_is_mfsk(arq_mode_table[j].freedv_mode))
+                TEST_ASSERT_NOT_EQUAL(arq_mode_table[i].payload_bytes,
+                                      arq_mode_table[j].payload_bytes);
+    TEST_ASSERT_EQUAL(arq_protocol_mode_timing(MERCURY_MODE_MFSK)->payload_bytes,
+                      arq_protocol_mode_timing(MERCURY_MODE_MFSK_N32)->payload_bytes);
+}
+
+/* A BW500 session's floor is the 500 Hz MFSK, any other's the 1 kHz one;
+ * the wait after an MFSK CALL covers the frame it went on. */
+void test_floor_mode_by_bandwidth(void)
+{
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, arq_floor_mode(500));
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, arq_floor_mode(2300));
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, arq_floor_mode(2750));
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, arq_floor_mode(0));
+    TEST_ASSERT_TRUE(arq_protocol_call_interval_for_mode_s(MERCURY_MODE_MFSK_N32) >
+                     arq_protocol_call_interval_for_mode_s(MERCURY_MODE_MFSK) + 13.0f);
 }
 
 void test_mode_timing_invalid(void)
@@ -393,16 +412,16 @@ void test_connect_v1_accept(void)
 }
 
 /* A 1.9.x CALL (bandwidth token alone in the extension), or another version
- * -- 1 is 1.9.18's, whose MFSK sat at 2000 Hz: not ours, the versions do not
- * connect. */
+ * -- 1 is 1.9.18's, whose MFSK sat at 2000 Hz, 2 is 1.9.19's, whose BW500
+ * sessions sat on the 1 kHz floor: not ours, the versions do not connect. */
 void test_connect_other_version_refused(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
     TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame), 0x21,
                                                             "PU2UIT", "PU2UIT-3", 2300));
     uint8_t ext = frame_header_extension(frame[0]);
-    TEST_ASSERT_EQUAL_INT(2, ARQ_CONNECT_VERSION);
-    uint8_t versions[] = { 0, 1, 3 };
+    TEST_ASSERT_EQUAL_INT(3, ARQ_CONNECT_VERSION);
+    uint8_t versions[] = { 0, 1, 2 };
     for (unsigned v = 0; v < sizeof(versions); v++)
     {
         uint8_t other[INT_BUFFER_SIZE];
@@ -521,6 +540,7 @@ int main(void)
 
     RUN_TEST(test_callsign_too_long_is_refused_not_truncated);
     RUN_TEST(test_callsign_roundtrip_realistic);
+    RUN_TEST(test_floor_mode_by_bandwidth);
     RUN_TEST(test_connect_v1_call);
     RUN_TEST(test_connect_v1_accept);
     RUN_TEST(test_connect_other_version_refused);

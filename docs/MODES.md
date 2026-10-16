@@ -33,6 +33,7 @@ that index.
 | 9 | DATAC17 | 1180 | 2062 | ARQ rung 5 |
 | 10 | QAM16C2 | 1213 | 2062 | ARQ rung 6 |
 | 11 | MFSK | 98 | 1000 | ARQ rung 0 (the floor); CALLs, control and tone patterns at the floor |
+| 12 | MFSK500 | 98 | 500 | ARQ rung 0 of a BW500 session; its CALLs, control and patterns at the floor |
 
 An ARQ session runs each direction on rungs 0-6 (0-3 at BW500), starting on
 the rung the connect's SNR supports (`ARQ_SNR_MIN_*`, the thresholds below)
@@ -60,9 +61,14 @@ single-frame bursts, 100 trials, "delivered" = acquired AND decoded.
 | **DATAC17** | 2100 | 1410 | 1180 | (15936,9456) | 6.71 | 89/100 at +8 dB, 97/100 at +10 dB ² | Forward link data (intermediate SNR, ~2× DATAC1 goodput) |
 | QAM16C2 | 2100 | 3100 | 1213 | (16200,9720) | 3.2 | 94/100 at +15.7 dB, 84/100 at +13.7 dB ² (upstream: 90/100 at 15 dB ¹) | Forward link data (high SNR, ~2.9× DATAC1 goodput) |
 | **MFSK** | 1000 | ~60 | 98 | LDPC rate 8/16, N=1600 | ~13.5 | 50 % FER at −11.2 dB AWGN (DATAC15 −10.3 on the same harness) ⁴ | Fringe data and control (the carousel's floor) |
+| **MFSK500** | 500 | ~31 | 98 | LDPC rate 8/16, N=1600 | ~26.2 | 90 % at −14.1 dB AWGN, −14.1 behind a 500 Hz filter, −10.4 moderate fading ⁵ | The floor of a BW500 session |
 
 ⁴ [MFSK-PORT.md](MFSK-PORT.md), "The fringe floor was the sync accept
 threshold"; its sections have the fading figures and the rate ladder.
+
+⁵ `utils/mfsk_channel_sweep.sh` (Watterson, 100 trials a point, SNR3k at
+equal peak power); on the same harness the 1 kHz MFSK reaches 90 % at
+−11.1 dB on AWGN and never decodes behind the 500 Hz filter.
 
 ¹ Upstream codec2 figures.
 ² Mercury bench (ch simulator, `--mpp`, Octave-generated fading file).  The

@@ -539,6 +539,36 @@ static uint64_t monotonic_ms(void)
     return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
 }
 
+/* --- Carrier offset of the last frame decoded (the UI's freq_offset) ---
+ * What the far radio's dial is off by, as we hear it, which an operator
+ * otherwise has no way to see -- nor a station's broken sample clock, which
+ * shows as an offset too (1.5 % of 1500 Hz is 23 Hz).  Set by every decoder
+ * but the monitors, which hear other stations' traffic. */
+static _Atomic float    g_rx_foff_hz = 0.0f;
+static _Atomic uint64_t g_rx_foff_ms = 0;      /* when; 0 = never */
+
+/* Caller holds the codec instance's lock. */
+static void note_rx_freq_offset(const modem_codec_t *codec)
+{
+    float hz;
+    if (!codec->be->get_freq_offset || !codec->be->get_freq_offset(codec->ctx, &hz))
+        return;
+    uint64_t now = monotonic_ms();
+    atomic_store(&g_rx_foff_hz, hz);
+    atomic_store(&g_rx_foff_ms, now ? now : 1);
+}
+
+bool modem_get_rx_freq_offset(float *hz, uint64_t *age_ms)
+{
+    uint64_t at = atomic_load(&g_rx_foff_ms);
+    if (!at)
+        return false;
+    uint64_t now = monotonic_ms();
+    if (hz)     *hz = atomic_load(&g_rx_foff_hz);
+    if (age_ms) *age_ms = now > at ? now - at : 0;
+    return true;
+}
+
 static bool arq_mode_policy_ready_snapshot(bool have_snapshot, const arq_runtime_snapshot_t *snapshot)
 {
     return have_snapshot && snapshot && snapshot->initialized;
@@ -554,7 +584,8 @@ static bool is_supported_split_mode(int mode)
            mode == FREEDV_MODE_DATAC16 ||
            mode == FREEDV_MODE_DATAC17 ||
            mode == FREEDV_MODE_QAM16C2 ||
-           mode == MERCURY_MODE_MFSK;
+           mode == MERCURY_MODE_MFSK ||
+           mode == MERCURY_MODE_MFSK_N32;
 }
 
 static bool is_payload_split_mode(int mode)
@@ -565,14 +596,15 @@ static bool is_payload_split_mode(int mode)
            mode == FREEDV_MODE_DATAC15 ||
            mode == FREEDV_MODE_DATAC17 ||
            mode == FREEDV_MODE_QAM16C2 ||
-           mode == MERCURY_MODE_MFSK;
+           mode == MERCURY_MODE_MFSK ||
+           mode == MERCURY_MODE_MFSK_N32;
 }
 
 /* Which backend owns a given mode. Every current mode is FreeDV; the MFSK
  * fringe mode registers its own backend here (Stage 2). */
 static const modem_backend_t *backend_for_mode(int mode)
 {
-    if (mode == MERCURY_MODE_MFSK)
+    if (mercury_mode_is_mfsk(mode))
         return &modem_backend_mfsk;
     return &modem_backend_freedv;
 }
@@ -613,6 +645,7 @@ static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
         FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC13,
         FREEDV_MODE_DATAC4,  FREEDV_MODE_DATAC3,  FREEDV_MODE_DATAC1,
         FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2, MERCURY_MODE_MFSK,
+        MERCURY_MODE_MFSK_N32,
     };
     clear_mode_pool_locked();
     for (size_t i = 0; i < sizeof(pool_modes) / sizeof(pool_modes[0]); i++)
@@ -692,6 +725,8 @@ static uint32_t bitrate_level_from_payload_mode(int mode)
         return 25;
     case MERCURY_MODE_MFSK:
         return 100;
+    case MERCURY_MODE_MFSK_N32:
+        return 103;
     default:
         return 15;
     }
@@ -969,9 +1004,11 @@ try_shm_connect2:
      * transmission does not key over one no decoder has synced on. */
     arq_modem_set_channel_busy_fn(modem_channel_busy);
     arq_modem_set_crc_seed_fn(modem_apply_crc_seed);
+    /* A session's patterns go at its floor's geometry. */
+    arq_modem_set_floor_mode_fn(mfsk_pattern_set_geometry);
     
     int modem_sample_rate = g_modem->codec.be->sample_rate(g_modem->codec.ctx);
-    HLOGI("modem", "Initialized persistent mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2/MFSK), frames per burst: %d", frames_per_burst);
+    HLOGI("modem", "Initialized persistent mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2/MFSK/MFSK500), frames per burst: %d", frames_per_burst);
     HLOGI("modem", "Active FreeDV mode at startup: %d (%s), verbosity: %d", mode, mode_name_from_enum(mode), freedv_verbosity);
     HLOGI("modem", "Modem expects sample rate: %d Hz", modem_sample_rate);
     HLOGI("modem", "Modem payload bytes per frame: %zu", payload_bytes_per_modem_frame);
@@ -1795,6 +1832,7 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     if (*nbytes_out > 0)
     {
         frames_received++;
+        note_rx_freq_offset(&codec);
         HLOGI("modem-rx", ">>> DECODED FRAME %d: %zu bytes, SNR: %.2f dB",
                frames_received, *nbytes_out, snr_est);
     }
@@ -1882,7 +1920,7 @@ static void modem_apply_crc_seed(uint16_t seed)
         /* The session's own control frames (DISCONNECT, ...) carry a plain
          * CRC, and go on MFSK to a peer below the control mode (arq_fsm.c,
          * session_ctl_mode): MFSK accepts them too. */
-        bool plain_ok = control || modem_mode_pool[i].mode == MERCURY_MODE_MFSK;
+        bool plain_ok = control || mercury_mode_is_mfsk(modem_mode_pool[i].mode);
         pthread_mutex_t *l = modem_inst_lock_for(c->ctx);
         pthread_mutex_lock(l);
         if (c->be->set_crc_seed)
@@ -2143,6 +2181,9 @@ typedef struct {
      * state with the payload plane, which uses the pooled MFSK instance in a
      * session. */
     modem_codec_t       own_codec;
+    /* The MFSK call listener's second instance, for the 500 Hz floor
+     * (MERCURY_MODE_MFSK_N32): it decodes with whichever its mode names. */
+    modem_codec_t       own_narrow;
     /* Honour g_payload_resync_req.  Exactly one worker may: the flag is taken
      * with atomic_exchange, so a second consumer would steal the payload
      * plane's resync. */
@@ -2237,8 +2278,10 @@ static void *rx_worker_thread(void *arg)
         }
 
         int mode = atomic_load(&w->mode);
-        int bound = modem_codec_valid(&w->own_codec)
-                  ? rx_decoder_bind_own(&w->state, w->own_codec, mode)
+        modem_codec_t own = mode == MERCURY_MODE_MFSK_N32 && modem_codec_valid(&w->own_narrow)
+                          ? w->own_narrow : w->own_codec;
+        int bound = modem_codec_valid(&own)
+                  ? rx_decoder_bind_own(&w->state, own, mode)
                   : rx_decoder_bind_mode(&w->state, mode);
         if (bound < 0)
         {
@@ -2428,7 +2471,10 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         }
         nbytes_out = (size_t)be->rawdata_rx(ctx, state->bytes_out, state->demod_in);
         if (nbytes_out > 0 && !monitor)
+        {
             publish_link_bitrate(&state->codec, state->mode);
+            note_rx_freq_offset(&state->codec);
+        }
         if (nin > 0)
         {
             state->demod_count -= nin;
@@ -2834,10 +2880,21 @@ void *rx_thread(void *g_modem)
      * DATAC16 CALLs (ARQ_CALL_FAST_SLOTS); without this a station that was
      * only listening could not decode those CALLs at all -- its payload
      * decoder sits on the listen (-m) mode and its control decoder on DATAC16.
-     * It costs one more decoder while idle, nothing during a session. */
+     * It costs one more decoder while idle, nothing during a session.  It
+     * decodes the floor of the station's own bandwidth (the 500 Hz one at
+     * BW500), which is what a caller at that bandwidth escalates to; both
+     * instances are open, one is fed. */
     {
         const modem_backend_t *be = backend_for_mode(MERCURY_MODE_MFSK);
         void *ctx = be ? be->open(MERCURY_MODE_MFSK) : NULL;
+        void *nctx = ctx ? be->open(MERCURY_MODE_MFSK_N32) : NULL;
+        if (nctx)
+        {
+            if (be->configure)
+                be->configure(nctx, 1, 0);
+            w_listen.own_narrow.be  = be;
+            w_listen.own_narrow.ctx = nctx;
+        }
         if (ctx)
         {
             if (be->configure)
@@ -2993,9 +3050,18 @@ void *rx_thread(void *g_modem)
         /* The MFSK call listener only runs while a CALL can arrive on MFSK and
          * nothing else would decode it.  Leaving that state drops what it
          * holds, so a later listening spell starts from fresh audio. */
+        int listen_mode = arq_policy_ready && arq_snapshot.listen_floor_mode
+                        ? arq_snapshot.listen_floor_mode : MERCURY_MODE_MFSK;
         bool feed_listen = modem_codec_valid(&w_listen.own_codec) &&
                            arq_policy_ready && arq_snapshot.listening_for_calls &&
-                           payload_mode != MERCURY_MODE_MFSK;
+                           payload_mode != listen_mode;
+        if (listen_mode != atomic_load(&w_listen.mode))
+        {
+            /* the station's bandwidth changed: what is buffered was for the
+             * other geometry */
+            atomic_store(&w_listen.mode, listen_mode);
+            atomic_store(&w_listen.flush_req, true);
+        }
         if (listen_fed && !feed_listen)
             atomic_store(&w_listen.flush_req, true);
         listen_fed = feed_listen;
@@ -3353,6 +3419,8 @@ void *rx_thread(void *g_modem)
     rx_decoder_dispose(&w_listen.state);
     if (modem_codec_valid(&w_listen.own_codec))
         w_listen.own_codec.be->close(w_listen.own_codec.ctx);
+    if (modem_codec_valid(&w_listen.own_narrow))
+        w_listen.own_narrow.be->close(w_listen.own_narrow.ctx);
     if (monitor_active)
     {
         monitor_workers_stop(monitor_workers, monitor_count);

@@ -69,6 +69,9 @@ const arq_mode_timing_t arq_mode_table[] = {
      * longest burst, which sizes the modem's RX backlog: shorter, and the
      * backlog cap chopped MFSK bursts in half (mfsk-margin, 7feaadb). */
     {  MERCURY_MODE_MFSK,     13.50f,    18.0f,          98   },
+    /* The BW500 floor: the same frame on 32 tones 15.6 Hz apart, twice the
+     * symbol length, 26.2 s on the air (arq_floor_mode). */
+    {  MERCURY_MODE_MFSK_N32, 27.00f,    32.0f,          98   },
 };
 
 const int arq_mode_table_count =
@@ -122,11 +125,16 @@ float arq_protocol_call_interval_for_mode_s(int mode)
     float override = atomic_load(&arq_callint_override_s);
     if (override > 0.0f)
         return override;
-    if (mode == MERCURY_MODE_MFSK) {
+    if (mercury_mode_is_mfsk(mode)) {
         const arq_mode_timing_t *tm = arq_protocol_mode_timing(mode);
         return (tm ? tm->frame_duration_s : 13.5f) + 10.5f;
     }
     return arq_protocol_call_interval_s();
+}
+
+int arq_floor_mode(int bw_hz)
+{
+    return bw_hz == ARQ_BANDWIDTH_NARROW_HZ ? MERCURY_MODE_MFSK_N32 : MERCURY_MODE_MFSK;
 }
 
 int arq_protocol_retry_rank(const char *local_call, const char *remote_call)

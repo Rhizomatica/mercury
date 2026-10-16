@@ -329,6 +329,14 @@ float arq_protocol_call_interval_s(void);
  * DATAC16-shaped interval would key the next CALL over the answer. */
 float arq_protocol_call_interval_for_mode_s(int mode);
 
+/* The MFSK floor of a session at this bandwidth (Hz): the 500 Hz geometry
+ * (MERCURY_MODE_MFSK_N32, 32 tones 15.6 Hz apart) for BW500, whose stations
+ * may sit behind a 500 Hz filter that no 1 kHz MFSK passes; the 1 kHz floor
+ * (MERCURY_MODE_MFSK) otherwise.  Per bit the two reach equally far on AWGN
+ * (the narrow one's 3 dB is twice the airtime), the 1 kHz one further on
+ * flutter, in half the keydown. */
+int arq_floor_mode(int bw_hz);
+
 /**
  * @brief Compute CRC16-CCITT of an uppercase-normalised callsign.
  * Used to encode/validate the DST field in CALL/ACCEPT frames.
@@ -348,7 +356,7 @@ uint16_t arq_protocol_callsign_crc16(const char *callsign);
 int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                                    uint8_t session_id, uint8_t snr_raw);
 
-/* --- CALL/ACCEPT, protocol version 2 (PACKET_TYPE_ARQ_CALL) ---
+/* --- CALL/ACCEPT, protocol version 3 (PACKET_TYPE_ARQ_CALL) ---
  *
  * 14 bytes (a DATAC16 frame), padded to the frame on MFSK.  Byte 0 is the
  * framer: type CALL, and in its extension the bandwidth token (2 bits), the
@@ -361,6 +369,9 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  * 1015.6..1984.4 Hz, centred on 1500 Hz like the codec2 modes; the frames are
  * the same, but a pair of versions 1 and 2 would connect on DATAC16 and then
  * never hear each other at the floor, so the version keeps them apart.
+ * Version 3 gave a BW500 session its own floor, the 500 Hz MFSK
+ * (arq_floor_mode): a version-2 station at BW500 would sit on the 1 kHz one.
+ * 3 is the last value the two bits hold; a later change needs another mark.
  *
  *   CALL    1: 0 | session id   2-3: CRC16 of the called callsign
  *           4-13: the caller's callsign, arithmetic-coded
@@ -368,7 +379,7 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  *           4-5: CRC16 of the called callsign   6-7: the callee's nonce
  *           8: the caller's start rung (3 bits; 7 = ARQ_ACCEPT_LEVEL_CTL_DEAF),
  *              5 bits zero      9-13: zero */
-#define ARQ_CONNECT_VERSION           2
+#define ARQ_CONNECT_VERSION           3
 #define ARQ_CONNECT_EXT_BW_MASK       0x03
 #define ARQ_CONNECT_EXT_VERSION_SHIFT 2
 #define ARQ_CONNECT_EXT_VERSION_MASK  0x0C

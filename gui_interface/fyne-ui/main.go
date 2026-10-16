@@ -157,6 +157,11 @@ type telemetryState struct {
 	Waterfall          bool
 	AudioOk            bool
 	AudioError         string
+	// The carrier offset the last frame decoded arrived at, and how long
+	// ago; FreqOffsetValid is false until one has been measured.
+	FreqOffsetValid bool
+	FreqOffsetHz    float64
+	FreqOffsetAgeMs int64
 }
 
 type uiBindings struct {
@@ -196,6 +201,7 @@ type uiBindings struct {
 	tcpText           *canvas.Text
 	txBytesText       *canvas.Text
 	rxBytesText       *canvas.Text
+	freqOffsetText    *canvas.Text
 	spectrumCanvas    *canvas.Raster
 	waterfallCanvas   *canvas.Raster
 	waterfallCard     *widget.Card
@@ -242,7 +248,30 @@ func parseStatusMessage(payload []byte) (telemetryState, error) {
 		status.AudioOk = true
 	}
 	status.AudioError = toString(raw["audio_error"])
+	// null until a frame has been decoded, absent from an older server.
+	if v, ok := raw["freq_offset_hz"].(float64); ok {
+		status.FreqOffsetValid = true
+		status.FreqOffsetHz = v
+		status.FreqOffsetAgeMs = int64(toFloat64(raw["freq_offset_age_ms"]))
+	}
 	return status, nil
+}
+
+// freqOffsetStaleMs is how old an offset may be before it is shown dimmed: by
+// then the far station may have retuned, or be another station.
+const freqOffsetStaleMs = 120000
+
+// freqOffsetDisplay renders the last frame's carrier offset, signed, dimmed
+// once stale and "--" before any frame.
+func freqOffsetDisplay(t telemetryState) (string, color.Color) {
+	if !t.FreqOffsetValid {
+		return "-- Hz", themeDim()
+	}
+	text := fmt.Sprintf("%+.1f Hz", t.FreqOffsetHz)
+	if t.FreqOffsetAgeMs > freqOffsetStaleMs {
+		return text, themeDim()
+	}
+	return text, themeForeground()
 }
 
 func parseSpectrumFrame(frame []byte) ([]float32, int, error) {
@@ -641,6 +670,12 @@ func main() {
 	rxBytesText.TextSize = 13
 	bindings.rxBytesText = rxBytesText
 
+	// How far off frequency the far station arrives -- its dial, or a sound
+	// card clock that is off, which no other display shows.
+	freqOffsetText := canvas.NewText("-- Hz", themeDim())
+	freqOffsetText.TextSize = 13
+	bindings.freqOffsetText = freqOffsetText
+
 	spectrumCanvas := canvas.NewRaster(func(w, h int) image.Image {
 		img := image.NewNRGBA(image.Rect(0, 0, w, h))
 		drawSpectrumImage(img, w, h, state)
@@ -847,6 +882,10 @@ func main() {
 				bindings.rxBytesText.Text = fmt.Sprintf("%d", telemetry.BytesReceived)
 				bindings.rxBytesText.Color = themeForeground()
 				bindings.rxBytesText.Refresh()
+			}
+			if bindings.freqOffsetText != nil {
+				bindings.freqOffsetText.Text, bindings.freqOffsetText.Color = freqOffsetDisplay(telemetry)
+				bindings.freqOffsetText.Refresh()
 			}
 			bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", telemetry.TXGainDB))
 			bindings.txPeakLabel.SetText(fmt.Sprintf("TX peak: %.1f dBFS", telemetry.TXPeakDBFS))
@@ -1259,6 +1298,7 @@ func main() {
 		canvas.NewText("Client TCP Connected", themeDim()), bindings.tcpText,
 		canvas.NewText("Bytes transmitted", themeDim()), bindings.txBytesText,
 		canvas.NewText("Bytes received", themeDim()), bindings.rxBytesText,
+		canvas.NewText("Freq offset", themeDim()), bindings.freqOffsetText,
 	)
 	telemetryCard := widget.NewCard("Telemetry", "", telemetryGrid)
 

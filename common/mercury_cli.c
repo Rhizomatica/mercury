@@ -560,11 +560,11 @@ static void list_modulation_modes(int freedv_verbosity, bool verbose)
         printf("Mode index: %d\n", i);
         printf("Opening mode %s (%d)\n", freedv_mode_names[i], freedv_modes[i]);
 
-        if (freedv_modes[i] == MERCURY_MODE_MFSK)
+        if (mercury_mode_is_mfsk(freedv_modes[i]))
         {
             /* Non-FreeDV backend: ask it the same questions directly. */
             const modem_backend_t *be = &modem_backend_mfsk;
-            void *ctx = be->open(MERCURY_MODE_MFSK);
+            void *ctx = be->open(freedv_modes[i]);
             if (ctx == NULL) { printf("Failed to open mode %d\n", freedv_modes[i]); continue; }
             int bits = be->bits_per_frame(ctx);
             int nsam = be->n_tx_samples(ctx);

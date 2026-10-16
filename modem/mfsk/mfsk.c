@@ -399,23 +399,27 @@ void mfsk_demod(const mfsk_t *m, const mfsk_cplx *fft_in, int total_bits,
 
     for (int s = 0; s < nSymbols; s++)
     {
-        /* Estimate noise variance from bins outside all stream bands */
-        int band_start = m->stream_offsets[0];
-        int band_end = m->stream_offsets[m->nStreams - 1] + m->M;
+        /* Noise variance from the stream's own bins, all but each stream's
+         * strongest (the tone, or a noise peak where it is too weak to matter).
+         * It used to come from the bins outside every stream's band, which a
+         * radio's narrow filter suppresses: behind a 500 Hz filter they read
+         * far below the noise on the tones, the LLRs came out too confident and
+         * hit the clamp, and the 500 Hz geometries lost up to 8 dB there. */
         double noise_sum = 0.0;
         int noise_bins = 0;
-        for (int k = 0; k < m->Nc; k++)
+        for (int st = 0; st < m->nStreams; st++)
         {
-            if (k < band_start || k >= band_end)
+            double sum = 0.0, emax = 0.0;
+            int n = 0;
+            for (int mm = 0; mm < m->M; mm++)
             {
-                mfsk_cplx val = fft_in[s * m->Nc + k];
+                mfsk_cplx val = fft_in[s * m->Nc + m->stream_offsets[st] + mm];
                 double e = val.re * val.re + val.im * val.im;
-                if (isfinite(e))
-                {
-                    noise_sum += e;
-                    noise_bins++;
-                }
+                if (!isfinite(e)) continue;
+                sum += e; n++;
+                if (e > emax) emax = e;
             }
+            if (n > 1) { noise_sum += sum - emax; noise_bins += n - 1; }
         }
         double noise_var = (noise_bins > 0) ? noise_sum / noise_bins : 1e-30;
         if (noise_var < 1e-30) noise_var = 1e-30;

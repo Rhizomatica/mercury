@@ -66,6 +66,12 @@ typedef struct {
     bool   radio_frequency_valid;
     uint64_t radio_frequency_hz;
     uint64_t radio_frequency_age_ms;
+    /* The carrier offset the last frame we decoded arrived at, Hz (positive:
+     * above nominal), and how long ago.  freq_offset_valid is false until a
+     * frame has been decoded with one measured. */
+    bool   freq_offset_valid;
+    float  freq_offset_hz;
+    uint64_t freq_offset_age_ms;
 } ui_status_t;
 
 /* Render the snapshot as the status JSON remote clients already expect.

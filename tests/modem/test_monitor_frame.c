@@ -124,7 +124,7 @@ void test_monitor_disconnect_and_other_version(void)
     frame[1] = 3;
     run_frame(frame, sizeof(frame), FREEDV_MODE_DATAC16, 3.0f);
     TEST_ASSERT_EQUAL_STRING("CONTROL", cap_kind);
-    TEST_ASSERT_EQUAL_STRING("another protocol version (Mercury 1.9.18 or older?)", cap_detail);
+    TEST_ASSERT_EQUAL_STRING("another protocol version (Mercury 1.9.19 or older?)", cap_detail);
     TEST_ASSERT_EQUAL_INT(2, cap_count);
 }
 

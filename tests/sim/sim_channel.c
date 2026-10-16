@@ -44,6 +44,9 @@ static double mode_cliff_db(int freedv_mode)
     case FREEDV_MODE_DATAC13: return -4.0;
     case FREEDV_MODE_DATAC14: return -2.0;
     case MERCURY_MODE_MFSK:   return -13.0; /* the fringe floor */
+    /* BW500's floor: 3 dB below (twice the airtime a bit), sim AWGN 90 %
+     * at -14.1 dB against the 1 kHz floor's -11.1 (mfsk_channel_sweep) */
+    case MERCURY_MODE_MFSK_N32: return -16.0;
     case SIM_MODE_PATTERN: {  /* ~10 dB below DATAC16 (mfsk-margin) */
         /* SIM_PATTERN_CLIFF: utils/pattern_probe measures the real detector
          * at 50 % near -14.5 dB, -14 with a +25 Hz offset. */

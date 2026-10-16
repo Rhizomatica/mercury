@@ -124,6 +124,10 @@ pattern_probe: pattern_probe.c ../modem/modem_mfsk.c $(MFSK_DSP_SRC) ../modem/fr
 mfsk_rx_probe: mfsk_rx_probe.c ../modem/modem_mfsk.c $(MFSK_DSP_SRC) ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -O2 -I../modem -I../modem/mfsk -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
+# One MFSK burst through a channel tool by file (utils/mfsk_channel_sweep.sh).
+mfsk_burst_file: mfsk_burst_file.c ../modem/modem_mfsk.c $(MFSK_DSP_SRC) ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -O2 -I../modem -I../modem/mfsk -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
+
 mfsk_puncture_sweep: mfsk_puncture_sweep.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -o $@ $(filter %.c %.a %.o,$^) -lm
 # Broadcast a file to Mercury, or receive one, over the broadcast TCP/KISS port.

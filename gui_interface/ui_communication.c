@@ -97,6 +97,7 @@ static const char *ui_arq_mode_name(int mode)
     case FREEDV_MODE_DATAC17: return "DATAC17";
     case FREEDV_MODE_QAM16C2: return "QAM16C2";
     case MERCURY_MODE_MFSK: return "MFSK";
+    case MERCURY_MODE_MFSK_N32: return "MFSK500";
     default: return "";
     }
 }
@@ -641,6 +642,8 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
     float tx_gain_linear = modem_get_tx_gain();
     out->tx_gain_db   = (tx_gain_linear > 0.0f) ? 20.0f * log10f(tx_gain_linear) : -120.0f;
     out->tx_peak_dbfs = modem_get_tx_peak_dbfs();
+    out->freq_offset_valid = modem_get_rx_freq_offset(&out->freq_offset_hz,
+                                                      &out->freq_offset_age_ms);
 
     out->waterfall_enabled = ctx->waterfall_enabled ? true : false;
 

@@ -419,7 +419,10 @@ void test_mfsk_modem_decodes_burst_behind_a_failed_anchor(void)
 /* True single-sideband frequency shift of a real passband signal: form the
  * analytic signal with a Hilbert FIR, rotate, take the real part. Multiplying
  * by a cosine would make two sidebands, which is not what a mistuned radio
- * does. */
+ * does.  The loop below correlates with h rather than convolving, so q is
+ * MINUS the Hilbert transform -- hence + q sin: with - q sin, as it was, every
+ * shift went the other way (a 1000 Hz tone moved "+16 Hz" came out at 984 Hz),
+ * which no decode noticed but the reported offset does. */
 static void shift_hz(int16_t *x, int n, double df, double fs)
 {
     enum { HT = 101 };
@@ -441,7 +444,7 @@ static void shift_hz(int16_t *x, int n, double df, double fs)
     }
     for (int i = 0; i < n; i++) {
         double ph = 2.0 * M_PI * df * (double)i / fs;
-        double v  = (double)x[i] * cos(ph) - q[i] * sin(ph);
+        double v  = (double)x[i] * cos(ph) + q[i] * sin(ph);
         if (v >  32767.0) v =  32767.0;
         if (v < -32768.0) v = -32768.0;
         x[i] = (int16_t)lrint(v);
@@ -505,13 +508,154 @@ void test_mfsk_modem_decodes_with_dial_offset(void)
                 if (held > 0) memmove(acc, acc + nin, (size_t)held * 2);
             }
         }
-        printf("  dial offset %+6.1f Hz (%.2f bins): %s\n", offsets[oi],
-               offsets[oi] / (8000.0 / 256.0), match ? "decoded" : "LOST");
+        float foff = 0.0f;
+        int have = be->get_freq_offset(ctx, &foff);
+        printf("  dial offset %+6.1f Hz (%.2f bins): %s, reported %+.1f Hz\n", offsets[oi],
+               offsets[oi] / (8000.0 / 256.0), match ? "decoded" : "LOST", (double)foff);
         free(acc); free(out); free(frame); free(pre); free(dat); free(post); free(pb);
 
         char msg[96];
         snprintf(msg, sizeof msg, "burst lost at a %.0f Hz dial offset", offsets[oi]);
         TEST_ASSERT_TRUE_MESSAGE(match >= 1, msg);
+        /* What the operator is shown: to the payload's eighth of a
+         * subcarrier (3.9 Hz), with the sign of the shift. */
+        TEST_ASSERT_TRUE(have);
+        TEST_ASSERT_FLOAT_WITHIN(4.0f, (float)offsets[oi], foff);
+    }
+}
+
+/* A receiver whose sound card runs `ratio` times fast: band-limited
+ * resampling, a Blackman-windowed sinc 32 taps either side. */
+static int16_t *resample_clock(const int16_t *x, int n, double ratio, int *m_out)
+{
+    enum { HALF = 32 };
+    int m = (int)floor((double)n * ratio);
+    int16_t *y = calloc((size_t)m, sizeof(int16_t));
+    for (int i = 0; i < m; i++) {
+        double t = (double)i / ratio, a = 0.0;
+        int c = (int)floor(t);
+        for (int j = c - HALF + 1; j <= c + HALF; j++) {
+            if (j < 0 || j >= n) continue;
+            double d = t - (double)j, w = M_PI * (d / HALF + 1.0);
+            double v = d == 0.0 ? 1.0 : sin(M_PI * d) / (M_PI * d);
+            a += x[j] * v * (0.42 - 0.5 * cos(w) + 0.08 * cos(2.0 * w));
+        }
+        y[i] = (int16_t)lrint(a > 32767 ? 32767 : a < -32768 ? -32768 : a);
+    }
+    *m_out = m;
+    return y;
+}
+
+/* A sample-clock error walks the symbols out from under a decoder that reads
+ * them at the nominal spacing: the old one held only +/-0.2 %, and a capture
+ * through a rate converter that ran 1.5 % slow decoded no MFSK frame at all.
+ * The payload is read at a searched sample ratio; the offset reported is the
+ * one the clock moves 1500 Hz by, 1500 (1/ratio - 1). */
+void test_mfsk_modem_decodes_with_clock_error(void)
+{
+    const double ratios[] = { 0.985, 1.015 };
+    for (unsigned ri = 0; ri < sizeof(ratios) / sizeof(ratios[0]); ri++)
+    {
+        be->close(ctx);
+        ctx = be->open(MERCURY_MODE_MFSK);
+        TEST_ASSERT_NOT_NULL(ctx);
+
+        int bytes = be->bits_per_frame(ctx) / 8;
+        int nin   = be->nin(ctx);
+        int cap   = be->n_tx_samples(ctx) + 40000;
+        uint8_t *frame = malloc(bytes);
+        for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 13 + 5);
+        uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+        frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+        int16_t *pre = calloc(cap, 2), *dat = calloc(cap, 2), *post = calloc(cap, 2);
+        int np = be->preamble_tx(ctx, pre);
+        int nd = be->rawdata_tx(ctx, dat, frame);
+        int ns = be->postamble_tx(ctx, post);
+        int lead = 2 * nin, trail = 16 * nin;
+        int total = lead + np + nd + ns + trail;
+        int16_t *pb = calloc((size_t)total, 2);
+        memcpy(pb + lead, pre, (size_t)np * 2);
+        memcpy(pb + lead + np, dat, (size_t)nd * 2);
+        memcpy(pb + lead + np + nd, post, (size_t)ns * 2);
+
+        int m = 0;
+        int16_t *rx = resample_clock(pb, total, ratios[ri], &m);
+        uint8_t *out = calloc((size_t)bytes, 1);
+        int n = feed_and_decode(rx, m, out);
+        float foff = 0.0f;
+        int have = be->get_freq_offset(ctx, &foff);
+        double want = MFSK_CENTRE_HZ * (1.0 / ratios[ri] - 1.0);
+        printf("  clock x%.3f: %s, reported %+.1f Hz (expected %+.1f)\n", ratios[ri],
+               n == bytes ? "decoded" : "LOST", (double)foff, want);
+
+        char msg[64];
+        snprintf(msg, sizeof msg, "burst lost at clock ratio %.3f", ratios[ri]);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(bytes, n, msg);
+        TEST_ASSERT_EQUAL_MEMORY(frame, out, bytes);
+        TEST_ASSERT_TRUE(have);
+        TEST_ASSERT_FLOAT_WITHIN(4.0f, (float)want, foff);
+        free(frame); free(pre); free(dat); free(post); free(pb); free(rx); free(out);
+    }
+}
+
+/* A gap in the transmitter's audio: its playback ran dry and silence went
+ * into the burst, so everything after it arrives late (on air: 25 ms, 200
+ * samples, 4.5 s into a floor frame, lost at 18 dB SNR), or a network audio
+ * path lost a packet and everything after it arrives early.  The preamble
+ * places the symbols before the gap and the postamble those after it, and
+ * the payload is read with a switch between the two.  Three kinds: the
+ * on-air one; silence of nearly a whole symbol (320 samples), where both
+ * placements line windows up with symbols and only the silence shows where
+ * the gap is; and samples lost, about a whole symbol of them, with no
+ * silence to show it. */
+void test_mfsk_modem_decodes_burst_with_a_playback_gap(void)
+{
+    const struct { double at; int n; } gaps[] = { { 0.35, 200 }, { 0.5, 300 }, { 0.6, -340 } };
+    for (unsigned gi = 0; gi < sizeof(gaps) / sizeof(gaps[0]); gi++)
+    {
+        be->close(ctx);
+        ctx = be->open(MERCURY_MODE_MFSK);
+        TEST_ASSERT_NOT_NULL(ctx);
+
+        int bytes = be->bits_per_frame(ctx) / 8;
+        int nin   = be->nin(ctx);
+        int cap   = be->n_tx_samples(ctx) + 40000;
+        uint8_t *frame = malloc(bytes);
+        for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 29 + 3);
+        uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+        frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+        int16_t *pre = calloc(cap, 2), *dat = calloc(cap, 2), *post = calloc(cap, 2);
+        int np = be->preamble_tx(ctx, pre);
+        int nd = be->rawdata_tx(ctx, dat, frame);
+        int ns = be->postamble_tx(ctx, post);
+        int lead = 2 * nin, trail = 16 * nin;
+        int len = lead + np + nd + ns + trail;
+        int16_t *burst = calloc((size_t)len, 2);
+        memcpy(burst + lead, pre, (size_t)np * 2);
+        memcpy(burst + lead + np, dat, (size_t)nd * 2);
+        memcpy(burst + lead + np + nd, post, (size_t)ns * 2);
+
+        /* The gap, inside the payload: n samples of silence in, or -n out. */
+        int at = lead + np + (int)(gaps[gi].at * nd), n = gaps[gi].n;
+        int total = len + n;
+        int16_t *pb = calloc((size_t)total, 2);
+        memcpy(pb, burst, (size_t)at * 2);
+        if (n > 0)
+            memcpy(pb + at + n, burst + at, (size_t)(len - at) * 2);
+        else
+            memcpy(pb + at, burst + at - n, (size_t)(len - at + n) * 2);
+
+        uint8_t *out = calloc((size_t)bytes, 1);
+        int got = feed_and_decode(pb, total, out);
+        printf("  gap of %+d samples at %.0f %% of the payload: %s\n", n, 100.0 * gaps[gi].at,
+               got == bytes ? "decoded" : "LOST");
+        char msg[80];
+        snprintf(msg, sizeof msg, "burst lost with a gap of %+d samples", n);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(bytes, got, msg);
+        TEST_ASSERT_EQUAL_MEMORY(frame, out, bytes);
+        free(frame); free(pre); free(dat); free(post); free(burst); free(pb); free(out);
     }
 }
 
@@ -879,6 +1023,8 @@ int main(void)
     RUN_TEST(test_mfsk_modem_decodes_second_burst_after_window_wraps);
     RUN_TEST(test_mfsk_modem_decodes_burst_behind_a_failed_anchor);
     RUN_TEST(test_mfsk_modem_decodes_with_dial_offset);
+    RUN_TEST(test_mfsk_modem_decodes_with_clock_error);
+    RUN_TEST(test_mfsk_modem_decodes_burst_with_a_playback_gap);
     RUN_TEST(test_mfsk_modem_tx_does_not_clip);
     RUN_TEST(test_mfsk_modem_noise_no_false_decode);
     RUN_TEST(test_mfsk_modem_sync_while_burst_arrives);
