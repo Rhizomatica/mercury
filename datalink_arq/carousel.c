@@ -1161,6 +1161,16 @@ static int choose_level(const car_t *c, uint64_t now)
             car_trace(c, "rx confirms lv=%d", up);
             return up;
         }
+    /* Where the SNR would start a session, if that is above: a probe there
+     * directly, not one rung at a time (sim, step:-12:10: the floor to
+     * DATAC17 took four probes, one exchange each). */
+    if (c->snr_valid) {
+        int up = cap_level(c, car_start_level(c->snr_ema));
+        if (up > best && level_potential(c, up) > best_gp &&
+            (level_allowed(c, up) ? !c->lv_rounds[up] || c->polls - c->lv_round_at[up] >= probe_every(c, up)
+                                  : reprobe_due(c, up, now)))
+            return up;
+    }
     for (int up = best + 1; up <= c->max_level; up++) {
         if (level_potential(c, up) <= best_gp)
             continue;                   /* cannot win even with no loss */
