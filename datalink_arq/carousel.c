@@ -1418,6 +1418,11 @@ static void take_pieces(car_t *c, const msg_t *m)
     c->peer_unopened = m->unopened;
     c->peer_hi = resolve16(c->rbase, m->hi);
     c->peer_hi_known = true;
+    /* A round says the peer had something after all: no "nothing to send"
+     * taken from a silence or a pattern after my offer still stands.  It did
+     * until my next poll, and a DISCONNECT waiting for the drain could go
+     * with the peer's blocks in flight (specs/carousel/DirDone.tla). */
+    c->status_seen = false;
 }
 
 /* ---- turns: who keys, and when (docs/CAROUSEL-TURNS.md) ------------------- *

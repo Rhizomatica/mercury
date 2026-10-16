@@ -64,6 +64,15 @@ run:
 | `Stale_Above` | a same-seed frame of an earlier session | NB 3, K 2, sent ≤ 3, MOD 4, WIN 2, 2 in flight | pass, 1 482 872 states |
 | `Adversary_Floor` | both, at the floor | same | pass, 12 138 448 states |
 | `Stale_Above_NoCheck` | a stale frame, blocks without a check | same | **`Integrity` violated** |
+| `Stale_Poll` | a same-seed **poll** of an earlier session, any base and need | NB 3, K 2, sent ≤ 3, MOD 4, WIN 2, 2 in flight | **`RetireSafe` violated** (residual risk, below) |
+
+`Stale_Poll` records a risk the code accepts.  A poll carries no check of its
+own beyond the seeded CRC16, so a poll of an earlier session with the same
+seed (the callee's nonce makes that a 1-in-65536 event), or a corrupt poll
+that passes its CRC (one in 65536, and `decode_ctl` drops out-of-range
+fields), can retire a block the receiver does not hold.  Nobody sends it
+again; the receiver delivers in order up to it, stalls, and the session ends
+on its watchdog: data cut short, never wrong.
 
 Before it (trunk 2c07bf4: a BREAK retired the block, and blocks had no
 check), two configurations failed, in 9 steps each:
@@ -280,3 +289,29 @@ What the explorer does not cover: SNR-dependent decoding (each frame either
 arrives or is lost), fading collisions between two keydowns that both sense
 correctly but too late, and more than k events.  Those are the job of the
 seeded matrix (`carousel_bench`) and of the step-3 work on control signals.
+
+## DirDone: when the peer's direction is done
+
+`DirDone.tla` checks the judgement a DISCONNECT waits on (`car_is_drained`:
+mine retired, and `peer_direction_done`).  The peer gets data from its
+application at any time and reports in every frame what it holds (highest
+block opened, data not yet cut: a STATUS, and a poll since arch-2.0).  The
+deciding end takes the peer's direction as done when a STATUS said so since
+its last poll (`status_seen`), or the last report shows nothing uncut and
+nothing opened above what it delivered.  `status_seen` is also set without a
+STATUS: after an offer of the turn (`KD_BOTH`, made only to a peer whose
+direction is done) answered by silence, by a pattern (which may be a false
+alarm), or by a poll with no round and no data.
+
+    java -cp /opt/TLA+Toolbox/tla2tools.jar tlc2.TLC -workers 4 \
+        -metadir /tmp/tlc-dirdone -config DirDone.cfg DirDone.tla
+
+- `DirDone.cfg`: the code's rules.  `Sound` -- the peer's direction is taken
+  as done only when everything it held at its last frame heard is
+  delivered -- holds: no error, 71 distinct states (NB 3).
+- `Mut_dd_offerany.cfg`: the offer made whatever the decider knows.  Violates
+  `Sound`.
+- `Mut_dd_keepstatus.cfg`: a round of the peer's leaves `status_seen` set, as
+  the code did until arch-2.0: the round arrived after the silence that set
+  it, said the peer had a block, and a DISCONNECT waiting for the drain could
+  still go.  Violates `Sound`.  Fixed: `take_pieces` clears `status_seen`.
