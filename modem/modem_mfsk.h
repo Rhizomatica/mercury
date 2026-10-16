@@ -21,12 +21,19 @@
  * mode enum (which currently tops out at QAM16C2=25) so it can never collide
  * with a codec2 mode; backend_for_mode() routes it to the MFSK backend. */
 #define MERCURY_MODE_MFSK 100
-/* Experimental 500 Hz geometries of the same burst (same code, frame and
- * patterns' tone lists), for measurement only -- no ladder uses them:
- *   102  16 tones at 31.25 Hz (4 bits a 40 ms symbol)
- *   103  32 tones at 15.625 Hz (5 bits an 80 ms symbol) */
+/* 500 Hz geometries of the same burst (same code, frame and patterns' tone
+ * lists):
+ *   102  16 tones at 31.25 Hz (4 bits a 40 ms symbol), measurement only
+ *   103  32 tones at 15.625 Hz (5 bits an 80 ms symbol), the floor of a
+ *        BW500 session (arq_floor_mode) */
 #define MERCURY_MODE_MFSK_N16 102
 #define MERCURY_MODE_MFSK_N32 103
+
+/* Any of the MFSK backend's modes. */
+static inline int mercury_mode_is_mfsk(int mode)
+{
+    return mode == MERCURY_MODE_MFSK || mode == MERCURY_MODE_MFSK_N16 || mode == MERCURY_MODE_MFSK_N32;
+}
 
 extern const modem_backend_t modem_backend_mfsk;
 
@@ -35,10 +42,13 @@ extern const modem_backend_t modem_backend_mfsk;
  * layer (ARQ) emits one via send_pattern_ack() and detects incoming ones in
  * the RX baseband.  pattern_kind: 0 = plain ACK, 1 = ACK+TURN (break). */
 
-/* Measurement only (utils/pattern_probe): the patterns at another MFSK
- * mode's geometry, MERCURY_MODE_MFSK_N16 or _N32, with its global lists.  Not
- * thread-safe: call before any pattern is sent or detected. */
+/* The patterns at an MFSK mode's geometry (MERCURY_MODE_MFSK, the default,
+ * _N16 or _N32), with its global lists until a session binds its own: a
+ * session's floor sets it before its seed.  Safe while patterns are sent and
+ * detected: each call works on one geometry, and a window that was detecting
+ * at another starts over. */
 void mfsk_pattern_set_geometry(int mode);
+int  mfsk_pattern_geometry(void);
 
 /* Number of pattern symbols (for buffer sizing / airtime). */
 int mfsk_pattern_nsymb(void);
@@ -91,6 +101,7 @@ typedef struct {
 struct mfsk_stream_det;
 typedef struct {
     struct mfsk_stream_det *det;   /* created on the first push */
+    const void *geom;              /* ...at this geometry (mfsk_pattern_set_geometry) */
     double  hist_re[64], hist_im[64]; /* the low-pass filter's last inputs, downmixed */
     int     hist_pos;
     long long n;                   /* samples pushed since the reset */

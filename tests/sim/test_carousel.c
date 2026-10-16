@@ -11,6 +11,7 @@
 #include "unity.h"
 #include "carousel_sim.h"
 #include "carousel.h"
+#include "modem_mfsk.h"
 #include "freedv_api.h"
 
 #include <stdio.h>
@@ -21,7 +22,7 @@
 void setUp(void) {}
 /* Here, not at the end of a test: a failed assertion leaves the test at once,
  * and the next one would run with its sensing. */
-void tearDown(void) { unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); }
+void tearDown(void) { unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW"); }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
 {
@@ -224,7 +225,29 @@ static void test_carousel_bandwidth_max_level(void)
     TEST_ASSERT_EQUAL_INT(3, c->peer_snr_level);
     TEST_ASSERT_EQUAL_INT(3, c->tx_level);
     TEST_ASSERT_EQUAL_INT(3, c->poll_level);
+    /* rung 0 is the session's floor; the rest of the ladder is everyone's */
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, car_session_level_mode(c, 0));
+    car_set_floor_mode(c, MERCURY_MODE_MFSK_N32);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, car_session_level_mode(c, 0));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, car_session_level_mode(c, 1));
     free(c);
+}
+
+/* A BW500 session on its own floor, the 500 Hz MFSK (26 s frames, one a
+ * keydown): where the 1 kHz floor no longer decodes (-14 dB), on fades, and
+ * with one direction at the floor and the other well above it, every byte
+ * arrives intact and no keydown meets another. */
+static void test_carousel_bw500_floor(void)
+{
+    static const char *CH[] = { "cliff:-14", "fade:-9:0.5", "asym:-14:5", "step:5:-14:300" };
+    setenv("CAR_BW", "500", 1);
+    setenv("CAR_CS_DECODABLE", "1", 1);
+    for (size_t c = 0; c < sizeof(CH) / sizeof(CH[0]); c++)
+        for (uint64_t seed = 1; seed <= 2; seed++) {
+            check(seed, CH[c], false);
+            check(seed, CH[c], true);
+        }
+    unsetenv("CAR_BW");
 }
 
 int main(void)
@@ -240,6 +263,7 @@ int main(void)
     RUN_TEST(test_carousel_drain_budget_fits_the_floor);
     RUN_TEST(test_carousel_piece_size_agrees);
     RUN_TEST(test_carousel_bandwidth_max_level);
+    RUN_TEST(test_carousel_bw500_floor);
     RUN_TEST(test_carousel_request_response_completes);
     return UNITY_END();
 }

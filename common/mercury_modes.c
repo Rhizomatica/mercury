@@ -29,7 +29,10 @@ int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        /* Not a FreeDV mode: our own fringe modem, which the
                         * modem layer opens through its own backend.  Listed
                         * here so -m and MODE can select it like any other. */
-                       MERCURY_MODE_MFSK };
+                       MERCURY_MODE_MFSK,
+                       /* ...and its 500 Hz geometry, the floor of a BW500
+                        * session. */
+                       MERCURY_MODE_MFSK_N32 };
 
 char *freedv_mode_names[] = { "DATAC1",
                               "DATAC3",
@@ -42,7 +45,8 @@ char *freedv_mode_names[] = { "DATAC1",
                               "DATAC16",
                               "DATAC17",
                               "QAM16C2",
-                              "MFSK" };
+                              "MFSK",
+                              "MFSK500" };
 
 int mercury_cli_mode_count(void)
 {

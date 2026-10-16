@@ -303,11 +303,11 @@ RX demux (`car_on_frame`, C:1602-1626):
 
 ### 3.4 Connect frames (generic FSM, carousel-relevant fields only)
 
-**[carousel-only]** Protocol version 2 (1 was 1.9.18; see §16); the byte layout is in
+**[carousel-only]** Protocol version 3 (1 was 1.9.18, 2 was 1.9.19; see §16, §17); the byte layout is in
 docs/CAROUSEL-ARQ.md, "Wire formats".
 
 - Both frames: framer extension = bandwidth token (2 bits), version (2 bits,
-  = 2), carousel bit. A frame with another version or without the bit is
+  = 3), carousel bit. A frame with another version or without the bit is
   dropped (`arq_protocol_connect_version_ok`); a CALL from another version
   addressed to this station is logged, not answered. 1.9.x and earlier
   carousel builds therefore do not connect to this one.
@@ -882,3 +882,11 @@ calibration needs points above 12 dB.
 | Change | Where | Risks |
 |---|---|---|
 | MFSK's carrier moves from 2000 Hz to 1484.375 Hz, so its tones sit at 1015.6-1984.4 Hz, centred on 1500 Hz like the codec2 modes (they were at 1531-2500 Hz).  Connect frames carry protocol version 2: a 1.9.18 station (version 1) and a later one would connect on DATAC16 and then never hear each other at the floor. | 3.4, `modem_mfsk.c`, `arq_protocol.h` | none to the rules or the TLA+ models: the floor's timing and frames are unchanged |
+
+---
+
+## 17. The BW500 floor (branch mfsk-narrow)
+
+| Change | Where | Risks |
+|---|---|---|
+| A BW500 session's rung 0 is the 500 Hz MFSK (mode 103, 26.2 s frames, one a keydown); BW2300 and BW2750 keep the 1 kHz floor.  Each end takes the floor from the negotiated bandwidth when the session's seed is set (`arq_floor_mode`), and everything at the floor follows it: data rounds, control frames to a control-deaf peer and their `CTL_FLOOR_MARK` frame, the session's DISCONNECT, ACK/BREAK patterns and NAV headers.  A caller's MFSK CALLs go on the floor of its own bandwidth; the idle MFSK listener decodes the floor of the station's own.  Connect frames carry protocol version 3: a 1.9.19 station (version 2) at BW500 would sit on the 1 kHz floor. | 1.3, 3.4, S1, I-BW, `carousel.c` (`lmode`), `arq_fsm.c`, `modem.c` | timing: the floor's keydown and the callee's ACCEPT window grow by 13.5 s, and a decode on a Pi 4 ends ~0.25 s later, inside `D_MFSK_MS`; the turn model is re-checked at the longer frame (`specs/turns/CarouselTurns_mfsk500.cfg`).  `CarouselBlocks` abstracts rungs away |

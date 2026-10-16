@@ -244,6 +244,8 @@ typedef struct
     bool     car_peer_ctl_deaf;       /* connect: ...and it, me (the CALL came on MFSK) */
     bool     ctl_floor_at_stop;       /* the carousel's peer_ctl_deaf when it stopped,
                                        * for the DISCONNECT exchange after it */
+    int      floor_mode;              /* the session's MFSK floor (arq_floor_mode
+                                       * of its bandwidth), from its seed on */
     uint64_t car_last_rx_ms;          /* last carousel frame from the peer     */
 
     /* --- Timer mechanism --- */
@@ -310,6 +312,9 @@ typedef struct
     /** Key a pattern (arq_pattern_kind_t) on the air.  Optional. */
     void (*send_pattern)(int pattern_kind);
     void (*set_crc_seed)(uint16_t seed);
+    /** The session's MFSK floor (arq_floor_mode), set with its seed: the
+     *  geometry patterns are keyed and detected at.  Optional. */
+    void (*set_floor_mode)(int mode);
 } arq_fsm_callbacks_t;
 
 /**
