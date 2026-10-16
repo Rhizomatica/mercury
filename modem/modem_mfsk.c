@@ -112,11 +112,11 @@
  * The burst is read symbol by symbol at the nominal spacing, so a clock
  * error walks the FFT window off its symbols: past about +/-0.2 % the last
  * symbols of a 13 s burst sit a whole guard interval out and no frame
- * decodes.  A sound card is normally within 100 ppm, but a station's audio
- * path need not be: on the bench both sBitx stations' ALSA loopback ran 1.5 %
- * slow (radiod's RTP path did not), so one station on RTP and one on the
- * loopback lost every MFSK frame both ways, while the OFDM modes, which track
- * timing, carried on.  Acquisition still finds the burst -- each preamble
+ * decodes.  A sound card is normally within 100 ppm, but an audio chain that
+ * converts rates need not be: on the bench, a capture through ALSA's plug
+ * converter at 8 kHz ran 1.5 % slow, and no MFSK frame decoded from it until
+ * it was resampled, while the OFDM modes, which track timing, carried on.
+ * (Mercury's own paths on the bench measured no error.)  Acquisition still finds the burst -- each preamble
  * symbol is correlated on its own, and the shift of 1500 Hz the clock causes
  * (23 Hz at 1.5 %) is just another dial offset to the frequency search -- so
  * only the payload needs the ratio, and it has hundreds of symbols to measure
@@ -127,6 +127,20 @@
  * halves it. */
 #define MFSK_RATE_MAX  0.02
 #define MFSK_RATE_STEP 0.0025
+
+/* A gap in the transmitted audio.  When the transmitting station's playback
+ * runs dry (radiod logs "radio playback: underrun ... played as silence"),
+ * silence goes into the burst and everything after it arrives late: on air
+ * 25 ms of it, about 4.5 s into a 13 s floor frame, and the frame was lost at
+ * 18 dB SNR -- both stations' radiod did this every minute or two.  The
+ * preamble then places the symbols before the gap and the postamble those
+ * after it, and neither all of them, so a payload whose two anchors disagree
+ * by MFSK_SLIP_MIN samples up to MFSK_SLIP_MAX_SYMB symbols is also read with
+ * a switch from the one to the other, at the symbol that makes the tones
+ * strongest (mfsk_try_split).  Below MFSK_SLIP_MIN the guard interval
+ * absorbs it. */
+#define MFSK_SLIP_MIN      8
+#define MFSK_SLIP_MAX_SYMB 2
 
 typedef struct {
     int mode;
@@ -190,6 +204,9 @@ typedef struct {
     long            dm_key;
     double          dm_rate, dm_hb, dm_snr_s, dm_snr_n;
     long            pst_tried_abs;  /* furthest postamble whose payload was tried */
+    long            pre_fail_abs;   /* where the payload of the last preamble whose
+                                     * read failed starts (nominal rate), or -1:
+                                     * the other anchor of a burst with a gap */
     /* The last frame's offset on air, Hz (positive: above nominal), for
      * get_freq_offset. */
     float           foff_hz;
@@ -388,6 +405,7 @@ static void *mfsk_be_open(int mode)
     h->rate = 1.0;
     h->dm_key = -1;
     h->pst_tried_abs = -1;
+    h->pre_fail_abs = -1;
     h->pstN = mfsk_sync_build_postamble_template(&h->m, &h->o, h->pstT, h->pstE);
     return h;
 }
@@ -669,6 +687,25 @@ static int mfsk_pay_fits(const mfsk_modem_t *h, double start, double rate)
            start + (double)(h->NPAY * h->Nofdm - 1) * rate + 2.0 < (double)h->bf_len;
 }
 
+/* How a payload is read: symbol s starts at start + s Nofdm rate, or, from
+ * symbol ksplit on, at start2 + s Nofdm rate (a burst with a gap; ksplit is
+ * NPAY when there is none). */
+typedef struct {
+    double start, start2, rate;
+    int    ksplit;
+} mfsk_read_t;
+
+static mfsk_read_t mfsk_read_one(const mfsk_modem_t *h, double start, double rate)
+{
+    mfsk_read_t rd = { start, start, rate, h->NPAY };
+    return rd;
+}
+
+static inline double mfsk_read_pos(const mfsk_modem_t *h, const mfsk_read_t *rd, int s)
+{
+    return (s < rd->ksplit ? rd->start : rd->start2) + (double)s * h->Nofdm * rd->rate;
+}
+
 /* Can every ratio be tried, i.e. is the payload in at the slowest clock? */
 static int mfsk_pay_ready(const mfsk_modem_t *h, int payoff, int ref)
 {
@@ -677,29 +714,37 @@ static int mfsk_pay_ready(const mfsk_modem_t *h, int payoff, int ref)
     return end < (double)h->bf_len;
 }
 
-/* The payload's strongest tone per stream and symbol, summed, over every
- * `every`-th symbol: how well a ratio and offset line the tones up with the
- * bins. */
-static double mfsk_pay_energy(const mfsk_modem_t *h, double start, double rate, double hb,
-                              int every)
+/* One symbol's strongest tone per stream, summed: how well a position, ratio
+ * and offset line its tone up with the bins.  *all (if not NULL) gets every
+ * tone bin's energy, which a misplaced window keeps and silence does not. */
+static double mfsk_sym_energy(const mfsk_modem_t *h, double pos, double rate, double hb,
+                              double *all)
+{
+    double complex dep[MFSK_NCAR];
+    double e = 0.0, a = 0.0;
+    mfsk_sym_bins(h, pos, rate, hb, dep);
+    for (int st = 0; st < h->m.nStreams; st++)
+    {
+        double emax = 0.0;
+        for (int t = 0; t < h->m.M; t++)
+        {
+            double complex v = dep[h->m.stream_offsets[st] + t];
+            double en = creal(v * conj(v));
+            if (en > emax) emax = en;
+            a += en;
+        }
+        e += emax;
+    }
+    if (all) *all = a;
+    return e;
+}
+
+/* ...summed over every `every`-th symbol of a payload read. */
+static double mfsk_pay_energy(const mfsk_modem_t *h, const mfsk_read_t *rd, double hb, int every)
 {
     double e = 0.0;
     for (int s = 0; s < h->NPAY; s += every)
-    {
-        double complex dep[MFSK_NCAR];
-        mfsk_sym_bins(h, start + (double)s * h->Nofdm * rate, rate, hb, dep);
-        for (int st = 0; st < h->m.nStreams; st++)
-        {
-            double emax = 0.0;
-            for (int t = 0; t < h->m.M; t++)
-            {
-                double complex v = dep[h->m.stream_offsets[st] + t];
-                double en = creal(v * conj(v));
-                if (en > emax) emax = en;
-            }
-            e += emax;
-        }
-    }
+        e += mfsk_sym_energy(h, mfsk_read_pos(h, rd, s), rd->rate, hb, NULL);
     return e;
 }
 
@@ -714,13 +759,13 @@ static double mfsk_pay_energy(const mfsk_modem_t *h, double start, double rate, 
  * a subcarrier either side, and the offset whose strongest tones carry the
  * most energy over the whole payload wins: hundreds of symbols choose it
  * reliably where the preamble's few could not. */
-static double mfsk_refine_hb(const mfsk_modem_t *h, double start, double rate, double hb0)
+static double mfsk_refine_hb(const mfsk_modem_t *h, const mfsk_read_t *rd, double hb0)
 {
     double best_e = -1.0, best_hb = hb0;
     for (int k = -2; k <= 2; k++)
     {
         double hb = hb0 + 0.25 * k;
-        double e = mfsk_pay_energy(h, start, rate, hb, 1);
+        double e = mfsk_pay_energy(h, rd, hb, 1);
         if (e > best_e) { best_e = e; best_hb = hb; }
     }
     return best_hb;
@@ -739,7 +784,8 @@ static double mfsk_search_rate(const mfsk_modem_t *h, int payoff, int ref, long 
     {
         double r = 1.0 + k * MFSK_RATE_STEP, st = mfsk_pay_start(h, payoff, ref, r);
         if (!mfsk_pay_fits(h, st, r)) continue;
-        double e = mfsk_pay_energy(h, st, r, h->freq_hb * r, 2);
+        mfsk_read_t rd = mfsk_read_one(h, st, r);
+        double e = mfsk_pay_energy(h, &rd, h->freq_hb * r, 2);
         if (e > best_e) { best_e = e; best = r; }
     }
     double cand[4] = { best - 0.5 * MFSK_RATE_STEP, best, best + 0.5 * MFSK_RATE_STEP,
@@ -750,7 +796,8 @@ static double mfsk_search_rate(const mfsk_modem_t *h, int payoff, int ref, long 
     {
         double r = cand[c], st = mfsk_pay_start(h, payoff, ref, r);
         if (!mfsk_pay_fits(h, st, r)) continue;
-        double e = mfsk_pay_energy(h, st, r, h->freq_hb * r, 1);
+        mfsk_read_t rd = mfsk_read_one(h, st, r);
+        double e = mfsk_pay_energy(h, &rd, h->freq_hb * r, 1);
         if (e > best_e) { best_e = e; pick = r; }
     }
     return pick;
@@ -779,13 +826,13 @@ static int mfsk_frame_crc_ok(mfsk_modem_t *h, const int *bits, uint8_t *bytes_ou
     return 1;
 }
 
-/* Demod and decode the payload read from start at `rate`, the dial offset
- * refined about acquisition's.  Leaves the LLRs in llr_di and what it did in
- * dm_*; returns whether the frame passed its CRC (bytes_out filled). */
-static int mfsk_decode_at(mfsk_modem_t *h, long key, double start, double rate,
-                          uint8_t *bytes_out)
+/* Demod and decode the payload as rd reads it, the dial offset refined about
+ * acquisition's.  Leaves the LLRs in llr_di and what it did in dm_*; returns
+ * whether the frame passed its CRC (bytes_out filled). */
+static int mfsk_decode_at(mfsk_modem_t *h, long key, const mfsk_read_t *rd, uint8_t *bytes_out)
 {
-    double hb = mfsk_refine_hb(h, start, rate, h->freq_hb * rate);
+    double rate = rd->rate;
+    double hb = mfsk_refine_hb(h, rd, h->freq_hb * rate);
 
     /* SNR: per symbol, the strongest tone bin of each stream (signal + noise)
      * against the mean of the bins outside every stream's band (noise). */
@@ -795,7 +842,7 @@ static int mfsk_decode_at(mfsk_modem_t *h, long key, double start, double rate,
     for (int s = 0; s < h->NPAY; s++)
     {
         double complex dep[MFSK_NCAR];
-        mfsk_sym_bins(h, start + (double)s * h->Nofdm * rate, rate, hb, dep);
+        mfsk_sym_bins(h, mfsk_read_pos(h, rd, s), rate, hb, dep);
         for (int k = 0; k < MFSK_NCAR; k++)
         {
             h->rb[s * MFSK_NCAR + k].re = creal(dep[k]);
@@ -838,6 +885,75 @@ static int mfsk_decode_at(mfsk_modem_t *h, long key, double start, double rate,
     return mfsk_frame_crc_ok(h, out_bits, bytes_out);
 }
 
+/* A burst with a gap (MFSK_SLIP_MIN): its payload read from the preamble's
+ * place up to symbol k and from the postamble's from k on.  Read at the
+ * ratio the last frame came at, not the one just searched: a gap moves the
+ * payload, not the clock, and the search bends the clock to spread a gap
+ * over the burst.
+ *
+ * k is first where the strongest tones carry the most energy: each symbol's
+ * on both placements is one pass over the payload, and the best k one sum.
+ * That fails for a gap of about a whole number of symbols: then both
+ * placements line a window up with a symbol everywhere, one of them the
+ * neighbour's, and every k scores alike (a 300-sample gap in a 320-sample
+ * symbol: k came out 1 of 320).  The gap itself is silence, though, and the
+ * symbol holding it has less energy in its tone bins on any placement, so
+ * that symbol and the next are tried as well.  A gap that took samples out
+ * (a lost packet on a network audio path) leaves no silence: for one of
+ * about a whole number of symbols -- within a guard interval of it -- k is
+ * also tried at every eighth of the payload, and a k that far off misreads
+ * at most a sixteenth of the symbols, which the code corrects.  The CRC
+ * picks.  Returns whether a read decoded (as mfsk_decode_at). */
+static int mfsk_try_split(mfsk_modem_t *h, long key, int payoff, int ref, int pre_payoff,
+                          uint8_t *bytes_out)
+{
+    double r = h->rate, hb = h->freq_hb * r;
+    double a = mfsk_pay_start(h, pre_payoff, h->P, r);
+    double b = mfsk_pay_start(h, payoff, ref, r);
+    double d = fabs(b - a);
+    if (d < MFSK_SLIP_MIN || d > (double)(MFSK_SLIP_MAX_SYMB * h->Nofdm))
+        return 0;
+    if (!mfsk_pay_fits(h, a, r) || !mfsk_pay_fits(h, b, r))
+        return 0;
+    double *ea = malloc((size_t)h->NPAY * 3 * sizeof(double));
+    if (!ea)
+        return 0;
+    double *eb = ea + h->NPAY, *ta = eb + h->NPAY, tot_b = 0.0;
+    for (int s = 0; s < h->NPAY; s++)
+    {
+        double off = (double)s * h->Nofdm * r;
+        ea[s] = mfsk_sym_energy(h, a + off, r, hb, &ta[s]);
+        eb[s] = mfsk_sym_energy(h, b + off, r, hb, NULL);
+        tot_b += eb[s];
+    }
+    /* sum_{s<k} ea + sum_{s>=k} eb, for k = 1 .. NPAY-1 (0 and NPAY are the
+     * two single placements, already read) */
+    double run = tot_b, best = -1.0;
+    int k_best = 1, s_dip = 1;
+    for (int k = 1; k < h->NPAY; k++)
+    {
+        run += ea[k - 1] - eb[k - 1];
+        if (run > best) { best = run; k_best = k; }
+        if (ta[k] < ta[s_dip]) s_dip = k;
+    }
+    free(ea);
+    int cand[3 + 7] = { k_best, s_dip, s_dip + 1 }, nc = 3, pass = 0;
+    double res = fmod(d, (double)h->Nofdm), gi = (double)(h->Nofdm - h->nfft);
+    if (d >= h->Nofdm - gi && (res < gi || res > h->Nofdm - gi))
+        for (int e = 1; e < 8; e++)
+            cand[nc++] = e * h->NPAY / 8;
+    for (int c = 0; c < nc && !pass; c++)
+    {
+        int k = cand[c], seen = 0;
+        for (int j = 0; j < c; j++) seen |= cand[j] == k;
+        if (k < 1 || k >= h->NPAY || seen)
+            continue;
+        mfsk_read_t rd = { a, b, r, k };
+        pass = mfsk_decode_at(h, key, &rd, bytes_out);
+    }
+    return pass;
+}
+
 /* Demod one MFSK burst whose payload starts at bf[payoff] at the nominal
  * rate, anchored ref symbols from there (mfsk_pay_start), decode LDPC, verify
  * CRC16.  Returns frame_bytes on success (bytes_out filled), else 0.
@@ -847,8 +963,13 @@ static int mfsk_decode_at(mfsk_modem_t *h, long key, double start, double rate,
  * always did.  Only if that fails, once the burst is in at the slowest ratio
  * searched (mfsk_pay_ready -- the caller treats the anchor as settled from
  * then on), is the ratio searched and the frame read again at the best one
- * if that differs. */
-static int mfsk_try_payload(mfsk_modem_t *h, int payoff, int ref, uint8_t *bytes_out)
+ * if that differs.  And if that fails too and the burst's other anchor
+ * placed the payload elsewhere (pre_payoff, the preamble's payload start, or
+ * -1), it is read once more with a switch between the two (mfsk_try_split). */
+static int mfsk_try_split(mfsk_modem_t *h, long key, int payoff, int ref, int pre_payoff,
+                          uint8_t *bytes_out);
+static int mfsk_try_payload(mfsk_modem_t *h, int payoff, int ref, int pre_payoff,
+                            uint8_t *bytes_out)
 {
     long key = h->n_abs + (long)payoff;
     int pass = 0;
@@ -857,7 +978,8 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, int ref, uint8_t *bytes
         double st = mfsk_pay_start(h, payoff, ref, h->rate);
         if (!mfsk_pay_fits(h, st, h->rate))
             return 0;
-        pass = mfsk_decode_at(h, key, st, h->rate, bytes_out);
+        mfsk_read_t rd = mfsk_read_one(h, st, h->rate);
+        pass = mfsk_decode_at(h, key, &rd, bytes_out);
     }
     if (!pass)
     {
@@ -865,8 +987,13 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, int ref, uint8_t *bytes
             return 0;
         double r = mfsk_search_rate(h, payoff, ref, key);
         if (h->dm_key != key || r != h->dm_rate)
-            pass = mfsk_decode_at(h, key, mfsk_pay_start(h, payoff, ref, r), r, bytes_out);
+        {
+            mfsk_read_t rd = mfsk_read_one(h, mfsk_pay_start(h, payoff, ref, r), r);
+            pass = mfsk_decode_at(h, key, &rd, bytes_out);
+        }
     }
+    if (!pass && pre_payoff >= 0)
+        pass = mfsk_try_split(h, key, payoff, ref, pre_payoff, bytes_out);
 
     /* HARQ Chase combining across separated bursts.
      *
@@ -1182,7 +1309,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     int nbytes = 0;
     if (payoff >= 0 && !already_tried)
     {
-        nbytes = mfsk_try_payload(h, payoff, h->P, bytes_out);
+        nbytes = mfsk_try_payload(h, payoff, h->P, -1, bytes_out);
         if ((payload_resident || nbytes > 0) && h->anchor_abs >= 0)
         {
             if (nbytes > 0)
@@ -1204,6 +1331,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
                 if (h->anchor_abs > h->reject_abs) h->reject_abs = h->anchor_abs;
                 h->tried_abs  = h->anchor_abs;
                 h->anchor_abs = -1;
+                h->pre_fail_abs = h->n_abs + (long)payoff;   /* for its postamble */
             }
         }
     }
@@ -1245,7 +1373,8 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
         else if (poff >= 0)
         {
             int ppayoff = poff - h->NPAY * h->Nofdm;
-            int pn = mfsk_try_payload(h, ppayoff, -h->NPAY, bytes_out);
+            long pre = h->pre_fail_abs - h->n_abs;   /* that burst's preamble, if it failed */
+            int pn = mfsk_try_payload(h, ppayoff, -h->NPAY, pre >= 0 ? (int)pre : -1, bytes_out);
             h->pst_tried_abs = h->n_abs + (long)poff;
             if (pn > 0)
             {
@@ -1278,6 +1407,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     h->anchor_abs = -1;
     h->tried_abs  = -1;
     h->reject_abs = -1;                     /* next burst searches from the top */
+    h->pre_fail_abs = -1;
     return nbytes;
 }
 
