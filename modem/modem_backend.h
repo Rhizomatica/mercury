@@ -89,6 +89,12 @@ struct modem_backend {
      * whether the last frame decoded matched the seed. */
     void  (*set_crc_seed)(void *ctx, uint16_t seed, int accept_plain);
     int   (*rx_crc_seeded)(void *ctx);
+
+    /* The carrier offset the last frame decoded arrived at, in Hz: positive
+     * when it was above nominal (the far radio's dial, plus whatever a
+     * sample-clock error shifts the band's centre by).  Optional
+     * (null-checked); returns 0 when the backend has no estimate. */
+    int   (*get_freq_offset)(void *ctx, float *hz);
 };
 
 static inline bool modem_codec_valid(const modem_codec_t *c)

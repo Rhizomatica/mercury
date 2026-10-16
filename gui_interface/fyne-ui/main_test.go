@@ -167,6 +167,28 @@ func TestParseStatusMessagePeerHearsMode(t *testing.T) {
 	}
 }
 
+// The last frame's carrier offset; null before any frame, absent from an
+// older server -- neither may read as "exactly on frequency".
+func TestParseStatusMessageFreqOffset(t *testing.T) {
+	status, err := parseStatusMessage([]byte(`{"type":"status","freq_offset_hz":-23.4,"freq_offset_age_ms":1500}`))
+	if err != nil {
+		t.Fatalf("parseStatusMessage returned error: %v", err)
+	}
+	if !status.FreqOffsetValid || status.FreqOffsetHz != -23.4 || status.FreqOffsetAgeMs != 1500 {
+		t.Fatalf("got valid=%v hz=%v age=%v, want true -23.4 1500",
+			status.FreqOffsetValid, status.FreqOffsetHz, status.FreqOffsetAgeMs)
+	}
+	for _, msg := range []string{`{"type":"status","freq_offset_hz":null,"freq_offset_age_ms":null}`, `{"type":"status"}`} {
+		status, err = parseStatusMessage([]byte(msg))
+		if err != nil {
+			t.Fatalf("parseStatusMessage returned error: %v", err)
+		}
+		if status.FreqOffsetValid {
+			t.Fatalf("%s: got a valid offset, want none", msg)
+		}
+	}
+}
+
 // audio_ok:false with no audio_error must parse to an empty string, so the
 // dialog's fallback message fires instead of showing the literal "<nil>".
 func TestParseStatusMessageAudioFailureWithoutErrorDefaultsEmpty(t *testing.T) {

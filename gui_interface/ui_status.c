@@ -18,6 +18,8 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
      * fails if it drifts. */
     char frequency[32];
     char age[32];
+    char foff[32];
+    char foff_age[32];
     if (st->radio_frequency_valid)
     {
         snprintf(frequency, sizeof(frequency), "%llu",
@@ -29,6 +31,17 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
     {
         snprintf(frequency, sizeof(frequency), "null");
         snprintf(age, sizeof(age), "null");
+    }
+    if (st->freq_offset_valid)
+    {
+        snprintf(foff, sizeof(foff), "%.1f", (double)st->freq_offset_hz);
+        snprintf(foff_age, sizeof(foff_age), "%llu",
+                 (unsigned long long)st->freq_offset_age_ms);
+    }
+    else
+    {
+        snprintf(foff, sizeof(foff), "null");
+        snprintf(foff_age, sizeof(foff_age), "null");
     }
 
     int n = snprintf(buf, buflen,
@@ -55,7 +68,9 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
          * that remote clients parse. */
         "\"peer_snr\":%.1f,"
         "\"peer_snr_valid\":%s,"
-        "\"peer_hears_mode\":\"%s\"}",
+        "\"peer_hears_mode\":\"%s\","
+        "\"freq_offset_hz\":%s,"
+        "\"freq_offset_age_ms\":%s}",
         st->bitrate_bps,
         st->snr_db,
         st->user_callsign,
@@ -76,7 +91,9 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         age,
         st->peer_snr_db,
         st->peer_snr_valid ? "true" : "false",
-        st->peer_hears_mode);
+        st->peer_hears_mode,
+        foff,
+        foff_age);
 
     if (n < 0 || (size_t)n >= buflen)
         return -1;

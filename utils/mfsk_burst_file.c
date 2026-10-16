@@ -3,14 +3,18 @@
  *   mfsk_burst_file tx <mode> <seed> <burst.raw> <padded.raw>
  *   mfsk_burst_file rx <mode> <seed> <received.raw>        (prints 1 or 0)
  *   mfsk_burst_file bpf <lo_hz> <hi_hz> <in.raw> <out.raw>
+ *   mfsk_burst_file rate <ratio> <in.raw> <out.raw>
  *
  * tx writes one CRC-valid frame (payload from <seed>) as 8 kHz int16: the
  * burst alone (for the channel tool to measure its SNR) and with 0.5 s of
  * silence before and 4 s after (to decode).  rx decodes a received file with
  * the real MFSK backend and says whether that frame came back.  <mode> is a
  * Mercury MFSK mode number: 100 (the floor), 102 or 103 (the 500 Hz
- * geometries).  bpf is a receiver's narrow filter: a windowed-sinc band-pass,
- * -6 dB at lo and hi, about 150 Hz from there to the stop band.
+ * geometries); on a decode it also says, on stderr, the carrier offset the
+ * frame arrived at.  bpf is a receiver's narrow filter: a windowed-sinc band-pass,
+ * -6 dB at lo and hi, about 150 Hz from there to the stop band.  rate is a
+ * sample-clock error: <ratio> output samples per input sample, i.e. what a
+ * receiver whose sound card runs <ratio> times fast records.
  * utils/mfsk_channel_sweep.sh drives the three through codec2's ch or the
  * Watterson model.
  *
@@ -64,13 +68,46 @@ static int bpf(double lo, double hi, const char *in, const char *out)
     return 0;
 }
 
+/* Band-limited resampling: output sample m is the input at m / ratio, by a
+ * Blackman-windowed sinc RATE_HALF taps either side.  The ratio stays near 1
+ * and the signal under 2 kHz, so no anti-alias narrowing is needed. */
+#define RATE_HALF 32
+
+static int resample(double ratio, const char *in, const char *out)
+{
+    FILE *f = fopen(in, "rb"), *g = fopen(out, "wb");
+    if (!f || !g || ratio < 0.5 || ratio > 2.0) return 2;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f) / 2;
+    rewind(f);
+    long m = (long)floor((double)n * ratio);
+    int16_t *x = malloc((size_t)n * 2), *y = malloc((size_t)m * 2);
+    if (!x || !y || fread(x, 2, (size_t)n, f) != (size_t)n) return 2;
+    for (long i = 0; i < m; i++) {
+        double t = (double)i / ratio, a = 0.0;
+        long c = (long)floor(t);
+        for (long j = c - RATE_HALF + 1; j <= c + RATE_HALF; j++) {
+            if (j < 0 || j >= n) continue;
+            double d = t - (double)j, w = M_PI * (d / RATE_HALF + 1.0);
+            double v = d == 0.0 ? 1.0 : sin(M_PI * d) / (M_PI * d);
+            a += x[j] * v * (0.42 - 0.5 * cos(w) + 0.08 * cos(2.0 * w));
+        }
+        y[i] = (int16_t)lrint(a > 32767 ? 32767 : a < -32768 ? -32768 : a);
+    }
+    fwrite(y, 2, (size_t)m, g);
+    fclose(f); fclose(g);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 6 && !strcmp(argv[1], "bpf"))
         return bpf(atof(argv[2]), atof(argv[3]), argv[4], argv[5]);
+    if (argc == 5 && !strcmp(argv[1], "rate"))
+        return resample(atof(argv[2]), argv[3], argv[4]);
     if (argc < 5 || (strcmp(argv[1], "tx") && strcmp(argv[1], "rx")) || (!strcmp(argv[1], "tx") && argc < 6)) {
         fprintf(stderr, "usage: %s tx <mode> <seed> <burst.raw> <padded.raw> | rx <mode> <seed> <received.raw>"
-                        " | bpf <lo> <hi> <in.raw> <out.raw>\n", argv[0]);
+                        " | bpf <lo> <hi> <in.raw> <out.raw> | rate <ratio> <in.raw> <out.raw>\n", argv[0]);
         return 2;
     }
     const modem_backend_t *be = &modem_backend_mfsk;
@@ -105,6 +142,9 @@ int main(int argc, char **argv)
         if (be->rawdata_rx(h, out, buf) > 0 && !memcmp(out, frame, (size_t)fb)) { got = 1; break; }
     }
     fclose(f);
+    float foff;
+    if (got && be->get_freq_offset(h, &foff))
+        fprintf(stderr, "offset %+.1f Hz\n", (double)foff);
     printf("%d\n", got);
     return 0;
 }

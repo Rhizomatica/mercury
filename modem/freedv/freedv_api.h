@@ -294,6 +294,9 @@ void freedv_harq_reset(struct freedv *freedv);
  * seed 0 restores the plain CRC. */
 void freedv_set_crc_seed(struct freedv *freedv, uint16_t seed, int accept_plain);
 int freedv_get_rx_crc_seeded(struct freedv *freedv);
+/* The OFDM demodulator's carrier offset estimate, Hz (positive: the signal
+ * is above nominal); returns 0, *hz untouched, for a mode that is not OFDM. */
+int freedv_get_freq_offset(struct freedv *freedv, float *hz);
 int freedv_crc16_class(struct freedv *freedv, unsigned char *unpacked_bits, int nbits);
 void freedv_set_test_frames_diversity(struct freedv *freedv,
                                       int test_frames_diversity);

@@ -377,6 +377,9 @@ func statusFromC(cst *C.ui_status_t) telemetryState {
 		Waterfall:          bool(cst.waterfall_enabled),
 		AudioOk:            bool(cst.audio_ok),
 		AudioError:         C.GoString(&cst.audio_error[0]),
+		FreqOffsetValid:    bool(cst.freq_offset_valid),
+		FreqOffsetHz:       float64(cst.freq_offset_hz),
+		FreqOffsetAgeMs:    int64(cst.freq_offset_age_ms),
 	}
 }
 
