@@ -202,20 +202,20 @@
     \toprule
     \textbf{Mode} & \textbf{Origin} & \textbf{BW, Hz} & \textbf{Payload, B} & \textbf{bit/s} & \textbf{FEC (n,k)} & \textbf{Role} \\
     \midrule
-    \ours MFSK     & \ours Mercury (v1 port) & \ours 1000 & \ours 98   & \ours $\sim$60 & \ours LDPC (1600,800)   & \ours rung 0 (floor) \\
+    \ours MFSK     & \ours Mercury           & \ours 1000 & \ours 98   & \ours $\sim$60 & \ours LDPC (1600,800)   & \ours rung 0 (floor) \\
     \ours DATAC15  & \ours Mercury           & \ours 200  & \ours 30   & \ours 68       & \ours (768,256)          & \ours rung 1 \\
     DATAC4         & codec2                  & 250        & 54         & 87             & (1472,448)               & rung 2 \\
     DATAC3         & codec2                  & 500        & 126        & 321            & (2048,1024)              & rung 3 (BW500 top) \\
     DATAC1         & codec2                  & 1700       & 510        & 980            & (8192,4096)              & rung 4 \\
     \ours DATAC17  & \ours Mercury           & \ours 2100 & \ours 1180 & \ours 1410     & \ours (15936,9456)       & \ours rung 5 \\
-    \ours QAM16C2  & \ours our codec2 fork   & \ours 2100 & \ours 1213 & \ours 3100    & \ours (16200,9720)       & \ours rung 6 \\
+    QAM16C2        & codec2                  & 2100       & 1213       & 3100           & (16200,9720)             & rung 6 \\
     \midrule
     \ours DATAC16  & \ours Mercury           & \ours 200  & \ours 14   & \ours 42       & \ours (640,128)          & \ours ARQ control \\
     DATAC0/13/14   & codec2                  & 200--500   & 3--14      & 58--291        & ---                      & broadcast, tests \\
     \bottomrule
   \end{tabular}
   \par\medskip
-  {\small\colorbox{hgreen!35}{\strut\, green \,} = designed by us: four of the seven rungs, and the control mode}
+  {\small\colorbox{hgreen!35}{\strut\, green \,} = designed by us: three of the seven rungs, and the control mode}
   \src{Source: docs/MODES.md}
 \end{frame}
 
@@ -224,10 +224,10 @@
   \begin{tikzpicture}[x=1.75cm,y=0.62cm]
     \foreach \i/\m/\r/\s/\c in {0/MFSK/60/floor/hgreen,1/DATAC15/68/$\geq -3$/hgreen,2/DATAC4/87/probe/hcreamdk,
                                 3/DATAC3/321/$\geq +1$/hcreamdk,4/DATAC1/980/$\geq +8$/hcreamdk,
-                                5/DATAC17/1410/$\geq +12$/hgreen,6/QAM16C2/3100/$\geq +18$/hgreen}{
-      \fill[\c,draw=hdkgreen,line width=0.7pt,rounded corners=1.5pt] (\i,0) rectangle ++(0.92,\i+1);
+                                5/DATAC17/1410/$\geq +12$/hgreen,6/QAM16C2/3100/$\geq +18$/hcreamdk}{
+      \fill[\c,draw=hdkgreen,line width=0.7pt,rounded corners=1.5pt] (\i,0) rectangle ++(0.92,0.85*\i+1.7);
       \node[font=\scriptsize\bfseries,rotate=90,anchor=west] at (\i+0.46,0.15) {\m};
-      \node[font=\scriptsize,anchor=south] at (\i+0.46,\i+1) {\r\ bit/s};
+      \node[font=\scriptsize,anchor=south] at (\i+0.46,0.85*\i+1.7) {\r\ bit/s};
       \node[font=\scriptsize,text=hdkmauve,anchor=north] at (\i+0.46,-0.15) {\s};
     }
     \draw[-{Latex[length=3mm]},horange,line width=1.5pt] (-0.2,-1.6) -- (7.0,-1.6) node[right,font=\small\color{hblack}] {SNR};
@@ -250,12 +250,12 @@
       \end{itemize}
     \end{block}
     \column{0.5\textwidth}
-    \begin{block}{Fast: DATAC17 and QAM16C2}
+    \begin{block}{Fast: DATAC17, on codec2's QAM16C2 code}
       \begin{itemize}
         \item 2.1 kHz, about 1.2 KB a frame
-        \item QAM16C2: 16-QAM, (16200,9720), 3100 bit/s
-        \item DATAC17: QPSK, same codeword, 1410 bit/s
-        \item 97/100 at +10 dB; 94/100 at +15.7 dB (MPP)
+        \item codec2's QAM16C2: 16-QAM, (16200,9720), 3100 bit/s
+        \item DATAC17: QPSK on that codeword, 1410 bit/s
+        \item DATAC17 97/100 at +10 dB (MPP)
       \end{itemize}
     \end{block}
   \end{columns}
@@ -274,7 +274,7 @@
   \begin{columns}[T]
     \column{0.52\textwidth}
     \begin{itemize}
-      \item Pure-C port of Mercury v1's MFSK (Fadi Jerji): \textbf{32-FSK on OFDM subcarriers}
+      \item Mercury's own modem: \textbf{32-FSK on OFDM subcarriers}, non-coherent
       \item 8 kHz, Nfft 256: tones 31.25 Hz apart, 40 ms symbols (25 baud)
       \item Centred on \textbf{1500 Hz} since 1.9.19: tones 1015.6--1984.4 Hz
       \item Preamble \emph{and} postamble: a burst is found from either end
