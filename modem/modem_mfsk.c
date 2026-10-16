@@ -106,6 +106,28 @@
 #define MFSK_LPF_TAPS_MAX    MFSK_LPF_NARROW_TAPS
 #define MFSK_LPF_FC   1000.0
 
+/* Sample-clock error the payload decoder searches, as receiver samples per
+ * transmitted sample: 1 +/- MFSK_RATE_MAX in MFSK_RATE_STEP steps.
+ *
+ * The burst is read symbol by symbol at the nominal spacing, so a clock
+ * error walks the FFT window off its symbols: past about +/-0.2 % the last
+ * symbols of a 13 s burst sit a whole guard interval out and no frame
+ * decodes.  A sound card is normally within 100 ppm, but a station's audio
+ * path need not be: on the bench both sBitx stations' ALSA loopback ran 1.5 %
+ * slow (radiod's RTP path did not), so one station on RTP and one on the
+ * loopback lost every MFSK frame both ways, while the OFDM modes, which track
+ * timing, carried on.  Acquisition still finds the burst -- each preamble
+ * symbol is correlated on its own, and the shift of 1500 Hz the clock causes
+ * (23 Hz at 1.5 %) is just another dial offset to the frequency search -- so
+ * only the payload needs the ratio, and it has hundreds of symbols to measure
+ * it with.  (At 1.5 % the floor still needs about 1 dB more than on a good
+ * clock, most of it the frequency grid's: 23 Hz is midway between two
+ * hypotheses, and a dial 23 Hz off costs the same.)
+ * The step is under the +/-0.2 % a payload tolerates, and a finer pass
+ * halves it. */
+#define MFSK_RATE_MAX  0.02
+#define MFSK_RATE_STEP 0.0025
+
 typedef struct {
     int mode;
     int nfft;                       /* MFSK_NFFT, or 512 for 15.625 Hz tones */
@@ -159,6 +181,19 @@ typedef struct {
     double complex *preT_hyp[MFSK_FREQ_HYPS_MAX];
     int             freq_hb;        /* latched hypothesis, in HALF subcarriers */
     int             freq_locked;    /* a decode confirmed freq_hb            */
+    /* Receiver samples per transmitted sample (see MFSK_RATE_MAX): the last
+     * frame's, which the next burst is read at first, 1.0 until one is. */
+    double          rate;
+    /* The decode last attempted (mfsk_decode_at): its anchor (an absolute
+     * index, -1 for none), sample ratio and dial offset in half subcarriers.
+     * Its LLRs are in llr_di and its SNR sums in dm_snr_s/_n. */
+    long            dm_key;
+    double          dm_rate, dm_hb, dm_snr_s, dm_snr_n;
+    long            pst_tried_abs;  /* furthest postamble whose payload was tried */
+    /* The last frame's offset on air, Hz (positive: above nominal), for
+     * get_freq_offset. */
+    float           foff_hz;
+    int             foff_valid;
     double          preE[MFSK_MAX_PREAMBLE_SYMB], pstE[MFSK_MAX_PREAMBLE_SYMB];
     int             preN, pstN;
 
@@ -350,6 +385,9 @@ static void *mfsk_be_open(int mode)
     }
     h->freq_hb = 0;
     h->freq_locked = 0;
+    h->rate = 1.0;
+    h->dm_key = -1;
+    h->pst_tried_abs = -1;
     h->pstN = mfsk_sync_build_postamble_template(&h->m, &h->o, h->pstT, h->pstE);
     return h;
 }
@@ -571,25 +609,98 @@ static void mfsk_downmix(mfsk_modem_t *h)
     if (last > h->bf_len) h->bf_len = last;
 }
 
-/* One symbol's depadded bins, from bf[b], with a dial offset of hb half
- * subcarriers undone so the tones land back on their nominal bins.  The phase
- * restarts each symbol, which is harmless: the demod is non-coherent, only
- * the frequency matters. */
-static void mfsk_sym_bins(const mfsk_modem_t *h, int b, double hb, double complex *dep)
+/* bf at a fractional index: 4-point Lagrange interpolation.  The baseband is
+ * filtered to 1 kHz or less at 8 kHz, so it is smooth enough at that order;
+ * x - 1 and x + 2 must be in bf. */
+static inline double complex bf_at(const mfsk_modem_t *h, double x)
+{
+    long i = (long)floor(x);
+    double t = x - (double)i;
+    const double complex *p = &h->bf[i - 1];
+    if (t == 0.0) return p[1];
+    return -t * (t - 1.0) * (t - 2.0) / 6.0 * p[0]
+         + (t + 1.0) * (t - 1.0) * (t - 2.0) / 2.0 * p[1]
+         - (t + 1.0) * t * (t - 2.0) / 2.0 * p[2]
+         + (t + 1.0) * t * (t - 1.0) / 6.0 * p[3];
+}
+
+/* One symbol's depadded bins, read from bf at pos onwards, one sample every
+ * `rate`, with a dial offset of hb half subcarriers undone so the tones land
+ * back on their nominal bins.  The phase restarts each symbol, which is
+ * harmless: the demod is non-coherent, only the frequency matters. */
+static void mfsk_sym_bins(const mfsk_modem_t *h, double pos, double rate, double hb,
+                          double complex *dep)
 {
     double complex rmv[MFSK_NFFT_MAX], ff[MFSK_NFFT_MAX], sym[MFSK_NFFT_MAX * 2];
-    const double complex *src = &h->bf[b];
-    if (hb != 0.0)
+    const double complex *src = sym;
+    double ph = -M_PI * hb / (double)h->nfft;
+    double complex w = cos(ph) + I * sin(ph), p = 1.0;
+    if (rate == 1.0 && pos == floor(pos))
     {
-        double ph = -M_PI * hb / (double)h->nfft;
-        double complex w = cos(ph) + I * sin(ph), p = 1.0;
-        for (int n = 0; n < h->Nofdm; n++, p *= w)
-            sym[n] = h->bf[b + n] * p;
-        src = sym;
+        int b = (int)pos;
+        if (hb == 0.0)
+            src = &h->bf[b];
+        else
+            for (int n = 0; n < h->Nofdm; n++, p *= w)
+                sym[n] = h->bf[b + n] * p;
     }
+    else
+        for (int n = 0; n < h->Nofdm; n++, p *= w)
+            sym[n] = bf_at(h, pos + (double)n * rate) * p;
     ofdm_gi_remover(&h->o, src, rmv);
     ofdm_fft(&h->o, rmv, ff);
     ofdm_zero_depadder(&h->o, ff, dep);
+}
+
+/* Where the payload starts at sample ratio `rate`.  It is anchored ref
+ * symbols from payoff -- the preamble's start (ref P) or the postamble's
+ * (ref -NPAY) -- and payoff is where it starts at the nominal rate, so the
+ * burst stretches or shrinks about the anchor. */
+static double mfsk_pay_start(const mfsk_modem_t *h, int payoff, int ref, double rate)
+{
+    return (double)payoff + (double)ref * h->Nofdm * (rate - 1.0);
+}
+
+/* Is the whole payload, read from start at `rate`, in bf (with the
+ * interpolator's reach either side)? */
+static int mfsk_pay_fits(const mfsk_modem_t *h, double start, double rate)
+{
+    return start >= 1.0 &&
+           start + (double)(h->NPAY * h->Nofdm - 1) * rate + 2.0 < (double)h->bf_len;
+}
+
+/* Can every ratio be tried, i.e. is the payload in at the slowest clock? */
+static int mfsk_pay_ready(const mfsk_modem_t *h, int payoff, int ref)
+{
+    double r = 1.0 + MFSK_RATE_MAX;
+    double end = mfsk_pay_start(h, payoff, ref, r) + (double)(h->NPAY * h->Nofdm - 1) * r + 2.0;
+    return end < (double)h->bf_len;
+}
+
+/* The payload's strongest tone per stream and symbol, summed, over every
+ * `every`-th symbol: how well a ratio and offset line the tones up with the
+ * bins. */
+static double mfsk_pay_energy(const mfsk_modem_t *h, double start, double rate, double hb,
+                              int every)
+{
+    double e = 0.0;
+    for (int s = 0; s < h->NPAY; s += every)
+    {
+        double complex dep[MFSK_NCAR];
+        mfsk_sym_bins(h, start + (double)s * h->Nofdm * rate, rate, hb, dep);
+        for (int st = 0; st < h->m.nStreams; st++)
+        {
+            double emax = 0.0;
+            for (int t = 0; t < h->m.M; t++)
+            {
+                double complex v = dep[h->m.stream_offsets[st] + t];
+                double en = creal(v * conj(v));
+                if (en > emax) emax = en;
+            }
+            e += emax;
+        }
+    }
+    return e;
 }
 
 /* The dial offset to an eighth of a subcarrier.
@@ -603,43 +714,79 @@ static void mfsk_sym_bins(const mfsk_modem_t *h, int b, double hb, double comple
  * a subcarrier either side, and the offset whose strongest tones carry the
  * most energy over the whole payload wins: hundreds of symbols choose it
  * reliably where the preamble's few could not. */
-static double mfsk_refine_hb(const mfsk_modem_t *h, int payoff)
+static double mfsk_refine_hb(const mfsk_modem_t *h, double start, double rate, double hb0)
 {
-    double best_e = -1.0, best_hb = h->freq_hb;
+    double best_e = -1.0, best_hb = hb0;
     for (int k = -2; k <= 2; k++)
     {
-        double hb = h->freq_hb + 0.25 * k, e = 0.0;
-        for (int s = 0; s < h->NPAY; s++)
-        {
-            double complex dep[MFSK_NCAR];
-            mfsk_sym_bins(h, payoff + s * h->Nofdm, hb, dep);
-            for (int st = 0; st < h->m.nStreams; st++)
-            {
-                double emax = 0.0;
-                for (int t = 0; t < h->m.M; t++)
-                {
-                    double complex v = dep[h->m.stream_offsets[st] + t];
-                    double en = creal(v * conj(v));
-                    if (en > emax) emax = en;
-                }
-                e += emax;
-            }
-        }
+        double hb = hb0 + 0.25 * k;
+        double e = mfsk_pay_energy(h, start, rate, hb, 1);
         if (e > best_e) { best_e = e; best_hb = hb; }
     }
     return best_hb;
 }
 
-/* Demod one MFSK burst whose payload symbols start at bf[payoff], decode LDPC,
- * verify CRC16. Returns frame_bytes on success (bytes_out filled), else 0. */
-static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
+/* The sample ratio, from the payload: every MFSK_RATE_STEP over +/-
+ * MFSK_RATE_MAX on every other symbol, then half a step either side of the
+ * best, and the ratio last decoded at, on all of them.  The frequency stays
+ * acquisition's: a clock error shifts 1500 Hz by far more than it spreads
+ * the tones about it, and that shift is what acquisition found. */
+static double mfsk_search_rate(const mfsk_modem_t *h, int payoff, int ref, long key)
 {
-    if (payoff < 0 || payoff + h->NPAY * h->Nofdm > h->bf_len)
+    int K = (int)lround(MFSK_RATE_MAX / MFSK_RATE_STEP);
+    double best_e = -1.0, best = 1.0;
+    for (int k = -K; k <= K; k++)
+    {
+        double r = 1.0 + k * MFSK_RATE_STEP, st = mfsk_pay_start(h, payoff, ref, r);
+        if (!mfsk_pay_fits(h, st, r)) continue;
+        double e = mfsk_pay_energy(h, st, r, h->freq_hb * r, 2);
+        if (e > best_e) { best_e = e; best = r; }
+    }
+    double cand[4] = { best - 0.5 * MFSK_RATE_STEP, best, best + 0.5 * MFSK_RATE_STEP,
+                       h->dm_key == key ? h->dm_rate : best };
+    best_e = -1.0;
+    double pick = best;
+    for (int c = 0; c < 4; c++)
+    {
+        double r = cand[c], st = mfsk_pay_start(h, payoff, ref, r);
+        if (!mfsk_pay_fits(h, st, r)) continue;
+        double e = mfsk_pay_energy(h, st, r, h->freq_hb * r, 1);
+        if (e > best_e) { best_e = e; pick = r; }
+    }
+    return pick;
+}
+
+/* Info bits -> bytes (MSB-first, matching TX), then the CRC16 over the
+ * payload (all but the last 2) against its trailer -- FreeDV's contract. */
+static int mfsk_frame_crc_ok(mfsk_modem_t *h, const int *bits, uint8_t *bytes_out)
+{
+    size_t nbytes = h->frame_bytes;
+    for (size_t by = 0; by < nbytes; by++)
+    {
+        uint8_t v = 0;
+        for (int bit = 0; bit < 8; bit++)
+            v = (uint8_t)((v << 1) | (bits[by * 8 + bit] & 1));
+        bytes_out[by] = v;
+    }
+    uint16_t crc = freedv_gen_crc16(bytes_out, (int)(nbytes - 2));
+    uint16_t got = (uint16_t)((bytes_out[nbytes - 2] << 8) | bytes_out[nbytes - 1]);
+    if (h->crc_seed && (uint16_t)(crc ^ h->crc_seed) == got)
+        h->rx_seeded = 1;
+    else if ((!h->crc_seed || h->crc_accept_plain) && crc == got)
+        h->rx_seeded = 0;
+    else
         return 0;
+    return 1;
+}
 
-    double hb = mfsk_refine_hb(h, payoff);
+/* Demod and decode the payload read from start at `rate`, the dial offset
+ * refined about acquisition's.  Leaves the LLRs in llr_di and what it did in
+ * dm_*; returns whether the frame passed its CRC (bytes_out filled). */
+static int mfsk_decode_at(mfsk_modem_t *h, long key, double start, double rate,
+                          uint8_t *bytes_out)
+{
+    double hb = mfsk_refine_hb(h, start, rate, h->freq_hb * rate);
 
-    double sig = 0.0;                /* LLR magnitude, for HARQ below */
     /* SNR: per symbol, the strongest tone bin of each stream (signal + noise)
      * against the mean of the bins outside every stream's band (noise). */
     double snr_s = 0.0, snr_n = 0.0;
@@ -648,7 +795,7 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
     for (int s = 0; s < h->NPAY; s++)
     {
         double complex dep[MFSK_NCAR];
-        mfsk_sym_bins(h, payoff + s * h->Nofdm, hb, dep);
+        mfsk_sym_bins(h, start + (double)s * h->Nofdm * rate, rate, hb, dep);
         for (int k = 0; k < MFSK_NCAR; k++)
         {
             h->rb[s * MFSK_NCAR + k].re = creal(dep[k]);
@@ -678,7 +825,48 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
         int j = h->ilv[t];
         if (j < h->code->N) h->llr_di[j] = h->llr[t];   /* undo the scatter */
     }
-    for (int i = 0; i < h->code->N; i++) sig += fabs(h->llr_di[i]);
+    h->dm_key = key;
+    h->dm_rate = rate;
+    h->dm_hb = hb;
+    h->dm_snr_s = snr_s;
+    h->dm_snr_n = snr_n;
+
+    /* The CRC decides, not the LDPC's parity check: an unconverged decode
+     * can still carry the right info bits. */
+    int out_bits[MFSK_LDPC_MAXK];   /* not static: decoders run side by side */
+    (void)mfsk_ldpc_decode_ws(h->ldpc, h->code, h->llr_di, out_bits, 50);
+    return mfsk_frame_crc_ok(h, out_bits, bytes_out);
+}
+
+/* Demod one MFSK burst whose payload starts at bf[payoff] at the nominal
+ * rate, anchored ref symbols from there (mfsk_pay_start), decode LDPC, verify
+ * CRC16.  Returns frame_bytes on success (bytes_out filled), else 0.
+ *
+ * It is read first at the sample ratio the last frame came at, as soon as
+ * that much of it is in, so a frame from a well-clocked peer costs what it
+ * always did.  Only if that fails, once the burst is in at the slowest ratio
+ * searched (mfsk_pay_ready -- the caller treats the anchor as settled from
+ * then on), is the ratio searched and the frame read again at the best one
+ * if that differs. */
+static int mfsk_try_payload(mfsk_modem_t *h, int payoff, int ref, uint8_t *bytes_out)
+{
+    long key = h->n_abs + (long)payoff;
+    int pass = 0;
+    if (h->dm_key != key)
+    {
+        double st = mfsk_pay_start(h, payoff, ref, h->rate);
+        if (!mfsk_pay_fits(h, st, h->rate))
+            return 0;
+        pass = mfsk_decode_at(h, key, st, h->rate, bytes_out);
+    }
+    if (!pass)
+    {
+        if (!mfsk_pay_ready(h, payoff, ref))
+            return 0;
+        double r = mfsk_search_rate(h, payoff, ref, key);
+        if (h->dm_key != key || r != h->dm_rate)
+            pass = mfsk_decode_at(h, key, mfsk_pay_start(h, payoff, ref, r), r, bytes_out);
+    }
 
     /* HARQ Chase combining across separated bursts.
      *
@@ -693,11 +881,9 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
      * Decode the single shot FIRST and only fall back to the combined buffer
      * when it fails: a good copy must never be corrupted by summing it with
      * stale ones -- that ordering mistake once turned HARQ into a data-plane
-     * outage here (issue #223 lineage), so it is deliberate.
+     * outage here (issue #223 lineage), so it is deliberate.  The copy summed
+     * is the one read at the best sample ratio found (llr_di, dm_*).
      */
-    int out_bits[MFSK_LDPC_MAXK];   /* not static: decoders run side by side */
-    int ok = mfsk_ldpc_decode_ws(h->ldpc, h->code, h->llr_di, out_bits, 50);
-
     if (h->harq_on)
     {
         /* Bound what may be summed together.
@@ -728,52 +914,42 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
 
         for (int i = 0; i < h->code->N; i++) h->llr_acc[i] += h->llr_di[i];
         h->harq_copies++;
-        if (!ok && h->harq_copies > 1)
+        if (!pass && h->harq_copies > 1)
         {
             /* Average, not raw sum: the min-sum decoder is scale-sensitive,
              * so a growing magnitude changes its behaviour as copies pile up. */
             float inv = 1.0f / (float)h->harq_copies;
             for (int i = 0; i < h->code->N; i++) h->llr_di[i] = h->llr_acc[i] * inv;
-            ok = mfsk_ldpc_decode_ws(h->ldpc, h->code, h->llr_di, out_bits, 50);
+            int out_bits[MFSK_LDPC_MAXK];
+            (void)mfsk_ldpc_decode_ws(h->ldpc, h->code, h->llr_di, out_bits, 50);
+            pass = mfsk_frame_crc_ok(h, out_bits, bytes_out);
         }
-        if (ok)
+        if (pass)
         {
             memset(h->llr_acc, 0, (size_t)h->code->N * sizeof(float));
             h->harq_copies = 0;
             h->harq_first_ms = 0;
         }
     }
-    (void)ok;
-
-    /* pack info bits -> bytes (MSB-first, matching TX) */
-    size_t nbytes = h->frame_bytes;
-    for (size_t by = 0; by < nbytes; by++)
-    {
-        uint8_t v = 0;
-        for (int bit = 0; bit < 8; bit++)
-            v = (uint8_t)((v << 1) | (out_bits[by * 8 + bit] & 1));
-        bytes_out[by] = v;
-    }
-    /* CRC16 over payload (all but last 2), compare trailer — FreeDV's contract */
-    uint16_t crc = freedv_gen_crc16(bytes_out, (int)(nbytes - 2));
-    uint16_t got = (uint16_t)((bytes_out[nbytes - 2] << 8) | bytes_out[nbytes - 1]);
-    if (h->crc_seed && (uint16_t)(crc ^ h->crc_seed) == got)
-        h->rx_seeded = 1;
-    else if ((!h->crc_seed || h->crc_accept_plain) && crc == got)
-        h->rx_seeded = 0;
-    else
+    if (!pass)
         return 0;
 
     /* The SNR used to be the mean |LLR|, which saturates (it read +5 at -9 dB
      * and at +7 dB alike on the air).  Now: tone energy over bin noise,
      * summed over the streams' tones, referred to 3 kHz. */
     {
-        double lin = snr_n > 0.0 ? snr_s / snr_n * h->m.nStreams : 0.0;
+        double lin = h->dm_snr_n > 0.0 ? h->dm_snr_s / h->dm_snr_n * h->m.nStreams : 0.0;
         if (lin < 1e-4) lin = 1e-4;
         h->last_snr = (float)(10.0 * log10(lin) + h->snr_bin_to_3k_db + MFSK_SNR_CAL_DB);
     }
-    (void)sig;
-    return (int)nbytes;
+    /* The next burst is read at this one's ratio first.  The offset is
+     * reported as it reached us: in the receiver's own samples, of the burst's
+     * centre.  The spectrum is mirrored at baseband (see MFSK_FC), so a burst
+     * above nominal reads as a negative hb. */
+    h->rate = h->dm_rate;
+    h->foff_hz = (float)(-h->dm_hb * 0.5 * MFSK_FS / (double)h->nfft / h->dm_rate + 0.0);
+    h->foff_valid = 1;
+    return (int)h->frame_bytes;
 }
 
 /* Carrier sense: is a burst on the air now?  The search above looks only at
@@ -998,15 +1174,16 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * different answer -- it just burns CPU in bursts, and a spike is exactly
      * what makes a real-time capture overrun and lose the NEXT burst.  (The
      * FIFO path blocks instead of dropping, which is why it completes transfers
-     * while ALSA and PulseAudio both stall after one frame.) */
-    int payload_resident = (payoff >= 0) &&
-                           (payoff + h->NPAY * h->Nofdm <= h->bf_len);
+     * while ALSA and PulseAudio both stall after one frame.)  "Resident"
+     * means in at the slowest sample clock searched, which is when
+     * mfsk_try_payload has tried everything it will. */
+    int payload_resident = (payoff >= 0) && mfsk_pay_ready(h, payoff, h->P);
     int already_tried = (h->anchor_abs >= 0) && (h->tried_abs == h->anchor_abs);
     int nbytes = 0;
     if (payoff >= 0 && !already_tried)
     {
-        nbytes = mfsk_try_payload(h, payoff, bytes_out);
-        if (payload_resident && h->anchor_abs >= 0)
+        nbytes = mfsk_try_payload(h, payoff, h->P, bytes_out);
+        if ((payload_resident || nbytes > 0) && h->anchor_abs >= 0)
         {
             if (nbytes > 0)
             {
@@ -1045,8 +1222,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * whose payload was present and still failed.  While the burst is merely
      * incomplete there is nothing for this to recover, and running it on every
      * such attempt doubled the search cost for no chance of a frame. */
-    int payload_was_resident = (payoff >= 0) &&
-                               (payoff + h->NPAY * h->Nofdm <= h->bf_len);
+    int payload_was_resident = payload_resident;
     if (nbytes <= 0 && (off < 0 || payload_was_resident))
     {
         double pmetric = 0.0;
@@ -1058,10 +1234,19 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
         }
         int poff = mfsk_sync_search(h->bf, h->bf_len, 1, h->pstT, h->pstE,
                                     h->pstN, h->Nofdm, pstart, &pmetric);
-        if (poff >= 0)
+        /* The search refines its candidate and can land back on a postamble
+         * it was told to start past, as the preamble's can (above), and a
+         * payload is tried once: re-reading a failed one every 4 symbols,
+         * sample-clock search and all, would be most of the decoder's CPU. */
+        if (poff >= 0 && h->n_abs + (long)poff <= h->pst_tried_abs)
+        {
+            h->pst_scan_abs = h->n_abs + (long)poff + (long)(SCAN_OVERLAP_SYMB + 1) * h->Nofdm;
+        }
+        else if (poff >= 0)
         {
             int ppayoff = poff - h->NPAY * h->Nofdm;
-            int pn = (ppayoff >= 0) ? mfsk_try_payload(h, ppayoff, bytes_out) : 0;
+            int pn = mfsk_try_payload(h, ppayoff, -h->NPAY, bytes_out);
+            h->pst_tried_abs = h->n_abs + (long)poff;
             if (pn > 0)
             {
                 off = poff;
@@ -1104,6 +1289,14 @@ static void mfsk_be_get_stats(void *ctx, int *sync, float *snr)
 }
 
 static int mfsk_be_get_rx_status(void *ctx) { (void)ctx; return 0; }
+
+static int mfsk_be_get_freq_offset(void *ctx, float *hz)
+{
+    mfsk_modem_t *h = ctx;
+    if (!h->foff_valid) return 0;
+    *hz = h->foff_hz;
+    return 1;
+}
 
 /* ======================================================================
  * Pattern ACK (Welch-Costas tone burst) — TX and detect
@@ -1359,6 +1552,7 @@ const modem_backend_t modem_backend_mfsk = {
     .set_harq         = mfsk_be_set_harq,
     .set_crc_seed     = mfsk_be_set_crc_seed,
     .rx_crc_seeded    = mfsk_be_rx_crc_seeded,
+    .get_freq_offset  = mfsk_be_get_freq_offset,
 };
 
 

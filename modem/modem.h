@@ -100,6 +100,11 @@ int  modem_get_tx_delay_ms(void);
 // silent.
 float modem_get_tx_peak_dbfs(void);
 
+// The carrier offset the last frame decoded arrived at, in Hz (positive: above
+// nominal), and how long ago that was.  False until a decoder has measured
+// one.  Either pointer may be NULL.
+bool modem_get_rx_freq_offset(float *hz, uint64_t *age_ms);
+
 // --- ATU tuning carrier (host "TUNE" command) ---
 // Key the transmitter and emit a steady ~1 kHz tone so an antenna tuner can
 // find a match, VARA-style. `dbfs` is the absolute level at the sound card in

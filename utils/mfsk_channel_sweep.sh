@@ -12,7 +12,8 @@
 #
 # Environment: BPF="<lo> <hi>" filters what the receiver hears through a
 # narrow radio filter (after the noise, as an IF filter does); FOFF=<Hz> puts
-# the transmitter that far off frequency.
+# the transmitter that far off frequency; RATE=<ratio> gives the receiver's
+# sound card that clock error (1.015: 1.5 % fast).
 set -u
 C=$1; MODE=$2
 HERE=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$HERE/.." && pwd)
@@ -31,10 +32,11 @@ for s in "$@"; do
   No=$(python3 -c "print(-($s) - 11.05)"); ok=0
   for t in $(seq 1 "$T"); do
     "$TOOL" tx "$MODE" "$t" "$W/b.raw" "$W/f.raw"
+    if [ -n "${RATE:-}" ]; then "$TOOL" rate "$RATE" "$W/f.raw" "$W/r.raw"; mv "$W/r.raw" "$W/f.raw"; fi
     if [ "$C" = awgn ]; then F=; else F=--$C; fi
     "$WT" "$W/f.raw" "$W/n.raw" --No "$No" --freq "${FOFF:-0}" $F 2>/dev/null
     if [ -n "${BPF:-}" ]; then "$TOOL" bpf $BPF "$W/n.raw" "$W/r.raw"; mv "$W/r.raw" "$W/n.raw"; fi
     ok=$((ok + $("$TOOL" rx "$MODE" "$t" "$W/n.raw")))
   done
-  echo "$C mode=$MODE SNR3k=$s${BPF:+ bpf=${BPF// /-}}${FOFF:+ foff=$FOFF}: $ok/$T"
+  echo "$C mode=$MODE SNR3k=$s${BPF:+ bpf=${BPF// /-}}${FOFF:+ foff=$FOFF}${RATE:+ rate=$RATE}: $ok/$T"
 done

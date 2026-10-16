@@ -539,6 +539,36 @@ static uint64_t monotonic_ms(void)
     return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
 }
 
+/* --- Carrier offset of the last frame decoded (the UI's freq_offset) ---
+ * What the far radio's dial is off by, as we hear it, which an operator
+ * otherwise has no way to see -- nor a station's broken sample clock, which
+ * shows as an offset too (1.5 % of 1500 Hz is 23 Hz).  Set by every decoder
+ * but the monitors, which hear other stations' traffic. */
+static _Atomic float    g_rx_foff_hz = 0.0f;
+static _Atomic uint64_t g_rx_foff_ms = 0;      /* when; 0 = never */
+
+/* Caller holds the codec instance's lock. */
+static void note_rx_freq_offset(const modem_codec_t *codec)
+{
+    float hz;
+    if (!codec->be->get_freq_offset || !codec->be->get_freq_offset(codec->ctx, &hz))
+        return;
+    uint64_t now = monotonic_ms();
+    atomic_store(&g_rx_foff_hz, hz);
+    atomic_store(&g_rx_foff_ms, now ? now : 1);
+}
+
+bool modem_get_rx_freq_offset(float *hz, uint64_t *age_ms)
+{
+    uint64_t at = atomic_load(&g_rx_foff_ms);
+    if (!at)
+        return false;
+    uint64_t now = monotonic_ms();
+    if (hz)     *hz = atomic_load(&g_rx_foff_hz);
+    if (age_ms) *age_ms = now > at ? now - at : 0;
+    return true;
+}
+
 static bool arq_mode_policy_ready_snapshot(bool have_snapshot, const arq_runtime_snapshot_t *snapshot)
 {
     return have_snapshot && snapshot && snapshot->initialized;
@@ -1795,6 +1825,7 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     if (*nbytes_out > 0)
     {
         frames_received++;
+        note_rx_freq_offset(&codec);
         HLOGI("modem-rx", ">>> DECODED FRAME %d: %zu bytes, SNR: %.2f dB",
                frames_received, *nbytes_out, snr_est);
     }
@@ -2428,7 +2459,10 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         }
         nbytes_out = (size_t)be->rawdata_rx(ctx, state->bytes_out, state->demod_in);
         if (nbytes_out > 0 && !monitor)
+        {
             publish_link_bitrate(&state->codec, state->mode);
+            note_rx_freq_offset(&state->codec);
+        }
         if (nin > 0)
         {
             state->demod_count -= nin;

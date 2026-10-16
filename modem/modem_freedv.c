@@ -80,6 +80,7 @@ static void fdv_set_crc_seed(void *ctx, uint16_t seed, int accept_plain)
 { freedv_set_crc_seed(FDV(ctx), seed, accept_plain); }
 static int  fdv_rx_crc_seeded(void *ctx)      { return freedv_get_rx_crc_seeded(FDV(ctx)); }
 static void fdv_unsync(void *ctx)             { freedv_set_sync(FDV(ctx), FREEDV_SYNC_UNSYNC); }
+static int  fdv_get_freq_offset(void *ctx, float *hz) { return freedv_get_freq_offset(FDV(ctx), hz); }
 
 const modem_backend_t modem_backend_freedv = {
     .name             = "freedv",
@@ -106,4 +107,5 @@ const modem_backend_t modem_backend_freedv = {
     .unsync           = fdv_unsync,
     .set_crc_seed     = fdv_set_crc_seed,
     .rx_crc_seeded    = fdv_rx_crc_seeded,
+    .get_freq_offset  = fdv_get_freq_offset,
 };
