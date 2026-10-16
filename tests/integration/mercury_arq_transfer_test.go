@@ -270,6 +270,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 	}
 	defer dataB.Close()
 
+	tConnect := time.Now()
 	if got := sendControlCommand(t, connA, rwA, "CONNECT TESTA TESTB"); !strings.HasPrefix(got, "OK") {
 		failWithLogs("CONNECT -> %q, want OK", got)
 	}
@@ -300,6 +301,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 	if !connected {
 		failWithLogs("no CONNECTED notification within deadline")
 	}
+	t.Logf("CONNECTED after %.1f s", time.Since(tConnect).Seconds())
 	_ = connA.SetReadDeadline(time.Time{})
 
 	// Default 102 bytes (3 datac15 frames).  MERCURY_TEST_PAYLOAD_KB sets a
