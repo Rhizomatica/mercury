@@ -1719,6 +1719,11 @@ func main() {
 			return
 		}
 		appendLog("Mercury engine started — connecting...\n")
+		// Where the engine log went, or why it could not be opened. stderr is
+		// invisible in the windowsgui build, so ui.log carries it instead.
+		if status := mercuryLogStatus(); status != "" {
+			appendLog(status + "\n")
+		}
 		engineReady.Store(true)
 		connectLink()
 	}()

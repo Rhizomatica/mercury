@@ -19,6 +19,7 @@
 #include "mercury_cli.h"
 #include "mercury_bridge.h"
 #include "mercury_version.h"
+#include "hermes_log.h"
 #include "ui_communication.h"
 #include "modem.h"
 #include "modem_stats.h"   /* MODEM_STATS_NSPEC */
@@ -97,6 +98,11 @@ int mercury_init(int argc, char **argv, const char *default_config, const char *
     const char *log = cli.log_file_path ? cli.log_file_path : log_path;
     return mercury_engine_init(&cli.cfg, cli.cfg_path, log, cli.log_file_jsonl,
                                cli.startup_mode, cli.test_mode);
+}
+
+const char *mercury_log_status(void)
+{
+    return hermes_log_file_status();
 }
 
 /* ------------------------------------------------------------------ */

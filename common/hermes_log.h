@@ -40,6 +40,21 @@ void hermes_log_set_component_level(const char *component, hermes_log_level_t le
  *         to stderr and file logging stays disabled.
  */
 int  hermes_log_set_file(const char *path, hermes_log_level_t min_level, bool jsonl);
+
+/**
+ * @brief One-line report of the last hermes_log_set_file() outcome.
+ *
+ * On success: "writing log to <absolute path>" -- the resolved path, so a
+ * relative path that landed outside the expected folder is identifiable.  On
+ * failure: "cannot open log file '<path>': <reason>; file logging disabled".
+ *
+ * This exists for callers whose stderr is not visible (the Windows GUI is
+ * linked windowsgui), so they can surface the same message somewhere the
+ * operator will see it.  Returns NULL when no file sink has been configured.
+ * The pointer is owned by the logger and valid until the next set_file() or
+ * shutdown; copy before returning it across an FFI boundary.
+ */
+const char *hermes_log_file_status(void);
 void hermes_log_close_file(void);
 unsigned long hermes_log_dropped_count(void);
 void hermes_logf(hermes_log_level_t level, const char *component, const char *fmt, ...);

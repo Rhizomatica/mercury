@@ -84,6 +84,17 @@ func mercuryStart(defaultConfig, logPath string, args []string) error {
 	return nil
 }
 
+// mercuryLogStatus reports where the engine log is being written, or why the
+// requested file could not be opened. The Windows GUI is linked windowsgui, so
+// the engine's stderr warning is invisible there; the caller appends this to
+// the UI log. Returns "" when the engine configured no file sink.
+func mercuryLogStatus() string {
+	if p := C.mercury_log_status(); p != nil {
+		return C.GoString(p)
+	}
+	return ""
+}
+
 func mercuryStop() {
 	C.mercury_request_shutdown()
 	C.mercury_shutdown()

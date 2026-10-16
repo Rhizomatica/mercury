@@ -14,4 +14,6 @@ func mercuryStart(defaultConfig, logPath string, args []string) error {
 	return fmt.Errorf("mercury engine not embedded (build with -tags mercury_embedded)")
 }
 
+func mercuryLogStatus() string { return "" }
+
 func mercuryStop() {}
