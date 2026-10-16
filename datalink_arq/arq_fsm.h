@@ -87,10 +87,13 @@ typedef struct
 
     /* RX_CAROUSEL: the control decoder (DATAC16) produced it; otherwise the
      * payload decoder, in `mode`.  RX_ACCEPT: the rung the callee starts our
-     * rounds on (0..6, or ARQ_ACCEPT_LEVEL_CTL_DEAF), its session nonce, and
-     * the CRC16 of the callsign we called, which the FSM checks. */
+     * rounds on (0..6), whether it hears us below the control mode, the SNR
+     * it read our CALL at (0: unknown), its session nonce, and the CRC16 of
+     * the callsign we called, which the FSM checks. */
     bool     from_control;
     int      car_level;
+    bool     car_ctl_deaf;
+    float    car_call_snr;
     uint16_t car_nonce;
     uint16_t car_called_crc;
 
@@ -242,6 +245,9 @@ typedef struct
     int      car_tx_level;            /* ...for ours, from the peer (-1: none) */
     bool     car_ctl_deaf;            /* connect: I heard the peer below the control mode */
     bool     car_peer_ctl_deaf;       /* connect: ...and it, me (the CALL came on MFSK) */
+    float    car_call_snr;            /* connect: the SNR the callee read the CALL at
+                                       * (the callee: its own; the caller: from the
+                                       * ACCEPT), 0 unknown */
     bool     ctl_floor_at_stop;       /* the carousel's peer_ctl_deaf when it stopped,
                                        * for the DISCONNECT exchange after it */
     int      floor_mode;              /* the session's MFSK floor (arq_floor_mode

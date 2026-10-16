@@ -2098,7 +2098,8 @@ static void process_received_frame(const uint8_t *data,
 
     switch (frame_type)
     {
-    case PACKET_TYPE_ARQ_CALL:
+    case PACKET_TYPE_ARQ_CALL:    /* 1.9.x: logged if it is for us, not answered */
+    case PACKET_TYPE_ARQ_CALL2:
         if (arq_policy_ready)
             arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes, snr_est, mode);
         break;

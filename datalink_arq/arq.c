@@ -20,6 +20,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -871,7 +872,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
          * for us from an older release, 1.9.19, 1.9.18 or 1.9.x: the
          * versions do not connect (docs/CAROUSEL-ARQ.md, "Wire formats"). */
         if (!is_accept)
-            HLOGW(LOG_COMP, "CALL for %s from another protocol version (Mercury 1.9.19 or older?): not answered",
+            HLOGW(LOG_COMP, "CALL for %s from another protocol version (Mercury 1.9.x?): not answered",
                   dialed_call);
         return false;
     }
@@ -886,6 +887,8 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         /* The callee's callsign is not on the air, only its CRC: the FSM
          * checks it against the station it called. */
         ev.car_level      = acc.start_level;
+        ev.car_ctl_deaf   = acc.ctl_deaf;
+        ev.car_call_snr   = isnan(acc.call_snr_db) ? 0.0f : acc.call_snr_db;
         ev.car_nonce      = acc.nonce;
         ev.car_called_crc = acc.called_crc;
     }

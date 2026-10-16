@@ -13,6 +13,7 @@
 #include "framer.h"     /* PACKET_TYPE_ARQ_*, frame_header_packet_type */
 #include "freedv_api.h" /* FREEDV_MODE_DATAC15 and friends */
 
+#include <math.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -27,7 +28,7 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
     uint8_t ptype = frame_header_packet_type(frame[0]);
 
     /* ---- CALL / ACCEPT frames (compact 14-byte layout) ---- */
-    if (ptype == PACKET_TYPE_ARQ_CALL)
+    if (ptype == PACKET_TYPE_ARQ_CALL2)
     {
         if (frame_size < 2)
             return false;
@@ -56,6 +57,8 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
         out_ev->rx_snr     = rx_snr;
         if (is_accept) {
             out_ev->car_level      = acc.start_level;
+            out_ev->car_ctl_deaf   = acc.ctl_deaf;
+            out_ev->car_call_snr   = isnan(acc.call_snr_db) ? 0.0f : acc.call_snr_db;
             out_ev->car_nonce      = acc.nonce;
             out_ev->car_called_crc = acc.called_crc;
         }
