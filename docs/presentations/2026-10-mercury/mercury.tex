@@ -187,7 +187,6 @@
       \item \hl{2$\times$ faster} on a good link
       \item Links down to \hl{$-10$ dB} SNR now complete
       \item On air, 8 KB each way: 485/509 s \textrightarrow{} \textbf{312/238 s}
-      \item At 3 \% power, 2 KB: 1310/1266 s \textrightarrow{} \textbf{832/755 s}
     \end{itemize}
   \end{columns}
   \src{Source: docs/RELEASE-1.9.18.md}
@@ -374,33 +373,36 @@
     \begin{itemize}
       \item MFSK operates \hl{5 to 9 dB} below DATAC15
       \item Against modem73's coherent RFDM modes: 2.7 dB better per bit on AWGN, a tie under fading
-      \item On air: 1 KB over UUCP at \textbf{2 \% power} in 533 s
     \end{itemize}
   \end{columns}
   \src{Sim, 100 trials a point, Watterson model, 2026-10-15 (PR \#390); docs/MFSK-PORT.md; docs/RELEASE-1.9.19.md}
 \end{frame}
 
-\begin{frame}{Under review: 500 Hz MFSK and sample-clock tracking}
+\begin{frame}{Under review: a 500 Hz MFSK floor for BW500 sessions}
+  \small
   \begin{columns}[T]
     \column{0.5\textwidth}
-    \begin{block}{Mode 103 for 500 Hz filters (PR \#390)}
+    \begin{block}{MFSK500: the BW500 floor (PR \#390)}
       \begin{itemize}
         \item The 1 kHz MFSK cannot be decoded behind a 500 Hz filter
-        \item 32 tones 15.625 Hz apart, 80 ms symbols, 26 s bursts
-        \item 90 \%: \textbf{$-14.1$ dB} AWGN, $-10.4$ dB moderate, behind the filter too
-        \item On air at the bench: $-14.2$ dB (sim $-14.1$)
+        \item 32 tones 15.625 Hz apart, 80 ms symbols, 26~s frames
+        \item 90 \%: {\bfseries $-14.1$~dB} AWGN, $-10.4$~dB moderate fading, behind the filter too
+        \item Searches at 2 kHz: idle receive \textbf{cheaper} than the 1 kHz floor
+        \item BW2300 and BW2750 keep the 1 kHz floor; air-protocol version 3
       \end{itemize}
     \end{block}
     \column{0.5\textwidth}
-    \begin{block}{Three receiver fixes, all modes}
+    \begin{block}{Receiver fixes, all MFSK modes}
       \begin{itemize}
         \item Dial offset to an eighth of a subcarrier
         \item Pattern search in half-subcarrier steps (removes a 3--4 dB loss)
         \item LLR noise from the tones' own bins
-        \item Payload read at a \textbf{searched sample-clock ratio}: decodes from 0.98 to 1.02 (was $\pm$0.2 \%)
-        \item Carrier offset as a top-level status field
+        \item A burst with a \textbf{gap in its audio} (a playback underrun at the transmitter) is read across the gap
       \end{itemize}
     \end{block}
+    \begin{exampleblock}{On air, two bench stations}
+      \footnotesize Every complete MFSK500 frame decoded, both ways, underrun-hit frames included; BW500 sessions on the floor answered by its patterns
+    \end{exampleblock}
   \end{columns}
   \src{Source: PR \#390 (draft), measurements 2026-10-15/16}
 \end{frame}
@@ -504,7 +506,6 @@
     \begin{itemize}
       \item \hl{35--45 \% shorter} transfer times in every measurement
       \item Simulated NVIS: stop-and-wait never completed; the carousel did
-      \item At \textbf{2 \% power} trunk never connected; the carousel delivered in 632--932 s
       \item On air: mean of two runs in each direction, sBitx test bench
     \end{itemize}
   \end{columns}
@@ -695,7 +696,7 @@
       \item \textbf{Windows}: Authenticode-signed (Certum)
       \item \textbf{macOS}: universal x86\_64 + arm64, static Hamlib, notarised
       \item \textbf{iOS and Android}: coming soon, the modem and its GUI on the phone
-      \item \textbf{Raspberry Pi 4}: idle receive at 28--30 \% of one core
+      \item \textbf{Raspberry Pi} 4 and 5, the HERMES station computers
     \end{itemize}
   \end{columns}
   \src{Source: README.md, docs/WEBSOCKET\_STATUS.md, docs/WINDOWS-SIGNING.md, docs/MACOS-UNIVERSAL.md; PR \#383}
