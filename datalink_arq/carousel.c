@@ -1377,6 +1377,7 @@ static void fill_poll(car_t *c, msg_t *m)
             if (!h->got[i]) { m->gap = i; break; }
     m->loss16 = (int)lround(c->loss_est * 15.0);
     m->has_data = has_data(c);
+    m->hi = (uint8_t)(c->next_blk_id - 1); m->unopened = unopened(c);
     m->snr_db = my_snr(c);
     m->ctl_deaf = c->ctl_deaf;
     stamp_hint(c, m);
@@ -2362,6 +2363,11 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
     if (m->type == M_POLL) {                 /* the peer's poll for my rounds */
         apply_need(c, m);
         c->peer_has_data = m->has_data;
+        /* ...and what it holds, as in a status: an ack of my last round that
+         * says it has nothing lets a DISCONNECT go at once, where an idle poll
+         * for a status cost an exchange more (Go harness, +10 dB: 11 s). */
+        c->peer_hi = resolve16(c->rbase, m->hi);
+        c->peer_hi_known = true; c->peer_unopened = m->unopened;
         c->tx_loss = m->loss16 / 15.0;
         c->floor_waiting = c->pat_waiting = false;
         /* Taken as heard on last_lv even when this answers a REQ about a
