@@ -297,10 +297,18 @@ static int hamlib_open(const ptt_config_t *config)
     return 0;
 }
 
+/* Hamlib's read_string_generic() (iofunc.c, 4.6.2 and master) sleeps 5 ms
+ * after every reply byte while errno == EAGAIN, and never clears errno: a
+ * successful read leaves it alone.  A thread that reaches Hamlib with an
+ * EAGAIN left from its own non-blocking I/O pays that per byte -- ~60 ms more
+ * key-up for an Icom CI-V echo + ack (seen as 23 -> 134 ms get_level in
+ * hermes-radio-daemon).  So errno is cleared before the Hamlib calls on the
+ * keying and frequency-poll paths. */
 static int hamlib_set(bool on)
 {
     if (!g_radio)
         return -1;
+    errno = 0;
     int ret = rig_set_ptt(g_radio, RIG_VFO_CURR,
                           on ? RIG_PTT_ON : RIG_PTT_OFF);
     if (ret != RIG_OK)
@@ -318,6 +326,7 @@ static void hamlib_close(void)
 {
     if (!g_radio)
         return;
+    errno = 0;                      /* see hamlib_set */
     (void)rig_set_ptt(g_radio, RIG_VFO_CURR, RIG_PTT_OFF);
     rig_close(g_radio);
     rig_cleanup(g_radio);
@@ -730,15 +739,18 @@ bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz,
         freq_t freq = 0;
         uint64_t started_ms = now;
         g_frequency_attempt_ms = now;
+        errno = 0;                  /* see hamlib_set */
         int ret = rig_get_freq(g_radio, RIG_VFO_CURR, &freq);
         if (ret != RIG_OK)
         {
             vfo_t current_vfo = RIG_VFO_NONE;
+            errno = 0;
             int vfo_ret = rig_get_vfo(g_radio, &current_vfo);
             if (vfo_ret == RIG_OK && current_vfo != RIG_VFO_NONE &&
                 current_vfo != RIG_VFO_CURR)
             {
                 freq = 0;
+                errno = 0;
                 ret = rig_get_freq(g_radio, current_vfo, &freq);
             }
         }
