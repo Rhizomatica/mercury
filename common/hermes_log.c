@@ -28,6 +28,7 @@
 #define HERMES_LOG_COMPONENT_MAX     32
 #define HERMES_LOG_MESSAGE_MAX       480
 #define HERMES_LOG_COMP_TABLE_MAX    16
+#define HERMES_LOG_STATUS_MAX        512
 
 /* Per-entry routing flags are stored with the entry so the worker thread
  * needs no further access to shared state when printing. */
@@ -74,6 +75,7 @@ typedef struct
     FILE              *file_fp_to_close;  /* fp deferred until shutdown      */
     hermes_log_level_t file_min_level;
     bool               file_jsonl;
+    char               file_status[HERMES_LOG_STATUS_MAX]; /* last set_file outcome */
 
     hermes_log_comp_t  comp_table[HERMES_LOG_COMP_TABLE_MAX];
     int                comp_table_size;
@@ -289,6 +291,7 @@ int hermes_log_init(size_t capacity)
     g_log.file_fp_to_close = NULL;
     g_log.file_min_level  = HERMES_LOG_LEVEL_DEBUG;
     g_log.file_jsonl      = false;
+    g_log.file_status[0]  = '\0';
     g_log.comp_table_size = 0;
     atomic_store_explicit(&g_log.dropped, 0, memory_order_relaxed);
     atomic_store_explicit(&g_log.min_level, HERMES_LOG_LEVEL_INFO, memory_order_relaxed);
@@ -400,13 +403,39 @@ int hermes_log_set_file(const char *path, hermes_log_level_t min_level, bool jso
         /* The whole point of a file sink is to survive where nobody is
          * watching the terminal, so a silent failure here is the worst
          * outcome: the operator believes the run is being recorded and only
-         * finds out when there is nothing to send.  Say it, with the path and
-         * the reason, on the one stream that does not depend on the log file.
-         * Keep the return value so callers can react if they ever need to. */
-        fprintf(stderr, "hermes_log: cannot open log file '%s': %s; "
-                        "file logging disabled\n", path, strerror(errno));
+         * finds out when there is nothing to send.  Keep the reason in the
+         * status the UI can read and print it to the one stream that does not
+         * depend on the file (invisible in a windowsgui build, hence the
+         * status).  Return -1 so callers can still react. */
+        char status[HERMES_LOG_STATUS_MAX];
+        snprintf(status, sizeof(status),
+                 "cannot open log file '%s': %s; file logging disabled",
+                 path, strerror(errno));
+
+        pthread_mutex_lock(&g_log.lock);
+        snprintf(g_log.file_status, sizeof(g_log.file_status), "%s", status);
+        pthread_mutex_unlock(&g_log.lock);
+
+        fprintf(stderr, "hermes_log: %s\n", status);
         return -1;
     }
+
+    /* Report where the file actually landed.  A relative path resolves
+     * against the process's working directory, which on Windows is often not
+     * the folder the operator is looking in -- "no log" is then really "log
+     * somewhere else", and only the absolute path tells the two apart. */
+    char status[HERMES_LOG_STATUS_MAX];
+#if defined(_WIN32)
+    char resolved[HERMES_LOG_STATUS_MAX * 8];
+    const char *shown =
+        _fullpath(resolved, path, sizeof(resolved)) ? resolved : path;
+    snprintf(status, sizeof(status), "writing log to %s", shown);
+#else
+    char *resolved = realpath(path, NULL);
+    snprintf(status, sizeof(status), "writing log to %s",
+             resolved ? resolved : path);
+    free(resolved);
+#endif
 
     pthread_mutex_lock(&g_log.lock);
     /* Defer close of old file until shutdown (worker may still have queued entries). */
@@ -415,9 +444,24 @@ int hermes_log_set_file(const char *path, hermes_log_level_t min_level, bool jso
     g_log.file_fp        = fp;
     g_log.file_min_level = min_level;
     g_log.file_jsonl     = jsonl;
+    /* Announce only when the outcome changes: the daemon sets the same file
+     * twice (main() brings the logger up, then the engine init sets it again),
+     * and a duplicate line at the top of every log is noise. */
+    bool announce = (strcmp(g_log.file_status, status) != 0);
+    snprintf(g_log.file_status, sizeof(g_log.file_status), "%s", status);
     update_effective_min_locked();
     pthread_mutex_unlock(&g_log.lock);
+
+    /* Into the new sink as well: whoever later opens a stray session.log can
+     * see from its first line where it was meant to live. */
+    if (announce)
+        HLOGI("log", "%s", status);
     return 0;
+}
+
+const char *hermes_log_file_status(void)
+{
+    return g_log.file_status[0] ? g_log.file_status : NULL;
 }
 
 void hermes_log_close_file(void)

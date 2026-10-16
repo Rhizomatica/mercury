@@ -35,6 +35,16 @@ int  mercury_init(int argc, char **argv, const char *default_config, const char 
 void mercury_shutdown(void);
 void mercury_request_shutdown(void);
 
+/* One-line report of where the engine log is being written, or why the
+ * requested file could not be opened ("writing log to <path>" /
+ * "cannot open log file '<path>': <reason>; file logging disabled").
+ *
+ * The Windows GUI is linked windowsgui, so the stderr warning the engine
+ * prints for a bad -L is invisible; the UI reads this and appends it to its
+ * own ui.log instead.  NULL when no file sink is configured.  Owned by the
+ * engine; copy (Go: C.GoString) before it is next set. */
+const char *mercury_log_status(void);
+
 /* ---- In-process UI link ----------------------------------------------------
  * The embedded UI pulls state and pushes commands through these calls instead
  * of opening a websocket back to its own process.  The websocket server keeps
