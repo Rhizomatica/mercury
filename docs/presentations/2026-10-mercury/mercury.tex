@@ -157,7 +157,7 @@
     \end{block}
     \begin{block}{Releases}
       \textbf{1.9.18} (12 Oct): the carousel data plane\\
-      \textbf{1.9.19} (13 Oct): MFSK centred on 1500 Hz, protocol v2, JNOS 2.0
+      \textbf{1.9.19} (13 Oct): MFSK centred on 1500 Hz, hence air-protocol version 2 (does not interoperate with 1.9.18); JNOS 2.0 support
     \end{block}
   \end{columns}
   \src{Source: git history of \texttt{mercuryv2}; docs/RELEASE-1.9.18.md, docs/RELEASE-1.9.19.md}
@@ -475,7 +475,7 @@
     \column{0.33\textwidth}
     \begin{block}{Session binding}
       Seed = CRC16(session id, nonce, both calls), mixed into every frame's CRC.
-      Protocol v1 = 1.9.18, v2 = 1.9.19: a CALL of another version is logged, not answered
+      CALL and ACCEPT carry the air-protocol version (1.9.18: 1, 1.9.19: 2); a CALL of another version is logged, not answered
     \end{block}
   \end{columns}
   \medskip
