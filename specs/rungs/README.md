@@ -41,4 +41,35 @@ Results:
     - `prevr`: violates `Wasted`.  Naming a rung left the callee's
       fallback (`s_prev_lv`) apart from the caller's (`ok_lv`).
 
+## FloorSilence
+
+What keeps a session alive when the channel falls below every mode but the
+MFSK floor (`FloorSilence.tla`, carousel.c's silence rule): the channel may
+go down for good at any step, after which only floor keydowns decode; M takes
+its control and rounds to the floor after `FM` silent exchanges
+(`SILENT_MS`); S falls back to the floor after `FS` (`S_FALLBACK_MS`), once
+a silence, and its round timer (CAR_T_W, which may fire before or after the
+fallback) does not take a fallen-back S off the floor.
+
+    java -cp /opt/TLA+Toolbox/tla2tools.jar tlc2.TLC -workers 4 \
+        -metadir /tmp/tlc-floor -config FloorSilence.cfg FloorSilence.tla
+
+- `FloorSilence.cfg`: the code's rules.  `Delivered` holds: no error, 696
+  distinct states; also for every `FM`, `FS` in 1..3 (436-1184 states).
+- `Mut_fs_nosilence.cfg`: M never takes the control mode to be out.
+  Violates `Delivered`: down for good, M's DATAC16 control is never heard.
+- `Mut_fs_nostay.cfg`: the round timer takes S off the floor it fell back
+  to.  Violates `Delivered`: M at the floor, S on DATAC4 for ever (the
+  explorer found it in the code: cliff:-5, a floor poll and two handovers
+  lost).
+
+Which model covers the other 2.0 changes:
+
+- the direct probe (`choose_level` asks for the rung the SNR would start
+  on): `RungAgreement`'s sized poll names any rung (`\E l \in Rungs`), so
+  agreement and delivery hold for whichever it picks;
+- a pattern only for the rung asked: the floor's patterns are outside
+  `RungAgreement`; the rule only narrows when S answers with one, which
+  `FloorSilence` does not depend on.
+
 Give each TLC run its own `-metadir`.
