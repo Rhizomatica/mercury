@@ -706,20 +706,14 @@
 
 \begin{frame}{Future work}
   \begin{columns}[T]
-    \column{0.5\textwidth}
-    \begin{itemize}
-      \item The \textbf{500 Hz MFSK} as the BW500 floor, pinned on air first
-      \item Acquisition on a finer frequency grid: about 1 dB at mid-grid offsets
-      \item Encryption on the carousel plane
-      \item Modes wider than 2.1 kHz for BW2750
-    \end{itemize}
-    \column{0.5\textwidth}
-    \begin{itemize}
-      \item The channel model merged, and the MATLAB scripts kept as a dated record, ported to Octave piece by piece
-      \item Mercury on \textbf{iOS and Android}, coming soon
-      \item More field reports from HERMES stations
-      \item Next release once these land
-    \end{itemize}
+    \column{0.47\textwidth}
+    \begin{block}{\faMobile*\ Mercury on iOS and Android}
+      The modem and its GUI on the phone: coming soon
+    \end{block}
+    \column{0.47\textwidth}
+    \begin{block}{\faLock\ Optional encryption}
+      Encrypted sessions on the carousel plane, off by default (Noise\_KK, PR \#306)
+    \end{block}
   \end{columns}
 \end{frame}
 
