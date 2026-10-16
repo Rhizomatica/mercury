@@ -616,17 +616,17 @@
     \column{0.46\textwidth}
     \begin{block}{Acceptance tests in the CI suite}
       \footnotesize
-      \begin{tabular*}{\linewidth}{@{}l@{\extracolsep{\fill}}rr@{}}
+      \begin{tabular*}{\dimexpr\linewidth-2ex\relax}{@{}l@{\extracolsep{\fill}}rr@{}}
                                      & \textbf{Measured} & \textbf{Theory} \\
         Power beyond 3$\sigma$       & 0.273 \%          & 0.27 \% \\
         Power beyond the spread      & 4.68 \%           & 4.55 \% \\
-        Fade rate below $-10$ dB     & 0.5067 s$^{-1}$   & 0.5072 s$^{-1}$ \\
+        Fades below $-10$ dB, s$^{-1}$ & 0.5067          & 0.5072 \\
       \end{tabular*}
       \par\smallskip
       Reference values: the Gaussian spectrum and Rice's closed-form level-crossing rate. Records of 900 s with fixed seeds.
     \end{block}
-    \begin{exampleblock}{Cross-validation with MATLAB R2026a}
-      \footnotesize Every preset compared with the Communications Toolbox (\texttt{stdchan}, \texttt{comm.RayleighChannel}):
+    \begin{exampleblock}{Cross-validation with MATLAB}
+      \footnotesize Every preset compared with the R2026a Communications Toolbox (\texttt{stdchan}, \texttt{comm.RayleighChannel}):
       \textbf{26 of 26 checks passed}; a second run reproduced the results byte for byte.
     \end{exampleblock}
   \end{columns}
