@@ -148,6 +148,7 @@ typedef struct {
     bool     snr_valid;
     uint64_t deadline[CAR_NTIMERS]; /* 0 = disarmed */
     uint64_t last_carrier_ms;       /* the peer was last heard on the air */
+    uint64_t heard_ms;              /* ...last decoded: a frame or a pattern */
     bool     tx_busy;               /* our keydown is on the air */
     uint8_t  held;                  /* why the planned keydown waits (HELD_*):
                                      * logged once per hold */

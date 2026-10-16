@@ -291,6 +291,17 @@ static uint64_t level_air(const car_t *c, int lv) { return mode_air(lmode(c, lv)
  * start rung: level 0 begins at -2 dB, where the control mode still works and
  * a 13.5 s MFSK control frame is pure cost. */
 #define CTL_FLOOR_MARK   0x07
+/* Silence is evidence too.  When the channel falls below the control mode
+ * nothing decodes, so no reading says so: both ends kept the SNR they had,
+ * and the caller re-sent its DATAC16 handover every 11 s for 40 minutes
+ * while the callee listened (sim, step:10:-12, 50 KB: the floor reached a
+ * median 917 s after the step).  So when a keydown of mine ends with nothing
+ * of the peer's decoded for SILENT_MS, I take both directions to be below
+ * the control mode: my control goes on the floor, where the peer listens
+ * after S_FALLBACK_MS of silence, and the first frame either way measures
+ * the link again.  At 30 s NVIS, which loses most fast frames to its
+ * multipath, went to a floor it did not need (+19 %, sim). */
+#define SILENT_MS 90000
 #define CTL_DEAF_ON_DB   (ARQ_SNR_MIN_DATAC15_DB - 0.5f)
 #define CTL_DEAF_OFF_DB  (ARQ_SNR_MIN_DATAC15_DB + 1.0f)
 static bool ctl_on_floor(const car_t *c)      { return c->io.pattern && c->peer_ctl_deaf; }
@@ -1861,7 +1872,12 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
     int frames = c->round_frames > 0 ? c->round_frames : 1;
     if (!c->rx_tail && c->poll_n > frames) frames = c->poll_n;
     double loss = 1.0 - (double)c->round_seen / frames;
-    if (c->io.pattern && lv > 0 && lv == c->poll_level && n == c->poll_n && !c->status_seen &&
+    /* ...a round that came on the rung I asked for: a sender that missed my
+     * poll keeps on where it was, and a pattern to that kept it there (sim,
+     * step:-12:10 seed 27: DATAC3 asked, floor rounds answered by patterns
+     * "for DATAC3" at +10 dB). */
+    if (c->io.pattern && lv > 0 && lv == c->poll_level && c->rx_level == c->poll_level &&
+        n == c->poll_n && !c->status_seen &&
         c->round_seen > 0 && loss <= c->polled_loss + 0.05 &&
         c->floor_patterns < FLOOR_POLL_EVERY && !window_full) {
         bool whole = c->round_seen >= c->round_frames && c->rx_tail;
@@ -2690,6 +2706,7 @@ int car_ui_peer_mode(const car_t *c)
 void car_start_sender(car_t *c, uint64_t now)
 {
     c->master = true;
+    c->heard_ms = now;
     c->piece = car_piece_for_start(c->peer_snr_level);
     c->tx_level = c->peer_snr_level; c->tx_n = 1;
     c->poll_level = c->snr_level; c->poll_n = 1;
@@ -2704,6 +2721,7 @@ void car_start_sender(car_t *c, uint64_t now)
 void car_start_receiver(car_t *c, uint64_t now)
 {
     c->master = false;
+    c->heard_ms = now;
     c->piece = car_piece_for_start(c->snr_level);
     c->poll_level = c->snr_level; c->poll_n = 1;
     bind_rx(c, c->ctl_deaf && c->io.pattern ? 0 : c->poll_level);
@@ -2753,6 +2771,7 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
         ctl = decode_ctl(c, bytes + 1, len - 1, &m);
     if (control || ctl) {
         if (!ctl) return;
+        c->heard_ms = now;
         note_peer_ctl_deaf(c, m.ctl_deaf);
         c->peer_short = m.short_rung; c->peer_backlog = m.backlog;
         if (c->master) m_on_ctl(c, now, &m);
@@ -2762,6 +2781,7 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     int lv = level_of_mode(mode);
     if (lv < 0 || !decode_data(bytes, len, &m, piece_of(c))) return;
     if (m.left >= keydown_cap(c, lv)) return;   /* corrupt: no keydown on the rung is that long */
+    c->heard_ms = now;
     note_peer_ctl_deaf(c, m.ctl_deaf);
     msg_t k;
     if (m.has_ctl && lv == c->rx_level && decode_ctl(c, m.ctl, CAR_POLL_BYTES, &k) && k.type == M_POLL && k.h_n) {
@@ -2778,6 +2798,11 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
 void car_on_tx_done(car_t *c, uint64_t now)
 {
     c->tx_busy = false;
+    if (c->io.pattern && now >= c->heard_ms + SILENT_MS && !(c->ctl_deaf && c->peer_ctl_deaf)) {
+        car_trace(c, "nothing of the peer's decoded in %d s: control at the floor",
+                  (int)((now - c->heard_ms) / 1000));
+        c->ctl_deaf = c->peer_ctl_deaf = true;
+    }
     if (!c->master) {                        /* S: its next slot is armed */
         c->s_tx_end = now;
         /* A poll moved my decoder to a rung M's rounds have not come on
@@ -2820,6 +2845,7 @@ static bool pattern_in_time(const car_t *c, uint64_t now)
 void car_on_pattern(car_t *c, uint64_t now, int kind)
 {
     c->last_carrier_ms = now;
+    c->heard_ms = now;
     c->rx_late = false;
     if (c->tx_busy || !(c->floor_waiting || c->pat_waiting)) return;
     if (!pattern_in_time(c, now)) {
@@ -2871,7 +2897,15 @@ void car_on_time(car_t *c, uint64_t now)
         if (due == CAR_T_M) m_timer(c, now);
         else if (due == CAR_T_S) s_slot(c, now);
         else if (due == CAR_T_W) {
-            if (c->rx_level == c->poll_level && c->s_prev_lv >= 0 && c->poll_level != c->s_prev_lv) {
+            /* Not off the floor once the silence fallback is due: M's control
+             * comes there after its own silence (SILENT_MS), and going back to
+             * the rung of an older poll took S off it for good (explorer,
+             * cliff:-5, a floor poll and two handovers lost: M sent MFSK
+             * control for 20 minutes to an S on DATAC4). */
+            if (c->rx_level == 0 && now >= c->heard_ms + S_FALLBACK_MS) {
+                car_trace(c, "rx: nothing from the peer in %d s -- staying at the floor",
+                          (int)((now - c->heard_ms) / 1000));
+            } else if (c->rx_level == c->poll_level && c->s_prev_lv >= 0 && c->poll_level != c->s_prev_lv) {
                 car_trace(c, "rx: no round on lv=%d -- back to lv=%d", c->poll_level, c->s_prev_lv);
                 c->round_seen = 0; c->round_frames = c->poll_n;
                 rx_measure(c, c->poll_level, now);
