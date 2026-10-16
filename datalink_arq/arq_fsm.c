@@ -14,6 +14,7 @@
 
 #include <limits.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include <strings.h>
 #include <stdint.h>
@@ -255,15 +256,15 @@ int arq_call_carrier(const arq_session_t *sess)
          ? arq_floor_mode(arq_get_bw()) : sess->control_mode;
 }
 
-/* The start level an ACCEPT names, 0..6 -- or 7, which no ladder level uses,
- * for "level 0, and I hear you below the control mode".  A floor-only
- * caller's first control from us would otherwise be its only way to learn
- * that, and at the floor we answer with patterns, which carry no bits: a
- * 1 KB transfer went by without one, and its DISCONNECT then went out on a
- * mode we could not hear (harness, forward below DATAC16). */
+/* The ACCEPT names the caller's start rung and says whether we hear it below
+ * the control mode (then the rung is the floor).  A floor-only caller's first
+ * control from us would otherwise be its only way to learn that, and at the
+ * floor we answer with patterns, which carry no bits: a 1 KB transfer went by
+ * without one, and its DISCONNECT then went out on a mode we could not hear
+ * (harness, forward below DATAC16). */
 static int accept_level(const arq_session_t *sess)
 {
-    return sess->car_ctl_deaf ? ARQ_ACCEPT_LEVEL_CTL_DEAF : sess->car_rx_level;
+    return sess->car_ctl_deaf ? 0 : sess->car_rx_level;
 }
 
 /* The callee's wait, from the end of an ACCEPT on this carrier, for the
@@ -296,7 +297,9 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
         const char *called = sess->local_call[0] ? sess->local_call : my_call;
         n = arq_protocol_build_accept(frame, sizeof(frame), sess->session_id,
                                       called, sess->remote_call, bw_hz,
-                                      accept_level(sess), sess->car_nonce);
+                                      accept_level(sess), sess->car_ctl_deaf,
+                                      sess->car_call_snr != 0.0f ? sess->car_call_snr : NAN,
+                                      sess->car_nonce);
         /* The ACCEPT is the carousel's first poll: from here the caller's
          * frames carry the session seed, and its first round comes on the rung
          * the ACCEPT names. */
@@ -324,7 +327,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
         if (mode != sess->control_mode)
             HLOGI(LOG_COMP, "%s on the MFSK floor (%s)", is_accept ? "ACCEPT" : "CALL",
                   is_accept ? "the CALL came on it" : "the fast CALLs went unanswered");
-        send_frame(PACKET_TYPE_ARQ_CALL, mode, (size_t)n, frame, 0);
+        send_frame(PACKET_TYPE_ARQ_CALL2, mode, (size_t)n, frame, 0);
     }
     else
         /* Almost always an over-long callsign: the 10-byte SRC slot holds ~14
@@ -832,6 +835,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
              * cannot hear us": the caller escalates just the same when it is
              * we who cannot hear its control-mode CALLs.) */
             sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
+            sess->car_call_snr = ev->rx_snr;
         }
         sess->car_peer_ctl_deaf = false;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
@@ -905,8 +909,9 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             ev->car_called_crc != arq_protocol_callsign_crc16(sess->remote_call))
             break;
         sess->pending_disconnect = false;
-        sess->car_peer_ctl_deaf = ev->car_level == ARQ_ACCEPT_LEVEL_CTL_DEAF;
+        sess->car_peer_ctl_deaf = ev->car_ctl_deaf;
         sess->car_tx_level = sess->car_peer_ctl_deaf ? 0 : ev->car_level;
+        sess->car_call_snr = ev->car_call_snr;
         if (sess->car_tx_level > session_max_level())
             sess->car_tx_level = session_max_level();
         sess->car_rx_level = session_start_level(ev->rx_snr);

@@ -38,6 +38,7 @@
 #define PACKET_TYPE_BROADCAST_CONTROL 0x03  /* broadcast/control frame type       */
 #define PACKET_TYPE_BROADCAST_DATA    0x04  /* broadcast/data frame type          */
 #define PACKET_TYPE_ARQ_CQ            0x05  /* compact DATAC16 CQ metadata frame  */
+#define PACKET_TYPE_ARQ_CALL2         0x06  /* CALL/ACCEPT of Mercury 2.0         */
 
 #define PACKET_TYPE_BITS   3    /* bits [7:5] of framer byte */
 #define PACKET_TYPE_SHIFT  5

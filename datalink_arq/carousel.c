@@ -346,7 +346,7 @@ typedef struct {
 
 typedef struct {
     int      type;
-    int      snr_level;
+    float    snr_db;      /* CTL: how its sender hears me, dB; NAN: no reading yet */
     uint32_t poll_id;
     int      left;
     bool     unopened;
@@ -370,20 +370,33 @@ typedef struct {
     uint64_t inline_end;            /* POLL: inline, its keydown ends then */
 } msg_t;
 
+/* A control frame's SNR: 6 bits, 1 dB from -24 to +38, 63 for none.  Three
+ * bits sit in b[11], two in its low bits, one in b[1]: the rung the field
+ * held in 1.9.x took the first three. */
+#define SNR_CODE_NONE 63
+static int snr_code(float db)
+{
+    if (isnan(db)) return SNR_CODE_NONE;
+    long v = lrintf(db) + 24;
+    return v < 0 ? 0 : v > SNR_CODE_NONE - 1 ? SNR_CODE_NONE - 1 : (int)v;
+}
+static float snr_of_code(int code) { return code == SNR_CODE_NONE ? NAN : (float)(code - 24); }
+
 static void encode_ctl(const msg_t *m, uint8_t *b)
 {
+    int snr = snr_code(m->snr_db);
     memset(b, 0, CAR_POLL_BYTES);
     int type = m->type == M_POLL ? 0 : m->type == M_REQ ? 1 : 2;
     b[0] = (uint8_t)(type << 6 | (m->has_data ? 1 : 0) << 5 | (m->poll_id & 0x0F) << 1 |
                      (m->ctl_deaf ? 1 : 0));
-    b[1] = (uint8_t)((m->level & 7) << 5 | (m->n & 0x0F) << 1);
+    b[1] = (uint8_t)((m->level & 7) << 5 | (m->n & 0x0F) << 1 | (snr & 1));
     b[2] = (uint8_t)((m->loss16 & 0x0F) << 4 | (m->base & 0x0F));
     uint64_t nb = 0;                          /* 8 x 7 bits, first block high */
     for (int o = 0; o < CAR_WIN; o++)
         nb = nb << 7 | (uint64_t)(m->need[o] == FB_UNSEEN ? 127 : m->need[o] & 0x7F);
     for (int i = 0; i < 7; i++) b[3 + i] = (uint8_t)(nb >> (8 * (6 - i)));
     b[10] = (uint8_t)(m->gap < 0 ? 255 : m->gap);
-    b[11] = (uint8_t)((m->snr_level & 7) << 5 | (m->h_level & 7) << 2);
+    b[11] = (uint8_t)((snr >> 3) << 5 | (m->h_level & 7) << 2 | ((snr >> 1) & 3));
     b[12] = (uint8_t)((m->h_n & 0x0F) << 4 | (m->h_id & 0x0F));
     b[13] = (uint8_t)((m->hi & 0x0F) << 4 | (m->unopened ? 1 : 0) << 3 | (m->short_rung ? 1 : 0) << 2 |
                       (m->backlog & 3));
@@ -429,7 +442,7 @@ static bool decode_ctl(const car_t *c, const uint8_t *b, size_t len, msg_t *m)
         m->need[o] = v == 127 ? FB_UNSEEN : v;
     }
     m->gap = b[10] == 255 ? -1 : b[10];
-    m->snr_level = b[11] >> 5;
+    m->snr_db = snr_of_code((b[11] >> 5) << 3 | (b[11] & 3) << 1 | (b[1] & 1));
     m->h_level = (b[11] >> 2) & 7;
     m->h_n = b[12] >> 4;
     m->h_id = b[12] & 0x0F;
@@ -437,7 +450,7 @@ static bool decode_ctl(const car_t *c, const uint8_t *b, size_t len, msg_t *m)
     m->unopened = (b[13] >> 3) & 1;
     m->short_rung = (b[13] >> 2) & 1;
     m->backlog = b[13] & 3;
-    if (m->level >= CAR_NLEVELS || m->h_level >= CAR_NLEVELS || m->snr_level >= CAR_NLEVELS) return false;
+    if (m->level >= CAR_NLEVELS || m->h_level >= CAR_NLEVELS) return false;
     /* ...and so do more frames than a keydown on the rung can hold: a poll
      * read with its size flipped had S key five MFSK frames, 72 s, into a
      * slot for one DATAC4 frame (explorer, corrupt byte 7 of an inline poll). */
@@ -1072,6 +1085,22 @@ static int probe_every(const car_t *c, int lv)
 
 static int cap_level(const car_t *c, int lv) { return lv > c->max_level ? c->max_level : lv; }
 
+/* How I hear the peer, for its control frames: the smoothed reading, or none
+ * before the first frame with one. */
+static float my_snr(const car_t *c) { return c->snr_valid ? c->snr_ema : NAN; }
+
+/* How the peer hears me, from its control frame: the rung that starts my
+ * direction follows it (it was the connect's, fixed, in 1.9.x).  A frame
+ * with no reading keeps what the ACCEPT or an earlier frame said. */
+static void take_peer_snr(car_t *c, uint64_t now, const msg_t *m)
+{
+    if (isnan(m->snr_db)) return;
+    c->peer_snr_db = m->snr_db;
+    c->peer_snr_ms = now;
+    c->peer_snr_level = cap_level(c, car_start_level(m->snr_db));
+    c->peer_level_known = true;
+}
+
 static int choose_level(const car_t *c, uint64_t now)
 {
     int best = -1;
@@ -1326,7 +1355,7 @@ static void fill_poll(car_t *c, msg_t *m)
             if (!h->got[i]) { m->gap = i; break; }
     m->loss16 = (int)lround(c->loss_est * 15.0);
     m->has_data = has_data(c);
-    m->snr_level = c->snr_level;
+    m->snr_db = my_snr(c);
     m->ctl_deaf = c->ctl_deaf;
     stamp_hint(c, m);
 }
@@ -1634,7 +1663,7 @@ static void send_status(car_t *c, uint8_t id)
     msg_t m;
     memset(&m, 0, sizeof(m));
     m.type = M_STATUS; m.poll_id = id;
-    m.hi = (uint8_t)(c->next_blk_id - 1); m.snr_level = c->snr_level;
+    m.hi = (uint8_t)(c->next_blk_id - 1); m.snr_db = my_snr(c);
     m.ctl_deaf = c->ctl_deaf;
     m.has_data = has_data(c); m.unopened = unopened(c);
     stamp_hint(c, &m);
@@ -1686,7 +1715,7 @@ static void send_req(car_t *c, uint8_t id)
     m.type = M_REQ; m.poll_id = id;
     m.level = c->last_lv >= 0 ? c->last_lv : 0; m.n = c->last_nf; m.h_id = c->last_mk;
     m.has_data = has_data(c); m.unopened = unopened(c);
-    m.hi = (uint8_t)(c->next_blk_id - 1); m.snr_level = c->snr_level; m.ctl_deaf = c->ctl_deaf;
+    m.hi = (uint8_t)(c->next_blk_id - 1); m.snr_db = my_snr(c); m.ctl_deaf = c->ctl_deaf;
     stamp_hint(c, &m);
     put_ctl(c, &fr[0], &m);
     keydown(c, fr, 1);
@@ -2302,8 +2331,7 @@ static void m_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 
 static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
 {
-    c->peer_snr_level = cap_level(c, m->snr_level);
-    c->peer_level_known = true;
+    take_peer_snr(c, now, m);
     if (m->type == M_POLL) {                 /* the peer's poll for my rounds */
         apply_need(c, m);
         c->peer_has_data = m->has_data;
@@ -2511,8 +2539,7 @@ static void s_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
 {
     s_heard_m(c, now);
-    c->peer_snr_level = cap_level(c, m->snr_level);
-    c->peer_level_known = true;
+    take_peer_snr(c, now, m);
     uint32_t d = d_of_mode(mode);
     uint64_t eh = now + TAIL_MS;
     if (m->type == M_POLL) {

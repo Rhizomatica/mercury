@@ -221,6 +221,9 @@ typedef struct {
     uint8_t  floor_blk;             /* the block my last floor round carried */
     int      peer_snr_level;        /* where the SNR the peer measures starts me */
     bool     peer_level_known;      /* ...as the peer reported it (ACCEPT, poll) */
+    float    peer_snr_db;           /* how the peer hears me, as its last control
+                                     * frame said (dB) */
+    uint64_t peer_snr_ms;           /* ...and when (0: never) */
     int      rx_data_lv;            /* the rung of the last data frame I took; -1 none */
     bool     peer_has_data;         /* the peer said it has data for me */
 
