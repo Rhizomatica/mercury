@@ -828,6 +828,10 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->call_rx_mode    = ev->mode;
         if (!same_session)
         {
+            /* A new session takes the CALL's bandwidth; a repeat keeps the
+             * session's, like its nonce and rung: the caller adopts whatever
+             * an ACCEPT of it says (specs/connect/ConnectHandshake.tla). */
+            arq_set_session_bw(ev->bw_hz, true);
             sess->car_nonce    = session_nonce();
             sess->car_rx_level = session_start_level(ev->rx_snr);   /* the ACCEPT names it */
             /* How the caller hears us it reports in its first frame, which
@@ -909,6 +913,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             ev->car_called_crc != arq_protocol_callsign_crc16(sess->remote_call))
             break;
         sess->pending_disconnect = false;
+        arq_set_session_bw(ev->bw_hz, false);
         sess->car_peer_ctl_deaf = ev->car_ctl_deaf;
         sess->car_tx_level = sess->car_peer_ctl_deaf ? 0 : ev->car_level;
         sess->car_call_snr = ev->car_call_snr;

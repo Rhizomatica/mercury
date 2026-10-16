@@ -91,6 +91,7 @@ typedef struct
      * it read our CALL at (0: unknown), its session nonce, and the CRC16 of
      * the callsign we called, which the FSM checks. */
     bool     from_control;
+    int      bw_hz;               /* RX_CALL / RX_ACCEPT: the bandwidth it advertises */
     int      car_level;
     bool     car_ctl_deaf;
     float    car_call_snr;
