@@ -223,6 +223,9 @@ void arq_discard_stale_rx(void);
  * @return 500, 2300, or 2750 when configured; otherwise 2300.
  */
 int arq_reported_bandwidth_hz(void);
+/* The FSM took a CALL (from_call: the session gets min(ours, its)) or an
+ * ACCEPT (the session gets its) advertising bw_hz. */
+void arq_set_session_bw(int bw_hz, bool from_call);
 
 /**
  * @brief Queue outbound payload bytes for ARQ transmission.

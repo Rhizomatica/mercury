@@ -101,6 +101,9 @@ int arq_get_bw(void)
     return arq_conn.bw;
 }
 
+/* Tests set the session bandwidth themselves (arq_test_session_bw_hz). */
+void arq_set_session_bw(int bw_hz, bool from_call) { (void)bw_hz; (void)from_call; }
+
 
 /* ---- freedv_gen_crc16 stub (CRC16-CCITT) ---- */
 

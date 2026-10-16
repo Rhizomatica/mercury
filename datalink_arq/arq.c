@@ -896,15 +896,23 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", caller);
     /* local = the one of our callsigns the caller dialed (primary or secondary) */
     snprintf(ev.local_call, CALLSIGN_MAX_SIZE, "%s", dialed_call);
-    pthread_mutex_lock(&g_conn_lock);
-    int local_bw = normalize_bandwidth_hz(arq_conn.bw);
-    if (is_accept)
-        arq_conn.session_bw = normalize_bandwidth_hz(bw_hz);
-    else
-        arq_conn.session_bw = normalize_bandwidth_hz(bw_hz < local_bw ? bw_hz : local_bw);
-    pthread_mutex_unlock(&g_conn_lock);
+    /* The bandwidth the frame advertises: the FSM makes it the session's when
+     * it takes the frame (arq_set_session_bw), not here -- another station's
+     * CALL, or a stray ACCEPT, would change the bandwidth of the session being
+     * answered, and its ends then capped their rungs and chose their floor
+     * apart. */
+    ev.bw_hz = bw_hz;
     evq_push(&ev);
     return true;
+}
+
+void arq_set_session_bw(int bw_hz, bool from_call)
+{
+    pthread_mutex_lock(&g_conn_lock);
+    int local_bw = normalize_bandwidth_hz(arq_conn.bw);
+    /* the callee answers with min(its own, the CALL's); the caller takes it */
+    arq_conn.session_bw = normalize_bandwidth_hz(from_call && local_bw < bw_hz ? local_bw : bw_hz);
+    pthread_mutex_unlock(&g_conn_lock);
 }
 
 bool arq_handle_incoming_cq_frame(uint8_t *data, size_t frame_size)
