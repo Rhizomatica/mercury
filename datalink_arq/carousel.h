@@ -140,6 +140,7 @@ typedef struct {
     int      snr_level;             /* where the SNR measured here starts the peer */
     int      max_level;             /* the highest rung the session's bandwidth
                                      * allows (car_set_max_level) */
+    int      floor_mode;            /* rung 0's mode (car_set_floor_mode) */
     bool     ctl_deaf;              /* I hear the peer below the control mode: its
                                      * control must reach me on MFSK (reported) */
     bool     peer_ctl_deaf;         /* ...and the peer, of me, as it reports */
@@ -273,6 +274,9 @@ void car_set_max_level(car_t *c, int lv);
 /* The highest rung a session bandwidth (Hz, VARA's BW500/BW2300/BW2750)
  * allows. */
 int  car_max_level_for_bw(int bw_hz);
+/* The session's floor, rung 0 (arq_floor_mode of its bandwidth): the 1 kHz
+ * MFSK unless set.  Both ends set the same, after car_init. */
+void car_set_floor_mode(car_t *c, int mode);
 /* Seed, from the connect exchange, whether each end hears the other below the
  * control mode (see ctl_on_floor in carousel.c).  Frames keep both current. */
 void car_seed_ctl_deaf(car_t *c, bool mine, bool peers);
@@ -303,7 +307,8 @@ void     car_on_time(car_t *c, uint64_t now);
 
 /* The ladder rung for an SNR, mapped the way trunk enters a mode from DATAC15. */
 int  car_start_level(float snr_db);
-int  car_level_mode(int level);
+int  car_level_mode(int level);              /* on the 1 kHz floor's ladder */
+int  car_session_level_mode(const car_t *c, int level);
 /* The session's piece size, from the rung the callee's ACCEPT starts the
  * caller's rounds on (both ends know it; the FSM also folds it into the
  * session seed, so ends that disagree hear none of each other's frames). */

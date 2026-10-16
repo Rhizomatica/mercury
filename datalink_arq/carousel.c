@@ -161,18 +161,25 @@ static uint32_t nav_lead(const car_t *c) { (void)c; return 0; }
 
 enum { M_DATA, M_POLL, M_REQ, M_STATUS };
 
-/* MFSK is the floor: ~10 dB below DATAC15, at 3 pieces per 13.5 s frame. */
+/* MFSK is the floor: ~10 dB below DATAC15, at 3 pieces per 13.5 s frame.
+ * A session's floor is its own (car_set_floor_mode): BW500's is the 500 Hz
+ * MFSK, the same frame in 26.2 s; every other rung is the same for all. */
 static const int LADDER[CAR_NLEVELS] = {
     MERCURY_MODE_MFSK,
     FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
     FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
 };
-
-static uint32_t burst_gap_ms(int lv)
+static int lmode(const car_t *c, int lv)
 {
-    return LADDER[lv] == FREEDV_MODE_QAM16C2 || LADDER[lv] == MERCURY_MODE_MFSK ? 200 : 100;
+    return lv == 0 && c->floor_mode ? c->floor_mode : LADDER[lv];
+}
+
+static uint32_t burst_gap_ms(const car_t *c, int lv)
+{
+    return lmode(c, lv) == FREEDV_MODE_QAM16C2 || mercury_mode_is_mfsk(lmode(c, lv)) ? 200 : 100;
 }
 int car_level_mode(int level) { return LADDER[level]; }
+int car_session_level_mode(const car_t *c, int level) { return lmode(c, level); }
 static bool has_data(const car_t *c);
 static bool peer_direction_done(const car_t *c);
 /* Nothing in flight either way.  The callee: no data of its own, and the
@@ -250,6 +257,7 @@ static uint32_t block_check(const car_t *c, uint8_t id, int K, const uint8_t (*p
 
 static int level_of_mode(int mode)
 {
+    if (mercury_mode_is_mfsk(mode)) return 0;      /* either floor */
     for (int lv = 0; lv < CAR_NLEVELS; lv++)
         if (LADDER[lv] == mode) return lv;
     return -1;
@@ -265,7 +273,7 @@ static uint64_t mode_air(int mode)
     const arq_mode_timing_t *tm = arq_protocol_mode_timing(mode);
     return tm ? (uint64_t)(tm->frame_duration_s * 1000.0f + 0.5f) : 4400;
 }
-static uint64_t level_air(int lv) { return mode_air(LADDER[lv]); }
+static uint64_t level_air(const car_t *c, int lv) { return mode_air(lmode(c, lv)); }
 
 /* ---- the control plane at the floor ----------------------------------------
  * Control frames go on the control mode (DATAC16).  A peer that hears me below
@@ -291,7 +299,7 @@ static bool peer_ctl_on_floor(const car_t *c) { return c->io.pattern && c->ctl_d
  * for a session that starts on the floor (car_start_sender / _receiver).
  * Arrays keep CAR_PIECE-byte rows; a piece uses the first piece_of(c). */
 static int piece_of(const car_t *c) { return c->piece ? c->piece : CAR_PIECE; }
-static int pieces_per_frame(const car_t *c, int lv) { return (mode_payload(LADDER[lv]) - FRAME_HDR - SEG_HDR) / piece_of(c); }
+static int pieces_per_frame(const car_t *c, int lv) { return (mode_payload(lmode(c, lv)) - FRAME_HDR - SEG_HDR) / piece_of(c); }
 /* A rung whose first frame holds an inline poll and still a piece: not the
  * floor, nor DATAC15. */
 static bool inline_ok(int lv)
@@ -308,26 +316,26 @@ static bool inline_poll(const car_t *c)
 {
     return c->tx_level > 0 && inline_ok(c->tx_level) && c->ok_lv == c->tx_level;
 }
-static uint64_t round_air(int lv, int n)
+static uint64_t round_air(const car_t *c, int lv, int n)
 {
-    return (uint64_t)n * level_air(lv) + (uint64_t)(n > 0 ? n - 1 : 0) * burst_gap_ms(lv);
+    return (uint64_t)n * level_air(c, lv) + (uint64_t)(n > 0 ? n - 1 : 0) * burst_gap_ms(c, lv);
 }
 
 /* A turn lasts TURN_QUANTUM_MS, but never less than two full rounds on the
  * rung in use: each change of direction costs a control exchange, and at
  * the floor, where a round alone is 28 s, a 30 s turn changed direction
  * every round (sim, fade:-5 both ways: 132 changes, a poll each). */
-static int keydown_cap(int lv);
+static int keydown_cap(const car_t *c, int lv);
 static int round_n(const car_t *c);
 static bool both_ok(const car_t *c, int lv);
 static bool offer_both(car_t *c, uint64_t now);
 static size_t m_peer_expect(const car_t *c);
-static uint64_t turn_quantum(int lv)
+static uint64_t turn_quantum(const car_t *c, int lv)
 {
-    uint64_t two = 2 * round_air(lv, keydown_cap(lv));
+    uint64_t two = 2 * round_air(c, lv, keydown_cap(c, lv));
     return two > TURN_QUANTUM_MS ? two : TURN_QUANTUM_MS;
 }
-static uint64_t turn_cap(int lv) { return turn_quantum(lv) + (TURN_CAP_MS - TURN_QUANTUM_MS); }
+static uint64_t turn_cap(const car_t *c, int lv) { return turn_quantum(c, lv) + (TURN_CAP_MS - TURN_QUANTUM_MS); }
 
 /* ---- messages ------------------------------------------------------------ */
 typedef struct {
@@ -389,18 +397,18 @@ static void put_ctl(const car_t *c, car_frame_t *f, const msg_t *m)
     if (ctl_on_floor(c)) {
         /* A frame fills its mode: the modem refuses anything shorter (on
          * the real modem a 15-byte MFSK control frame never went out). */
-        int room = mode_payload(LADDER[0]);
+        int room = mode_payload(lmode(c, 0));
         memset(f->bytes, 0, (size_t)room);
         f->bytes[0] = CTL_FLOOR_MARK;
         encode_ctl(m, f->bytes + 1);
-        f->mode = LADDER[0]; f->len = room;
+        f->mode = lmode(c, 0); f->len = room;
     } else {
         encode_ctl(m, f->bytes);
         f->mode = ARQ_CONTROL_MODE; f->len = CAR_POLL_BYTES;
     }
 }
 
-static bool decode_ctl(const uint8_t *b, size_t len, msg_t *m)
+static bool decode_ctl(const car_t *c, const uint8_t *b, size_t len, msg_t *m)
 {
     if (len < CAR_POLL_BYTES) return false;
     memset(m, 0, sizeof(*m));
@@ -433,7 +441,7 @@ static bool decode_ctl(const uint8_t *b, size_t len, msg_t *m)
     /* ...and so do more frames than a keydown on the rung can hold: a poll
      * read with its size flipped had S key five MFSK frames, 72 s, into a
      * slot for one DATAC4 frame (explorer, corrupt byte 7 of an inline poll). */
-    if (m->n > keydown_cap(m->level) || m->h_n > keydown_cap(m->h_level)) return false;
+    if (m->n > keydown_cap(c, m->level) || m->h_n > keydown_cap(c, m->h_level)) return false;
     /* Out-of-range fields mean a corrupt frame that passed its CRC: drop it
      * rather than act on it (spec risk R19). */
     for (int o = 0; o < CAR_WIN; o++)
@@ -587,7 +595,7 @@ static void keydown(car_t *c, car_frame_t *fr, int n)
 static void bind_rx(car_t *c, int lv)
 {
     c->rx_level = lv;
-    if (c->io.bind_rx) c->io.bind_rx(c->io.ctx, LADDER[lv]);
+    if (c->io.bind_rx) c->io.bind_rx(c->io.ctx, lmode(c, lv));
 }
 
 /* ---- sender --------------------------------------------------------------- *
@@ -620,7 +628,7 @@ static bool unopened(const car_t *c)
 #endif
 static int block_k_for(const car_t *c, int lv)
 {
-    int frames = (int)((BLOCK_AIR_MS + level_air(lv) - 1) / level_air(lv));
+    int frames = (int)((BLOCK_AIR_MS + level_air(c, lv) - 1) / level_air(c, lv));
     int k = frames * pieces_per_frame(c, lv);
     return k < BLOCK_MIN_K ? BLOCK_MIN_K : k > CAR_MAX_K ? CAR_MAX_K : k;
 }
@@ -724,7 +732,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
         if (fb) { car_sblock_t t = c->sb[0]; c->sb[0] = c->sb[fb]; c->sb[fb] = t; }
         c->nsb = 1; c->floor_blk = c->sb[0].id;
     }
-    int mode = LADDER[lv];
+    int mode = lmode(c, lv);
     int room = mode_payload(mode);
 
     /* What each open block still needs, with a margin for the loss seen. */
@@ -742,7 +750,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
         car_frame_t *x = &fr[nf];
         memset(x->bytes, 0, (size_t)room);
         x->mode = mode; x->len = (size_t)room;
-        x->gap_ms = nf ? burst_gap_ms(lv) : 0;
+        x->gap_ms = nf ? burst_gap_ms(c, lv) : 0;
         int pos = FRAME_HDR + (nf ? 0 : reserve0), nseg = 0;
         uint8_t last_block = 0;
         /* The piece the receiver's in-order stream waits for goes first, so
@@ -806,7 +814,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
     return nf;
 }
 
-static int keydown_cap(int lv);
+static int keydown_cap(const car_t *c, int lv);
 
 /* ---- link adaptation: goodput, measured per level ------------------------ *
  * With erasure coding every piece received is useful, so a level's goodput is
@@ -828,7 +836,7 @@ static int keydown_cap(int lv);
 
 static double level_rate(const car_t *c, int lv)   /* raw piece bytes per ms of airtime */
 {
-    return (double)(pieces_per_frame(c, lv) * piece_of(c)) / (double)level_air(lv);
+    return (double)(pieces_per_frame(c, lv) * piece_of(c)) / (double)level_air(c, lv);
 }
 
 /* Delivery estimated from frame counts, not from single rounds: at 25 % flat
@@ -987,7 +995,7 @@ static uint64_t round_overhead(const car_t *c, int lv)
 {
     return lv == 0 && c->io.pattern ? FLOOR_OVERHEAD_MS : ROUND_OVERHEAD_MS;
 }
-static int keydown_cap(int lv);
+static int keydown_cap(const car_t *c, int lv);
 /* For bounds (tests/sim/carousel_bound.c): a rung's geometry as the carousel
  * itself sees it -- data bytes per frame, frames per full keydown, that
  * keydown's airtime and the fixed cost of a round around it. */
@@ -996,23 +1004,23 @@ void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *f
 {
     static const car_t z;   /* the overhead macros read c: no session, no NAV lead */
     const car_t *c = &z;
-    int n = keydown_cap(lv);
+    int n = keydown_cap(c, lv);
     if (bytes_per_frame) *bytes_per_frame = pieces_per_frame(c, lv) * CAR_PIECE;
     if (frames) *frames = n;
-    if (round_air_ms) *round_air_ms = round_air(lv, n);
+    if (round_air_ms) *round_air_ms = round_air(c, lv, n);
     if (overhead_ms) *overhead_ms = lv == 0 && floor_patterns ? FLOOR_OVERHEAD_MS : ROUND_OVERHEAD_MS;
 }
 
-static int keydown_cap(int lv)
+static int keydown_cap(const car_t *c, int lv)
 {
-    int cap = (int)(MAX_KEYDOWN_MS / level_air(lv));
+    int cap = (int)(MAX_KEYDOWN_MS / level_air(c, lv));
     bool slow = LADDER[lv] == FREEDV_MODE_DATAC15 || LADDER[lv] == FREEDV_MODE_DATAC4;
     if (slow && cap > SLOW_RUNG_FRAMES) cap = SLOW_RUNG_FRAMES;
     return cap > 15 ? 15 : cap < 1 ? 1 : cap;                          /* 4 bits */
 }
 static double air_fraction(const car_t *c, int lv, int frames)
 {
-    double air = (double)round_air(lv, frames);
+    double air = (double)round_air(c, lv, frames);
     return air / (air + (double)round_overhead(c, lv));
 }
 /* The round a rung has earned: one frame more than it recently delivered,
@@ -1036,11 +1044,11 @@ static int level_earned(const car_t *c, int lv)
 static double level_goodput(const car_t *c, int lv)
 {
     int earned = level_earned(c, lv);
-    int frames = earned < keydown_cap(lv) ? earned : keydown_cap(lv);
+    int frames = earned < keydown_cap(c, lv) ? earned : keydown_cap(c, lv);
     return level_rate(c, lv) * level_delivery(c, lv) * air_fraction(c, lv, frames);
 }
 /* The most a rung could deliver: no loss, full rounds. */
-static double level_potential(const car_t *c, int lv) { return level_rate(c, lv) * air_fraction(c, lv, keydown_cap(lv)); }
+static double level_potential(const car_t *c, int lv) { return level_rate(c, lv) * air_fraction(c, lv, keydown_cap(c, lv)); }
 
 /* A measured rung above the best is probed again every PROBE_EVERY polls,
  * twice as long after each round in a row on it that lost half its frames
@@ -1142,7 +1150,7 @@ static int peer_outstanding(const car_t *c)
  * here -- what is still needed. */
 static int poll_size(const car_t *c, int lv, uint64_t now)
 {
-    int cap = keydown_cap(lv);
+    int cap = keydown_cap(c, lv);
     int earned = level_earned(c, lv);
     if (cap > earned) cap = earned;
     /* With my own data waiting, the peer's turn ends at TURN_CAP_MS: ask
@@ -1151,8 +1159,8 @@ static int poll_size(const car_t *c, int lv, uint64_t now)
      * turns; S asks only for M's rounds.) */
     if (c->master && has_data(c)) {
         uint64_t held = now - c->phase_start;
-        int64_t left = (int64_t)turn_cap(lv) - (int64_t)held;
-        int fit = left > 0 ? (int)(left / (int64_t)(level_air(lv) + burst_gap_ms(lv))) : 1;
+        int64_t left = (int64_t)turn_cap(c, lv) - (int64_t)held;
+        int fit = left > 0 ? (int)(left / (int64_t)(level_air(c, lv) + burst_gap_ms(c, lv))) : 1;
         if (fit < 1) fit = 1;
         if (cap > fit) cap = fit;
     }
@@ -1277,8 +1285,8 @@ static int short_rung(const car_t *c, int lv, size_t bytes, int *pn)
         int ppf = pieces_per_frame(c, l);
         if (ppf < 1) continue;
         int n = (pieces + ppf - 1) / ppf;
-        if (n > keydown_cap(l)) continue;
-        uint64_t a = round_air(l, n);
+        if (n > keydown_cap(c, l)) continue;
+        uint64_t a = round_air(c, l, n);
         if (a < best_air) { best_air = a; best = l; best_n = n; }
     }
     if (best != lv) *pn = best_n;
@@ -1405,7 +1413,7 @@ enum { ANC_POLL, ANC_DONE, ANC_ROUND, ANC_REQ, ANC_PATTERN, ANC_BOTH };
 static uint32_t ctl_air_max(const car_t *c)
 {
     uint64_t a = mode_air(ARQ_CONTROL_MODE);
-    if (c->io.pattern && level_air(0) > a) a = level_air(0);
+    if (c->io.pattern && level_air(c, 0) > a) a = level_air(c, 0);
     return (uint32_t)a;
 }
 /* The longest S keydown of each kind.  S's control goes on MFSK when the
@@ -1414,19 +1422,19 @@ static uint32_t ctl_air_max(const car_t *c)
  * an answer to my keydown, s_ctl_ms the most it can be. */
 static uint32_t s_ctl_for(const car_t *c, bool deaf)
 {
-    return LEAD_MAX_MS + (uint32_t)(deaf && c->io.pattern ? level_air(0) : mode_air(ARQ_CONTROL_MODE)) + TAIL_MS;
+    return LEAD_MAX_MS + (uint32_t)(deaf && c->io.pattern ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) + TAIL_MS;
 }
 static uint32_t s_ctl_ms(const car_t *c) { return LEAD_MAX_MS + ctl_air_max(c) + TAIL_MS; }
-static uint32_t s_round_ms(int lv, int n) { return LEAD_MAX_MS + (uint32_t)round_air(lv, n) + TAIL_MS; }
+static uint32_t s_round_ms(const car_t *c, int lv, int n) { return LEAD_MAX_MS + (uint32_t)round_air(c, lv, n) + TAIL_MS; }
 static uint32_t s_pat_ms(void) { return LEAD_MAX_MS + PATTERN_AIR_MS + TAIL_MS; }
-static uint32_t r_cap_ms(void)
+static uint32_t r_cap_ms(const car_t *c)
 {
     uint32_t m = 0;
     for (int lv = 0; lv < CAR_NLEVELS; lv++)
-        if (s_round_ms(lv, keydown_cap(lv)) > m) m = s_round_ms(lv, keydown_cap(lv));
+        if (s_round_ms(c, lv, keydown_cap(c, lv)) > m) m = s_round_ms(c, lv, keydown_cap(c, lv));
     return m;
 }
-static uint32_t d_of_mode(int mode) { return mode == MERCURY_MODE_MFSK ? D_MFSK_MS : D_OFDM_MS; }
+static uint32_t d_of_mode(int mode) { return mercury_mode_is_mfsk(mode) ? D_MFSK_MS : D_OFDM_MS; }
 /* The slot period of an anchor S learned up to d late, whose rounds are at
  * most r: the round, then room for M to hear it end (however late it began)
  * and answer with control, guarded.  A continuation slot opens only after
@@ -1437,7 +1445,7 @@ static uint32_t slot_period(const car_t *c, uint32_t d, uint32_t r)
 {
     return r + d + (c->io.pattern ? D_MFSK_MS : D_OFDM_MS) + 2 * TURN_G_MS + s_ctl_ms(c);
 }
-static uint32_t r_floor_ms(void) { return s_round_ms(0, keydown_cap(0)); }
+static uint32_t r_floor_ms(const car_t *c) { return s_round_ms(c, 0, keydown_cap(c, 0)); }
 
 /* ---- M: where S may be ---- */
 static uint64_t mslot_lo(const car_t *c, const car_mlog_t *l, int i)
@@ -1613,7 +1621,7 @@ static void send_pattern(car_t *c, int kind)
     c->rx_break = false;
     c->seq_at_ask = c->deliver_seq;
     if (c->poll_level == 0)
-        c->poll_n = keydown_cap(0);     /* what a sender streaming the floor sends */
+        c->poll_n = keydown_cap(c, 0);     /* what a sender streaming the floor sends */
     c->round_seen = 0; c->round_frames = c->poll_n; c->status_seen = false;
     c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
     c->tx_busy = true;
@@ -1645,7 +1653,7 @@ static void send_status(car_t *c, uint8_t id)
 static int round_n(const car_t *c)
 {
     int n = c->tx_n;
-    if (!c->master || c->tx_level <= 0 || n >= keydown_cap(c->tx_level)) return n;
+    if (!c->master || c->tx_level <= 0 || n >= keydown_cap(c, c->tx_level)) return n;
     double margin = c->tx_loss * 1.3 + 0.05;
     int pieces = 0;
     for (int b = 0; b < c->nsb; b++) pieces += (int)ceil(c->sb[b].need * (1.0 + margin));
@@ -1707,7 +1715,7 @@ static bool tx_on_pattern(car_t *c, int kind)
     }
     c->floor_waiting = false;
     c->floor_silent = 0;
-    c->tx_n = keydown_cap(0);              /* streaming: full floor rounds */
+    c->tx_n = keydown_cap(c, 0);              /* streaming: full floor rounds */
     /* "The block you are on is in": only for the block my last round carried,
      * and never for one the receiver cannot have decoded yet.  It stops the
      * block; only a poll retires it (spec risk R5, specs/carousel). */
@@ -1873,14 +1881,14 @@ static uint64_t kind_len(const car_t *c, int kind)
 {
     uint64_t head = 110 + nav_lead(c);
     switch (kind) {
-    case KD_ROUND:         return head + round_air(c->tx_level, round_n(c)) + TAIL_MS;
+    case KD_ROUND:         return head + round_air(c, c->tx_level, round_n(c)) + TAIL_MS;
     case KD_BOTH:          if (inline_poll(c))
-                               return head + round_air(c->tx_level, round_n(c)) + TAIL_MS;
-                           return head + (ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE)) +
-                                  CHAIN_GAP_MS + round_air(c->tx_level, round_n(c)) + TAIL_MS;
+                               return head + round_air(c, c->tx_level, round_n(c)) + TAIL_MS;
+                           return head + (ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) +
+                                  CHAIN_GAP_MS + round_air(c, c->tx_level, round_n(c)) + TAIL_MS;
     case KD_PATTERN_ACK:
     case KD_PATTERN_BREAK: return 110 + PATTERN_AIR_MS + TAIL_MS;
-    default:               return head + (ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE)) + TAIL_MS;
+    default:               return head + (ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) + TAIL_MS;
     }
 }
 static uint64_t plan_len(const car_t *c) { return kind_len(c, c->plan); }
@@ -1908,7 +1916,7 @@ static void m_key_plan(car_t *c)
     switch (kind) {
     case KD_POLL: {
         int lv = c->plan_lv, n = c->plan_n;
-        uint32_t rr = n ? s_round_ms(lv, n) : 0;
+        uint32_t rr = n ? s_round_ms(c, lv, n) : 0;
         int k = n && lv == 0 && c->io.pattern ? K_FLOOR : 0;
         m_note(c, KD_POLL, rr > ctl ? rr : ctl, my_ctl_d(c), k, rr);
         send_poll(c, lv, n, id);
@@ -1919,13 +1927,13 @@ static void m_key_plan(car_t *c)
          * one keydown no longer than the two (no continuations: the next
          * exchange is mine to start). */
         int lv = c->plan_lv, n = c->plan_n;
-        uint32_t rr = ctl + CHAIN_GAP_MS + s_round_ms(lv, n);
-        uint32_t d = my_ctl_d(c), dr = d_of_mode(LADDER[c->tx_level >= 0 ? c->tx_level : 0]);
+        uint32_t rr = ctl + CHAIN_GAP_MS + s_round_ms(c, lv, n);
+        uint32_t d = my_ctl_d(c), dr = d_of_mode(lmode(c, c->tx_level >= 0 ? c->tx_level : 0));
         m_note(c, KD_BOTH, rr, d > dr ? d : dr, 0, 0);
         if (peer_ctl_on_floor(c) && lv > 0) bind_rx(c, 0);
         if (!send_poll_ex(c, lv, n, id, true))            /* nothing of mine after all */
-            m_note(c, KD_POLL, s_round_ms(lv, n) > ctl ? s_round_ms(lv, n) : ctl, my_ctl_d(c),
-                   n && lv == 0 && c->io.pattern ? K_FLOOR : 0, s_round_ms(lv, n));
+            m_note(c, KD_POLL, s_round_ms(c, lv, n) > ctl ? s_round_ms(c, lv, n) : ctl, my_ctl_d(c),
+                   n && lv == 0 && c->io.pattern ? K_FLOOR : 0, s_round_ms(c, lv, n));
         break;
     }
     case KD_DONE:
@@ -1940,18 +1948,18 @@ static void m_key_plan(car_t *c)
          * the floor a full floor round, continued while it hears nothing.
          * Otherwise any round, and continuations if it is at the floor.  A
          * pattern carries no control-deaf bit: S's status may be either mode. */
-        uint32_t cm = s_ctl_ms(c), r = r_cap_ms();
+        uint32_t cm = s_ctl_ms(c), r = r_cap_ms(c);
         bool known = c->round_seen > 0, floor = c->poll_level == 0 && c->io.pattern;
-        if (known) r = floor ? r_floor_ms() : s_round_ms(c->poll_level, c->poll_n);
+        if (known) r = floor ? r_floor_ms(c) : s_round_ms(c, c->poll_level, c->poll_n);
         int k = c->io.pattern && (!known || floor) ? K_FLOOR : 0;
-        m_note(c, kind, r > cm ? r : cm, D_PAT_MS, k, r_floor_ms());
+        m_note(c, kind, r > cm ? r : cm, D_PAT_MS, k, r_floor_ms(c));
         send_pattern(c, kind == KD_PATTERN_BREAK ? CAR_PATTERN_BREAK : CAR_PATTERN_ACK);
         break;
     }
     case KD_ROUND:
         /* S answers my round with its poll or a pattern, which I listen for:
          * its control comes on MFSK when I hear it below the control mode. */
-        m_note(c, KD_ROUND, ctl > s_pat_ms() ? ctl : s_pat_ms(), d_of_mode(LADDER[c->tx_level]), 0, 0);
+        m_note(c, KD_ROUND, ctl > s_pat_ms() ? ctl : s_pat_ms(), d_of_mode(lmode(c, c->tx_level)), 0, 0);
         if (peer_ctl_on_floor(c)) bind_rx(c, 0);
         if (!send_round(c, id)) m_note(c, KD_REQ, ctl, my_ctl_d(c), 0, 0);  /* a status went */
         break;
@@ -2145,7 +2153,7 @@ static void m_decide_send(car_t *c, uint64_t now)
 {
     bool answered = c->s_answered;
     if (answered) c->reqs = 0;
-    if (c->peer_has_data && (!has_data(c) || now - c->phase_start >= turn_quantum(c->tx_level > 0 ? c->tx_level : 0))) {
+    if (c->peer_has_data && (!has_data(c) || now - c->phase_start >= turn_quantum(c, c->tx_level > 0 ? c->tx_level : 0))) {
         car_trace(c, "turn: the peer's (%s)", has_data(c) ? "quantum" : "I am done");
         m_start_recv(c, now);
         return;
@@ -2222,7 +2230,7 @@ static void m_decide_recv(car_t *c, uint64_t now)
     bool done = peer_direction_done(c);
     uint64_t held = now - c->phase_start;
     bool quantum = !both_ok(c, c->poll_level) &&
-                   ((c->done_in_round && held >= turn_quantum(c->poll_level)) || held >= turn_cap(c->poll_level));
+                   ((c->done_in_round && held >= turn_quantum(c, c->poll_level)) || held >= turn_cap(c, c->poll_level));
     if (has_data(c) && (done || quantum)) {
         if (c->tx_level < 0) { c->tx_level = c->peer_snr_level; c->tx_n = 1; }
         if (done && offer_both(c, now)) return;
@@ -2288,7 +2296,7 @@ static void m_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
     c->traffic = true;
     c->peer_data_ms = now;
     rx_frame(c, m, lv, m->poll_id == c->poll_id);
-    m_heard_end(c, now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS,
+    m_heard_end(c, now + (uint64_t)m->left * (level_air(c, lv) + burst_gap_ms(c, lv)) + TAIL_MS,
                 (int)m->poll_id, m->pat_anchor, m->slot);
 }
 
@@ -2324,7 +2332,7 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
         if (m->h_n) {                        /* its round follows, in this keydown */
             c->peer_hi = resolve16(c->rbase, m->hi);
             c->peer_hi_known = true; c->peer_unopened = m->unopened;
-            m_heard_end(c, m->inline_end ? m->inline_end : now + CHAIN_GAP_MS + round_air(m->h_level, m->h_n) + TAIL_MS,
+            m_heard_end(c, m->inline_end ? m->inline_end : now + CHAIN_GAP_MS + round_air(c, m->h_level, m->h_n) + TAIL_MS,
                         (int)m->poll_id, false, 0);
             return;
         }
@@ -2497,7 +2505,7 @@ static void s_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
     rx_frame(c, m, lv, true);
     c->s_prev_lv = lv;
     s_anchor(c, ANC_ROUND, (uint8_t)m->poll_id,
-             now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS, d_of_mode(LADDER[lv]), 0, 0);
+             now + (uint64_t)m->left * (level_air(c, lv) + burst_gap_ms(c, lv)) + TAIL_MS, d_of_mode(lmode(c, lv)), 0, 0);
 }
 
 static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
@@ -2523,15 +2531,15 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
             c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
             c->peer_hi = resolve16(c->rbase, m->hi);
             c->peer_hi_known = true; c->peer_unopened = m->unopened;
-            uint32_t dr = d_of_mode(LADDER[m->h_level]);
+            uint32_t dr = d_of_mode(lmode(c, m->h_level));
             if (m->inline_end) s_anchor(c, ANC_BOTH, (uint8_t)m->poll_id, m->inline_end, dr, 0, 0);
-            else s_anchor(c, ANC_BOTH, (uint8_t)m->poll_id, eh + CHAIN_GAP_MS + round_air(m->h_level, m->h_n),
+            else s_anchor(c, ANC_BOTH, (uint8_t)m->poll_id, eh + CHAIN_GAP_MS + round_air(c, m->h_level, m->h_n),
                           d > dr ? d : dr, 0, 0);
         } else if (m->n) {
             c->tx_level = cap_level(c, m->level); c->tx_n = m->n;
             car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
             bool fl = m->level == 0 && c->io.pattern;
-            s_anchor(c, ANC_POLL, (uint8_t)m->poll_id, eh, d, fl ? K_FLOOR : 0, s_round_ms(m->level, m->n));
+            s_anchor(c, ANC_POLL, (uint8_t)m->poll_id, eh, d, fl ? K_FLOOR : 0, s_round_ms(c, m->level, m->n));
         } else {
             s_anchor(c, ANC_DONE, (uint8_t)m->poll_id, eh, d, 0, 0);
         }
@@ -2589,6 +2597,12 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->s_prev_lv = c->ok_lv = -1;
     c->rx_data_lv = -1;
     c->max_level = CAR_NLEVELS - 1;
+    c->floor_mode = MERCURY_MODE_MFSK;
+}
+
+void car_set_floor_mode(car_t *c, int mode)
+{
+    c->floor_mode = mercury_mode_is_mfsk(mode) ? mode : MERCURY_MODE_MFSK;
 }
 
 /* The top rung of each session bandwidth.  A BW500 session keeps everything
@@ -2636,12 +2650,12 @@ int car_piece_for_start(int caller_start_level)
 
 int car_piece(const car_t *c) { return piece_of(c); }
 
-int car_ui_tx_mode(const car_t *c) { return c->last_nf > 0 && c->last_lv >= 0 && c->last_lv < CAR_NLEVELS ? LADDER[c->last_lv] : -1; }
-int car_ui_rx_mode(const car_t *c) { return c->rx_data_lv >= 0 ? LADDER[c->rx_data_lv] : -1; }
+int car_ui_tx_mode(const car_t *c) { return c->last_nf > 0 && c->last_lv >= 0 && c->last_lv < CAR_NLEVELS ? lmode(c, c->last_lv) : -1; }
+int car_ui_rx_mode(const car_t *c) { return c->rx_data_lv >= 0 ? lmode(c, c->rx_data_lv) : -1; }
 int car_ui_peer_mode(const car_t *c)
 {
     return c->peer_level_known && c->peer_snr_level >= 0 && c->peer_snr_level < CAR_NLEVELS
-           ? LADDER[c->peer_snr_level] : -1;
+           ? lmode(c, c->peer_snr_level) : -1;
 }
 
 /* The caller: the session's timing master.  The callee's ACCEPT named the
@@ -2707,9 +2721,9 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
             car_trace(c, "I hear the peer %s the control mode (%.1f dB)", deaf ? "below" : "above", c->snr_ema);
         }
     }
-    bool ctl = control && decode_ctl(bytes, len, &m);
+    bool ctl = control && decode_ctl(c, bytes, len, &m);
     if (!control && len >= 1 + CAR_POLL_BYTES && bytes[0] == CTL_FLOOR_MARK)   /* control, on the floor */
-        ctl = decode_ctl(bytes + 1, len - 1, &m);
+        ctl = decode_ctl(c, bytes + 1, len - 1, &m);
     if (control || ctl) {
         if (!ctl) return;
         note_peer_ctl_deaf(c, m.ctl_deaf);
@@ -2720,12 +2734,12 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     }
     int lv = level_of_mode(mode);
     if (lv < 0 || !decode_data(bytes, len, &m, piece_of(c))) return;
-    if (m.left >= keydown_cap(lv)) return;   /* corrupt: no keydown on the rung is that long */
+    if (m.left >= keydown_cap(c, lv)) return;   /* corrupt: no keydown on the rung is that long */
     note_peer_ctl_deaf(c, m.ctl_deaf);
     msg_t k;
-    if (m.has_ctl && lv == c->rx_level && decode_ctl(m.ctl, CAR_POLL_BYTES, &k) && k.type == M_POLL && k.h_n) {
+    if (m.has_ctl && lv == c->rx_level && decode_ctl(c, m.ctl, CAR_POLL_BYTES, &k) && k.type == M_POLL && k.h_n) {
         /* the poll first: it says what the round it rides in is */
-        k.inline_end = now + (uint64_t)m.left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS;
+        k.inline_end = now + (uint64_t)m.left * (level_air(c, lv) + burst_gap_ms(c, lv)) + TAIL_MS;
         c->peer_short = k.short_rung; c->peer_backlog = k.backlog;
         if (c->master) m_on_ctl(c, now, &k);
         else           s_on_ctl(c, now, &k, mode);
@@ -2746,7 +2760,7 @@ void car_on_tx_done(car_t *c, uint64_t now)
         if (c->s_asked_new) {
             c->s_asked_new = false;
             uint64_t round_end = now + D_OFDM_MS + TURN_G_MS + LEAD_MAX_MS +
-                                 round_air(c->poll_level, c->poll_n) + TAIL_MS + d_of_mode(LADDER[c->poll_level]);
+                                 round_air(c, c->poll_level, c->poll_n) + TAIL_MS + d_of_mode(lmode(c, c->poll_level));
             arm(c, CAR_T_W, round_end);
         }
         return;
@@ -2797,7 +2811,7 @@ void car_on_pattern(car_t *c, uint64_t now, int kind)
          * names no keydown; my rounds keep the poll id they follow. */
         s_heard_m(c, now);
         c->ok_lv = c->last_lv;
-        s_anchor(c, ANC_PATTERN, 0xFF, now, D_PAT_MS, c->tx_level == 0 && c->io.pattern ? K_FLOOR : 0, r_floor_ms());
+        s_anchor(c, ANC_PATTERN, 0xFF, now, D_PAT_MS, c->tx_level == 0 && c->io.pattern ? K_FLOOR : 0, r_floor_ms(c));
     }
 }
 
@@ -2852,7 +2866,7 @@ uint64_t car_drain_budget_ms(const car_t *c)
 {
     int lv = c->tx_level >= 0 ? c->tx_level : 0;
     if (c->poll_level < lv) lv = c->poll_level;          /* the slower way */
-    uint64_t exchange = (uint64_t)s_round_ms(lv, keydown_cap(lv)) + s_ctl_ms(c) + 2 * TG_MS +
+    uint64_t exchange = (uint64_t)s_round_ms(c, lv, keydown_cap(c, lv)) + s_ctl_ms(c) + 2 * TG_MS +
                         D_MFSK_MS + 2 * TURN_G_MS;
     return 3 * exchange;
 }

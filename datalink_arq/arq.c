@@ -868,10 +868,10 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     if (rc == -2)
     {
         /* Bytes 2-3 are the called CRC in every version, so this is a call
-         * for us from an older release, 1.9.18 or 1.9.x: the
+         * for us from an older release, 1.9.19, 1.9.18 or 1.9.x: the
          * versions do not connect (docs/CAROUSEL-ARQ.md, "Wire formats"). */
         if (!is_accept)
-            HLOGW(LOG_COMP, "CALL for %s from another protocol version (Mercury 1.9.18 or older?): not answered",
+            HLOGW(LOG_COMP, "CALL for %s from another protocol version (Mercury 1.9.19 or older?): not answered",
                   dialed_call);
         return false;
     }
@@ -1015,6 +1015,7 @@ int arq_init(size_t frame_size, int mode)
         .send_keydown        = cb_send_keydown,
         .send_pattern        = cb_send_pattern,
         .set_crc_seed        = arq_modem_crc_seed,
+        .set_floor_mode      = arq_modem_floor_mode,
     };
     arq_fsm_set_callbacks(&cbs);
     arq_fsm_set_timing(&g_timing);
@@ -1256,6 +1257,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     if (!snapshot || !g_initialized) return false;
     int backlog = cb_tx_backlog();   /* takes g_app_tx_mtx; compute before g_sess_lock */
     int trx     = arq_get_trx();     /* takes g_conn_lock (leaf); before g_sess_lock */
+    int own_bw  = arq_get_bw();      /* likewise */
     pthread_mutex_lock(&g_sess_lock);
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
@@ -1269,6 +1271,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
      * MFSK CALLs arrived mid-ACCEPTING, and the call never connected. */
     snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING ||
                                      g_sess.conn_state == ARQ_CONN_ACCEPTING);
+    snapshot->listen_floor_mode = arq_floor_mode(normalize_bandwidth_hz(own_bw));
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
     snapshot->payload_mode      = g_sess.payload_mode;

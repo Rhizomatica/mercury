@@ -347,11 +347,11 @@ static bool io_peer_keyed(void *ctx)
             bool bound = l->bound_at <= p->kd[i].start;
             if (!p->kd[i].sync) continue;
             if (m == SIM_MODE_PATTERN) {
-                if (l->rx_mode == MERCURY_MODE_MFSK && bound) from = p->kd[i].start;
+                if (mercury_mode_is_mfsk(l->rx_mode) && bound) from = p->kd[i].start;
             } else if (m == ARQ_CONTROL_MODE || (m == l->rx_mode && bound)) {
                 /* The MFSK preamble search takes longer to be sure: under a
                  * second at -7 dB (test_mfsk_modem), more near its floor. */
-                from = p->kd[i].start + (m == MERCURY_MODE_MFSK ? MFSK_CS_EXTRA_MS : 0);
+                from = p->kd[i].start + (mercury_mode_is_mfsk(m) ? MFSK_CS_EXTRA_MS : 0);
             }
         }
         if (from == UINT64_MAX) return false;
@@ -596,6 +596,13 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         if (getenv("CAR_NOHINT")) hears = heard = -99.0;
         car_init(&s->car, &io, car_start_level((float)hears), car_start_level((float)heard));
         car_seed_ctl_deaf(&s->car, hears < ARQ_SNR_MIN_DATAC15_DB, heard < ARQ_SNR_MIN_DATAC15_DB);
+        /* CAR_BW=500: a BW500 session, capped at DATAC3 on the 500 Hz floor */
+        if (getenv("CAR_BW")) {
+            int bw = atoi(getenv("CAR_BW"));
+            car_set_max_level(&s->car, car_max_level_for_bw(bw));
+            car_set_floor_mode(&s->car, arq_floor_mode(bw));
+        }
+        if (getenv("CAR_FLOOR")) car_set_floor_mode(&s->car, atoi(getenv("CAR_FLOOR")));   /* A/B */
         s->rx_mode = -1;
     }
     for (int i = 0; i < CAR_SIM_BYTES; i++) {
@@ -694,7 +701,11 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;
     res->overruns = car_overruns(&S[0].car) + car_overruns(&S[1].car) + slot_breaches;
+    /* No timer either side, and nobody on the air: a station keyed when the
+     * run ends arms its timers only as the keydown ends (a 27 s BW500 floor
+     * frame often straddles the limit). */
     res->stalled = !done_ms && car_next_deadline(&S[0].car) == UINT64_MAX &&
-                   car_next_deadline(&S[1].car) == UINT64_MAX;
+                   car_next_deadline(&S[1].car) == UINT64_MAX &&
+                   S[0].tx_end <= now_ms && S[1].tx_end <= now_ms;
     sim_channel_destroy(ch);
 }

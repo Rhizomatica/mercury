@@ -11,6 +11,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "unity.h"
+#include "modem_mfsk.h"
 #include "sim_clock.h"
 #include "sim_channel.h"
 #include "sim_endpoint.h"
@@ -473,6 +474,39 @@ void test_car_bandwidth_caps_the_rungs(void)
     sim_destroy(s);
 }
 
+/* A BW500 session's floor is the 500 Hz MFSK.  At -5 dB the CALL connects
+ * on DATAC16 and both directions start on the floor (below DATAC15's start
+ * at -3): both ends take the narrow floor from the negotiated bandwidth, and
+ * nothing at all goes out on the 1 kHz one. */
+void test_car_bw500_runs_on_the_narrow_floor(void)
+{
+    static uint8_t blob[400];
+    fill(blob, sizeof(blob), 31);
+    int bw = arq_conn.bw;
+    arq_conn.bw = ARQ_BANDWIDTH_NARROW_HZ;        /* both ends' own (arq_get_bw) */
+    arq_test_session_bw_hz = ARQ_BANDWIDTH_NARROW_HZ;
+    sim_t *s = make_sim(3, 0.0);
+    sim_set_snr(s, -5.0);
+    connect_ab(s);
+    sim_run_until_idle(s, 120000);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, sim_endpoint_session(sim_a(s))->floor_mode);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, sim_endpoint_session(sim_b(s))->floor_mode);
+    queue(s, sim_a(s), blob, sizeof(blob));
+    queue(s, sim_b(s), blob, sizeof(blob));
+    sim_run_until_idle(s, 4 * 3600000);
+    size_t got;
+    TEST_ASSERT_TRUE(intact_prefix(sim_b(s), blob, sizeof(blob), &got));
+    TEST_ASSERT_EQUAL_size_t(sizeof(blob), got);
+    TEST_ASSERT_TRUE(intact_prefix(sim_a(s), blob, sizeof(blob), &got));
+    TEST_ASSERT_EQUAL_size_t(sizeof(blob), got);
+    TEST_ASSERT_TRUE(sim_mode_frames(s, MERCURY_MODE_MFSK_N32) > 0);
+    TEST_ASSERT_EQUAL_INT(0, sim_mode_frames(s, MERCURY_MODE_MFSK));
+    TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+    sim_destroy(s);
+    arq_conn.bw = bw;
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -491,5 +525,6 @@ int main(void)
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
     RUN_TEST(test_car_bandwidth_caps_the_rungs);
+    RUN_TEST(test_car_bw500_runs_on_the_narrow_floor);
     return UNITY_END();
 }

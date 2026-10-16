@@ -180,6 +180,19 @@ void arq_modem_crc_seed(uint16_t seed)
         g_crc_seed_fn(seed);
 }
 
+static void (*g_floor_mode_fn)(int mode) = NULL;
+
+void arq_modem_set_floor_mode_fn(void (*fn)(int mode))
+{
+    g_floor_mode_fn = fn;
+}
+
+void arq_modem_floor_mode(int mode)
+{
+    if (g_floor_mode_fn)
+        g_floor_mode_fn(mode);
+}
+
 void arq_modem_ptt_on(int mode, size_t frame_size)
 {
     (void)frame_size;

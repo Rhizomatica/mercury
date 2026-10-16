@@ -81,6 +81,7 @@ static const char *ui_arq_mode_name(int mode)
     case FREEDV_MODE_DATAC17: return "DATAC17";
     case FREEDV_MODE_QAM16C2: return "QAM16C2";
     case MERCURY_MODE_MFSK: return "MFSK";
+    case MERCURY_MODE_MFSK_N32: return "MFSK500";
     default: return "";
     }
 }

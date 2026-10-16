@@ -7,7 +7,7 @@
  */
 
 #include "arq_fsm.h"
-#include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
+#include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK, mercury_mode_is_mfsk */
 #include "arq_protocol.h"
 #include "arq_timing.h"
 #include "arq.h"
@@ -104,6 +104,7 @@ void arq_fsm_init(arq_session_t *sess)
     sess->control_mode        = ARQ_CONTROL_MODE;
     sess->payload_mode        = FREEDV_MODE_DATAC15;
     sess->peer_tx_mode        = FREEDV_MODE_DATAC15;
+    sess->floor_mode          = MERCURY_MODE_MFSK;
     sess->initial_payload_mode = FREEDV_MODE_DATAC15;  /* overwritten by arq_set_initial_mode */
 }
 
@@ -248,8 +249,10 @@ int arq_call_carrier(const arq_session_t *sess)
     if (!sess) return ARQ_CONTROL_MODE;
     if (sess->call_sends_done < ARQ_CALL_FAST_SLOTS)
         return sess->control_mode;
+    /* The floor of my own bandwidth: the callee answers min(its own, mine),
+     * and a BW500 station listens on the 500 Hz floor. */
     return ((sess->call_sends_done - ARQ_CALL_FAST_SLOTS) % 2 == 0)
-         ? MERCURY_MODE_MFSK : sess->control_mode;
+         ? arq_floor_mode(arq_get_bw()) : sess->control_mode;
 }
 
 /* The start level an ACCEPT names, 0..6 -- or 7, which no ladder level uses,
@@ -261,6 +264,19 @@ int arq_call_carrier(const arq_session_t *sess)
 static int accept_level(const arq_session_t *sess)
 {
     return sess->car_ctl_deaf ? ARQ_ACCEPT_LEVEL_CTL_DEAF : sess->car_rx_level;
+}
+
+/* The callee's wait, from the end of an ACCEPT on this carrier, for the
+ * caller's first round: on the BW500 floor that round is a frame 13.5 s
+ * longer than on the 1 kHz one. */
+static uint64_t accept_rx_window_ms(int call_mode)
+{
+    if (!mercury_mode_is_mfsk(call_mode))
+        return ARQ_ACCEPT_RX_WINDOW_MS;
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(call_mode),
+                            *t1 = arq_protocol_mode_timing(MERCURY_MODE_MFSK);
+    float longer_s = tm && t1 ? tm->frame_duration_s - t1->frame_duration_s : 0.0f;
+    return ARQ_ACCEPT_RX_WINDOW_FLOOR_MS + (uint64_t)(longer_s * 1000.0f + 0.5f);
 }
 
 static void send_call_accept(arq_session_t *sess, bool is_accept)
@@ -285,7 +301,8 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
          * frames carry the session seed, and its first round comes on the rung
          * the ACCEPT names. */
         car_set_seed(sess, car_seed(sess, false));
-        sess->peer_tx_mode = car_level_mode(sess->car_rx_level);
+        sess->peer_tx_mode = sess->car_rx_level == 0 ? sess->floor_mode
+                                                     : car_level_mode(sess->car_rx_level);
     }
     else
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
@@ -301,8 +318,8 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
             sess->call_carrier = mode;
             sess->call_sends_done++;
             /* An ACCEPT to an MFSK CALL comes back on MFSK: listen for it. */
-            if (mode == MERCURY_MODE_MFSK)
-                sess->peer_tx_mode = MERCURY_MODE_MFSK;
+            if (mercury_mode_is_mfsk(mode))
+                sess->peer_tx_mode = mode;
         }
         if (mode != sess->control_mode)
             HLOGI(LOG_COMP, "%s on the MFSK floor (%s)", is_accept ? "ACCEPT" : "CALL",
@@ -329,7 +346,7 @@ static int session_ctl_mode(const arq_session_t *sess)
     if (!sess->car)
         return sess->control_mode;
     bool deaf = sess->car_active ? car_peer_ctl_deaf(sess->car) : sess->ctl_floor_at_stop;
-    return deaf ? MERCURY_MODE_MFSK : sess->control_mode;
+    return deaf ? sess->floor_mode : sess->control_mode;
 }
 
 /* The session's DISCONNECT: the one control frame a session sends outside
@@ -567,9 +584,17 @@ static uint16_t car_seed(const arq_session_t *sess, bool is_caller)
     return seed ? seed : 0x5A5A;
 }
 
+/* A session's seed comes once both ends know its bandwidth (the callee from
+ * the CALL, the caller from the ACCEPT), and with it the session's floor:
+ * its patterns, too, go at that geometry. */
 static void car_set_seed(arq_session_t *sess, uint16_t seed)
 {
     sess->crc_seed = seed;
+    if (seed) {
+        sess->floor_mode = arq_floor_mode(arq_reported_bandwidth_hz());
+        if (g_cbs.set_floor_mode)
+            g_cbs.set_floor_mode(sess->floor_mode);
+    }
     if (g_cbs.set_crc_seed)
         g_cbs.set_crc_seed(seed);
 }
@@ -631,6 +656,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     sess->nav_busy_until_ms = 0;
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
     car_set_max_level(sess->car, session_max_level());
+    car_set_floor_mode(sess->car, sess->floor_mode);
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf, sess->car_peer_ctl_deaf);
     sess->ctl_floor_at_stop = false;
     sess->car_active = true;
@@ -1039,8 +1065,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * one DATAC15 frame.  Reset the deadline here so we always have
          * a full ARQ_ACCEPT_RX_WINDOW_MS window (guard + DATAC15 frame +
          * margin) measured from the moment our TX actually ends. */
-        sess->deadline_ms = time_now_ms() + (sess->call_rx_mode == MERCURY_MODE_MFSK
-                                             ? ARQ_ACCEPT_RX_WINDOW_FLOOR_MS : ARQ_ACCEPT_RX_WINDOW_MS);
+        sess->deadline_ms = time_now_ms() + accept_rx_window_ms(sess->call_rx_mode);
         /* This deadline is a LISTENING window, not a retransmission timer.  An
          * ACCEPT is only ever correct one channel guard after a CALL we heard,
          * because that is the only moment we know the caller has dropped PTT

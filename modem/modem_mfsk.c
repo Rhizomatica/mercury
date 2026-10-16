@@ -1535,12 +1535,21 @@ static int mfsk_be_get_freq_offset(void *ctx, float *hz)
  * without holding a full mfsk_modem_t.
  * ====================================================================== */
 
-static mfsk_t       g_pat_m;
-static ofdm_frame_t g_pat_o;
-static double       g_pat_lpf[MFSK_LPF_TAPS];
-static int          g_pat_nofdm;
-static int          g_pat_fcg;      /* carrier table, as mfsk_modem_t.fcg */
-static bool         g_pat_ready = false;
+/* One geometry per MFSK mode, built once, and the one in use: a session's
+ * floor (mfsk_pattern_set_geometry) can change while the RX thread runs its
+ * detector, so each call reads the selection once and works on that. */
+typedef struct {
+    mfsk_t       m;
+    ofdm_frame_t o;
+    double       lpf[MFSK_LPF_TAPS];
+    int          nofdm;
+    int          fcg;      /* carrier table, as mfsk_modem_t.fcg */
+} pat_geom_t;
+static const int      g_pat_modes[] = { MERCURY_MODE_MFSK, MERCURY_MODE_MFSK_N16, MERCURY_MODE_MFSK_N32 };
+#define PAT_NGEOM ((int)(sizeof(g_pat_modes) / sizeof(g_pat_modes[0])))
+static pat_geom_t     g_pat_geoms[PAT_NGEOM];
+static pthread_once_t g_pat_once = PTHREAD_ONCE_INIT;
+static _Atomic int    g_pat_sel = 0;
 /* The ACK and BREAK lists in use: the session's while a carousel session
  * seeds the modem (mfsk_pattern_set_session), the global ones otherwise. */
 static pthread_mutex_t g_pat_lists_mtx = PTHREAD_MUTEX_INITIALIZER;
@@ -1548,39 +1557,50 @@ static int          g_pat_ack[MFSK_MAX_ACK_TONES], g_pat_brk[MFSK_MAX_ACK_TONES]
 static bool         g_pat_lists_set = false;
 static _Atomic unsigned g_pat_gen = 1;     /* bumped on every change */
 
-static void mfsk_pattern_init_geometry(int mode)
+static void pat_geoms_init(void)
 {
-    int nfft = mode == MERCURY_MODE_MFSK_N32 ? 2 * MFSK_NFFT : MFSK_NFFT;
-    mfsk_init(&g_pat_m, mode == MERCURY_MODE_MFSK_N16 ? 16 : MFSK_M, MFSK_NCAR, 1);
-    ofdm_frame_init(&g_pat_o, nfft, MFSK_NCAR, MFSK_GI, 0);
-    g_pat_nofdm = ofdm_frame_nofdm(&g_pat_o);
-    g_pat_fcg = nfft == MFSK_NFFT ? 0 : 1;
     pthread_once(&g_fc_once, fc_table_init);
-    mklpf(g_pat_lpf, MFSK_LPF_FC);
-    g_pat_ready = true;
+    for (int i = 0; i < PAT_NGEOM; i++)
+    {
+        pat_geom_t *g = &g_pat_geoms[i];
+        int mode = g_pat_modes[i];
+        int nfft = mode == MERCURY_MODE_MFSK_N32 ? 2 * MFSK_NFFT : MFSK_NFFT;
+        mfsk_init(&g->m, mode == MERCURY_MODE_MFSK_N16 ? 16 : MFSK_M, MFSK_NCAR, 1);
+        ofdm_frame_init(&g->o, nfft, MFSK_NCAR, MFSK_GI, 0);
+        g->nofdm = ofdm_frame_nofdm(&g->o);
+        g->fcg = nfft == MFSK_NFFT ? 0 : 1;
+        mklpf(g->lpf, MFSK_LPF_FC);
+    }
 }
 
-static void mfsk_pattern_lazy_init(void)
+static const pat_geom_t *pat_geom(void)
 {
-    if (g_pat_ready) return;
-    mfsk_pattern_init_geometry(MERCURY_MODE_MFSK);
+    pthread_once(&g_pat_once, pat_geoms_init);
+    return &g_pat_geoms[atomic_load(&g_pat_sel)];
 }
 
 void mfsk_pattern_set_geometry(int mode)
 {
-    mfsk_pattern_init_geometry(mode);
+    pthread_once(&g_pat_once, pat_geoms_init);
+    int i = 0;
+    while (i < PAT_NGEOM && g_pat_modes[i] != mode) i++;
+    if (i == PAT_NGEOM || i == atomic_load(&g_pat_sel))
+        return;
     pthread_mutex_lock(&g_pat_lists_mtx);
+    atomic_store(&g_pat_sel, i);
     g_pat_lists_set = false;            /* back to this geometry's global lists */
     pthread_mutex_unlock(&g_pat_lists_mtx);
     atomic_fetch_add(&g_pat_gen, 1);
 }
 
-static void pat_lists(int *ack, int *brk)
+int mfsk_pattern_geometry(void) { pat_geom(); return g_pat_modes[atomic_load(&g_pat_sel)]; }
+
+static void pat_lists(const pat_geom_t *G, int *ack, int *brk)
 {
     pthread_mutex_lock(&g_pat_lists_mtx);
     if (!g_pat_lists_set) {
-        memcpy(g_pat_ack, g_pat_m.ack_tones, sizeof(g_pat_ack));
-        memcpy(g_pat_brk, g_pat_m.break_tones, sizeof(g_pat_brk));
+        memcpy(g_pat_ack, G->m.ack_tones, sizeof(g_pat_ack));
+        memcpy(g_pat_brk, G->m.break_tones, sizeof(g_pat_brk));
         g_pat_lists_set = true;
     }
     memcpy(ack, g_pat_ack, sizeof(g_pat_ack));
@@ -1590,10 +1610,10 @@ static void pat_lists(int *ack, int *brk)
 
 void mfsk_pattern_set_lists(const int *ack, const int *brk)
 {
-    mfsk_pattern_lazy_init();
+    const pat_geom_t *G = pat_geom();
     pthread_mutex_lock(&g_pat_lists_mtx);
-    memcpy(g_pat_ack, ack ? ack : g_pat_m.ack_tones, sizeof(g_pat_ack));
-    memcpy(g_pat_brk, brk ? brk : g_pat_m.break_tones, sizeof(g_pat_brk));
+    memcpy(g_pat_ack, ack ? ack : G->m.ack_tones, sizeof(g_pat_ack));
+    memcpy(g_pat_brk, brk ? brk : G->m.break_tones, sizeof(g_pat_brk));
     g_pat_lists_set = true;
     pthread_mutex_unlock(&g_pat_lists_mtx);
     atomic_fetch_add(&g_pat_gen, 1);
@@ -1601,9 +1621,9 @@ void mfsk_pattern_set_lists(const int *ack, const int *brk)
 
 bool mfsk_pattern_set_session(uint32_t key)
 {
-    mfsk_pattern_lazy_init();
+    const pat_geom_t *G = pat_geom();
     int ack[MFSK_MAX_ACK_TONES] = {0}, brk[MFSK_MAX_ACK_TONES] = {0};
-    bool bound = mfsk_session_patterns(&g_pat_m, key, NULL, 0, ack, brk);
+    bool bound = mfsk_session_patterns(&G->m, key, NULL, 0, ack, brk);
     pthread_mutex_lock(&g_pat_lists_mtx);
     memcpy(g_pat_ack, ack, sizeof(g_pat_ack));
     memcpy(g_pat_brk, brk, sizeof(g_pat_brk));
@@ -1615,26 +1635,26 @@ bool mfsk_pattern_set_session(uint32_t key)
 
 int mfsk_pattern_nsymb(void)
 {
-    mfsk_pattern_lazy_init();
-    return g_pat_m.ack_pattern_nsymb;
+    const pat_geom_t *G = pat_geom();
+    return G->m.ack_pattern_nsymb;
 }
 
 int mfsk_pattern_max_tx_samples(void)
 {
-    mfsk_pattern_lazy_init();
-    return g_pat_m.ack_pattern_nsymb * g_pat_nofdm;
+    const pat_geom_t *G = pat_geom();
+    return G->m.ack_pattern_nsymb * G->nofdm;
 }
 
 /* Generate the ack/break pattern as int16 passband.  Returns sample count. */
 int mfsk_pattern_tx(int16_t *out, int pattern_kind)
 {
-    mfsk_pattern_lazy_init();
-    int ns = g_pat_m.ack_pattern_nsymb;
+    const pat_geom_t *G = pat_geom();
+    int ns = G->m.ack_pattern_nsymb;
 
     mfsk_cplx *bins = (mfsk_cplx *)calloc((size_t)ns * MFSK_NCAR, sizeof(mfsk_cplx));
     if (!bins) return 0;
-    mfsk_t m = g_pat_m;      /* with the lists in use */
-    pat_lists(m.ack_tones, m.break_tones);
+    mfsk_t m = G->m;      /* with the lists in use */
+    pat_lists(G, m.ack_tones, m.break_tones);
     if (pattern_kind == 1)   /* ARQ_PATTERN_BREAK */
         mfsk_generate_break_pattern(&m, bins);
     else
@@ -1643,26 +1663,26 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind)
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
     int have_tail = 0;
-    int written = mfsk_synth(&g_pat_o, g_pat_fcg, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    int written = mfsk_synth(&G->o, G->fcg, G->nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
     free(bins);
     return written;
 }
 
 int mfsk_nav_tx(int16_t *out, int cls)
 {
-    mfsk_pattern_lazy_init();
+    const pat_geom_t *G = pat_geom();
     if (cls < 0) cls = 0;
     if (cls >= MFSK_NAV_CLASSES) cls = MFSK_NAV_CLASSES - 1;
-    int ns = g_pat_m.ack_pattern_nsymb;
+    int ns = G->m.ack_pattern_nsymb;
     mfsk_cplx *bins = (mfsk_cplx *)calloc((size_t)ns * MFSK_NCAR, sizeof(mfsk_cplx));
     if (!bins) return 0;
-    mfsk_t m = g_pat_m;
+    mfsk_t m = G->m;
     memcpy(m.ack_tones, mfsk_nav_tones[cls], sizeof(mfsk_nav_tones[cls]));
     mfsk_generate_ack_pattern(&m, bins);
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
     int have_tail = 0;
-    int written = mfsk_synth(&g_pat_o, g_pat_fcg, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    int written = mfsk_synth(&G->o, G->fcg, G->nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
     free(bins);
     return written;
 }
@@ -1671,8 +1691,8 @@ int mfsk_nav_tx(int16_t *out, int cls)
  * sets *is_break (1 = ACK+TURN break, 0 = plain ACK); 0 if none. */
 int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
 {
-    mfsk_pattern_lazy_init();
-    if (!pb || n < g_pat_m.ack_pattern_nsymb * g_pat_nofdm)
+    const pat_geom_t *G = pat_geom();
+    if (!pb || n < G->m.ack_pattern_nsymb * G->nofdm)
         return 0;
 
     /* Downmix passband -> complex baseband + LPF (same as mfsk_downmix). */
@@ -1682,7 +1702,7 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
     for (int i = 0; i < n; i++)
     {
         double x = (double)pb[i];
-        bb[i] = 2.0 * x * fc_phasor_g(g_pat_fcg, i);
+        bb[i] = 2.0 * x * fc_phasor_g(G->fcg, i);
     }
     for (int i = 0; i < n; i++)
     {
@@ -1690,7 +1710,7 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
         for (int k = 0; k < MFSK_LPF_TAPS; k++)
         {
             int j = i - k + MFSK_LPF_TAPS / 2;
-            if (j >= 0 && j < n) a += g_pat_lpf[k] * bb[j];
+            if (j >= 0 && j < n) a += G->lpf[k] * bb[j];
         }
         bf[i] = a;
     }
@@ -1700,19 +1720,19 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
      * doubled the cost of the most expensive thing in the RX loop (measured
      * 3.5k samp/s against 8k arriving — the reason arq.c only runs this inside
      * bounded windows). */
-    int ns  = g_pat_m.ack_pattern_nsymb;
+    int ns  = G->m.ack_pattern_nsymb;
     int ack[MFSK_MAX_ACK_TONES], brk[MFSK_MAX_ACK_TONES];
-    pat_lists(ack, brk);
+    pat_lists(G, ack, brk);
     const int *lists[2] = { ack, brk };
     int scores[2] = {0, 0};
-    mfsk_detect_patterns(&g_pat_m, &g_pat_o, bf, n, lists, 2,
-                         g_pat_m.ack_pattern_len, ns, scores, NULL);
+    mfsk_detect_patterns(&G->m, &G->o, bf, n, lists, 2,
+                         G->m.ack_pattern_len, ns, scores, NULL);
     int ack_score = scores[0];
     int brk_score = scores[1];
     free(bb); free(bf);
 
-    bool ack_hit = ack_score >= g_pat_m.ack_match_threshold;
-    bool brk_hit = brk_score >= g_pat_m.break_match_threshold;
+    bool ack_hit = ack_score >= G->m.ack_match_threshold;
+    bool brk_hit = brk_score >= G->m.break_match_threshold;
     if (!ack_hit && !brk_hit)
         return 0;
     /* Prefer the higher-scoring symbol so the two are told apart cleanly. */
@@ -1786,18 +1806,24 @@ const modem_backend_t modem_backend_mfsk = {
  * Sliding detection window -- see modem_mfsk.h for why it paces.
  * ---------------------------------------------------------------------- */
 /* How long an event waits for a stronger overlapping one: two symbols. */
-#define PAT_HOLD 640
+#define PAT_HOLD(G) (2 * (G)->nofdm)
 
 int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
                                mfsk_pattern_ev_t *out, int maxev)
 {
     if (!w || !pcm || n <= 0)
         return 0;
-    mfsk_pattern_lazy_init();
+    const pat_geom_t *G = pat_geom();
+    if (w->det && w->geom != G)
+    {
+        /* the session's floor changed the geometry: start over at the new one */
+        mfsk_pattern_window_free(w);
+    }
     if (!w->det)
     {
-        w->det = mfsk_stream_det_new(&g_pat_m, &g_pat_o, g_pat_m.ack_pattern_len,
-                                     g_pat_m.ack_pattern_nsymb);
+        w->geom = G;
+        w->det = mfsk_stream_det_new(&G->m, &G->o, G->m.ack_pattern_len,
+                                     G->m.ack_pattern_nsymb);
         if (!w->det)
             return 0;             /* no memory, no detection; never a crash */
         /* A NAV threshold a symbol above the ACK's: a session ACK or BREAK
@@ -1808,7 +1834,7 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
          * (pattern_probe): 0 cross-reads in 2048 clean session ACK/BREAK
          * bursts (3 at 8), 0 false headers in 10 h of noise (4 at 8), for
          * about 0.7 dB at -14 dB; 98 % detection at -12 dB still. */
-        int nav_thr = g_pat_m.ack_match_threshold + 1;
+        int nav_thr = G->m.ack_match_threshold + 1;
         for (int k = 0; k < MFSK_NAV_CLASSES; k++)
             mfsk_stream_det_set_list(w->det, MFSK_PAT_NAV(k), mfsk_nav_tones[k], nav_thr);
         w->gen = 0;
@@ -1819,9 +1845,9 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
         /* the session's lists changed (a session began or ended): what is in
          * the ring was scored against the old ones */
         int ack[MFSK_MAX_ACK_TONES], brk[MFSK_MAX_ACK_TONES];
-        pat_lists(ack, brk);
-        mfsk_stream_det_set_list(w->det, MFSK_PAT_ACK, ack, g_pat_m.ack_match_threshold);
-        mfsk_stream_det_set_list(w->det, MFSK_PAT_BREAK, brk, g_pat_m.break_match_threshold);
+        pat_lists(G, ack, brk);
+        mfsk_stream_det_set_list(w->det, MFSK_PAT_ACK, ack, G->m.ack_match_threshold);
+        mfsk_stream_det_set_list(w->det, MFSK_PAT_BREAK, brk, G->m.break_match_threshold);
         mfsk_stream_det_reset(w->det);
         w->gen = gen;
     }
@@ -1832,15 +1858,15 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
     int nout = 0;
     for (int i = 0; i < n; i++)
     {
-        double complex x = 2.0 * (double)pcm[i] * fc_phasor_g(g_pat_fcg, w->n++);
+        double complex x = 2.0 * (double)pcm[i] * fc_phasor_g(G->fcg, w->n++);
         w->hist_re[w->hist_pos] = creal(x);
         w->hist_im[w->hist_pos] = cimag(x);
         double ar = 0.0, ai = 0.0;
         int h = w->hist_pos;
         for (int k = 0; k < MFSK_LPF_TAPS; k++)
         {
-            ar += g_pat_lpf[k] * w->hist_re[h];
-            ai += g_pat_lpf[k] * w->hist_im[h];
+            ar += G->lpf[k] * w->hist_re[h];
+            ai += G->lpf[k] * w->hist_im[h];
             h = h ? h - 1 : MFSK_LPF_TAPS - 1;
         }
         w->hist_pos = (w->hist_pos + 1) % MFSK_LPF_TAPS;
@@ -1851,7 +1877,7 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
         {
             /* Overlapping events: one burst read as more than one list.  The
              * strongest stands; a weaker one never reaches the caller. */
-            long long st = ev[e].pos - MFSK_LPF_TAPS / 2, span = (long long)mfsk_pattern_max_tx_samples();
+            long long st = ev[e].pos - MFSK_LPF_TAPS / 2, span = (long long)G->m.ack_pattern_nsymb * G->nofdm;
             if (w->last_score && llabs(st - w->last_start) < span && ev[e].score <= w->last_score)
                 continue;
             bool drop = false;
@@ -1867,7 +1893,7 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
             w->pend[w->npend].kind  = ev[e].list;
             w->pend[w->npend].start = st;
             w->pend[w->npend].score = ev[e].score;
-            w->pend_due[w->npend]   = w->n + PAT_HOLD;
+            w->pend_due[w->npend]   = w->n + PAT_HOLD(G);
             w->npend++;
         }
         for (int q = 0; q < w->npend && nout < maxev; q++)

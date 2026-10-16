@@ -87,6 +87,9 @@ bool arq_modem_channel_busy(void);
  */
 void arq_modem_set_crc_seed_fn(void (*fn)(uint16_t seed));
 void arq_modem_crc_seed(uint16_t seed);
+/* The session's MFSK floor (arq_floor_mode), for the modem's patterns. */
+void arq_modem_set_floor_mode_fn(void (*fn)(int mode));
+void arq_modem_floor_mode(int mode);
 
 /**
  * @brief Notify ARQ that PTT has gone ON.
