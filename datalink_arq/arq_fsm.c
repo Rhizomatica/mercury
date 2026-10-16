@@ -1379,12 +1379,19 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_CALL:
         /* The peer we are tearing down with is calling again: it has left the
          * old session, so there is nothing left to wait for.  Retrying on, the
-         * CALL was ignored, and our next DISCONNECT keyed over its retry.  Not
-         * with a call of our own queued: that one goes out first. */
+         * CALL was ignored, and our next DISCONNECT keyed over its retry.  A
+         * callee whose DISCONNECT is out waits only for its answer, and a
+         * station calls with another MYCALL per application: on air the
+         * gateway's UUCP called as PU2UIT, its NNCP as PU2UIT-3, and a callee
+         * whose answer was lost ignored the NNCP CALLs for the 180 s of its
+         * end wait.  So that one takes a CALL for it from anyone
+         * (specs/teardown, Mut_samecall).  Not with a call of our own queued:
+         * that one goes out first. */
         if (!sess->pending_connect && sess->listen_enabled &&
-            strncmp(ev->remote_call, sess->remote_call, CALLSIGN_MAX_SIZE) == 0)
+            (strncmp(ev->remote_call, sess->remote_call, CALLSIGN_MAX_SIZE) == 0 ||
+             (sess->car_ending && sess->disconnect_sent)))
         {
-            HLOGI(LOG_COMP, "Disconnect finalized (%s is calling again)", ev->remote_call);
+            HLOGI(LOG_COMP, "Disconnect finalized (%s is calling)", ev->remote_call);
             notify_session_ended(sess);
             if (g_timing) arq_timing_record_disconnect(g_timing, "peer_recall");
             enter_idle_after_call(sess);

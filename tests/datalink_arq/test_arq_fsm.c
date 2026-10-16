@@ -562,6 +562,42 @@ void test_peer_calling_again_ends_teardown(void)
     TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);   /* the old session's end */
 }
 
+/* A callee ending the session: its DISCONNECT went in its slot, and it waits
+ * only for the answer.  On air that answer was lost, and the caller station's
+ * next application called with another MYCALL (UUCP as PU2UIT, then NNCP as
+ * PU2UIT-3): those CALLs were ignored for the 180 s end wait.  Before its
+ * DISCONNECT is out, a CALL from another callsign still does not end it. */
+void test_ending_callee_takes_a_call_from_any_callsign(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "PU2UIT", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = 0x21;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    ev = make_event(ARQ_EV_APP_DISCONNECT);
+    ev.abort = true;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.car_ending);
+
+    arq_event_t call = make_event(ARQ_EV_RX_CALL);
+    call.session_id = 0x35;
+    strncpy(call.remote_call, "PU2UIT-3", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_DISCONNECTING, sess.conn_state,
+        "another callsign's CALL ended a teardown whose DISCONNECT had not gone out");
+
+    sess.disconnect_sent = true;             /* car_io_end: the DISCONNECT in my slot */
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x35, sess.session_id);
+}
+
 static void connect_to(const char *call)
 {
     arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
@@ -1286,6 +1322,7 @@ int main(void)
     RUN_TEST(test_crossed_disconnect_is_answered);
     RUN_TEST(test_disconnect_after_ours_is_the_answer);
     RUN_TEST(test_peer_calling_again_ends_teardown);
+    RUN_TEST(test_ending_callee_takes_a_call_from_any_callsign);
     RUN_TEST(test_deferred_connect_is_placed_after_teardown_timeout);
     RUN_TEST(test_disconnect_cancels_deferred_connect);
     RUN_TEST(test_listen_off_cancels_deferred_connect);
