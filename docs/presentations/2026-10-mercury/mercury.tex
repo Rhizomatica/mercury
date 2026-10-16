@@ -95,16 +95,16 @@
     \column{0.5\textwidth}
     \begin{enumerate}
       \item Mercury in HERMES
-      \item The modes: a ladder of our own
-      \item MFSK: the fringe of the link
-      \item The carousel: a new ARQ
+      \item Modulation and coding modes
+      \item MFSK for weak-signal operation
+      \item Carousel ARQ
     \end{enumerate}
     \column{0.5\textwidth}
     \begin{enumerate}\setcounter{enumi}{4}
       \item Formal methods: TLA+ and TLAPS
-      \item Testing, and a standard channel
+      \item Testing and channel simulation
       \item Integration and platforms
-      \item What comes next
+      \item Outlook
     \end{enumerate}
   \end{columns}
 \end{frame}
@@ -112,7 +112,7 @@
 % =============================================================================
 \section{Mercury in HERMES}
 
-\begin{frame}{What Mercury is}
+\begin{frame}{Overview}
   \small
   \begin{columns}[T]
     \column{0.56\textwidth}
@@ -139,7 +139,7 @@
   \end{columns}
 \end{frame}
 
-\begin{frame}{2026 in numbers}
+\begin{frame}{2026 in figures}
   \begin{columns}[c]
     \column{0.5\textwidth}
     \centering
@@ -163,7 +163,7 @@
   \src{Source: git history of \texttt{mercuryv2}; docs/RELEASE-1.9.18.md, docs/RELEASE-1.9.19.md}
 \end{frame}
 
-\begin{frame}{1.9.18 against 1.9.17: the same 2 KB, one way}
+\begin{frame}{Release 1.9.18 compared with 1.9.17: a 2 KB transfer}
   \begin{columns}[c]
     \column{0.6\textwidth}
     \begin{tikzpicture}
@@ -194,9 +194,9 @@
 \end{frame}
 
 % =============================================================================
-\section{The modes: a ladder of our own}
+\section{Modulation and coding modes}
 
-\begin{frame}{The mode table}
+\begin{frame}{Mode overview}
   \centering\footnotesize\setlength{\tabcolsep}{4.5pt}
   \begin{tabular}{@{}l l r r r l l@{}}
     \toprule
@@ -219,7 +219,7 @@
   \src{Source: docs/MODES.md}
 \end{frame}
 
-\begin{frame}{The ladder: seven rungs, 60 to 3100 bit/s}
+\begin{frame}{Adaptive mode ladder: seven rungs from 60 to 3100 bit/s}
   \centering
   \begin{tikzpicture}[x=1.75cm,y=0.62cm]
     \foreach \i/\m/\r/\s/\c in {0/MFSK/60/floor/hgreen,1/DATAC15/68/$\geq -3$/hgreen,2/DATAC4/87/probe/hcreamdk,
@@ -237,7 +237,7 @@
   \src{Source: datalink\_arq/carousel.c (car\_start\_level), docs/CAROUSEL-SPEC.md \S 15}
 \end{frame}
 
-\begin{frame}{Our OFDM modes}
+\begin{frame}{OFDM modes designed by the project}
   \small
   \begin{columns}[T]
     \column{0.5\textwidth}
@@ -260,7 +260,7 @@
     \end{block}
   \end{columns}
   \smallskip
-  \begin{exampleblock}{Making the ladder honest}
+  \begin{exampleblock}{Accuracy of link adaptation}
     \footnotesize Per-mode \textbf{SNR calibration} (QAM16C2 read 9 dB low); a 16-QAM estimator above 12 dB;
     the \textbf{TX filter} no longer cuts our outer carriers (6.5 dB); \textbf{FFT-correlation} acquisition, 2.2$\times$ cheaper
   \end{exampleblock}
@@ -268,9 +268,10 @@
 \end{frame}
 
 % =============================================================================
-\section{MFSK: the fringe of the link}
+\section{MFSK for weak-signal operation}
 
-\begin{frame}{MFSK: a non-coherent floor under the OFDM ladder}
+\begin{frame}{MFSK: a non-coherent waveform below the OFDM modes}
+  \small
   \begin{columns}[T]
     \column{0.52\textwidth}
     \begin{itemize}
@@ -279,7 +280,7 @@
       \item Centred on \textbf{1500 Hz} since 1.9.19: tones 1015.6--1984.4 Hz
       \item Preamble \emph{and} postamble: a burst is found from either end
       \item LDPC N = 1600; five rates ported, \textbf{rate 1/2 ships} (98-byte frames, 13.5 s)
-      \item Lowering the rate to 1/16 buys only 2.1 dB: the floor is set by sync, not by the code
+      \item Reducing the code rate to 1/16 gains only 2.1 dB: sensitivity is limited by synchronisation
     \end{itemize}
     \column{0.45\textwidth}
     \begin{tikzpicture}
@@ -299,18 +300,18 @@
   \src{Source: docs/MFSK-PORT.md, modem/modem\_mfsk.c, docs/RELEASE-1.9.19.md}
 \end{frame}
 
-\begin{frame}{The floor was a threshold, not the code}
+\begin{frame}{Sensitivity limited by synchronisation, not by coding}
   \begin{columns}[c]
     \column{0.5\textwidth}
     \begin{itemize}
-      \item All five code rates gave \textbf{identical} frame error rates: the decoder never saw the hard frames
+      \item All five code rates gave \textbf{identical} frame error rates: frames near the threshold never reached the decoder
       \item The sync accept gate was 0.5, which demands SNR per symbol $\geq$ 0 dB
       \item At \textbf{0.08}, with false anchors released:
       \begin{itemize}
         \item AWGN 50 \% point: $-0.6$ \textrightarrow{} \hl{$-11.2$ dB}
         \item Watterson 2 ms / 1 Hz: $+5.0$ \textrightarrow{} \hl{$-3.7$ dB}
       \end{itemize}
-      \item Dual-ended acquisition is worth about 2 dB; interleaving the codeword 19 \% more fringe throughput
+      \item Dual-ended acquisition contributes about 2 dB; codeword interleaving adds 19 \% throughput at the margin
     \end{itemize}
     \column{0.48\textwidth}
     \begin{tikzpicture}
@@ -328,7 +329,7 @@
   \src{Source: docs/MFSK-PORT.md}
 \end{frame}
 
-\begin{frame}{Pattern ACKs: 0.64 seconds of air}
+\begin{frame}{Pattern acknowledgements: 0.64 s of airtime}
   \begin{columns}[T]
     \column{0.55\textwidth}
     \begin{itemize}
@@ -353,7 +354,7 @@
   \src{Source: docs/MFSK-PORT.md, README.md; PRs \#160, \#299}
 \end{frame}
 
-\begin{frame}{Sensitivity: MFSK against our best OFDM}
+\begin{frame}{Sensitivity of MFSK compared with the OFDM modes}
   \begin{columns}[c]
     \column{0.62\textwidth}
     \begin{tikzpicture}
@@ -371,7 +372,7 @@
     \end{tikzpicture}
     \column{0.36\textwidth}
     \begin{itemize}
-      \item MFSK holds \hl{5 to 9 dB} below DATAC15
+      \item MFSK operates \hl{5 to 9 dB} below DATAC15
       \item Against modem73's coherent RFDM modes: 2.7 dB better per bit on AWGN, a tie under fading
       \item On air: 1 KB over UUCP at \textbf{2 \% power} in 533 s
     \end{itemize}
@@ -379,12 +380,12 @@
   \src{Sim, 100 trials a point, Watterson model, 2026-10-15 (PR \#390); docs/MFSK-PORT.md; docs/RELEASE-1.9.19.md}
 \end{frame}
 
-\begin{frame}{In review: a 500 Hz MFSK, and a receiver that tracks the clock}
+\begin{frame}{Under review: 500 Hz MFSK and sample-clock tracking}
   \begin{columns}[T]
     \column{0.5\textwidth}
     \begin{block}{Mode 103 for 500 Hz filters (PR \#390)}
       \begin{itemize}
-        \item The 1 kHz MFSK never decodes behind a 500 Hz CW filter
+        \item The 1 kHz MFSK cannot be decoded behind a 500 Hz filter
         \item 32 tones 15.625 Hz apart, 80 ms symbols, 26 s bursts
         \item 90 \%: \textbf{$-14.1$ dB} AWGN, $-10.4$ dB moderate, behind the filter too
         \item On air at the bench: $-14.2$ dB (sim $-14.1$)
@@ -405,23 +406,23 @@
 \end{frame}
 
 % =============================================================================
-\section{The carousel: a new ARQ}
+\section{Carousel ARQ}
 
-\begin{frame}{Why a new ARQ}
+\begin{frame}{Motivation for a new ARQ}
   \begin{columns}[T]
     \column{0.5\textwidth}
-    \begin{alertblock}{The old plane: SNR-driven stop-and-wait}
+    \begin{alertblock}{Previous design: stop-and-wait}
       \begin{itemize}
-        \item One frame, one ACK, one turnaround
+        \item SNR-driven: one frame, one ACK, one turnaround
         \item Rungs chosen from SNR estimates that were wrong per mode
         \item Lost ACKs on the weak reverse path stalled the session
         \item Sim NVIS: \textbf{0 of 20} runs completed
       \end{itemize}
     \end{alertblock}
     \column{0.5\textwidth}
-    \begin{block}{The carousel}
+    \begin{block}{Carousel design}
       \begin{itemize}
-        \item \textbf{Receiver-driven}: the receiver asks for what it still needs
+        \item \textbf{Receiver-driven}: the receiver requests what it still needs
         \item \textbf{Erasure-coded}: any $k$ of the pieces rebuild a block, so no retransmission of a particular frame
         \item No per-frame ACKs, no sequence numbers
         \item Rungs chosen by \textbf{measured goodput}
@@ -432,7 +433,7 @@
   \src{Source: docs/CAROUSEL-ARQ.md, docs/CAROUSEL-REPORT.md}
 \end{frame}
 
-\begin{frame}{How the carousel works}
+\begin{frame}{Carousel operation}
   \begin{columns}[c]
     \column{0.55\textwidth}
     \begin{tikzpicture}[x=1cm,y=0.5cm,
@@ -453,26 +454,26 @@
       \item Systematic Cauchy \textbf{Reed-Solomon} over GF(256), blocks of up to 96 pieces
       \item \textbf{23--24 byte pieces}: four fit one MFSK frame
       \item Up to 8 blocks open; each ends in a seed-keyed CRC-32 and fails closed
-      \item 4 losses in a row is a dead verdict for a rung; re-probed after 60 s, doubling to 8 min
+      \item Four consecutive losses mark a rung unusable; it is probed again after 60 s, the interval doubling up to 8 min
     \end{itemize}
   \end{columns}
   \src{Source: docs/CAROUSEL-SPEC.md, docs/CAROUSEL-ARQ.md}
 \end{frame}
 
-\begin{frame}{Turns, connect and versions}
+\begin{frame}{Channel access, connection set-up and versioning}
   \begin{columns}[T]
     \column{0.33\textwidth}
-    \begin{block}{One timing master}
+    \begin{block}{Single timing master}
       The caller owns every timer; the callee keys only in its slots.
       \textbf{0 collisions} in 960 two-way deep-fade sim runs (\#351)
     \end{block}
     \column{0.33\textwidth}
-    \begin{block}{A deep connect}
+    \begin{block}{Connection at low SNR}
       After two unanswered DATAC16 CALLs, the CALL alternates with MFSK.
       The ACCEPT names the start rung and carries the callee's nonce
     \end{block}
     \column{0.33\textwidth}
-    \begin{block}{Bound to the session}
+    \begin{block}{Session binding}
       Seed = CRC16(session id, nonce, both calls), mixed into every frame's CRC.
       Protocol v1 = 1.9.18, v2 = 1.9.19: a CALL of another version is logged, not answered
     \end{block}
@@ -484,7 +485,7 @@
   \src{Source: docs/CAROUSEL-TURNS.md, docs/CAROUSEL-SPEC.md; PRs \#317, \#351}
 \end{frame}
 
-\begin{frame}{Results: sim, real modems, and on air}
+\begin{frame}{Results: simulation, modem bench and on-air tests}
   \begin{columns}[c]
     \column{0.58\textwidth}
     \begin{tikzpicture}
@@ -501,10 +502,10 @@
     \end{tikzpicture}
     \column{0.4\textwidth}
     \begin{itemize}
-      \item \hl{35--45 \% faster} everywhere we measured
-      \item Sim NVIS: stop-and-wait never finished; the carousel did
+      \item \hl{35--45 \% shorter} transfer times in every measurement
+      \item Simulated NVIS: stop-and-wait never completed; the carousel did
       \item At \textbf{2 \% power} trunk never connected; the carousel delivered in 632--932 s
-      \item On air: the mean of two runs each way, sBitx bench
+      \item On air: mean of two runs in each direction, sBitx test bench
     \end{itemize}
   \end{columns}
   \src{Source: docs/CAROUSEL-REPORT.md, docs/CAROUSEL-ARQ.md}
@@ -513,7 +514,7 @@
 % =============================================================================
 \section{Formal methods: TLA+ and TLAPS}
 
-\begin{frame}{Every protocol layer has a model}
+\begin{frame}{Formal models of the protocol layers}
   \centering\small
   \begin{tabular}{@{}p{3.1cm} p{5.6cm} p{4.6cm}@{}}
     \toprule
@@ -529,10 +530,10 @@
   \src{Source: specs/carousel, specs/turns, specs/rungs (README files)}
 \end{frame}
 
-\begin{frame}{Models that bite}
+\begin{frame}{Validation of the models}
   \begin{columns}[T]
     \column{0.5\textwidth}
-    \begin{block}{Mutants must fail}
+    \begin{block}{Mutation testing}
       \begin{itemize}
         \item Turns: five mutants (no grid, late, long, blind, reuse) each violate NoOverlap
         \item Rungs: five more (no request, no bind, deaf, unnamed, previous rung)
@@ -541,7 +542,7 @@
       \end{itemize}
     \end{block}
     \column{0.5\textwidth}
-    \begin{block}{The model meets the code}
+    \begin{block}{Conformance of the implementation}
       \begin{itemize}
         \item \texttt{car\_explore} runs the \textbf{real} \texttt{carousel.c} under every set of up to 3 losses or sensing failures, plus spurious BREAKs and corrupt frames
         \item \textbf{19\,765 runs in 1.5 s} in CI; 9.09 M in the long sweep
@@ -553,9 +554,9 @@
 \end{frame}
 
 % =============================================================================
-\section{Testing, and a standard channel}
+\section{Testing and channel simulation}
 
-\begin{frame}{The test framework}
+\begin{frame}{Test framework}
   \small
   \begin{columns}[c]
     \column{0.5\textwidth}
@@ -582,7 +583,7 @@
   \src{Source: tests/Makefile, tests/integration, tests/sim}
 \end{frame}
 
-\begin{frame}{CI on every pull request}
+\begin{frame}{Continuous integration on every pull request}
   \begin{columns}[T]
     \column{0.5\textwidth}
     \begin{block}{Builds}
@@ -595,40 +596,41 @@
     \begin{block}{Sanitizers}
       ThreadSanitizer on the unit tests; AddressSanitizer + UBSan on the unit tests and a full integration session
     \end{block}
-    \begin{block}{Beyond CI}
+    \begin{block}{Additional tooling}
       libFuzzer targets for the ARQ header, frame header, KISS, arithmetic and WebSocket JSON parsers; signed and notarised release pipeline
     \end{block}
   \end{columns}
   \src{Source: .github/workflows, docs/SANITIZERS.md, docs/FUZZING.md}
 \end{frame}
 
-\begin{frame}{A channel model that follows the standard}
+\begin{frame}{Channel model compliant with ITU-R F.1487}
+  \small
   \begin{columns}[T]
     \column{0.52\textwidth}
     \begin{itemize}
       \item Watterson model with the \textbf{Gaussian Doppler spectrum} of \textbf{ITU-R F.1487} / \textbf{CCIR 520-2}: spread = 2$\sigma$
       \item Named presets \texttt{ccir-good/moderate/poor/flutter} and ten \texttt{itur-*} (low to high latitude, NVIS)
-      \item An exact delay line; the old Butterworth presets kept for old results
-      \item The old ``poor'' faded \textbf{2$\times$ faster} than CCIR Poor: 1.007 against 0.515 fades a second
-      \item Cross-checked once against MATLAB's channel objects; the record is kept in the docs
+      \item An exact delay line; the former Butterworth presets are retained for reproducibility
+      \item The former ``poor'' preset faded \textbf{twice as fast} as CCIR Poor: 1.007 against 0.515 fades per second
+      \item Validated once against MATLAB's channel objects; the results are documented
     \end{itemize}
     \column{0.46\textwidth}
-    \begin{block}{Gates in C, run by CI}
-      \small
-      \begin{tabular}{@{}lrr@{}}
-                               & \textbf{measured} & \textbf{theory} \\
-        power beyond 3$\sigma$ & 0.273 \%        & 0.27 \% \\
-        power beyond spread    & 4.68 \%         & 4.55 \% \\
-        fades below $-10$ dB   & 0.5067/s        & 0.5072/s \\
-      \end{tabular}
+    \begin{block}{Acceptance tests in the CI suite}
+      \footnotesize
+      \begin{tabular*}{\linewidth}{@{}l@{\extracolsep{\fill}}rr@{}}
+                                     & \textbf{Measured} & \textbf{Theory} \\
+        Power beyond 3$\sigma$       & 0.273 \%          & 0.27 \% \\
+        Power beyond the spread      & 4.68 \%           & 4.55 \% \\
+        Fade rate below $-10$ dB     & 0.5067 s$^{-1}$   & 0.5072 s$^{-1}$ \\
+      \end{tabular*}
       \par\smallskip
-      Rice's closed form for the fade rate; 900 s records on pinned seeds
+      Reference values: the Gaussian spectrum and Rice's closed-form level-crossing rate. Records of 900 s with fixed seeds.
     \end{block}
   \end{columns}
   \src{Source: PR \#379 (Joseph Freivald, approved): docs/CHANNEL-MODEL.md, tests/common/test\_watterson.c}
 \end{frame}
 
-\begin{frame}{Measuring on more than one instrument}
+\begin{frame}{Independent measurement tools}
   \begin{columns}[T]
     \column{0.5\textwidth}
     \begin{block}{Channel simulators}
@@ -655,7 +657,7 @@
 % =============================================================================
 \section{Integration and platforms}
 
-\begin{frame}{Applications on top}
+\begin{frame}{Supported applications}
   \begin{columns}[T]
     \column{0.33\textwidth}
     \begin{block}{\faEnvelope\ Mail and files}
@@ -697,9 +699,9 @@
 \end{frame}
 
 % =============================================================================
-\section{What comes next}
+\section{Outlook}
 
-\begin{frame}{Next}
+\begin{frame}{Future work}
   \begin{columns}[T]
     \column{0.5\textwidth}
     \begin{itemize}
