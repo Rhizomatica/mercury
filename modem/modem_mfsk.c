@@ -150,6 +150,13 @@ typedef struct {
     double snr_bin_to_3k_db;        /* one bin's width against 3 kHz */
     mfsk_t m;
     ofdm_frame_t o;
+    /* The receiver runs at MFSK_FS / dec after its filter (mfsk_downmix):
+     * orx, nfft_r and Nr are o, nfft and Nofdm at that rate, and every
+     * position in bf -- anchors, payload starts, b_abs -- counts its samples.
+     * dec is 1 but for the 500 Hz geometry. */
+    int dec;
+    ofdm_frame_t orx;
+    int nfft_r, Nr;
     const mfsk_ldpc_code_t *code;   /* rate 8/16 */
     mfsk_ldpc_ws_t *ldpc;           /* this decoder's own LDPC workspace */
     int Nofdm, P, bps, NPAY;
@@ -174,9 +181,17 @@ typedef struct {
                                      * mfsk_downmix) */
     int      bb_len;                /* samples of bb that are downmixed        */
     int      bf_len;                /* samples of bf that are FINAL (filtered) */
+    /* The same filtered baseband at the full rate, for the payload reads:
+     * bf itself when dec is 1; otherwise filled only once a burst's preamble
+     * is in view (mfsk_full_rate), so an idle listener never pays for it.
+     * Payload positions, keys and pre_fail_abs count its samples (n_abs). */
+    double complex *bf8;
+    int      bf8_len;
+    int      bf8_lo;                /* bf8 below this was never computed       */
     long     n_abs;                 /* absolute index of rxbuf[0] — keeps the
                                      * carrier phase tied to the sample, not to
                                      * its position in a sliding buffer        */
+    long     b_abs;                 /* ...and of bf[0]: n_abs / dec            */
     mfsk_cplx      *rb;             /* NPAY*NCAR depadded bins */
     int             nb;             /* NPAY*bps transmitted bit slots (>= N) */
     int            *ilv;            /* interleaver: coded index per tx slot   */
@@ -306,6 +321,20 @@ static void *mfsk_be_open(int mode)
      * airtime per byte, so the fringe rung stays at rate 1/2. */
     h->code  = &mfsk_ldpc_8_16;          /* rate 1/2: 100-byte frame */
     h->Nofdm = ofdm_frame_nofdm(&h->o);
+    /* The 500 Hz geometry's receiver at 2 kHz.  Its tones span 500 Hz and its
+     * filter passes 400 Hz either side of the carrier (below), so a quarter
+     * of the rate holds all of it, and a 128-point FFT there has the 512-point
+     * one's 15.625 Hz bins: the same symbols, the same templates, at a
+     * quarter of the cost.  At 8 kHz its idle listener took 3.3 times the
+     * floor's CPU, nearly all of it the preamble search (25 hypotheses of
+     * 512-sample symbols against 13 of 256). */
+    h->dec = mode == MERCURY_MODE_MFSK_N32 ? 4 : 1;
+    if (h->dec == 1)
+        h->orx = h->o;
+    else
+        ofdm_frame_init(&h->orx, h->nfft / h->dec, MFSK_NCAR, MFSK_GI, 0);
+    h->nfft_r = h->orx.Nfft;
+    h->Nr     = ofdm_frame_nofdm(&h->orx);
     h->P     = h->m.preamble_nSymb;
     h->bps   = mfsk_bits_per_symbol(&h->m);
     h->NPAY  = (h->code->N + h->bps - 1) / h->bps;
@@ -352,9 +381,12 @@ static void *mfsk_be_open(int mode)
     h->rxcap  = h->rxhold + (h->P + h->NPAY) * h->Nofdm;
     h->rxbuf = (int16_t *)malloc((size_t)h->rxcap * sizeof(int16_t));
     h->bf    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
+    h->bf8   = h->dec == 1 ? h->bf : (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
+    h->bf8_len = h->bf8_lo = 0;
     h->bb    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
     h->bb_len = h->bf_len = 0;
     h->n_abs  = 0;
+    h->b_abs  = 0;
     h->anchor_abs = -1;
     h->tried_abs  = -1;
     h->reject_abs = -1;
@@ -375,15 +407,16 @@ static void *mfsk_be_open(int mode)
     h->ldpc  = mfsk_ldpc_ws_new();
     h->preT  = (double complex *)malloc((size_t)h->P * h->Nofdm * sizeof(double complex));
     h->pstT  = (double complex *)malloc((size_t)h->P * h->Nofdm * sizeof(double complex));
-    if (!h->rxbuf || !h->bf || !h->rb || !h->llr || !h->llr_di || !h->llr_acc || !h->ilv ||
+    if (!h->rxbuf || !h->bf || !h->bf8 || !h->rb || !h->llr || !h->llr_di || !h->llr_acc || !h->ilv ||
         !h->info || !h->ldpc || !h->preT || !h->pstT)
     {
+        if (h->bf8 != h->bf) free(h->bf8);
         free(h->rxbuf); free(h->bf); free(h->rb); free(h->llr); free(h->llr_di); free(h->llr_acc);
         free(h->ilv); free(h->info); mfsk_ldpc_ws_free(h->ldpc); free(h->preT); free(h->pstT); free(h);
         return NULL;
     }
     mfsk_interleave_init(h->ilv, h->nb);
-    h->preN = mfsk_sync_build_template(&h->m, &h->o, h->preT, h->preE);
+    h->preN = mfsk_sync_build_template(&h->m, &h->orx, h->preT, h->preE);
     /* One template per hypothesis: rotating the TEMPLATE by +k bins matches a
      * received signal shifted by +k bins, and costs nothing at run time beyond
      * the extra correlations. Rotation is continuous across the whole template
@@ -391,12 +424,12 @@ static void *mfsk_be_open(int mode)
     for (int hy = 0; hy < h->nhyp; hy++)
     {
         int hb = h->hyp_lo + hy;          /* half-bins */
-        h->preT_hyp[hy] = (double complex *)malloc((size_t)h->preN * h->Nofdm *
+        h->preT_hyp[hy] = (double complex *)malloc((size_t)h->preN * h->Nr *
                                                    sizeof(double complex));
         if (!h->preT_hyp[hy]) { mfsk_be_close(h); return NULL; }
-        for (int n = 0; n < h->preN * h->Nofdm; n++)
+        for (int n = 0; n < h->preN * h->Nr; n++)
         {
-            double ph = M_PI * (double)hb * (double)n / (double)h->nfft;
+            double ph = M_PI * (double)hb * (double)n / (double)h->nfft_r;
             h->preT_hyp[hy][n] = h->preT[n] * (cos(ph) + I * sin(ph));
         }
     }
@@ -406,7 +439,7 @@ static void *mfsk_be_open(int mode)
     h->dm_key = -1;
     h->pst_tried_abs = -1;
     h->pre_fail_abs = -1;
-    h->pstN = mfsk_sync_build_postamble_template(&h->m, &h->o, h->pstT, h->pstE);
+    h->pstN = mfsk_sync_build_postamble_template(&h->m, &h->orx, h->pstT, h->pstE);
     return h;
 }
 
@@ -417,6 +450,7 @@ static void mfsk_be_close(void *ctx)
     /* bb was never freed here: it is rxcap complex doubles (~3.4 MB), leaked on
      * every open/close cycle. */
     for (int hy = 0; hy < h->nhyp; hy++) free(h->preT_hyp[hy]);
+    if (h->bf8 != h->bf) free(h->bf8);
     free(h->rxbuf); free(h->bf); free(h->bb); free(h->rb);
     free(h->llr); free(h->llr_di); free(h->llr_acc); free(h->ilv);
     free(h->info); mfsk_ldpc_ws_free(h->ldpc); free(h->preT); free(h->pstT); free(h);
@@ -609,12 +643,43 @@ static void mfsk_downmix(mfsk_modem_t *h)
         h->bb[i] = 2.0 * (double)h->rxbuf[i] * fc_phasor_g(h->fcg, h->n_abs + (long)i);
     h->bb_len = h->rxlen;
 
-    /* bf[i] needs bb up to i + TAPS/2, so it is final only once that has
-     * arrived.  Everything below bf_len is already final and is never
-     * recomputed. */
-    int last = h->bb_len - h->lpf_taps / 2;
-    if (last > h->rxlen) last = h->rxlen;
+    /* bf[i] is the filter's output at bb[i * dec] (the receiver's rate,
+     * see dec): it needs bb up to i * dec + TAPS/2, so it is final only once
+     * that has arrived.  Everything below bf_len is already final and is
+     * never recomputed, and the outputs decimation drops are never computed. */
+    int D = h->dec;
+    int last = (h->bb_len - h->lpf_taps / 2 + D - 1) / D;
+    if (last > (h->rxlen + D - 1) / D) last = (h->rxlen + D - 1) / D;
     for (int i = h->bf_len; i < last; i++)
+    {
+        double complex a = 0;
+        for (int k = 0; k < h->lpf_taps; k++)
+        {
+            int j = i * D - k + h->lpf_taps / 2;
+            if (j >= 0 && j < h->bb_len) a += h->lpf[k] * h->bb[j];
+        }
+        h->bf[i] = a;
+    }
+    if (last > h->bf_len) h->bf_len = last;
+}
+
+/* The payload reads' baseband, bf8, at the full rate up to what bb makes
+ * final.  Not bf at the receiver's rate: the FFT's rectangular window
+ * spreads every in-band component into sidelobes across the band, and
+ * taking every dec-th sample folds the sidelobes 2 kHz away back onto the
+ * tones -- on noise, 0.4 dB more in every bin, and at mode 103's floor
+ * (-15 dB SNR3k) 13 frames of 40 became none.  The preamble search
+ * correlates in time, which folding does not touch: its metric is the same
+ * at either rate. */
+static void mfsk_full_rate(mfsk_modem_t *h, int from)
+{
+    if (h->dec == 1) { h->bf8_len = h->bf_len; return; }
+    /* Only from where a read can reach: the window holds two bursts, and
+     * filtering all of it at 8 kHz was most of a mode-103 frame's decode. */
+    if (from < 0) from = 0;
+    if (h->bf8_len < from) h->bf8_lo = h->bf8_len = from;
+    int lo = from < h->bf8_lo ? from : h->bf8_lo;   /* a read reaching lower: fill below */
+    for (int i = lo; i < h->bf8_lo; i++)
     {
         double complex a = 0;
         for (int k = 0; k < h->lpf_taps; k++)
@@ -622,9 +687,22 @@ static void mfsk_downmix(mfsk_modem_t *h)
             int j = i - k + h->lpf_taps / 2;
             if (j >= 0 && j < h->bb_len) a += h->lpf[k] * h->bb[j];
         }
-        h->bf[i] = a;
+        h->bf8[i] = a;
     }
-    if (last > h->bf_len) h->bf_len = last;
+    h->bf8_lo = lo;
+    int last = h->bb_len - h->lpf_taps / 2;
+    if (last > h->rxlen) last = h->rxlen;
+    for (int i = h->bf8_len; i < last; i++)
+    {
+        double complex a = 0;
+        for (int k = 0; k < h->lpf_taps; k++)
+        {
+            int j = i - k + h->lpf_taps / 2;
+            if (j >= 0 && j < h->bb_len) a += h->lpf[k] * h->bb[j];
+        }
+        h->bf8[i] = a;
+    }
+    if (last > h->bf8_len) h->bf8_len = last;
 }
 
 /* bf at a fractional index: 4-point Lagrange interpolation.  The baseband is
@@ -634,7 +712,7 @@ static inline double complex bf_at(const mfsk_modem_t *h, double x)
 {
     long i = (long)floor(x);
     double t = x - (double)i;
-    const double complex *p = &h->bf[i - 1];
+    const double complex *p = &h->bf8[i - 1];
     if (t == 0.0) return p[1];
     return -t * (t - 1.0) * (t - 2.0) / 6.0 * p[0]
          + (t + 1.0) * (t - 1.0) * (t - 2.0) / 2.0 * p[1]
@@ -657,10 +735,10 @@ static void mfsk_sym_bins(const mfsk_modem_t *h, double pos, double rate, double
     {
         int b = (int)pos;
         if (hb == 0.0)
-            src = &h->bf[b];
+            src = &h->bf8[b];
         else
             for (int n = 0; n < h->Nofdm; n++, p *= w)
-                sym[n] = h->bf[b + n] * p;
+                sym[n] = h->bf8[b + n] * p;
     }
     else
         for (int n = 0; n < h->Nofdm; n++, p *= w)
@@ -683,8 +761,8 @@ static double mfsk_pay_start(const mfsk_modem_t *h, int payoff, int ref, double 
  * interpolator's reach either side)? */
 static int mfsk_pay_fits(const mfsk_modem_t *h, double start, double rate)
 {
-    return start >= 1.0 &&
-           start + (double)(h->NPAY * h->Nofdm - 1) * rate + 2.0 < (double)h->bf_len;
+    return start >= (double)h->bf8_lo + 1.0 &&
+           start + (double)(h->NPAY * h->Nofdm - 1) * rate + 2.0 < (double)h->bf8_len;
 }
 
 /* How a payload is read: symbol s starts at start + s Nofdm rate, or, from
@@ -711,7 +789,7 @@ static int mfsk_pay_ready(const mfsk_modem_t *h, int payoff, int ref)
 {
     double r = 1.0 + MFSK_RATE_MAX;
     double end = mfsk_pay_start(h, payoff, ref, r) + (double)(h->NPAY * h->Nofdm - 1) * r + 2.0;
-    return end < (double)h->bf_len;
+    return end < (double)h->bf8_len;
 }
 
 /* One symbol's strongest tone per stream, summed: how well a position, ratio
@@ -1094,22 +1172,22 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, int ref, int pre_payoff
 #define SCAN_OVERLAP_SYMB 2
 static int mfsk_carrier_sense(mfsk_modem_t *h, int search_len)
 {
-    int burst = (h->P + h->NPAY) * h->Nofdm;
-    long end_abs = h->n_abs + h->bf_len;
+    int burst = (h->P + h->NPAY) * h->Nr;
+    long end_abs = h->b_abs + h->bf_len;
     if (h->carrier_abs >= 0) {
-        if (h->carrier_abs >= h->n_abs && h->carrier_abs + burst > end_abs)
+        if (h->carrier_abs >= h->b_abs && h->carrier_abs + burst > end_abs)
             return 1;                        /* still arriving */
         h->carrier_abs = -1;                 /* resident or slid out */
     }
     /* From where the last look stopped, one symbol back so a preamble that
      * straddled it is seen whole; never below the resident-payload range. */
-    int resident_end = search_len - h->P * h->Nofdm;   /* the search above ends here */
-    long from_abs = h->n_abs + (resident_end > 0 ? resident_end : 0);
-    if (h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nofdm > from_abs)
-        from_abs = h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nofdm;
-    int base = (int)(from_abs - h->n_abs);
+    int resident_end = search_len - h->P * h->Nr;   /* the search above ends here */
+    long from_abs = h->b_abs + (resident_end > 0 ? resident_end : 0);
+    if (h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nr > from_abs)
+        from_abs = h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nr;
+    int base = (int)(from_abs - h->b_abs);
     int len  = h->bf_len - base;
-    if (len < (h->P + 1) * h->Nofdm)
+    if (len < (h->P + 1) * h->Nr)
         return 0;
     int best = -1;
     double best_metric = -1.0;
@@ -1117,11 +1195,11 @@ static int mfsk_carrier_sense(mfsk_modem_t *h, int search_len)
         if (h->freq_locked && hy != h->freq_hb - h->hyp_lo) continue;
         double m = 0.0;
         int o = mfsk_sync_search(h->bf + base, len, 1, h->preT_hyp[hy], h->preE,
-                                 h->preN, h->Nofdm, 0, &m);
+                                 h->preN, h->Nr, 0, &m);
         if (o >= 0 && m > best_metric) { best_metric = m; best = o; }
     }
     /* Positions within P symbols of the end cannot be tested yet. */
-    h->carrier_scan_abs = end_abs - (long)(h->P + 2) * h->Nofdm;
+    h->carrier_scan_abs = end_abs - (long)(h->P + 2) * h->Nr;
     if (best < 0) return 0;
     h->carrier_abs = from_abs + best;
     return h->carrier_abs + burst > end_abs;
@@ -1136,16 +1214,25 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     if (h->rxlen + chunk > h->rxcap)
     {
         int drop = h->rxlen + chunk - h->rxhold;
+        /* A whole number of the receiver's samples, so bf keeps its grid. */
+        drop = (drop + h->dec - 1) / h->dec * h->dec;
+        int bdrop = drop / h->dec;
         memmove(h->rxbuf, h->rxbuf + drop, (size_t)(h->rxlen - drop) * sizeof(int16_t));
         /* Keep the derived buffers aligned with the raw one, or the incremental
          * downmix would recompute the wrong region. */
         if (h->bb_len > drop)
             memmove(h->bb, h->bb + drop, (size_t)(h->bb_len - drop) * sizeof(double complex));
-        if (h->bf_len > drop)
-            memmove(h->bf, h->bf + drop, (size_t)(h->bf_len - drop) * sizeof(double complex));
+        if (h->bf_len > bdrop)
+            memmove(h->bf, h->bf + bdrop, (size_t)(h->bf_len - bdrop) * sizeof(double complex));
+        if (h->bf8 != h->bf && h->bf8_len > drop)
+            memmove(h->bf8, h->bf8 + drop, (size_t)(h->bf8_len - drop) * sizeof(double complex));
         h->bb_len = (h->bb_len > drop) ? h->bb_len - drop : 0;
-        h->bf_len = (h->bf_len > drop) ? h->bf_len - drop : 0;
+        h->bf_len = (h->bf_len > bdrop) ? h->bf_len - bdrop : 0;
+        h->bf8_len = h->bf8 == h->bf ? h->bf_len : (h->bf8_len > drop) ? h->bf8_len - drop : 0;
+        h->bf8_lo  = (h->bf8_lo > drop) ? h->bf8_lo - drop : 0;
+        if (h->bf8_lo > h->bf8_len) h->bf8_lo = h->bf8_len;
         h->n_abs += drop;
+        h->b_abs += bdrop;
         h->rxlen -= drop;
     }
     memcpy(h->rxbuf + h->rxlen, demod_in, (size_t)chunk * sizeof(int16_t));
@@ -1167,7 +1254,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * peer's floor frame 1.3 s into it. */
     if (h->rxlen < burst)
     {
-        h->last_sync = mfsk_carrier_sense(h, h->bf_len - h->NPAY * h->Nofdm);
+        h->last_sync = mfsk_carrier_sense(h, h->bf_len - h->NPAY * h->Nr);
         return 0;
     }
 
@@ -1188,11 +1275,11 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * runs at all on a 32-bit Pi. */
     double metric = 0.0;
     int off = -1;
-    int search_len = h->bf_len - h->NPAY * h->Nofdm;
+    int search_len = h->bf_len - h->NPAY * h->Nr;
 
     if (h->anchor_abs >= 0)
     {
-        long rel = h->anchor_abs - h->n_abs;
+        long rel = h->anchor_abs - h->b_abs;
         if (rel >= 0 && rel <= (long)search_len)
         {
             off = (int)rel;          /* still in view: no correlation needed */
@@ -1204,7 +1291,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
         }
     }
 
-    if (off < 0 && search_len > h->P * h->Nofdm)
+    if (off < 0 && search_len > h->P * h->Nr)
     {
         /* Resume past a peak we already proved wrong.  The search returns the
          * EARLIEST offset above threshold, so a rejected peak at X means there
@@ -1214,9 +1301,9 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
         int start_symb = 0;
         if (h->reject_abs >= 0)
         {
-            long rel = h->reject_abs - h->n_abs;
+            long rel = h->reject_abs - h->b_abs;
             if (rel < 0) h->reject_abs = -1;                 /* slid out */
-            else start_symb = (int)(rel / h->Nofdm) + 1;
+            else start_symb = (int)(rel / h->Nr) + 1;
         }
         /* Nor search again what an earlier look already found empty: the
          * window only grows at its end, and a correlation reads only the
@@ -1227,8 +1314,8 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
          * downmix filter's still-settling tail. */
         if (h->pre_scan_abs >= 0)
         {
-            long rel = h->pre_scan_abs - h->n_abs - (long)SCAN_OVERLAP_SYMB * h->Nofdm;
-            int s = rel > 0 ? (int)(rel / h->Nofdm) : 0;
+            long rel = h->pre_scan_abs - h->b_abs - (long)SCAN_OVERLAP_SYMB * h->Nr;
+            int s = rel > 0 ? (int)(rel / h->Nr) : 0;
             if (s > start_symb) start_symb = s;
         }
         /* Sweep frequency hypotheses, not just time. Without this a dial
@@ -1252,7 +1339,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
             int hy = h->freq_hb - h->hyp_lo;
             if (hy >= 0 && hy < h->nhyp)
                 off = mfsk_sync_search(h->bf, search_len, 1, h->preT_hyp[hy],
-                                       h->preE, h->preN, h->Nofdm, start_symb,
+                                       h->preE, h->preN, h->Nr, start_symb,
                                        &metric);
             if (off < 0) h->freq_locked = 0;   /* stale lock: re-sweep below */
         }
@@ -1265,7 +1352,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
             {
                 double m = 0.0;
                 int o = mfsk_sync_search(h->bf, search_len, 1, h->preT_hyp[hy],
-                                         h->preE, h->preN, h->Nofdm,
+                                         h->preE, h->preN, h->Nr,
                                          start_symb, &m);
                 if (o >= 0 && m > best_metric)
                 {
@@ -1287,14 +1374,21 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
          * anchor must never be taken again, or it is tried once and then
          * sits there as "already tried" while the burst behind it goes by. */
         bool none_found = off < 0;   /* every hypothesis searched to the end */
-        if (off >= 0 && h->reject_abs >= 0 && h->n_abs + (long)off <= h->reject_abs)
+        if (off >= 0 && h->reject_abs >= 0 && h->b_abs + (long)off <= h->reject_abs)
             off = -1;
         if (off >= 0)
-            h->anchor_abs = h->n_abs + (long)off;
+            h->anchor_abs = h->b_abs + (long)off;
         else if (none_found)   /* every offset with a whole preamble in view */
-            h->pre_scan_abs = h->n_abs + (long)(search_len / h->Nofdm - h->P) * h->Nofdm;
+            h->pre_scan_abs = h->b_abs + (long)(search_len / h->Nr - h->P) * h->Nr;
     }
-    int payoff = (off >= 0) ? off + h->P * h->Nofdm : -1;
+    int payoff = (off >= 0) ? off + h->P * h->Nr : -1;
+    /* ...and at the full rate, where the payload is read (bf8). */
+    int payoff8 = payoff >= 0 ? payoff * h->dec : -1;
+    /* the clock search moves the start by up to NPAY symbols times
+     * MFSK_RATE_MAX, a gap's read by two symbols */
+    int reach8 = (int)(h->NPAY * h->Nofdm * MFSK_RATE_MAX) + (MFSK_SLIP_MAX_SYMB + 1) * h->Nofdm;
+    if (payoff8 >= 0)
+        mfsk_full_rate(h, payoff8 - reach8);
     /* Decode a given burst ONCE.  Once the anchor is fixed and the payload is
      * fully resident, the samples feeding the demod no longer change, so
      * re-running a 50-iteration LDPC decode every 4 symbols cannot produce a
@@ -1304,12 +1398,12 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * while ALSA and PulseAudio both stall after one frame.)  "Resident"
      * means in at the slowest sample clock searched, which is when
      * mfsk_try_payload has tried everything it will. */
-    int payload_resident = (payoff >= 0) && mfsk_pay_ready(h, payoff, h->P);
+    int payload_resident = (payoff8 >= 0) && mfsk_pay_ready(h, payoff8, h->P);
     int already_tried = (h->anchor_abs >= 0) && (h->tried_abs == h->anchor_abs);
     int nbytes = 0;
     if (payoff >= 0 && !already_tried)
     {
-        nbytes = mfsk_try_payload(h, payoff, h->P, -1, bytes_out);
+        nbytes = mfsk_try_payload(h, payoff8, h->P, -1, bytes_out);
         if ((payload_resident || nbytes > 0) && h->anchor_abs >= 0)
         {
             if (nbytes > 0)
@@ -1331,7 +1425,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
                 if (h->anchor_abs > h->reject_abs) h->reject_abs = h->anchor_abs;
                 h->tried_abs  = h->anchor_abs;
                 h->anchor_abs = -1;
-                h->pre_fail_abs = h->n_abs + (long)payoff;   /* for its postamble */
+                h->pre_fail_abs = h->n_abs + (long)payoff8;   /* for its postamble */
             }
         }
     }
@@ -1357,35 +1451,36 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
         int pstart = 0;
         if (h->pst_scan_abs >= 0)
         {
-            long rel = h->pst_scan_abs - h->n_abs - (long)SCAN_OVERLAP_SYMB * h->Nofdm;
-            pstart = rel > 0 ? (int)(rel / h->Nofdm) : 0;
+            long rel = h->pst_scan_abs - h->b_abs - (long)SCAN_OVERLAP_SYMB * h->Nr;
+            pstart = rel > 0 ? (int)(rel / h->Nr) : 0;
         }
         int poff = mfsk_sync_search(h->bf, h->bf_len, 1, h->pstT, h->pstE,
-                                    h->pstN, h->Nofdm, pstart, &pmetric);
+                                    h->pstN, h->Nr, pstart, &pmetric);
         /* The search refines its candidate and can land back on a postamble
          * it was told to start past, as the preamble's can (above), and a
          * payload is tried once: re-reading a failed one every 4 symbols,
          * sample-clock search and all, would be most of the decoder's CPU. */
-        if (poff >= 0 && h->n_abs + (long)poff <= h->pst_tried_abs)
+        if (poff >= 0 && h->b_abs + (long)poff <= h->pst_tried_abs)
         {
-            h->pst_scan_abs = h->n_abs + (long)poff + (long)(SCAN_OVERLAP_SYMB + 1) * h->Nofdm;
+            h->pst_scan_abs = h->b_abs + (long)poff + (long)(SCAN_OVERLAP_SYMB + 1) * h->Nr;
         }
         else if (poff >= 0)
         {
-            int ppayoff = poff - h->NPAY * h->Nofdm;
+            int ppayoff8 = (poff - h->NPAY * h->Nr) * h->dec;
             long pre = h->pre_fail_abs - h->n_abs;   /* that burst's preamble, if it failed */
-            int pn = mfsk_try_payload(h, ppayoff, -h->NPAY, pre >= 0 ? (int)pre : -1, bytes_out);
-            h->pst_tried_abs = h->n_abs + (long)poff;
+            mfsk_full_rate(h, (pre >= 0 && pre < ppayoff8 ? (int)pre : ppayoff8) - reach8);
+            int pn = mfsk_try_payload(h, ppayoff8, -h->NPAY, pre >= 0 ? (int)pre : -1, bytes_out);
+            h->pst_tried_abs = h->b_abs + (long)poff;
             if (pn > 0)
             {
                 off = poff;
                 nbytes = pn;
             }
             else   /* its payload failed, or is not in view: it will not change */
-                h->pst_scan_abs = h->n_abs + (long)poff + (long)(SCAN_OVERLAP_SYMB + 1) * h->Nofdm;
+                h->pst_scan_abs = h->b_abs + (long)poff + (long)(SCAN_OVERLAP_SYMB + 1) * h->Nr;
         }
         else
-            h->pst_scan_abs = h->n_abs + (long)(h->bf_len / h->Nofdm - h->P) * h->Nofdm;
+            h->pst_scan_abs = h->b_abs + (long)(h->bf_len / h->Nr - h->P) * h->Nr;
     }
 
     /* Sync means "a burst is arriving": its preamble located, its payload not
@@ -1394,7 +1489,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * above leaves it untouched, and that is ~13 s after a burst had ended --
      * so the carousel's receiver deferred its answer to a round until the
      * sender, hearing nothing, had keyed the next one. */
-    int arriving = off >= 0 && off + (h->P + h->NPAY) * h->Nofdm > h->bf_len;
+    int arriving = off >= 0 && off + (h->P + h->NPAY) * h->Nr > h->bf_len;
     if (nbytes <= 0 && !arriving)
         arriving = mfsk_carrier_sense(h, search_len);
     h->last_sync = nbytes <= 0 && arriving;
@@ -1403,7 +1498,8 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     h->carrier_abs = h->carrier_scan_abs = -1;
     h->pre_scan_abs = h->pst_scan_abs = -1;
     h->n_abs += h->rxlen;
-    h->rxlen = h->bb_len = h->bf_len = 0;   /* burst consumed */
+    h->b_abs = h->n_abs / h->dec;           /* rxlen is whole chunks: a multiple of dec */
+    h->rxlen = h->bb_len = h->bf_len = h->bf8_len = h->bf8_lo = 0;   /* burst consumed */
     h->anchor_abs = -1;
     h->tried_abs  = -1;
     h->reject_abs = -1;                     /* next burst searches from the top */
