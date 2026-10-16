@@ -93,3 +93,7 @@ radio_io/hidapi-w64/*.o
 utils/shortframe_sweep
 utils/hail_suffix_sweep
 utils/mfsk_puncture_sweep
+
+# TLC error-trace dumps (written next to the spec on a violation)
+*_TTrace_*.tla
+*_TTrace_*.bin
