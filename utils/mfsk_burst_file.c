@@ -4,6 +4,7 @@
  *   mfsk_burst_file rx <mode> <seed> <received.raw>        (prints 1 or 0)
  *   mfsk_burst_file bpf <lo_hz> <hi_hz> <in.raw> <out.raw>
  *   mfsk_burst_file rate <ratio> <in.raw> <out.raw>
+ *   mfsk_burst_file gap <at> <samples> <in.raw> <out.raw>
  *
  * tx writes one CRC-valid frame (payload from <seed>) as 8 kHz int16: the
  * burst alone (for the channel tool to measure its SNR) and with 0.5 s of
@@ -14,8 +15,10 @@
  * frame arrived at.  bpf is a receiver's narrow filter: a windowed-sinc band-pass,
  * -6 dB at lo and hi, about 150 Hz from there to the stop band.  rate is a
  * sample-clock error: <ratio> output samples per input sample, i.e. what a
- * receiver whose sound card runs <ratio> times fast records.
- * utils/mfsk_channel_sweep.sh drives the three through codec2's ch or the
+ * receiver whose sound card runs <ratio> times fast records.  gap is a gap in
+ * the transmitter's audio at <at> (0..1) of the burst: <samples> of silence
+ * put in, or taken out if negative (a playback underrun, a lost packet).
+ * utils/mfsk_channel_sweep.sh drives them through codec2's ch or the
  * Watterson model.
  *
  * Copyright (C) 2026 Rhizomatica
@@ -99,15 +102,48 @@ static int resample(double ratio, const char *in, const char *out)
     return 0;
 }
 
+/* A gap in the transmitter's audio, at `at` (0..1) of the burst's span: n
+ * samples of silence put in, or -n taken out (a playback underrun, a lost
+ * packet). */
+static int gap(double at, int n, const char *in, const char *out)
+{
+    FILE *f = fopen(in, "rb"), *g = fopen(out, "wb");
+    if (!f || !g || at < 0.0 || at > 1.0) return 2;
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f) / 2;
+    rewind(f);
+    int16_t *x = malloc((size_t)len * 2);
+    if (!x || fread(x, 2, (size_t)len, f) != (size_t)len) return 2;
+    long a = 0, b = len - 1;
+    while (a < len && abs(x[a]) < 50) a++;
+    while (b > a && abs(x[b]) < 50) b--;
+    long p = a + (long)(at * (double)(b - a));
+    if (n < 0 && p - n > len) return 2;
+    fwrite(x, 2, (size_t)p, g);
+    if (n > 0) {
+        int16_t *z = calloc((size_t)n, 2);
+        fwrite(z, 2, (size_t)n, g);
+        free(z);
+        fwrite(x + p, 2, (size_t)(len - p), g);
+    } else
+        fwrite(x + p - n, 2, (size_t)(len - p + n), g);
+    free(x);
+    fclose(f); fclose(g);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 6 && !strcmp(argv[1], "bpf"))
         return bpf(atof(argv[2]), atof(argv[3]), argv[4], argv[5]);
     if (argc == 5 && !strcmp(argv[1], "rate"))
         return resample(atof(argv[2]), argv[3], argv[4]);
+    if (argc == 6 && !strcmp(argv[1], "gap"))
+        return gap(atof(argv[2]), atoi(argv[3]), argv[4], argv[5]);
     if (argc < 5 || (strcmp(argv[1], "tx") && strcmp(argv[1], "rx")) || (!strcmp(argv[1], "tx") && argc < 6)) {
         fprintf(stderr, "usage: %s tx <mode> <seed> <burst.raw> <padded.raw> | rx <mode> <seed> <received.raw>"
-                        " | bpf <lo> <hi> <in.raw> <out.raw> | rate <ratio> <in.raw> <out.raw>\n", argv[0]);
+                        " | bpf <lo> <hi> <in.raw> <out.raw> | rate <ratio> <in.raw> <out.raw>"
+                        " | gap <at> <samples> <in.raw> <out.raw>\n", argv[0]);
         return 2;
     }
     const modem_backend_t *be = &modem_backend_mfsk;
