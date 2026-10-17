@@ -76,6 +76,13 @@ Which model covers the other 2.0 changes:
 - the direct probe (`choose_level` asks for the rung the SNR would start
   on): `RungAgreement`'s sized poll names any rung (`\E l \in Rungs`), so
   agreement and delivery hold for whichever it picks;
+- the SNR snap (two readings more than `SNR_GATE_DB` to one side of the
+  smoothed SNR move it): it changes only the reading S judges rungs by, so
+  `RungAgreement` covers the rung S then names (any rung).  It also moves
+  when an end decides it hears its peer below the control mode
+  (`ctl_deaf`).  No model has that decision, before or after this change:
+  the models fix the control frame's mode per configuration
+  (`CarouselTurns.cfg`, `CarouselTurns_mfsk.cfg`);
 - a pattern only for the rung asked: the floor's patterns are outside
   `RungAgreement`; the rule only narrows when S answers with one, which
   `FloorSilence` does not depend on.
