@@ -245,6 +245,44 @@ void test_car_disconnect_after_reply_is_prompt(void)
     sim_destroy(s);
 }
 
+/* #392: the Winlink tail.  The RMS (callee) hangs up as its FQ is on the
+ * air, and the client's slow app answers the FQ only after its own ack has
+ * gone.  Both ends leave the session cleanly, and the RMS's application gets
+ * nothing after it hung up (host_released): the client's late bytes are
+ * dropped, so no drain could have carried them (#398). */
+void test_car_winlink_tail_ends_cleanly(void)
+{
+    sim_t *s = idle_session(2, 10.0);
+    uint8_t ff[40], fq[8], ack[4];
+    memset(ff, 'F', sizeof(ff)); memset(fq, 'Q', sizeof(fq)); memset(ack, 'A', sizeof(ack));
+    static uint8_t rx[256];
+
+    queue(s, sim_a(s), ff, sizeof(ff));
+    for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)) < sizeof(ff); i++)
+        sim_run_until_idle(s, 100);
+
+    queue(s, sim_b(s), fq, sizeof(fq));
+    for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)) < sizeof(fq); i++)
+        sim_run_until_idle(s, 100);
+
+    /* The RMS hangs up, then the client's slow app sends its final byte. */
+    arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+    sim_inject(s, sim_b(s), &disc);
+    for (int i = 0; i < 20; i++) sim_run_until_idle(s, 100);   /* ~2 s: the FQ ack goes first */
+    queue(s, sim_a(s), ack, sizeof(ack));
+
+    sim_run_until_idle(s, 60000);
+
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_DISCONNECTING, state(sim_a(s)));
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
+    TEST_ASSERT_EQUAL_UINT16(0, sim_endpoint_crc_seed(sim_a(s)));
+    TEST_ASSERT_EQUAL_UINT16(0, sim_endpoint_crc_seed(sim_b(s)));
+    TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+    TEST_ASSERT_EQUAL_size_t(sizeof(ff), sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)));
+    sim_destroy(s);
+}
+
 /* The callee's ACCEPTs never reach the caller: it falls back to LISTENING
  * still seeded, to catch the caller's first round in case the caller did
  * connect.  The caller never comes, and the seed must not outlive the wait:
@@ -447,6 +485,7 @@ int main(void)
     RUN_TEST(test_car_idle_peer_loss_disconnects);
     RUN_TEST(test_car_disconnect_quiet_peer_one_try);
     RUN_TEST(test_car_disconnect_after_reply_is_prompt);
+    RUN_TEST(test_car_winlink_tail_ends_cleanly);
     RUN_TEST(test_car_disconnect_after_transfer);
     RUN_TEST(test_car_abort_skips_the_drain);
     RUN_TEST(test_car_reply_during_final_poll);
