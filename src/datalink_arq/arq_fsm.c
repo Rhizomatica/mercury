@@ -23,7 +23,7 @@
 #include "../common/hermes_log.h"
 #include "../common/virtual_clock.h"
 #include "../modem/framer.h"
-#include "../modem/freedv/freedv_api.h"
+#include <freedv/freedv_api.h>
 
 #define LOG_COMP  "arq-fsm"
 #define INT_BUFFER_SIZE 4096

@@ -5,7 +5,7 @@
  */
 
 #include "modem_freedv.h"
-#include "freedv_api.h"
+#include <freedv/freedv_api.h>
 
 /* ctx is the struct freedv *. */
 #define FDV(ctx) ((struct freedv *)(ctx))

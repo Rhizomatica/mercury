@@ -14,7 +14,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include "freedv_api.h"
+#include <freedv/freedv_api.h>
 #include "modem_mfsk.h"
 #include "framer.h"
 #include "arq.h"

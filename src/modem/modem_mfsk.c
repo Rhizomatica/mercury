@@ -5,10 +5,10 @@
  */
 
 #include "modem_mfsk.h"
-#include "mfsk.h"
-#include "mfsk_ofdm.h"
-#include "mfsk_sync.h"
-#include "mfsk_ldpc.h"
+#include "mfsk/mfsk.h"
+#include "mfsk/mfsk_ofdm.h"
+#include "mfsk/mfsk_sync.h"
+#include "mfsk/mfsk_ldpc.h"
 
 /* How much may be Chase-combined before the accumulator is abandoned.  Sized
  * from the MFSK CALL retry cadence (~18 s apart, at most a handful of tries):
@@ -16,7 +16,7 @@
  * abandoned sequence cannot reach the next caller. */
 #define MFSK_HARQ_MAX_COPIES 4
 #define MFSK_HARQ_WINDOW_MS  90000ULL
-#include "freedv_api.h"   /* freedv_gen_crc16 — codec-independent CRC16 */
+#include <freedv/freedv_api.h>   /* freedv_gen_crc16 — codec-independent CRC16 */
 
 #include <complex.h>
 #include <math.h>

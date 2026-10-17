@@ -18,7 +18,7 @@
 #include <winsock2.h>
 #endif
 
-#include "freedv_api.h"
+#include <freedv/freedv_api.h>
 #include "arq.h"
 #include "modem.h"
 #include "broadcast.h"

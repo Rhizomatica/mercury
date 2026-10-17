@@ -44,9 +44,9 @@
 #include "../data_interfaces/tcp_interfaces.h"
 #include "../common/hermes_log.h"
 #include "../common/message_store.h"
-#include "../modem/freedv/modem_stats.h"
+#include <freedv/modem_stats.h>
 #include "ui_history.h"
-#include "../modem/freedv/freedv_api.h"
+#include <freedv/freedv_api.h>
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 #include "../modem/modem.h"
 #include "../datalink_broadcast/bcast_status.h"

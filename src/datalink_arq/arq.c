@@ -37,7 +37,7 @@
 #include "../common/message_store.h"
 #include "../data_interfaces/tcp_interfaces.h"
 #include "../modem/framer.h"
-#include "../modem/freedv/freedv_api.h"
+#include <freedv/freedv_api.h>
 
 #define LOG_COMP "arq"
 

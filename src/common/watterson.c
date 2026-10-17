@@ -29,7 +29,7 @@
 #include <string.h>
 
 #include "watterson.h"
-#include "../modem/freedv/comp_prim.h"
+#include <freedv/comp_prim.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

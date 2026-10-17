@@ -11,7 +11,7 @@
  * appended -- reordering would silently repoint every operator's config.
  */
 
-#include "freedv_api.h"
+#include <freedv/freedv_api.h>
 #include "mercury_cli.h"
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 

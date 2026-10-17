@@ -42,13 +42,13 @@
 #include "../datalink_broadcast/bcast_status.h"
 #include "channel_busy.h"
 #include "tx_pacing.h"
-#include "freedv_api.h"
+#include <freedv/freedv_api.h>
 #include "modem_freedv.h"
 #include "modem_mfsk.h"
 #include "mfsk/mfsk.h"          /* NAV header classes */
-#include "fsk.h"
-#include "ldpc_codes.h"
-#include "ofdm_internal.h"
+#include <freedv/fsk.h>
+#include <freedv/ldpc_codes.h>
+#include <freedv/ofdm_internal.h>
 #include "hermes_log.h"
 #include "virtual_clock.h"
 

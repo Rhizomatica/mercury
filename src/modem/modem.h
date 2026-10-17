@@ -26,7 +26,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "freedv_api.h"
+#include <freedv/freedv_api.h>
 #include "modem_backend.h"
 
 #define TAIL_TIME_US 100000 // 100 ms (in microseconds) tail time after sending data

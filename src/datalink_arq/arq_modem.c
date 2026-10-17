@@ -15,7 +15,7 @@
 #include <errno.h>
 #include <stdlib.h>
 
-#include "../modem/freedv/freedv_api.h"
+#include <freedv/freedv_api.h>
 
 /* ======================================================================
  * Action queue — ring buffer of arq_action_t entries

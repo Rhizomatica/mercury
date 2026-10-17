@@ -16,9 +16,9 @@
 
 #include "mercury_cli.h"
 #include "mercury_version.h"
-#include "freedv_api.h"
+#include <freedv/freedv_api.h>
 #include "modem_mfsk.h"
-#include "ldpc_codes.h"
+#include <freedv/ldpc_codes.h>
 #include "audioio/audioio.h"
 #include "radio_io.h"
 #include "hermes_log.h"
