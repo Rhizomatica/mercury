@@ -2432,7 +2432,18 @@ static void s_slot(car_t *c, uint64_t now)
     if (!c->anc.on) return;
     if (c->end_req) {
         /* Ending: the session's DISCONNECT goes in this slot instead of an
-         * answer -- and in the next, if M keys again without hearing it. */
+         * answer -- and in the next, if M keys again without hearing it.  But
+         * first confirm data M sent after we ended: its final handshake byte
+         * must be ACKed or it never learns it landed, and it holds its own
+         * teardown open waiting for that (#392).  The ACK takes this slot;
+         * the DISCONNECT goes in the next. */
+        if (c->anc.i == 0 && !c->tx_busy && c->deliver_seq != c->seq_at_ask) {
+            car_trace(c, "ending: ack M's last data, DISCONNECT next slot");
+            s_answer(c, now, false);
+            if (++c->anc.i > c->anc.k) { c->anc.on = false; return; }
+            arm(c, CAR_T_S, c->anc.eh + TG_MS + (uint64_t)c->anc.i * c->anc.p);
+            return;
+        }
         car_trace(c, "tx: ending the session in slot %d", c->anc.i);
         c->anc.on = false;
         if (!c->tx_busy && c->io.end) c->io.end(c->io.ctx);
