@@ -22,6 +22,7 @@ find_package(Threads REQUIRED)
 
 target_link_libraries(mercury
     Threads::Threads
+    m
     ffaudio
     freedv
     iniparser
