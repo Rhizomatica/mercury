@@ -38,7 +38,8 @@ target_sources(mercury PRIVATE main.c)
 
 # Generate web_packed.c
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c"
-    COMMAND "websocket/pack_web.sh websocket/web websocket/web_packed.c"
+    COMMAND "websocket/pack_web.sh websocket/web ${CMAKE_CURRENT_BINARY_DIR}/web_packed.c"
+    WORKING_DIRECTORY gui_interface
 )
 
 target_sources(mercury PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c")
