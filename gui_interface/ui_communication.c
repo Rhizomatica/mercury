@@ -52,15 +52,7 @@
 #include "../radio_io/radio_io.h"  /* RADIO_TYPE_NONE */
 #include "../radio_io/rigctl_parse.h"  /* preload_radio_list */
 
-#include "../audioio/audio_dev_limits.h"   /* AUDIO_DEV_STR_MAX */
-
-/* Hand-written rather than #include "audioio.h": that header pulls in ffbase,
- * which is not on this file's include path. */
-extern int get_soundcard_list(int audio_system, int mode,
-                              char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX],
-                              int max_count);
-
-extern int audioio_available_subsystems(int *subsystems, int max);
+#include "../audioio/audioio.h"
 
 /* The enumerator writes rows this wide and we copy them straight into
  * ui_device_t; if the UI struct were ever the narrower of the two, long
@@ -68,16 +60,7 @@ extern int audioio_available_subsystems(int *subsystems, int max);
 _Static_assert(AUDIO_DEV_STR_MAX >= UI_DEV_ID_MAX,
                "device id rows must not be narrower than ui_device_t.id");
 
-/* Audio path health; see audioio.h.  Declared here rather than included for
- * the same reason audioio_restart is: audioio.h drags in ffbase. */
-extern bool audioio_health_ok(char *reason, size_t reasonlen);
-extern void audioio_health_reason(char *buf, size_t buflen);
-extern int  audioio_wait_healthy(int timeout_ms);
-
-extern int audioio_restart(const char *capture_dev, const char *playback_dev,
-                           int audio_subsys, int capture_channel_layout);
-
-// global shutdown flag from main.c
+// Mercury's run flag, defined in common/mercury_engine.c
 /* Must match the definition in common/mercury_engine.c: _Atomic, not
  * volatile.  This global is written from the termination signal handler and
  * polled by every worker loop; volatile orders nothing between threads, and
