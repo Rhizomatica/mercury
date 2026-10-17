@@ -1363,9 +1363,7 @@ func main() {
 	))
 	bindings.waterfallCard = spectrumCard
 
-	topPanel := container.NewVBox(
-		container.NewVBox(txCard, telemetryCard),
-	)
+	topPanel := container.New(halfWidthColumn{}, txCard, telemetryCard)
 	// A split, not a border: with the spectrum as a border's bottom edge it was
 	// handed its full minimum height before anything else, so on a short screen
 	// it took the lot and the controls above it collapsed to a sliver. A split
@@ -2132,3 +2130,45 @@ func getLogDir() string {
 // colours: they sit on a dark strip of their own.
 func themeForeground() color.Color { return theme.Color(theme.ColorNameForeground) }
 func themeDim() color.Color        { return theme.Color(theme.ColorNamePlaceHolder) }
+
+// halfWidthColumn stacks its children vertically, each left-aligned and
+// constrained to half the available width. The top control panel uses it so the
+// TX card and Telemetry card sit in a compact column instead of stretching
+// across the whole window.
+type halfWidthColumn struct{}
+
+func (halfWidthColumn) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	width := size.Width / 2
+	padding := theme.Padding()
+	y := float32(0)
+	for _, child := range objects {
+		if !child.Visible() {
+			continue
+		}
+		height := child.MinSize().Height
+		child.Move(fyne.NewPos(0, y))
+		child.Resize(fyne.NewSize(width, height))
+		y += height + padding
+	}
+}
+
+func (halfWidthColumn) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	minSize := fyne.NewSize(0, 0)
+	addPadding := false
+	padding := theme.Padding()
+	for _, child := range objects {
+		if !child.Visible() {
+			continue
+		}
+		m := child.MinSize()
+		if m.Width > minSize.Width {
+			minSize.Width = m.Width
+		}
+		minSize.Height += m.Height
+		if addPadding {
+			minSize.Height += padding
+		}
+		addPadding = true
+	}
+	return minSize
+}
