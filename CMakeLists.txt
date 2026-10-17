@@ -9,6 +9,7 @@ project(mercury
 )
 
 # Options
+option(ENABLE_HAMLIB "Build with hamlib support for rig steering" ON)
 option(BUILD_GUI "Build Fyne-UI based GUI written in Golang" ON)
 option(ENABLE_TESTS "Enable testing" ON)
 
