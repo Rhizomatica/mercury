@@ -946,7 +946,7 @@ windows-installer: windows fyne-ui-windows windows-installer-stage
 	@echo ""
 
 clean:
-	rm -f mercury mercury.exe *.o *.d .git_hash_stamp mercury-*.zip libmercury_core.a libmercury_core_w64.a libmercury_host.a
+	rm -f mercury mercury.exe *.o *.d .git_hash_stamp .mercury_host mercury-*.zip libmercury_core.a libmercury_core_w64.a libmercury_host.a
 	rm -f host/*.o host/*.d
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)

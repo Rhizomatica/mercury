@@ -107,8 +107,22 @@ COMMON_CFLAGS += -MMD -MP
 # stands here).  Each Makefile makes the objects it compiles depend on it, next
 # to its -include of .d files.  Only objects already on disk are named: one
 # that does not exist yet gets built regardless.  Variables given on the
-# command line (make CC=..., OS=Windows_NT) are still not tracked.
+# command line (make CC=..., OS=Windows_NT) are still not tracked, except
+# MERCURY_HOST, below.
 BUILD_CONFIG := $(MAKEFILE_LIST)
+
+# MERCURY_HOST is given on the command line, and it changes compile flags
+# (HAVE_HAMLIB, HAVE_HERMES_SHM, the iniparser headers).  A standalone `make`
+# followed by `make libmercury_host.a MERCURY_HOST=daemon` in one tree put the
+# standalone mercury_cli.o (built with -DHAVE_HERMES_SHM) in the daemon
+# archive.  .mercury_host holds the mode the objects were built for; it is
+# rewritten only when the mode changes, which then rebuilds them.  The
+# top-level make writes it before any sub-make reads it.
+MERCURY_HOST_STAMP := $(MERCURY_TOP)/.mercury_host
+ifneq ($(shell cat $(MERCURY_HOST_STAMP) 2>/dev/null),$(MERCURY_HOST))
+$(shell echo $(MERCURY_HOST) > $(MERCURY_HOST_STAMP))
+endif
+BUILD_CONFIG += $(MERCURY_HOST_STAMP)
 
 # Detect the compiler target so cross-compiling armhf from an aarch64 host
 # doesn't inherit aarch64-only flags from uname -m.
