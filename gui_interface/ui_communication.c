@@ -36,6 +36,7 @@
 
 
 #include "ui_communication.h"
+#include "ui_transport.h"
 #include "ui_status.h"
 
 #include "../datalink_arq/arq.h"
@@ -733,7 +734,7 @@ void *ui_publisher_thread(void *arg)
         {
             char buf[4096];
             if (ui_status_to_json(&st, buf, sizeof(buf)) > 0)
-                ws_broadcast_json(&ctx->ws, buf);
+                ui_transport_broadcast_json(buf);
         }
 
         // --- Send capture/playback device lists and input channel when a new UI client connects ---
@@ -763,7 +764,7 @@ void *ui_publisher_thread(void *arg)
                 if (cap_count > 0)
                 {
                     if (ui_device_list_to_json("capture_dev_list", devs, cap_count, sel, buf, json_cap) > 0)
-                        ws_broadcast_json(&ctx->ws, buf);
+                        ui_transport_broadcast_json(buf);
                     else
                         HLOGW(UI_LOG_TAG, "capture device list did not fit its JSON buffer "
                                           "(%d devices) — not published", cap_count);
@@ -773,7 +774,7 @@ void *ui_publisher_thread(void *arg)
                 if (pb_count > 0)
                 {
                     if (ui_device_list_to_json("playback_dev_list", devs, pb_count, sel, buf, json_cap) > 0)
-                        ws_broadcast_json(&ctx->ws, buf);
+                        ui_transport_broadcast_json(buf);
                     else
                         HLOGW(UI_LOG_TAG, "playback device list did not fit its JSON buffer "
                                           "(%d devices) — not published", pb_count);
@@ -797,7 +798,7 @@ void *ui_publisher_thread(void *arg)
             snprintf(ch_buf, sizeof(ch_buf),
                 "{\"type\":\"input_channel\",\"selected\":\"%s\","
                 "\"list\":[\"left\",\"right\",\"stereo\"]}", ch_str);
-            ws_broadcast_json(&ctx->ws, ch_buf);
+            ui_transport_broadcast_json(ch_buf);
 
             // Audio subsystem selection.  The list is the set of subsystems
             // this build actually compiled in; a single-entry list means the
@@ -815,7 +816,7 @@ void *ui_publisher_thread(void *arg)
                                 i ? "," : "", cfg_sound_system_name(subsystems[i]));
             if (pos < (int)sizeof(as_buf) - 4)
                 pos += snprintf(as_buf + pos, sizeof(as_buf) - pos, "]}");
-            ws_broadcast_json(&ctx->ws, as_buf);
+            ui_transport_broadcast_json(as_buf);
         }
 
         // --- Send PTT/Hamlib choices at startup and after config changes ---
@@ -860,7 +861,7 @@ void *ui_publisher_thread(void *arg)
                         pos += snprintf(buf + pos, 65536 - pos, "%s{\"name\":\"%s\",\"id\":\"%s\"}",
                                         i2 ? "," : "", radios[i2].name, radios[i2].id);
                     pos += snprintf(buf + pos, 65536 - pos, "]}");
-                    ws_broadcast_json(&ctx->ws, buf);
+                    ui_transport_broadcast_json(buf);
                 }
                 free(radios);
                 free(buf);
@@ -883,7 +884,7 @@ void *ui_publisher_thread(void *arg)
             char *buf = ui_history_frame_build(owned ? snap : "", count, snap_len);
             if (buf)
             {
-                ws_broadcast_json(&ctx->ws, buf);
+                ui_transport_broadcast_json(buf);
                 free(buf);
             }
             else
@@ -951,7 +952,7 @@ void *spectrum_publisher_thread(void *arg)
 #else
             memcpy(frame + 8, spec_dB, MODEM_STATS_NSPEC * sizeof(float));
 #endif
-            ws_broadcast_binary(&ctx->ws, frame, 8 + MODEM_STATS_NSPEC * sizeof(float));
+            ui_transport_broadcast_binary(frame, 8 + MODEM_STATS_NSPEC * sizeof(float));
         }
 
         hermes_usleep(SPECTRUM_PUBLISH_INTERVAL_US);
@@ -1035,12 +1036,10 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
     // connect callback is registered before the server thread starts to avoid
     // a race on aarch64 where the callback ptr and data could be seen
     // out-of-order by the server thread.
-    if (ws_init(&ctx->ws, ws_port,
-                ws_command_handler, ctx,
-                ws_connect_handler, ctx,
-                tls_enabled,
-                initial_cfg ? initial_cfg->tls_cert : CFG_SSL_CERT,
-                initial_cfg ? initial_cfg->tls_key  : CFG_SSL_KEY) != 0) {
+    if (ui_transport_init(ws_port, tls_enabled,
+                          initial_cfg ? initial_cfg->tls_cert : CFG_SSL_CERT,
+                          initial_cfg ? initial_cfg->tls_key  : CFG_SSL_KEY,
+                          ws_command_handler, ws_connect_handler, ctx) != 0) {
         HLOGE(UI_LOG_TAG, "Failed to init WebSocket server on port %u", ws_port);
         return -1;
     }
@@ -1049,7 +1048,7 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
     // Start publisher thread - periodic status broadcaster (via WebSocket)
     if (pthread_create(&ctx->pub_tid, NULL, ui_publisher_thread, ctx) != 0) {
         HLOGE(UI_LOG_TAG, "pthread_create(pub) failed: %s", strerror(errno));
-        ws_shutdown(&ctx->ws);
+        ui_transport_shutdown();
         return -1;
     }
     pthread_detach(ctx->pub_tid);
@@ -1089,7 +1088,7 @@ void ui_comm_shutdown(ui_ctx_t *ctx)
     }
     pthread_mutex_unlock(&ctx->cfg_mutex);
 
-    ws_shutdown(&ctx->ws);
+    ui_transport_shutdown();
     // NOTE: cfg_mutex is deliberately NOT destroyed.  ui_comm_set_waterfall
     // may have already read g_ui_ctx before the NULL above and could still
     // lock it, so destroying it here would race a live user.  The process is
