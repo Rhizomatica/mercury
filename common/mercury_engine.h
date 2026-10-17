@@ -19,12 +19,15 @@
 #include "ui_communication.h"
 #include "modem.h"
 
-/* Set by the termination signal handler, polled by main and by every worker
- * loop.  _Atomic rather than volatile: volatile provides no inter-thread
+/* Mercury's own run flag: set by the termination signal handler, by
+ * mercury_engine_shutdown(), and by an init that fails after starting threads;
+ * polled by main and by every worker loop.  Named for Mercury rather than the
+ * process because a host (hermes-radio-daemon) links Mercury in, and its own
+ * stop flag must not be the same symbol.  _Atomic rather than volatile: volatile provides no inter-thread
  * ordering, and the handler-write/thread-read pair is a data race in the
  * formal sense (ThreadSanitizer reports it at main.c's handler).  Plain
  * assignment and test still work -- C11 atomics overload them. */
-extern _Atomic bool shutdown_;
+extern _Atomic bool mercury_stop;
 
 /* ------------------------------------------------------------------ */
 /*  mercury_engine_init()                                              */
@@ -48,7 +51,7 @@ int mercury_engine_init(const mercury_config *cfg,
 /* ------------------------------------------------------------------ */
 /*  mercury_engine_shutdown()                                          */
 /*                                                                     */
-/*  Call AFTER setting shutdown_ = true.                                */
+/*  Call AFTER setting mercury_stop = true.                            */
 /* ------------------------------------------------------------------ */
 void mercury_engine_shutdown(void);
 

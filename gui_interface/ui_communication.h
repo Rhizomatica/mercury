@@ -28,7 +28,7 @@
 #include <stdatomic.h>
 #include <pthread.h>
 
-#include "websocket/mercury_websocket.h"
+#include "websocket/ws_json.h"     /* ws_command_t */
 #include "cfg_utils.h"
 #include "ui_status.h"
 
@@ -63,8 +63,7 @@ typedef struct {
 typedef struct ui_ctx ui_ctx_t;
 
 struct ui_ctx {
-    // WebSocket server (bidirectional: status TX + command RX)
-    ws_ctx_t ws;
+    // The UI transport (ui_transport.h) carries status out and commands in
     uint16_t ws_port;           // WebSocket listen port (default=10000)
     bool tls_enabled;           // false = plain WS (default), true = WSS
 

@@ -18,6 +18,7 @@
 #include "mercury_engine.h"
 #include "mercury_cli.h"
 #include "mercury_bridge.h"
+#include "host/mercury_host.h"   /* the same lifecycle calls, for a host */
 #include "mercury_version.h"
 #include "hermes_log.h"
 #include "ui_communication.h"
@@ -113,7 +114,7 @@ const char *mercury_log_status(void)
 /* ------------------------------------------------------------------ */
 void mercury_request_shutdown(void)
 {
-    shutdown_ = true;
+    mercury_stop = true;
 }
 
 /* ------------------------------------------------------------------ */

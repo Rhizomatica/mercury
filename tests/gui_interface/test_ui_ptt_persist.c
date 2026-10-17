@@ -28,6 +28,7 @@
 
 #include "unity.h"
 #include "ui_communication.h"
+#include "ui_transport.h"
 #include "ui_history.h"
 #include "hermes_log.h"
 #include "message_store.h"
@@ -57,7 +58,7 @@ int  radio_io_get_radio_list(char ids[][16], char names[][64], int max_count)
 
 /* ---- everything else the UI layer can reach: inert ---------------------- */
 
-_Atomic bool shutdown_ = false;
+_Atomic bool mercury_stop = false;
 
 void hermes_logf(hermes_log_level_t level, const char *component, const char *fmt, ...)
 { (void)level; (void)component; (void)fmt; }
@@ -105,15 +106,15 @@ char *ui_history_frame_build(const char *snap, size_t count, size_t snap_len)
 int  ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
 { (void)st; (void)buf; (void)buflen; return 0; }
 
-int  ws_broadcast_binary(ws_ctx_t *ctx, const void *data, size_t len)
-{ (void)ctx; (void)data; (void)len; return 0; }
-int  ws_broadcast_json(ws_ctx_t *ctx, const char *json) { (void)ctx; (void)json; return 0; }
-int  ws_init(ws_ctx_t *ctx, uint16_t port, ws_command_callback_t cmd_callback, void *cb_data,
-             ws_connect_callback_t connect_callback, void *connect_cb_data, bool tls_enabled,
-             const char *tls_cert_path, const char *tls_key_path)
-{ (void)ctx; (void)port; (void)cmd_callback; (void)cb_data; (void)connect_callback;
-  (void)connect_cb_data; (void)tls_enabled; (void)tls_cert_path; (void)tls_key_path; return 0; }
-void ws_shutdown(ws_ctx_t *ctx) { (void)ctx; }
+int  ui_transport_broadcast_binary(const void *data, size_t len)
+{ (void)data; (void)len; return 0; }
+int  ui_transport_broadcast_json(const char *json) { (void)json; return 0; }
+int  ui_transport_init(uint16_t port, bool tls_enabled, const char *tls_cert_path,
+                       const char *tls_key_path, ui_transport_command_fn on_command,
+                       ui_transport_connect_fn on_connect, void *user)
+{ (void)port; (void)tls_enabled; (void)tls_cert_path; (void)tls_key_path;
+  (void)on_command; (void)on_connect; (void)user; return 0; }
+void ui_transport_shutdown(void) {}
 
 /* ---- fixture ------------------------------------------------------------- */
 

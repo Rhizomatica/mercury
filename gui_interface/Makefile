@@ -27,7 +27,7 @@ CFLAGS_COMMON = $(COMMON_CFLAGS) -Wno-stringop-truncation -I../datalink_arq -I..
 # -DWS_HAVE_OPENSSL=1 plus the OpenSSL include path where wss:// is
 # supported (Linux); elsewhere it is empty and the server refuses wss://
 # at startup instead of failing per connection.
-WS_CFLAGS = $(COMMON_CFLAGS) -Iwebsocket -I../common $(WS_TLS_CFLAGS)
+WS_CFLAGS = $(COMMON_CFLAGS) -I. -Iwebsocket -I../common $(WS_TLS_CFLAGS)
 
 # Objects
 OBJS = ui_communication.o ui_status.o ui_devices.o ui_history.o
@@ -50,7 +50,7 @@ ui_status.o: ui_status.c ui_status.h
 ui_history.o: ui_history.c ui_history.h
 	$(CC) $(CFLAGS_COMMON) -c ui_history.c -o ui_history.o
 
-websocket/mercury_websocket.o: websocket/mercury_websocket.c websocket/mercury_websocket.h
+websocket/mercury_websocket.o: websocket/mercury_websocket.c ui_transport.h
 	$(CC) $(WS_CFLAGS) -c websocket/mercury_websocket.c -o websocket/mercury_websocket.o
 
 websocket/ws_server.o: websocket/ws_server.c websocket/ws_server.h

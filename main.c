@@ -180,7 +180,7 @@ static void handle_termination_signal(int sig)
     g_signal_count = 1;
     static const char msg[] = "Signal received, shutting down...\n";
     (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
-    shutdown_ = true;
+    mercury_stop = true;
 }
 
 /* SIGINT/SIGTERM -> handle_termination_signal.  On POSIX via sigaction, with
@@ -277,7 +277,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    while (!shutdown_)
+    while (!mercury_stop)
         msleep(500);
 
     /* Diagnosis build only: the answerer never disconnects, so its trace would
