@@ -28,6 +28,9 @@ target_link_libraries(mercury
     hidapi
 )
 
+# Add compile definitions
+target_compile_definitions(mercury PRIVATE _GNU_SOURCE)
+
 # Target sources
 target_sources(mercury PRIVATE main.c)
 
