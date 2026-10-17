@@ -29,6 +29,7 @@
 #include "interldpc.h"
 #include "ldpc_codes.h"
 #include "mpdecode_core.h"
+#include "ldpc_ctx.h"
 #include "ofdm_internal.h"
 #include "varicode.h"
 
@@ -112,6 +113,8 @@ void freedv_2020x_open(struct freedv *f) {
   f->n_nom_modem_samples = ofdm_get_samples_per_frame(f->ofdm);
   f->n_max_modem_samples = ofdm_get_max_samples_per_frame(f->ofdm);
   f->modem_sample_rate = f->ofdm->config.fs;
+  /* voice: bounded by a quarter of the frame period, as 700D/700E are */
+  f->ldpc_budget_ms = LDPC_VOICE_BUDGET_FRAC * 1000.0f * (float)f->n_nom_modem_samples / (float)f->modem_sample_rate;
   f->clip_en = false;
   f->sz_error_pattern = f->ofdm_bitsperframe;
 
@@ -287,6 +290,9 @@ int freedv_comprx_2020(struct freedv *f, COMP demod_in[]) {
 
     symbols_to_llrs(llr, codeword_symbols_de, codeword_amps_de, EsNo,
                     ofdm->mean_amp, ofdm->bps, coded_syms_per_frame);
+    ldpc->deadline_ns = f->ldpc_budget_ms > 0.0f
+                            ? ldpc_now_ns() + (uint64_t)(f->ldpc_budget_ms * 1e6f)
+                            : 0;
     ldpc_decode_frame(ldpc, &parityCheckCount, &iter, out_char, llr);
     if (parityCheckCount != ldpc->NumberParityBits)
       rx_status |= FREEDV_RX_BIT_ERRORS;

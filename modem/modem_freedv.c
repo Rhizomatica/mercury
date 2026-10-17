@@ -81,7 +81,21 @@ static void fdv_set_crc_seed(void *ctx, uint16_t seed, int accept_plain)
 static int  fdv_rx_crc_seeded(void *ctx)      { return freedv_get_rx_crc_seeded(FDV(ctx)); }
 static void fdv_unsync(void *ctx)             { freedv_set_sync(FDV(ctx), FREEDV_SYNC_UNSYNC); }
 
+static void fdv_set_ldpc_budget(void *ctx, float budget_ms, int max_iter)
+{
+    freedv_set_ldpc_budget_ms(FDV(ctx), budget_ms);
+    freedv_set_ldpc_max_iter(FDV(ctx), max_iter);
+}
+
+static int fdv_get_ldpc_stats(void *ctx, int *iters, int *hit_deadline,
+                              int *parity_ok, unsigned int *decode_count)
+{
+    return freedv_get_ldpc_stats(FDV(ctx), iters, hit_deadline, parity_ok, decode_count);
+}
+
 const modem_backend_t modem_backend_freedv = {
+    .set_ldpc_budget  = fdv_set_ldpc_budget,
+    .get_ldpc_stats   = fdv_get_ldpc_stats,
     .name             = "freedv",
     .open             = fdv_open,
     .close            = fdv_close,

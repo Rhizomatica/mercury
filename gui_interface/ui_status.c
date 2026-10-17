@@ -55,7 +55,9 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
          * that remote clients parse. */
         "\"peer_snr\":%.1f,"
         "\"peer_snr_valid\":%s,"
-        "\"peer_hears_mode\":\"%s\"}",
+        "\"peer_hears_mode\":\"%s\","
+        /* appended after peer_hears_mode, per the rule above (PR #359) */
+        "\"ldpc_iters_last\":%d,\"ldpc_iters_mean\":%.1f,\"ldpc_deadline_hits\":%d,\"ldpc_max_iter\":%d}",
         st->bitrate_bps,
         st->snr_db,
         st->user_callsign,
@@ -76,7 +78,8 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         age,
         st->peer_snr_db,
         st->peer_snr_valid ? "true" : "false",
-        st->peer_hears_mode);
+        st->peer_hears_mode,
+        st->ldpc_iters_last, (double)st->ldpc_iters_mean, st->ldpc_deadline_hits, st->ldpc_max_iter);
 
     if (n < 0 || (size_t)n >= buflen)
         return -1;

@@ -752,5 +752,6 @@ int main(int argc, char *argv[]) {
 
   ofdm_destroy(ofdm);
 
+  ldpc_free_ctx(&ldpc);
   return ret;
 }

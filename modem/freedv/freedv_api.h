@@ -289,6 +289,19 @@ void freedv_set_callback_data(struct freedv *freedv,
 void freedv_set_test_frames(struct freedv *freedv, int test_frames);
 void freedv_set_harq(struct freedv *freedv, int enable);
 void freedv_harq_reset(struct freedv *freedv);
+/* LDPC decoder control for the OFDM data modes: wall-clock budget per decode
+ * (ms, 0 = none; the decoder returns its best decision at the deadline), the
+ * iteration cap, and the statistics of the most recent decode.
+ * freedv_get_ldpc_stats returns 0 when the mode has no LDPC decoder. */
+void freedv_set_ldpc_budget_ms(struct freedv *freedv, float budget_ms);
+/* LLR scale source for the OFDM data modes: 1 (default) derives Es/No per
+ * packet from the per-mode calibrated SNR estimate; 0 uses the fixed EsNodB
+ * constant of the mode.  HARQ combines by summing when calibrated. */
+void freedv_set_llr_calibrated(struct freedv *freedv, int enable);
+float freedv_get_llr_esno_db(struct freedv *freedv);
+void freedv_set_ldpc_max_iter(struct freedv *freedv, int max_iter);
+int  freedv_get_ldpc_stats(struct freedv *freedv, int *iters, int *hit_deadline,
+                           int *parity_ok, unsigned int *decode_count);
 /* Data-frame CRC16 seed: TX side XORs the CRC with it (freedv_gen_crc16 ^
  * seed); RX accepts only seeded frames, plus plain ones if accept_plain.
  * seed 0 restores the plain CRC. */

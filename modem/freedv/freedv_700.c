@@ -136,9 +136,12 @@ void freedv_ofdm_voice_open(struct freedv *f, char *mode) {
 
   ldpc_codes_setup(f->ldpc, f->ofdm->codename);
   ldpc_mode_specific_setup(f->ofdm, f->ldpc);
-#ifdef __EMBEDDED__
-  f->ldpc->max_iter = 10; /* limit LDPC decoder iterations to limit CPU load */
-#endif
+  /* A voice frame is bounded by its own frame period, not by an iteration
+   * count: the per-decode budget is set below once the frame period is known
+   * (a quarter of it; see LDPC_VOICE_BUDGET_FRAC), and the deadline in the
+   * rx path does the bounding on every build.  codec2's __EMBEDDED__ cap of
+   * 10 iterations is not applied here for that reason. */
+  f->ldpc_cap_nobudget = f->ldpc->max_iter;
   int Nsymsperpacket = ofdm_get_bits_per_packet(f->ofdm) / f->ofdm->bps;
   f->rx_syms = (COMP *)MALLOC(sizeof(COMP) * Nsymsperpacket);
   assert(f->rx_syms != NULL);
@@ -154,6 +157,9 @@ void freedv_ofdm_voice_open(struct freedv *f, char *mode) {
   f->n_nom_modem_samples = ofdm_get_samples_per_frame(f->ofdm);
   f->n_max_modem_samples = ofdm_get_max_samples_per_frame(f->ofdm);
   f->modem_sample_rate = f->ofdm->config.fs;
+  /* 700D: 160 ms frames -> 40 ms budget; 700E: 80 ms -> 20 ms.  Hundreds of
+   * iterations of these small codes on a PC, the old cap's intent on a board. */
+  f->ldpc_budget_ms = LDPC_VOICE_BUDGET_FRAC * 1000.0f * (float)f->n_nom_modem_samples / (float)f->modem_sample_rate;
   f->clip_en = false;
   f->sz_error_pattern = f->ofdm_bitsperframe;
 
@@ -219,8 +225,13 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   ldpc_codes_setup(f->ldpc, f->ofdm->codename);
   ldpc_mode_specific_setup(f->ofdm, f->ldpc);
 #ifdef __EMBEDDED__
-  f->ldpc->max_iter = 10; /* limit LDPC decoder iterations to limit CPU load */
+  /* A data frame's bound is the ARQ's ACK window, which only the host knows:
+   * Mercury sets it per instance (freedv_set_ldpc_budget_ms) and then this
+   * instance runs to the code table's limit under that deadline.  A host that
+   * sets no budget keeps codec2's cap of 10 iterations, as it always was. */
+  f->ldpc->max_iter = 10;
 #endif
+  f->ldpc_cap_nobudget = f->ldpc->max_iter;
 
   // useful constants
   f->ofdm_bitsperpacket = ofdm_get_bits_per_packet(f->ofdm);
@@ -265,6 +276,22 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   assert(f->harq_llr != NULL);
   f->harq_llr_nbits = 0;
   f->harq_enable = 0;
+  f->ldpc_budget_ms = 0.0f;
+  /* LLR scale: the mode constant EsNodB, as shipped.  Scaling from the
+   * receiver's Es/No estimate instead is right in principle and measured
+   * 0.6-1.5 dB at the code level with the TRUE Es/No, but the estimate
+   * behind freedv_snr_calib() is a display calibration that extrapolates
+   * below its first knot, and at the 16200-bit modes' cliffs it reads
+   * several dB low: under-confident LLRs cost DATAC17 and QAM16C2 about 1 dB
+   * in fading end to end (review of PR #359, reproduced).  Off by default
+   * until the estimate -> Es/No mapping is validated per mode;
+   * LDPC_LLR_CALIBRATED=1 or freedv_set_llr_calibrated() enables it. */
+  f->llr_calibrated = 0;
+  {
+    const char *e = getenv("LDPC_LLR_CALIBRATED");
+    if (e && e[0] == '1') f->llr_calibrated = 1;
+  }
+  f->llr_esno_db_used = f->ofdm->EsNodB;
   f->harq_valid = 0;
   f->harq_ncopies = 0;
 }
@@ -617,12 +644,36 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
       int codeword_len = ldpc->CodeLength > Npayloadbitsperpacket
                              ? ldpc->CodeLength : Npayloadbitsperpacket;
       uint8_t decoded_codeword[codeword_len];
-      symbols_to_llrs(llr, payload_syms_de, payload_amps_de, EsNo,
+      /* LLR scale.  Default: the mode constant EsNodB (3 dB, 10 dB for the
+       * 16200-bit modes), as shipped.  Opt-in (llr_calibrated): the receiver's
+       * Es/No estimate, passed through the per-mode SNR calibration and mapped
+       * back from SNR3k to Es/No by subtracting the bandwidth + cyclic-prefix
+       * term, clamped to a sane range.  The sum-product decoder is scale
+       * sensitive, so this is worth 0.6-1.5 dB with the TRUE Es/No, and costs
+       * about 1 dB when the estimate reads low (see freedv_700_open_data). */
+      float EsNo_used = EsNo;
+      if (f->llr_calibrated) {
+        float raw_esno_db = (ofdm->bps == 4)
+                                ? ofdm_esno_est_dd(ofdm->bps, rx_syms, rx_amps, Nsymsperpacket)
+                                : ofdm_esno_est_calc(rx_syms, Nsymsperpacket);
+        float snr3k_cal = freedv_snr_calib(f->mode, ofdm_snr_from_esno(ofdm, raw_esno_db));
+        float esno_db = snr3k_cal - ofdm_snr_from_esno(ofdm, 0.0f);
+        if (esno_db < -3.0f) esno_db = -3.0f;
+        if (esno_db > 20.0f) esno_db = 20.0f;
+        f->llr_esno_db_used = esno_db;
+        EsNo_used = powf(10.0f, esno_db / 10.0f);
+      } else {
+        f->llr_esno_db_used = ofdm->EsNodB;
+      }
+      symbols_to_llrs(llr, payload_syms_de, payload_amps_de, EsNo_used,
                       ofdm->mean_amp, ofdm->bps, Npayloadsymsperpacket);
       /* Save this-transmission-only LLRs.  HARQ combining is applied BELOW only
        * as a fallback if the single-shot decode fails, so retained soft info
        * can never corrupt a frame that would have decoded on its own. */
       memcpy(llr_raw, llr, sizeof(float) * Npayloadbitsperpacket);
+      ldpc->deadline_ns = f->ldpc_budget_ms > 0.0f
+                              ? ldpc_now_ns() + (uint64_t)(f->ldpc_budget_ms * 1e6f)
+                              : 0;
       ldpc_decode_frame(ldpc, &parityCheckCount, &iter, decoded_codeword, llr);
       memcpy(f->rx_payload_bits, decoded_codeword, Ndatabitsperpacket);
 
@@ -647,9 +698,16 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
            * calibrated range while the independent per-copy noise still averages
            * down (~3 dB per doubling).  harq_llr holds the sum of harq_ncopies
            * prior copies; llr_raw is this copy, so divide by ncopies + 1. */
-          float norm = 1.0f / (float)(f->harq_ncopies + 1);
+          /* With calibrated LLRs the right combine is the SUM (independent
+           * observations of the same bit add in the log-likelihood domain);
+           * averaging was a workaround for the uncalibrated fixed-EsNo scale
+           * and is kept only for that case. */
+          float norm = f->llr_calibrated ? 1.0f : 1.0f / (float)(f->harq_ncopies + 1);
           for (int i = 0; i < Npayloadbitsperpacket; i++)
             llr_comb[i] = (llr_raw[i] + f->harq_llr[i]) * norm;
+          ldpc->deadline_ns = f->ldpc_budget_ms > 0.0f
+                                  ? ldpc_now_ns() + (uint64_t)(f->ldpc_budget_ms * 1e6f)
+                                  : 0;
           ldpc_decode_frame(ldpc, &parityCheckCount, &iter, decoded_codeword,
                             llr_comb);
           /* Integrity gate on the COMBINED decode — do NOT accept on CRC16
