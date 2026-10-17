@@ -1228,11 +1228,15 @@ static int choose_level(const car_t *c, uint64_t now)
     for (int up = best + 1; up <= c->max_level; up++) {
         if (level_potential(c, up) <= best_gp)
             continue;                   /* cannot win even with no loss */
-        /* Not a first try below the rung's threshold: there the bench has it
-         * losing to the rung below.  Once the smoothed SNR stopped lagging
-         * (two readings move it), step:-12:10 probed QAM16C2 (13 dB) at 10 dB
-         * in 119 seeds of 120, and lost every time. */
-        if (!c->lv_rounds[up] && c->snr_valid && c->snr_ema < level_min_db(up)) break;
+        /* Not a first try well below the rung's threshold: there the bench
+         * has it losing to the rung below.  Once the smoothed SNR stopped
+         * lagging (two readings move it), step:-12:10 probed QAM16C2 (13 dB)
+         * at 10 dB in 119 seeds of 120, and lost every time.  Half the gate,
+         * not the threshold itself: on air (20 %) the receiver read DATAC1
+         * at 6.1-6.8 dB, DATAC17 (7 dB) was never tried, and the session
+         * stayed on DATAC1; the build before reached DATAC17 there, and it
+         * delivered. */
+        if (!c->lv_rounds[up] && c->snr_valid && c->snr_ema < level_min_db(up) - SNR_GATE_DB / 2) break;
         if (!level_allowed(c, up)) {
             if (!reprobe_due(c, up, now)) break;
         } else if (c->lv_rounds[up] && c->polls - c->lv_round_at[up] < probe_every(c, up)) {

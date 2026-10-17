@@ -83,7 +83,7 @@ Which model covers the other 2.0 changes:
   (`ctl_deaf`).  No model has that decision, before or after this change:
   the models fix the control frame's mode per configuration
   (`CarouselTurns.cfg`, `CarouselTurns_mfsk.cfg`);
-- no first try of a rung while the SNR is below its threshold
+- no first try of a rung while the SNR is well below its threshold (half the gate)
   (`choose_level`'s one-rung-up probe): it only narrows the rungs S may
   name, which `RungAgreement` leaves free (any rung);
 - control on the control mode once the channel has risen past the peer's
