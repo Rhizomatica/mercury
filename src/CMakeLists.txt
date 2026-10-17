@@ -25,6 +25,7 @@ target_link_libraries(mercury
     m
     ffaudio
     freedv
+    raptorq
     iniparser
     hidapi
 )

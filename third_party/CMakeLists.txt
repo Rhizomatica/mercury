@@ -1,6 +1,7 @@
 add_subdirectory(iniparser)
 add_subdirectory(ffaudio)
 add_subdirectory(freedv)
+add_subdirectory(raptorq)
 
 if(WIN32)
     add_subdirectory(hidapi-w64)
