@@ -239,3 +239,10 @@ target_include_directories(mercury PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 # if(BUILD_GUI)
 
 # endif()
+
+# Install rules
+include(GNUInstallDirs)
+
+install(TARGETS mercury
+    DESTINATION "${CMAKE_INSTALL_BINDIR}"
+)
