@@ -42,7 +42,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c"
         "websocket/pack_web.sh"
         "websocket/web"
         "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c"
-    WORKING_DIRECTORY gui_interface
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/gui_interface"
     CODEGEN
 )
 
