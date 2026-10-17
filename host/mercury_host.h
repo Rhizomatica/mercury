@@ -18,6 +18,11 @@
  * mercury_init returns non-zero on failure (a busy TCP port, a bad config)
  * and stops only Mercury.  mercury.ini's audio and PTT settings are ignored
  * in this build: audio is the exchange below, PTT is ops->key.
+ *
+ * The callbacks (key, get_frequency, broadcast_json, broadcast_binary) run
+ * with Mercury's lock for them held: they must not call back into this header
+ * (mercury_host_set_*, mercury_host_ui_*), or they deadlock.  Queue the work
+ * for another thread instead.
  */
 
 #ifndef MERCURY_HOST_H_

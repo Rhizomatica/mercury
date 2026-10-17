@@ -171,7 +171,10 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 
 audio_health_t audioio_capture_health(void)
 {
-    return s_running ? AUDIO_HEALTH_RUNNING : AUDIO_HEALTH_STOPPED;
+    pthread_mutex_lock(&s_lock);
+    bool running = s_running;
+    pthread_mutex_unlock(&s_lock);
+    return running ? AUDIO_HEALTH_RUNNING : AUDIO_HEALTH_STOPPED;
 }
 
 audio_health_t audioio_playback_health(void)
@@ -198,7 +201,7 @@ void audioio_health_reset(void)
 int audioio_wait_healthy(int timeout_ms)
 {
     (void) timeout_ms;
-    return s_running ? 0 : -2;
+    return audioio_capture_health() == AUDIO_HEALTH_RUNNING ? 0 : -2;
 }
 
 void list_soundcards(int audio_system)
