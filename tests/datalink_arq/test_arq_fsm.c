@@ -878,6 +878,31 @@ void test_disconnect_reply_waits_one_reply_guard(void)
         "the listen intent given during the guard was lost");
 }
 
+/* A peer's DISCONNECT while our TX backlog is queued must not tear down at
+ * once: the caller stays CONNECTED and drains its data (a Winlink client's
+ * final handshake byte), then sends the reply. */
+void test_rx_disconnect_defers_with_backlog(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 256;  /* bytes still queued */
+
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.pending_disconnect_reply);
+    TEST_ASSERT_NOT_EQUAL_UINT64(0, sess.disconnect_deadline_ms);
+
+    /* Once the backlog drains, the reply goes (after one reply guard). */
+    fake_tx_backlog_fake.return_val = 0;
+    ev = make_event(ARQ_EV_APP_DATA_READY);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+}
+
 
 
 /* ---- Timeout tests ---- */
@@ -1282,6 +1307,7 @@ int main(void)
     RUN_TEST(test_connected_rejects_zero_session_id);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
+    RUN_TEST(test_rx_disconnect_defers_with_backlog);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
