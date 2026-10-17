@@ -1113,6 +1113,21 @@ static void take_peer_snr(car_t *c, uint64_t now, const msg_t *m)
     c->peer_level_known = true;
 }
 
+/* Where a fall back goes no higher than: the rung the SNR starts a session
+ * on, and lower if the latest reading says so -- the smoothed one lags.  On
+ * air, 20 % to 2 % power: the readings said -8 dB within a minute, the
+ * smoothed one took three more, and the receiver asked for DATAC3, DATAC4
+ * and DATAC15 in turn, one lost exchange each, before the floor (3-4 min,
+ * both builds).  In the sim, 60 seeds: stepa:6:-8:40:6 reached the floor in
+ * 162 s, not 344 (median), and step:10:-12:40 in 102, not 338. */
+static int fall_level(const car_t *c, int top)
+{
+    if (!c->snr_valid) return top;
+    float db = c->snr_last < c->snr_ema ? c->snr_last : c->snr_ema;
+    int lv = cap_level(c, car_start_level(db));
+    return lv < top ? lv : top;
+}
+
 static int choose_level(const car_t *c, uint64_t now)
 {
     int best = -1;
@@ -1123,18 +1138,21 @@ static int choose_level(const car_t *c, uint64_t now)
         if (gp > best_gp) { best_gp = gp; best = lv; }
     }
     if (best < 0) {
-        if (!c->lv_rounds[c->snr_level]) return c->snr_level;
+        /* A start stays where the connect's SNR put it: a fade's reading
+         * started fading +10 one rung low, and seed 58 took 17 % longer. */
+        int top = c->polls ? fall_level(c, c->snr_level) : c->snr_level;
+        if (!c->lv_rounds[top]) return top;
         /* The SNR's rung was tried and is out: the next one down not tried
          * yet, not the floor.  At 12 dB two DATAC17 polls lost in a row
          * dropped the session to MFSK past four rungs with margin to spare,
          * and it took 220 s to climb back (sim, awgn:0.25 seed 6). */
-        for (int lv = c->snr_level - 1; lv > 0; lv--)
+        for (int lv = top - 1; lv > 0; lv--)
             if (!c->lv_rounds[lv]) return lv;
         return 0;
     }
     /* Nothing measured gets through: go down to a rung not tried yet. */
     if (best_gp <= 0.0) {
-        for (int lv = best - 1; lv >= 0; lv--)
+        for (int lv = fall_level(c, best - 1); lv >= 0; lv--)
             if (!c->lv_rounds[lv]) return lv;
     }
     /* A faster rung needs more SNR than the best one does, so probe upward
@@ -2781,6 +2799,7 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     now = when;
     if (snr_db != 0.0f) {
         c->snr_ema = c->snr_valid ? 0.7f * c->snr_ema + 0.3f * snr_db : snr_db;
+        c->snr_last = snr_db;
         c->snr_valid = true;
         bool deaf = c->ctl_deaf ? c->snr_ema < CTL_DEAF_OFF_DB : c->snr_ema < CTL_DEAF_ON_DB;
         if (deaf != c->ctl_deaf) {

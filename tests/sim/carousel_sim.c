@@ -174,6 +174,7 @@ static double snr_bias(int mode)
     return snr_offset + (mode == FREEDV_MODE_DATAC15 || mode == FREEDV_MODE_DATAC4 || mode == ARQ_CONTROL_MODE ? -3.5 : 0.0);
 }
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
+static double step_back = NAN;                         /* stepa: the way back, this much better */
 
 /* The detector reports a pattern this long after it ends (0.23-0.24 s on air,
  * Pi 4); a poll, by contrast, is decoded as it ends. */
@@ -541,6 +542,13 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
         sscanf(chan + 5, "%lf:%lf:%lf", &step_from, &step_to, &step_at_s);
         sim_channel_set_snr(ch, step_from); snr_db = step_from;
     }
+    else if (!strncmp(chan, "stepa:", 6)) {  /* stepa:A:B:T:D  step:A:B:T from A to B, D dB better back */
+        sscanf(chan + 6, "%lf:%lf:%lf:%lf", &step_from, &step_to, &step_at_s, &step_back);
+        snr_dir[0] = step_from; snr_dir[1] = step_from + step_back;
+        sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
+        asym = true;
+        snr_db = step_from;
+    }
     else if (!strncmp(chan, "asym:", 5)) {   /* asym:A:B  A dB from A to B, B dB back */
         sscanf(chan + 5, "%lf:%lf", &snr_dir[0], &snr_dir[1]);
         sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
@@ -558,7 +566,7 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res)
 {
     trace = getenv("CAR_TRACE") != NULL;
-    asym = false;
+    asym = false; step_back = NAN;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
     nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
     nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
@@ -634,7 +642,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         if (t == UINT64_MAX || t > limit_ms) break;
         now_ms = t;
         if (step_at_s >= 0 && now_ms >= (uint64_t)(step_at_s * 1000.0)) {
-            sim_channel_set_snr(ch, step_to); snr_now = step_to;
+            if (!isnan(step_back)) {
+                snr_dir[0] = step_to; snr_dir[1] = step_to + step_back;
+                sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
+            } else {
+                sim_channel_set_snr(ch, step_to); snr_now = step_to;
+            }
             step_at_s = -1.0;
         }
         event_t e;
