@@ -57,7 +57,7 @@ int  radio_io_get_radio_list(char ids[][16], char names[][64], int max_count)
 
 /* ---- everything else the UI layer can reach: inert ---------------------- */
 
-_Atomic bool shutdown_ = false;
+_Atomic bool mercury_stop = false;
 
 void hermes_logf(hermes_log_level_t level, const char *component, const char *fmt, ...)
 { (void)level; (void)component; (void)fmt; }

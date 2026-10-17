@@ -64,7 +64,7 @@
  * polled by every worker loop; volatile orders nothing between threads, and
  * declaring the same object differently in different translation units is
  * undefined behaviour on top of that.  Plain assignment and test still work. */
-extern _Atomic bool shutdown_;
+extern _Atomic bool mercury_stop;
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -248,7 +248,7 @@ static void *tune_thread(void *unused)
 
     ptt_on();
 
-    while (!shutdown_ && !atomic_load(&g_tune_stop))
+    while (!mercury_stop && !atomic_load(&g_tune_stop))
     {
         if (time_now_ms() >= atomic_load(&g_tune_deadline_ms))
         {
@@ -282,7 +282,7 @@ static void *tune_thread(void *unused)
     /* Let what is already queued play out before unkeying, but bound the
      * wait: a wedged consumer must not hold the transmitter up. */
     uint64_t tail_deadline = time_now_ms() + 2000;
-    while (!shutdown_ && size_buffer(playback_buffer) > 0 &&
+    while (!mercury_stop && size_buffer(playback_buffer) > 0 &&
            time_now_ms() < tail_deadline)
         usleep(1000);
     usleep(TAIL_TIME_US);
@@ -1048,12 +1048,12 @@ int run_tests_tx(generic_modem_t *g_modem)
     int counter = 0;
 
     /* Stop on SIGINT/SIGTERM.  This used to be while(1): a signal only set
-     * shutdown_, the frame in flight finished and unkeyed, and the next one
+     * mercury_stop, the frame in flight finished and unkeyed, and the next one
      * keyed straight back up -- so `timeout 15 mercury -t` never stopped
      * transmitting, and only a second signal ended it, through _exit() with no
      * cleanup, possibly mid-frame with PTT still on.  Every frame unkeys at its
      * end (send_modulated_data), so leaving here leaves the radio unkeyed. */
-    while (!shutdown_)
+    while (!mercury_stop)
     {
         for (size_t i = 0; i < payload_size; i++)
         {
@@ -1095,7 +1095,7 @@ int run_tests_rx(generic_modem_t *g_modem)
     size_t bytes_out = 0;
     int counter = 0;
 
-    while(!shutdown_)
+    while(!mercury_stop)
     {
         receive_modulated_data(g_modem, buffer, &bytes_out);
         if (bytes_out == 0)
@@ -1135,11 +1135,11 @@ int shutdown_modem(generic_modem_t *g_modem)
     /* rx_thread reads the capture ring with a BLOCKING read_buffer() sized to
      * the decoder chunk.  By the time we get here the audio capture thread
      * has already exited, so if rx_thread parked on an empty ring after its
-     * last shutdown_ check, nothing will ever wake it and the join below
+     * last mercury_stop check, nothing will ever wake it and the join below
      * hangs (normal builds usually win this race; sanitizer-instrumented
      * builds lose it deterministically).  Feed one chunk of silence larger
      * than any decoder chunk (max freedv nin is ~3.5k samples) so a parked
-     * reader wakes, re-checks shutdown_, and exits.  tx_thread is safe: it
+     * reader wakes, re-checks mercury_stop, and exits.  tx_thread is safe: it
      * size-checks every ring before its blocking reads. */
     if (capture_buffer)
     {
@@ -1283,7 +1283,7 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
         write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
 
         uint64_t next_spec_ms = t0_ms;
-        while (!shutdown_ &&
+        while (!mercury_stop &&
                (size_buffer(playback_buffer) > 0 ||
                 time_now_ms() < t0_ms + burst_ms + tail_ms))
         {
@@ -1330,7 +1330,7 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
          * whole airtime (27 s for a two-frame MFSK keydown) -- past main()'s
          * 10 s alarm, which then killed the process with the key still down;
          * on a HERMES SHM station the radio daemon holds it there. */
-        while (waited_us < playback_duration_us && !shutdown_)
+        while (waited_us < playback_duration_us && !mercury_stop)
         {
             size_t pos = (size_t)((waited_us * FREEDV_FS_8000) / 1000000ULL);
             publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);
@@ -2227,7 +2227,7 @@ static void *rx_worker_thread(void *arg)
     int16_t *buf = NULL;
     int cap = 0;
 
-    while (atomic_load(&w->running) && !shutdown_)
+    while (atomic_load(&w->running) && !mercury_stop)
     {
         if (atomic_load(&w->flush_req))
         {
@@ -2519,7 +2519,7 @@ void *tx_thread(void *g_modem)
     uint8_t *data = NULL;
     size_t data_size = 0;
 
-    while (!shutdown_)
+    while (!mercury_stop)
     {
         arq_runtime_snapshot_t arq_snapshot;
         memset(&arq_snapshot, 0, sizeof(arq_snapshot));
@@ -2876,7 +2876,7 @@ void *rx_thread(void *g_modem)
     uint32_t rx_diag_iterations = 0;
     uint64_t rx_diag_read_time_ms = 0; /* cumulative time blocked in read_buffer */
 
-    while (!shutdown_)
+    while (!mercury_stop)
     {
         arq_runtime_snapshot_t arq_snapshot;
         memset(&arq_snapshot, 0, sizeof(arq_snapshot));

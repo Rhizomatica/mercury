@@ -40,7 +40,7 @@ _Static_assert(CFG_CALLSIGN_MAX_SIZE == CALLSIGN_MAX_SIZE,
                "CFG_CALLSIGN_MAX_SIZE must equal CALLSIGN_MAX_SIZE");
 
 /* ---- shared globals ---- */
-_Atomic bool shutdown_ = false;
+_Atomic bool mercury_stop = false;
 static generic_modem_t g_modem;
 static pthread_t g_radio_capture, g_radio_playback;
 static int g_audio_system = -1;
@@ -127,7 +127,7 @@ int mercury_engine_init(const mercury_config *cfg,
 {
     if (g_initialized) return 0;
 
-    shutdown_ = false;
+    mercury_stop = false;
 
     memcpy(&g_mcfg, cfg, sizeof(mercury_config));
 
@@ -264,7 +264,7 @@ int mercury_engine_init(const mercury_config *cfg,
      * and the TCP listeners with shutdown already requested: they can refuse
      * to start, and init then reported a failure -- exit 1, no PTT shutdown --
      * for what was a clean stop.  radio_io_shutdown() leaves PTT released. */
-    if (test_mode && shutdown_)
+    if (test_mode && mercury_stop)
     {
         test_shutdown_stall();
         shutdown_modem(&g_modem);
@@ -291,7 +291,7 @@ int mercury_engine_init(const mercury_config *cfg,
     if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
     {
         fprintf(stderr, "mercury_engine: ARQ init failed\n");
-        shutdown_ = true;
+        mercury_stop = true;
         shutdown_modem(&g_modem);
         if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
             audioio_deinit(&g_radio_capture, &g_radio_playback);
@@ -313,7 +313,7 @@ int mercury_engine_init(const mercury_config *cfg,
                         g_modem.payload_bytes_per_modem_frame) != EXIT_SUCCESS)
     {
         fprintf(stderr, "mercury_engine: TCP init failed\n");
-        shutdown_ = true;
+        mercury_stop = true;
         interfaces_shutdown();
         shutdown_modem(&g_modem);
         if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
@@ -375,7 +375,7 @@ void mercury_engine_shutdown(void)
 
     HLOGI("engine", "Shutting down");
 
-    shutdown_ = true;
+    mercury_stop = true;
     test_shutdown_stall();
 
     g_shutdown_step = "tcp interfaces";

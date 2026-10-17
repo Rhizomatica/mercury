@@ -113,7 +113,7 @@ const char *mercury_log_status(void)
 /* ------------------------------------------------------------------ */
 void mercury_request_shutdown(void)
 {
-    shutdown_ = true;
+    mercury_stop = true;
 }
 
 /* ------------------------------------------------------------------ */

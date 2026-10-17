@@ -48,7 +48,7 @@
  * polled by every worker loop; volatile orders nothing between threads, and
  * declaring the same object differently in different translation units is
  * undefined behaviour on top of that.  Plain assignment and test still work. */
-extern _Atomic bool shutdown_;
+extern _Atomic bool mercury_stop;
 
 /* ------------------------------------------------------------------ */
 /*  DirectSound GUID ↔ string helpers (Windows only)                  */
@@ -358,7 +358,7 @@ static void *null_capture_thread(void *unused)
     const size_t bytes = sizeof(silence);
 
     HLOGI("audio-null", "capture silence thread started");
-    while (!shutdown_ && !audio_shutdown_)
+    while (!mercury_stop && !audio_shutdown_)
     {
         if (circular_buf_free_size(capture_buffer) >= bytes)
             write_buffer(capture_buffer, (uint8_t *) silence, bytes);
@@ -374,7 +374,7 @@ static void *null_playback_thread(void *unused)
     uint8_t discard[4096];
 
     HLOGI("audio-null", "playback discard thread started");
-    while (!shutdown_ && !audio_shutdown_)
+    while (!mercury_stop && !audio_shutdown_)
     {
         size_t bytes = size_buffer(playback_buffer);
         if (bytes > sizeof(discard))
@@ -398,7 +398,7 @@ static int fifo_open_retry(const char *path, int flags, const char *log_tag)
         return -1;
     }
 
-    while (!shutdown_ && !audio_shutdown_)
+    while (!mercury_stop && !audio_shutdown_)
     {
         int fd = open(path, flags);
         if (fd >= 0)
@@ -438,7 +438,7 @@ static void *fifo_capture_thread(void *device_ptr)
         return NULL;   // audio failure ends this thread, not the engine
     }
 
-    while (!shutdown_ && !audio_shutdown_)
+    while (!mercury_stop && !audio_shutdown_)
     {
         /* Try to consume aligned int32_t samples from buf first */
         if (buf_len >= sizeof(int32_t))
@@ -511,7 +511,7 @@ static void *fifo_playback_thread(void *device_ptr)
         return NULL;   // audio failure ends this thread, not the engine
     }
 
-    while (!shutdown_ && !audio_shutdown_)
+    while (!mercury_stop && !audio_shutdown_)
     {
         if (pending_off >= pending_len)
         {
@@ -623,7 +623,7 @@ static int sock_connect_retry(const char *path)
         return -1;
     }
 
-    while (!shutdown_ && !audio_shutdown_)
+    while (!mercury_stop && !audio_shutdown_)
     {
         struct sockaddr_un addr;
         memset(&addr, 0, sizeof(addr));
@@ -675,7 +675,7 @@ static int sock_recv_full(int fd, uint8_t *buf, size_t len)
     size_t off = 0;
     while (off < len)
     {
-        if (shutdown_ || audio_shutdown_)
+        if (mercury_stop || audio_shutdown_)
             return -1;
         ssize_t n = recv(fd, buf + off, len - off, 0);
         if (n > 0)
@@ -697,7 +697,7 @@ static int sock_send_full(int fd, const uint8_t *buf, size_t len)
     size_t off = 0;
     while (off < len)
     {
-        if (shutdown_ || audio_shutdown_)
+        if (mercury_stop || audio_shutdown_)
             return -1;
         ssize_t n = send(fd, buf + off, len - off, MSG_NOSIGNAL);
         if (n > 0)
@@ -736,7 +736,7 @@ static void *sock_transport_thread(void *device_ptr)
 
     int fd = sock_connect_retry(path);
 
-    while (fd >= 0 && !shutdown_ && !audio_shutdown_)
+    while (fd >= 0 && !mercury_stop && !audio_shutdown_)
     {
         /* ---- recv one sim frame ---- */
         uint8_t hdr[SOCK_WIRE_HDR_SIM_BYTES];
@@ -780,9 +780,9 @@ static void *sock_transport_thread(void *device_ptr)
             fd = -1;
             if (rc == 0)
                 HLOGI("audio-sock", "sim closed the socket; reconnecting");
-            else if (!shutdown_ && !audio_shutdown_)
+            else if (!mercury_stop && !audio_shutdown_)
                 HLOGW("audio-sock", "socket error; reconnecting");
-            if (!shutdown_ && !audio_shutdown_)
+            if (!mercury_stop && !audio_shutdown_)
                 fd = sock_connect_retry(path);
             continue;
         }
@@ -792,7 +792,7 @@ static void *sock_transport_thread(void *device_ptr)
             ring32[i] = sock_wire_i16_to_ring(sock_wire_rd_u16(payload + (size_t)i * 2));
 
         size_t rx_bytes = (size_t)n * sizeof(int32_t);
-        while (rx_bytes > 0 && !shutdown_ && !audio_shutdown_)
+        while (rx_bytes > 0 && !mercury_stop && !audio_shutdown_)
         {
             if (circular_buf_free_size(capture_buffer) >= rx_bytes)
             {
@@ -815,7 +815,7 @@ static void *sock_transport_thread(void *device_ptr)
         uint64_t bp_start = audioio_monotonic_ms();
         while (size_buffer(capture_buffer) >
                    (size_t)SOCK_AUDIO_RX_HIGH_WATER_SAMPLES * sizeof(int32_t) &&
-               !shutdown_ && !audio_shutdown_)
+               !mercury_stop && !audio_shutdown_)
         {
             if (audioio_monotonic_ms() - bp_start > SOCK_AUDIO_BACKPRESSURE_CAP_MS)
             {
@@ -844,7 +844,7 @@ static void *sock_transport_thread(void *device_ptr)
         {
             close(fd);
             fd = -1;
-            if (!shutdown_ && !audio_shutdown_)
+            if (!mercury_stop && !audio_shutdown_)
             {
                 HLOGW("audio-sock", "send failed; reconnecting");
                 fd = sock_connect_retry(path);
@@ -867,7 +867,7 @@ static void *sock_transport_thread(void *device_ptr)
 static void *sock_idle_thread(void *unused)
 {
     (void) unused;
-    while (!shutdown_ && !audio_shutdown_)
+    while (!mercury_stop && !audio_shutdown_)
         ffthread_sleep(FIFO_AUDIO_POLL_MS * 10);
     return NULL;
 }
@@ -1136,7 +1136,7 @@ static void *rtp_transport_thread(void *unused)
     bool     warned_pt = false;
     int32_t  ring[RTP_WIRE_FRAME * 4];
 
-    while (!shutdown_ && !audio_shutdown_)
+    while (!mercury_stop && !audio_shutdown_)
     {
         uint64_t now = audioio_monotonic_ms();
         if (now >= tx.next_status_ms)
@@ -1555,7 +1555,7 @@ void *radio_playback_thread(void *device_ptr)
      * the playback path is fully validated and about to stream. */
     audio_health_set(false, AUDIO_HEALTH_RUNNING, NULL);
 
-    while (!shutdown_ && !audio_shutdown_)
+    while (!mercury_stop && !audio_shutdown_)
     {
         ffssize n;
         size_t buffer_size = size_buffer(playback_buffer);
@@ -1667,7 +1667,7 @@ void *radio_playback_thread(void *device_ptr)
      * "playback exit"), and after a failed init, which has no alarm, a
      * process that ignored SIGTERM until systemd killed it 90 s later, deaf
      * all the while.  The drain saved nothing: this loop ends as soon as
-     * shutdown_ is set, frame in flight or not, so the rest of the ring is
+     * mercury_stop is set, frame in flight or not, so the rest of the ring is
      * dropped regardless and the device holds at most its last period.
      * stop() pauses and closing the PCM drops that. */
     r = audio->stop(b);
@@ -1970,7 +1970,7 @@ void *radio_capture_thread(void *device_ptr)
      * path is fully validated and about to stream. */
     audio_health_set(true, AUDIO_HEALTH_RUNNING, NULL);
 
-    while (!shutdown_ && !audio_shutdown_)
+    while (!mercury_stop && !audio_shutdown_)
     {
         r = audio->read(b, (const void **)&buffer);
         if (r < 0)
@@ -2003,7 +2003,7 @@ void *radio_capture_thread(void *device_ptr)
                  * failing (issue #254). */
                 unsigned attempt = 0;
                 unsigned delay_ms = 200;
-                while (!shutdown_ && !audio_shutdown_)
+                while (!mercury_stop && !audio_shutdown_)
                 {
                     b = audio->alloc();
                     if (b != NULL && audio->open(b, cfg, conf.flags) == 0)
@@ -2023,7 +2023,7 @@ void *radio_capture_thread(void *device_ptr)
                      * the user wait out the whole backoff before the process
                      * will exit. */
                     for (unsigned slept = 0; slept < delay_ms &&
-                                             !shutdown_ && !audio_shutdown_;
+                                             !mercury_stop && !audio_shutdown_;
                          slept += 100)
                         ffthread_sleep(100);
                     /* Double up to the ceiling, do not overshoot it: the old

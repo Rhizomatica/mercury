@@ -82,7 +82,7 @@ extern int audioio_restart(const char *capture_dev, const char *playback_dev,
  * polled by every worker loop; volatile orders nothing between threads, and
  * declaring the same object differently in different translation units is
  * undefined behaviour on top of that.  Plain assignment and test still work. */
-extern _Atomic bool shutdown_;
+extern _Atomic bool mercury_stop;
 
 #define UI_LOG_TAG "ui-comm"
 
@@ -680,7 +680,7 @@ void *ui_publisher_thread(void *arg)
     HLOGI(UI_LOG_TAG, "Publisher started - sending status every %dms via WebSocket (port %u)",
            UI_PUBLISH_INTERVAL_US / 1000, ctx->ws_port);
 
-    while (!shutdown_)
+    while (!mercury_stop)
     {
         /* One gather, published two ways: struct to the embedded UI, JSON to
          * remote clients. */
@@ -915,7 +915,7 @@ void *spectrum_publisher_thread(void *arg)
 
     uint64_t last_seq = 0;
 
-    while (!shutdown_ && atomic_load_explicit(&ctx->spec_run, memory_order_relaxed))
+    while (!mercury_stop && atomic_load_explicit(&ctx->spec_run, memory_order_relaxed))
     {
         float spec_dB[MODEM_STATS_NSPEC];
         uint64_t seq = 0;

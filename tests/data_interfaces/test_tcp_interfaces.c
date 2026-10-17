@@ -342,7 +342,7 @@ cbuf_handle_t data_rx_buffer_broadcast = NULL;
 
 /* Matches the _Atomic definition in common/mercury_engine.c; a plain
  * volatile here is a conflicting declaration of the same object. */
-_Atomic bool shutdown_ = false;
+_Atomic bool mercury_stop = false;
 arq_info arq_conn = {0};
 
 /* ---- setUp / tearDown ---- */
@@ -1708,7 +1708,7 @@ static void broadcast_shutdown_case(int client_mode)
     TEST_ASSERT_EQUAL_INT(0, getsockname(probe, (struct sockaddr *)&addr, &len));
     int port = ntohs(addr.sin_port);
     close(probe);
-    shutdown_ = false;
+    mercury_stop = false;
     uint8_t backing[128] = {0};
     if (client_mode == 3)
     {
@@ -1753,7 +1753,7 @@ static void broadcast_shutdown_case(int client_mode)
         client = -1;
     }
     uint64_t start = monotonic_ms();
-    shutdown_ = true;
+    mercury_stop = true;
     pthread_join(server, NULL);
     alarm(0);
     if (client >= 0)
@@ -1767,7 +1767,7 @@ static void broadcast_shutdown_case(int client_mode)
         data_rx_buffer_broadcast = NULL;
         race_enabled = false;
     }
-    shutdown_ = false;
+    mercury_stop = false;
 }
 
 void test_bcast_disconnect_during_buffer_read(void) { broadcast_shutdown_case(3); }
@@ -1819,18 +1819,18 @@ void test_data_client_connect_discards_stale_rx(void)
     bool reactor_gave_up = false;
     alarm(10);
     /* ~1 run in 150 lost the probed pair to another process before the
-     * reactor bound it; the reactor then gave up (shutdown_) and nothing ever
+     * reactor bound it; the reactor then gave up (mercury_stop) and nothing ever
      * answered.  Start again on a fresh pair instead of failing. */
     for (int attempt = 0; attempt < 5 && client < 0; attempt++)
     {
         base = free_port_pair();
         TEST_ASSERT_TRUE_MESSAGE(base > 0, "no free port pair");
-        shutdown_ = false;
+        mercury_stop = false;
         discard_stale_rx_calls = 0;
         TEST_ASSERT_EQUAL_INT(0, pthread_create(&reactor, NULL, arq_reactor_thread, &base));
 
         addr.sin_port = htons((uint16_t)(base + 1));
-        for (int i = 0; i < 200 && client < 0 && !shutdown_; ++i)
+        for (int i = 0; i < 200 && client < 0 && !mercury_stop; ++i)
         {
             client = socket(AF_INET, SOCK_STREAM, 0);
             if (connect(client, (struct sockaddr *)&addr, sizeof(addr)) != 0)
@@ -1842,8 +1842,8 @@ void test_data_client_connect_discards_stale_rx(void)
         }
         if (client < 0)
         {
-            reactor_gave_up = shutdown_;
-            shutdown_ = true;
+            reactor_gave_up = mercury_stop;
+            mercury_stop = true;
             pthread_join(reactor, NULL);
         }
     }
@@ -1853,11 +1853,11 @@ void test_data_client_connect_discards_stale_rx(void)
     for (int i = 0; i < 100 && discard_stale_rx_calls == 0; ++i)
         usleep(10000);
 
-    shutdown_ = true;
+    mercury_stop = true;
     pthread_join(reactor, NULL);
     alarm(0);
     close(client);
-    shutdown_ = false;
+    mercury_stop = false;
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, discard_stale_rx_calls,
         "a data client connected without stale RX being discarded");
 }
@@ -1874,20 +1874,20 @@ void test_bcast_shutdown_backpressured_send(void)
     int pair[2];
     TEST_ASSERT_EQUAL_INT(0, socketpair(AF_UNIX, SOCK_STREAM, 0, pair));
     TEST_ASSERT_EQUAL_INT(0, set_nonblocking(pair[0]));
-    shutdown_ = false;
+    mercury_stop = false;
     bcast_client_done = false;
     pthread_t sender;
     alarm(5);
     TEST_ASSERT_EQUAL_INT(0, pthread_create(&sender, NULL, blocked_broadcast_send, &pair[0]));
     usleep(200000);
     uint64_t start = monotonic_ms();
-    shutdown_ = true;
+    mercury_stop = true;
     pthread_join(sender, NULL);
     alarm(0);
     close(pair[0]);
     close(pair[1]);
     TEST_ASSERT_TRUE(monotonic_ms() - start < 1000);
-    shutdown_ = false;
+    mercury_stop = false;
 }
 
 int main(void)
