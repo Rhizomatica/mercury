@@ -86,6 +86,15 @@ else
     endif
 endif
 
+# The daemon build takes PTT from its host program: no hamlib, sbitx SHM
+# keying or hidapi of its own.
+ifeq ($(MERCURY_HOST),daemon)
+HAVE_HAMLIB := 0
+HAMLIB_CFLAGS :=
+HAMLIB_LDFLAGS :=
+HAVE_HERMES_SHM := 0
+endif
+
 # pkg-config can report a hamlib that is not actually usable: the .pc file is
 # installed but the headers it points at are missing or broken.  The build then
 # gets all the way into radio_io before dying on
@@ -169,6 +178,12 @@ else
   endif
 endif
 
+ifeq ($(MERCURY_HOST),daemon)
+HAVE_HIDAPI :=
+HIDAPI_CFLAGS =
+HIDAPI_LDFLAGS =
+HIDAPI_OBJS =
+endif
 
 export HAVE_HAMLIB
 export HAVE_HERMES_SHM
@@ -229,7 +244,13 @@ HOST_UI_OBJS = gui_interface/websocket/mercury_websocket.o gui_interface/websock
 HOST_INI_OBJS = common/iniparser/iniparser.o common/iniparser/dictionary.o
 HOST_SHM_OBJS = common/ring_buffer_posix.o common/shm_posix.o
 else
-$(error MERCURY_HOST=daemon: the host implementations (host/) are not in this tree yet)
+# daemon: the host program supplies audio, PTT and the UI transport through
+# host/mercury_host.h, and its own iniparser and hermes_shm rings.
+HOST_AUDIO_OBJS = host/audio_host.o
+HOST_RADIO_OBJS = host/radio_host.o
+HOST_UI_OBJS = host/ui_host.o
+HOST_INI_OBJS =
+HOST_SHM_OBJS =
 endif
 
 MERCURY_LINK_INPUTS = \
@@ -300,10 +321,12 @@ internal_deps: .git_hash_stamp
 	$(MAKE) -C datalink_arq
 	$(MAKE) -C datalink_broadcast
 	$(MAKE) -C data_interfaces
-	$(MAKE) -C audioio
 	$(MAKE) -C common
 	$(MAKE) -C gui_interface
+ifeq ($(MERCURY_HOST),standalone)
+	$(MAKE) -C audioio
 	$(MAKE) -C radio_io
+endif
 
 windows:
 	$(MAKE) clean OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR)
@@ -396,6 +419,24 @@ libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS) $(MODEM_TOP_O
 	# next native build ("is a fat file"). Fresh create is identical on Linux.
 	rm -f $@
 	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
+
+# The daemon build: everything but the host-replaceable modules, plus host/,
+# for a program that links Mercury in (hermes-radio-daemon).  Link it with
+# modem/freedv/libfreedvdata.a and -liniparser; the host also provides the
+# hermes_shm rings (ring_buffer_posix, shm_posix).  It runs the engine through
+# the bridge's mercury_init/mercury_shutdown and host/mercury_host.h.
+HOST_CFLAGS = $(CFLAGS) -Ihost $(INIPARSER_CFLAGS)
+
+host/%.o: host/%.c host/mercury_host.h
+	$(CC) $(HOST_CFLAGS) -c $< -o $@
+
+libmercury_host.a: internal_deps $(BCAST_FILE_OBJS) $(MODEM_TOP_OBJS) $(HOST_AUDIO_OBJS) $(HOST_RADIO_OBJS) $(HOST_UI_OBJS)
+ifneq ($(MERCURY_HOST),daemon)
+	$(error libmercury_host.a is the daemon build: make libmercury_host.a MERCURY_HOST=daemon)
+endif
+	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	rm -f $@
+	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(HOST_AUDIO_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
 
 # The OS=Windows_NT internal_deps sub-make compiles cm108_ptt.o with
 # -DHAVE_HIDAPI, so the archive must carry the matching vendored hidapi object.
@@ -905,7 +946,8 @@ windows-installer: windows fyne-ui-windows windows-installer-stage
 	@echo ""
 
 clean:
-	rm -f mercury mercury.exe *.o *.d .git_hash_stamp mercury-*.zip libmercury_core.a libmercury_core_w64.a
+	rm -f mercury mercury.exe *.o *.d .git_hash_stamp mercury-*.zip libmercury_core.a libmercury_core_w64.a libmercury_host.a
+	rm -f host/*.o host/*.d
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
