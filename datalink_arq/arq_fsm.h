@@ -249,6 +249,8 @@ typedef struct
     float    car_call_snr;            /* connect: the SNR the callee read the CALL at
                                        * (the callee: its own; the caller: from the
                                        * ACCEPT), 0 unknown */
+    float    car_my_snr;              /* connect: the SNR I read the peer's connect
+                                       * frame at (the CALL, the ACCEPT), 0 unknown */
     bool     ctl_floor_at_stop;       /* the carousel's peer_ctl_deaf when it stopped,
                                        * for the DISCONNECT exchange after it */
     int      floor_mode;              /* the session's MFSK floor (arq_floor_mode

@@ -305,7 +305,41 @@ static uint64_t level_air(const car_t *c, int lv) { return mode_air(lmode(c, lv)
 #define SILENT_MS 90000
 #define CTL_DEAF_ON_DB   (ARQ_SNR_MIN_DATAC15_DB - 0.5f)
 #define CTL_DEAF_OFF_DB  (ARQ_SNR_MIN_DATAC15_DB + 1.0f)
-static bool ctl_on_floor(const car_t *c)      { return c->io.pattern && c->peer_ctl_deaf; }
+/* How the peer hears me now: its last reading of me, moved by as much as my
+ * reading of it has moved since.  The path's changes are the same both ways
+ * even where its levels are not (power, noise at each end), so the offset
+ * between the two directions drops out.  NAN when either is unknown. */
+static float peer_hears_me_db(const car_t *c)
+{
+    if (!c->peer_snr_ms || isnan(c->peer_snr_db) || isnan(c->peer_snr_mine) || !c->snr_valid) return NAN;
+    /* Only on a reading of mine newer than the peer's: with nothing decoded
+     * since, mine is as old as the channel it describes.  Without this, a
+     * station that had decoded nothing for 90 s (control at the floor) still
+     * read the old +10 dB and kept its control on the control mode, which
+     * the peer could no longer hear (sim, step:10:-12: 39 runs in 120 never
+     * finished). */
+    if (c->snr_ms <= c->peer_snr_ms) return NAN;
+    return c->peer_snr_db + (c->snr_ema - c->peer_snr_mine);
+}
+/* My control goes on the floor while the peer said it hears me below the
+ * control mode -- unless the channel has risen since by enough to put it
+ * above (peer_hears_me_db).  Only that way: the peer always decodes the
+ * control mode, but hears my floor control only where it listens on the
+ * floor, which follows its own reading.  In the sim, step:-12:10, the
+ * receiver's first poll after the step went on MFSK (13.8 s) where the
+ * control mode (4 s) reached the sender. */
+static bool ctl_on_floor(const car_t *c)
+{
+    if (!c->io.pattern || !c->peer_ctl_deaf) return false;
+    /* A deaf peer whose own reading does not say so went deaf on silence
+     * (nothing decoded for SILENT_MS: car_on_tx_done), and that reading is
+     * as old as the silence.  Trust the flag: with the reading, a receiver
+     * kept its polls on the control mode for a sender that had heard
+     * nothing of it in 111 s (sim, step:10:-12 seed 117: 1442 s longer). */
+    if (!(c->peer_snr_db < CTL_DEAF_OFF_DB)) return true;
+    float db = peer_hears_me_db(c);
+    return !(db >= CTL_DEAF_OFF_DB);
+}
 static bool peer_ctl_on_floor(const car_t *c) { return c->io.pattern && c->ctl_deaf; }
 /* The session's piece size (car_t.piece): CAR_PIECE, or CAR_PIECE_FLOOR
  * for a session that starts on the floor (car_start_sender / _receiver).
@@ -1109,6 +1143,7 @@ static void take_peer_snr(car_t *c, uint64_t now, const msg_t *m)
     if (isnan(m->snr_db)) return;
     c->peer_snr_db = m->snr_db;
     c->peer_snr_ms = now;
+    c->peer_snr_mine = c->snr_valid ? c->snr_ema : NAN;
     c->peer_snr_level = cap_level(c, car_start_level(m->snr_db));
     c->peer_level_known = true;
 }
@@ -2792,6 +2827,24 @@ void car_seed_ctl_deaf(car_t *c, bool mine, bool peers)
               mine ? "below" : "above", peers ? "below" : "above");
 }
 
+/* Without it the caller's first control frames said "no reading" (it had
+ * heard the ACCEPT, which the FSM takes, but no carousel frame), so a callee
+ * told it was heard below the control mode got no dB to go by when the
+ * channel rose (peer_hears_me_db).  At time 0: any reading of the session's
+ * own is newer. */
+void car_seed_snr(car_t *c, float mine, float peers)
+{
+    if (mine == 0.0f || isnan(mine)) return;
+    c->snr_ema = c->snr_last = mine;
+    c->snr_ms = 0;
+    c->snr_valid = true;
+    if (peers != 0.0f && !isnan(peers)) {
+        c->peer_snr_db = peers;
+        c->peer_snr_ms = 1;            /* the connect's: older than any reading to come */
+        c->peer_snr_mine = mine;
+    }
+}
+
 void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
                   float snr_db, uint32_t age_ms)
 {
@@ -2820,6 +2873,7 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
             else if (hi < c->snr_ema - SNR_GATE_DB) c->snr_ema = hi;
         }
         c->snr_last = snr_db;
+        c->snr_ms = now;
         c->snr_valid = true;
         bool deaf = c->ctl_deaf ? c->snr_ema < CTL_DEAF_OFF_DB : c->snr_ema < CTL_DEAF_ON_DB;
         if (deaf != c->ctl_deaf) {

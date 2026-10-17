@@ -604,6 +604,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         if (getenv("CAR_NOHINT")) hears = heard = -99.0;
         car_init(&s->car, &io, car_start_level((float)hears), car_start_level((float)heard));
         car_seed_ctl_deaf(&s->car, hears < ARQ_SNR_MIN_DATAC15_DB, heard < ARQ_SNR_MIN_DATAC15_DB);
+        if (!getenv("CAR_NOHINT")) car_seed_snr(&s->car, (float)hears, (float)heard);   /* as arq_fsm.c's car_start */
         /* CAR_BW=500: a BW500 session, capped at DATAC3 on the 500 Hz floor */
         if (getenv("CAR_BW")) {
             int bw = atoi(getenv("CAR_BW"));

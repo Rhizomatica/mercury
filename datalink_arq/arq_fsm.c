@@ -661,6 +661,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     car_set_max_level(sess->car, session_max_level());
     car_set_floor_mode(sess->car, sess->floor_mode);
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf, sess->car_peer_ctl_deaf);
+    car_seed_snr(sess->car, sess->car_my_snr, is_caller ? sess->car_call_snr : 0.0f);
     sess->ctl_floor_at_stop = false;
     sess->car_active = true;
     sess->car_session = true;
@@ -840,6 +841,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
              * we who cannot hear its control-mode CALLs.) */
             sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
             sess->car_call_snr = ev->rx_snr;
+            sess->car_my_snr   = ev->rx_snr;
         }
         sess->car_peer_ctl_deaf = false;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
@@ -921,6 +923,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->car_tx_level = session_max_level();
         sess->car_rx_level = session_start_level(ev->rx_snr);
         sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
+        sess->car_my_snr   = ev->rx_snr;
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call);
         if (g_timing)

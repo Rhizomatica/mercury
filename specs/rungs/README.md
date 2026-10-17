@@ -86,6 +86,11 @@ Which model covers the other 2.0 changes:
 - no first try of a rung while the SNR is below its threshold
   (`choose_level`'s one-rung-up probe): it only narrows the rungs S may
   name, which `RungAgreement` leaves free (any rung);
+- control on the control mode once the channel has risen past the peer's
+  "deaf" (`ctl_on_floor`, `peer_hears_me_db`): it changes only which mode
+  a control frame goes on, and only from the floor to the control mode,
+  which the peer always decodes.  Like the `ctl_deaf` decision above, no
+  model has that choice;
 - a pattern only for the rung asked: the floor's patterns are outside
   `RungAgreement`; the rule only narrows when S answers with one, which
   `FloorSilence` does not depend on.

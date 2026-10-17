@@ -146,6 +146,7 @@ typedef struct {
     bool     peer_ctl_deaf;         /* ...and the peer, of me, as it reports */
     float    snr_ema;               /* SNR of what the peer sends us, smoothed */
     float    snr_last;              /* ...and its latest reading */
+    uint64_t snr_ms;                /* ...and when it came */
     bool     snr_valid;
     uint64_t deadline[CAR_NTIMERS]; /* 0 = disarmed */
     uint64_t last_carrier_ms;       /* the peer was last heard on the air */
@@ -226,6 +227,7 @@ typedef struct {
     float    peer_snr_db;           /* how the peer hears me, as its last control
                                      * frame said (dB) */
     uint64_t peer_snr_ms;           /* ...and when (0: never) */
+    float    peer_snr_mine;         /* ...and how I heard the peer then (NAN: unknown) */
     int      rx_data_lv;            /* the rung of the last data frame I took; -1 none */
     bool     peer_has_data;         /* the peer said it has data for me */
 
@@ -285,6 +287,10 @@ void car_set_floor_mode(car_t *c, int mode);
 /* Seed, from the connect exchange, whether each end hears the other below the
  * control mode (see ctl_on_floor in carousel.c).  Frames keep both current. */
 void car_seed_ctl_deaf(car_t *c, bool mine, bool peers);
+/* The connect's SNRs (0: unknown): mine, the reading of the peer's connect
+ * frame -- the carousel's first, so its first control frame reports one --
+ * and the peer's of mine (the caller has it from the ACCEPT). */
+void car_seed_snr(car_t *c, float mine, float peers);
 /* The peer hears us below the control mode, as it last reported: our control
  * frames go on MFSK.  The session's own control frames follow the same rule. */
 bool car_peer_ctl_deaf(const car_t *c);
