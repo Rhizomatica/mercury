@@ -10,7 +10,7 @@ add_library(freedv STATIC
     H_212_158.c phi0.c gp_interleaver.c modem_stats.c
 )
 
-target_compile_definitions(freedv PRIVATE GIT_HASH=\"unknown\")
+target_compile_definitions(freedv PRIVATE "GIT_HASH=\"unknown\"")
 
 target_include_directories(freedv PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
