@@ -1,0 +1,11 @@
+add_subdirectory(iniparser)
+add_subdirectory(ffaudio)
+add_subdirectory(freedv)
+
+if(WIN32)
+    add_subdirectory(hidapi-w64)
+    add_subdirectory(hamlib-w64)
+elseif(APPLE)
+    add_subdirectory(hidapi-macos)
+    add_subdirectory(hamlib-macos)
+endif()
