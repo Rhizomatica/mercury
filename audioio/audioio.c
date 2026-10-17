@@ -2599,7 +2599,7 @@ void list_soundcards(int audio_system)
         ffaudio_init_conf aconf = {};
         if (audio->init(&aconf) != 0)
         {
-            printf("Error in audio->init()\n");
+            printf("Error in audio->init(): %s\n", aconf.error ? aconf.error : "unknown");
             return;
         }
         did_init = true;

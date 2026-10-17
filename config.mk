@@ -90,6 +90,28 @@ BUILD_CONFIG := $(MAKEFILE_LIST)
 CC_MACHINE := $(strip $(shell $(CC) -dumpmachine 2>/dev/null))
 TARGET_MACHINE := $(if $(CC_MACHINE),$(CC_MACHINE),$(shell uname -m 2>/dev/null))
 
+# iOS, device or simulator.  The build host is a Mac either way, so uname
+# cannot tell, and neither can the triple: clang's -dumpmachine ignores -arch
+# and -miphoneos-version-min and prints the host's (x86_64-apple-darwin25.6.0
+# for an iOS simulator compiler).  What does tell is the macro clang predefines
+# for every iOS target, device and simulator alike.  Asked only of a compiler
+# that targets Apple, so other builds do not pay for the extra invocation.
+TARGET_IOS :=
+TARGET_IOS_SIM :=
+ifneq ($(findstring apple,$(TARGET_MACHINE)),)
+  APPLE_MACROS := $(shell echo | $(CC) -dM -E -x c - 2>/dev/null)
+  ifneq ($(findstring __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__,$(APPLE_MACROS)),)
+    TARGET_IOS := 1
+  endif
+  # ...and the simulator, which a device build does not define.
+  ifneq ($(findstring __APPLE_EMBEDDED_SIMULATOR__,$(APPLE_MACROS)),)
+    TARGET_IOS_SIM := 1
+  endif
+  # The architecture, for Go (GOARCH): an Intel Mac's simulator is x86_64,
+  # everything else arm64.
+  TARGET_GOARCH := $(if $(findstring __x86_64__,$(APPLE_MACROS)),amd64,arm64)
+endif
+
 # --- Platform-specific flags for aarch64 targets ---
 ifneq ($(filter aarch64%,$(TARGET_MACHINE)),)
   # Runtime-dispatched atomics: uses LSE on ARMv8.1+ cores, falls back to

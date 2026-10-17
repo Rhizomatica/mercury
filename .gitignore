@@ -92,3 +92,11 @@ radio_io/hidapi-w64/*.o
 utils/shortframe_sweep
 utils/hail_suffix_sweep
 utils/mfsk_puncture_sweep
+
+# iOS app build
+ios/*.o
+ios/*.d
+ios/Mercury.app/
+ios/MercuryUI.app/
+ios/build-assets/
+Mercury-*.ipa
