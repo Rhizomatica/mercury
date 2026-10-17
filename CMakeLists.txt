@@ -10,10 +10,15 @@ project(mercury
 
 # Options
 option(BUILD_GUI "Build Fyne-UI based GUI written in Golang" ON)
+option(ENABLE_TESTS "Enable testing" ON)
 
 # Subdirectories
 add_subdirectory(third_party)
 add_subdirectory(src)
+
+if(ENABLE_TESTS)
+    add_subdirectory(tests)
+endif()
 
 # Misc installation rules
 include(GNUInstallDirs)
