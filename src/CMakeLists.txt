@@ -46,6 +46,8 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c"
     CODEGEN
 )
 
+target_include_directories(mercury PRIVATE gui_interface/websocket)
+
 target_sources(mercury PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c")
 
 # audioio
