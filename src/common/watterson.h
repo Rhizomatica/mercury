@@ -33,7 +33,7 @@
 #ifndef watterson_h
 #define watterson_h
 
-#include "modem/freedv/comp.h"
+#include "freedv/comp.h"
 #include "mercury_prng.h"
 
 /* Maximum number of paths supported */

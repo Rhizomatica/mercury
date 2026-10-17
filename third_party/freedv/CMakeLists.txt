@@ -12,4 +12,6 @@ add_library(freedv STATIC
 
 target_compile_definitions(freedv PRIVATE GIT_HASH=\"unknown\")
 
-target_include_directories(freedv PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(freedv PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+
+target_include_directories(freedv PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
