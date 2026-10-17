@@ -83,6 +83,9 @@ Which model covers the other 2.0 changes:
   (`ctl_deaf`).  No model has that decision, before or after this change:
   the models fix the control frame's mode per configuration
   (`CarouselTurns.cfg`, `CarouselTurns_mfsk.cfg`);
+- no first try of a rung while the SNR is below its threshold
+  (`choose_level`'s one-rung-up probe): it only narrows the rungs S may
+  name, which `RungAgreement` leaves free (any rung);
 - a pattern only for the rung asked: the floor's patterns are outside
   `RungAgreement`; the rule only narrows when S answers with one, which
   `FloorSilence` does not depend on.
