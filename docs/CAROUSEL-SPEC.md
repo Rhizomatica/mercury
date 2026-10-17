@@ -614,7 +614,7 @@ Predicates (`marginal = snr_valid && snr_ema < min_db + 3`, C:797-800):
 | E4 | `car_drain_budget_ms` = `3 × (G + H + ctl + CG + round_air(lv, keydown_cap(lv)) + T + 4000)`, `lv = min(tx_level (or 0), poll_level if drove_peer)`, `ctl = 13500` if either end is control-deaf (and MFSK longer) else 3740. | C:1801-1810 |
 | E5 | Drain deadline elapsed → forced DISCONNECTING (data may be undelivered). | F:2391-2405 |
 | E6 | Leaving CONNECTED: `car_active = false`, `ctl_floor_at_stop` remembered for the DISCONNECT carrier; seed cleared only on DISCONNECTED/LISTENING. Carousel frames in DISCONNECTING are ignored. | F:191-203, F:3953 |
-| E7 | RX DISCONNECT (session id matches) in CONNECTED → DISCONNECTED immediately (reply after G); whatever the carousel held is dropped. | F:2508-2522 |
+| E7 | RX DISCONNECT (session id matches) in CONNECTED → DISCONNECTED (reply after G). A caller with bytes still in flight or queued stays CONNECTED and replies once they are delivered, bounded by the drain budget -- the Winlink client's final handshake byte must reach the RMS before the teardown. A callee answers at once (the caller is gone). | F:2508-2522 |
 | E8 | LISTEN OFF in CONNECTED → idle immediately, no DISCONNECT on air. | F:2413-2428 |
 | E9 | KEEPALIVE and late ACCEPT are swallowed while the carousel runs. | F:2366-2368 |
 

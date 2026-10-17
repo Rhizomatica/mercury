@@ -728,6 +728,14 @@ static bool car_drained(const arq_session_t *sess)
     return car_is_drained(sess->car) && session_tx_backlog(sess) == 0;
 }
 
+/* Bytes of ours the carousel still holds: open blocks plus what the app has
+ * queued and not yet handed over.  A peer's DISCONNECT must not cut these off
+ * (a Winlink client's final handshake byte is queued this way). */
+static bool car_has_tx_pending(const arq_session_t *sess)
+{
+    return car_tx_inflight(sess->car) > 0 || session_tx_backlog(sess) > 0;
+}
+
 static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
 {
     switch (ev->id)
@@ -1460,6 +1468,15 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     /* A deferred DISCONNECT goes once everything has been delivered. */
     if (sess->pending_disconnect && car_drained(sess) && !sess->tx_active)
         car_begin_disconnect(sess, now);
+    /* A DISCONNECT reply deferred for our own data goes once it is all
+     * delivered (the peer keeps its carousel alive while it ends). */
+    if (sess->pending_disconnect_reply && !car_has_tx_pending(sess) && !sess->tx_active)
+    {
+        sess->disconnect_deadline_ms = 0;
+        sess_enter(sess, ARQ_CONN_DISCONNECTED,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+        return true;
+    }
     return true;
 }
 
@@ -1475,6 +1492,17 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
               "Deferred DISCONNECT drain timeout (%ds) — forcing teardown",
               ARQ_DISCONNECT_DRAIN_TIMEOUT_S);
         car_begin_disconnect(sess, time_now_ms());
+        return;
+    }
+    /* A DISCONNECT reply deferred for our own data whose drain deadline has
+     * passed: reply now, whatever is still undelivered. */
+    if (sess->pending_disconnect_reply && sess->disconnect_deadline_ms != 0 &&
+        time_now_ms() >= sess->disconnect_deadline_ms)
+    {
+        HLOGD(LOG_COMP, "Deferred DISCONNECT reply drain timeout — replying");
+        sess->disconnect_deadline_ms = 0;
+        sess_enter(sess, ARQ_CONN_DISCONNECTED,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
         return;
     }
 
@@ -1524,10 +1552,13 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         return;
 
     case ARQ_EV_RX_DISCONNECT:
+    {
         /* Reply one reply guard later, like every other answer.  A frame
          * decodes before its tail has played out -- on air (bench run 14) the
          * DISCONNECT decoded 186 ms before the peer's TX_COMPLETE -- and a
          * reply keyed at once (40 ms) clipped it. */
+        bool already_deferring = sess->pending_disconnect_reply &&
+                                 sess->disconnect_deadline_ms != 0;
         sess->pending_disconnect_reply = true;
         /* Peer-initiated disconnect supersedes any locally deferred one. */
         sess->pending_disconnect = false;
@@ -1535,9 +1566,28 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          * drain to the TCP socket before UUCP sees the DISCONNECTED signal. */
         sess->pending_disconnect_notify = true;
         if (g_timing) arq_timing_record_disconnect(g_timing, "rx_disconnect");
+        /* The caller's own bytes still in flight (or queued) are owed to the
+         * app before it hangs up: a Winlink client's final handshake byte is
+         * cut off by an immediate teardown, and the RMS then drops the message.
+         * The callee keeps its carousel alive while it ends, so it
+         * still hears the caller; drain, then reply, bounded by the drain
+         * budget. A callee receiving the caller's DISCONNECT does NOT drain:
+         * the caller is going away and will hear nothing more. The callee
+         * re-sends its DISCONNECT every slot until it hears us, so a repeated
+         * one must not re-arm the drain deadline. */
+        if (sess->car_active && car_is_master(sess->car) && car_has_tx_pending(sess))
+        {
+            if (!already_deferring)
+            {
+                sess->disconnect_deadline_ms = time_now_ms() + car_drain_budget_ms(sess->car);
+                HLOGD(LOG_COMP, "DISCONNECT reply deferred until our data is delivered");
+            }
+            return;   /* stay CONNECTED; the carousel drains, then we reply */
+        }
         sess_enter(sess, ARQ_CONN_DISCONNECTED,
                    time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
         return;
+    }
 
     default:
         break;
@@ -1662,6 +1712,9 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
         if (sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS < d)
             d = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
         if (sess->pending_disconnect && sess->disconnect_deadline_ms &&
+            sess->disconnect_deadline_ms < d)
+            d = sess->disconnect_deadline_ms;
+        if (sess->pending_disconnect_reply && sess->disconnect_deadline_ms &&
             sess->disconnect_deadline_ms < d)
             d = sess->disconnect_deadline_ms;
         sess->deadline_ms    = d;
