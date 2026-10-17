@@ -6,7 +6,8 @@
  * The daemon build (`make libmercury_host.a MERCURY_HOST=daemon`) leaves out
  * Mercury's own audio, PTT and websocket server; the program that links it in
  * (hermes-radio-daemon) owns the radio and supplies them through this header.
- * Lifecycle is the bridge's (gui_interface/fyne-ui/engine/mercury_bridge.h):
+ * Lifecycle is the bridge's (gui_interface/fyne-ui/engine/mercury_bridge.h),
+ * declared below:
  *
  *     mercury_host_set_radio(&ops);              before mercury_init
  *     mercury_host_set_ui(&ui_ops);              optional, any time
@@ -29,6 +30,28 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ---- lifecycle -----------------------------------------------------------
+ *
+ * The bridge's calls (mercury_bridge.c), declared here too so a host need not
+ * include mercury_bridge.h and the engine headers behind it.
+ *
+ * mercury_init: argv as on the command line, e.g. {"mercury", "-C",
+ * "/etc/mercury/mercury.ini"}; default_config is used when there is no -C,
+ * log_path when there is no -L (NULL: no log file; the log always goes to
+ * stderr).  Returns once the engine is up: 0, MERCURY_INIT_CONFIG_ERROR when
+ * the configuration file cannot be read in full, or -1.  In a TX/RX test (-t,
+ * -r) it returns only after mercury_request_shutdown(), so call it on a
+ * thread of its own there.
+ *
+ * mercury_request_shutdown: sets Mercury's run flag; safe from any thread.
+ * mercury_shutdown: stops Mercury and joins its threads, PTT released. */
+#ifndef MERCURY_INIT_CONFIG_ERROR
+#define MERCURY_INIT_CONFIG_ERROR (-2)
+#endif
+int  mercury_init(int argc, char **argv, const char *default_config, const char *log_path);
+void mercury_request_shutdown(void);
+void mercury_shutdown(void);
 
 /* ---- radio ---------------------------------------------------------------
  *
