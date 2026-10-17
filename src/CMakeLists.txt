@@ -217,6 +217,8 @@ target_sources(mercury PRIVATE
 
 target_include_directories(mercury PRIVATE radio_io)
 
+target_include_directories(mercury PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+
 # GUI building
 # if(BUILD_GUI)
 
