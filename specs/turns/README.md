@@ -45,8 +45,9 @@ answers it `TgD` after decoding it, in a single slot, and the carousel
 closes nothing on that answer.  With `CLOSE` and `DISC` both `FALSE`, the
 behaviour is exactly the base model's.
 
-- `CarouselTurns_close.cfg`: the code's rules.  Run in progress: no error
-  through 36.6 M distinct states (H = 24, 5 workers); final count to follow.
+- `CarouselTurns_close.cfg`: the code's rules.  Not exhausted: no error
+  through 60.1 M distinct states at depth 50 (H = 24, 5 workers), with
+  5.3 M still queued when the run was stopped for lack of memory.
 - `Mut_spentany.cfg`: S continues after a status of nothing.  Violates
   `NoOverlap`, because M had closed those slots.
 - `Mut_anytime.cfg`: M takes a pattern whenever it hears one.  Violates
