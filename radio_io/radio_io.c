@@ -252,6 +252,7 @@ static int hamlib_open(const ptt_config_t *config)
                                                config->hamlib_conf);
     radio_io_warn_port_mismatch(config->hamlib_model, config->device);
 
+    errno = 0;                      /* see hamlib_set */
     int ret = rig_open(g_radio);
     /* A port without modem-control lines -- a pty from socat or ser2net, a
      * com0com pair, some Bluetooth serial links -- refuses the ioctl, and
@@ -265,6 +266,7 @@ static int hamlib_open(const ptt_config_t *config)
             rig_set_conf(g_radio, rig_token_lookup(g_radio, "rts_state"), "Unset");
         if (defaulted & 2)
             rig_set_conf(g_radio, rig_token_lookup(g_radio, "dtr_state"), "Unset");
+        errno = 0;
         ret = rig_open(g_radio);
     }
     if (ret != RIG_OK)
@@ -284,6 +286,7 @@ static int hamlib_open(const ptt_config_t *config)
 
     if (g_radio->caps->rig_model == RIG_MODEL_NETRIGCTL)
     {
+        errno = 0;
         int rc = rig_set_vfo_opt(g_radio, netrigctl_get_vfo_mode(g_radio));
         if (rc != RIG_OK)
             HLOGW(RADIO_LOG_TAG, "Failed to set NetRigCtl VFO option: %d", rc);
@@ -297,13 +300,14 @@ static int hamlib_open(const ptt_config_t *config)
     return 0;
 }
 
-/* Hamlib's read_string_generic() (iofunc.c, 4.6.2 and master) sleeps 5 ms
- * after every reply byte while errno == EAGAIN, and never clears errno: a
- * successful read leaves it alone.  A thread that reaches Hamlib with an
- * EAGAIN left from its own non-blocking I/O pays that per byte -- ~60 ms more
- * key-up for an Icom CI-V echo + ack (seen as 23 -> 134 ms get_level in
- * hermes-radio-daemon).  So errno is cleared before the Hamlib calls on the
- * keying and frequency-poll paths. */
+/* A workaround for the older Hamlib the stations run (4.6.2), fixed in later
+ * releases, so not a bug to report: its read_string_generic() (iofunc.c)
+ * sleeps 5 ms after every reply byte while errno == EAGAIN, and never clears
+ * errno, since a successful read leaves it alone.  A thread that reaches
+ * Hamlib with an EAGAIN left from its own non-blocking I/O pays that per
+ * byte -- ~60 ms more key-up for an Icom CI-V echo + ack (seen as 23 -> 134
+ * ms get_level in hermes-radio-daemon).  So errno is cleared before every
+ * Hamlib call that talks to the radio: open, keying, frequency poll, close. */
 static int hamlib_set(bool on)
 {
     if (!g_radio)
@@ -328,6 +332,7 @@ static void hamlib_close(void)
         return;
     errno = 0;                      /* see hamlib_set */
     (void)rig_set_ptt(g_radio, RIG_VFO_CURR, RIG_PTT_OFF);
+    errno = 0;                      /* ...which Hamlib's own reads may set */
     rig_close(g_radio);
     rig_cleanup(g_radio);
     g_radio = NULL;
