@@ -2799,6 +2799,21 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     now = when;
     if (snr_db != 0.0f) {
         c->snr_ema = c->snr_valid ? 0.7f * c->snr_ema + 0.3f * snr_db : snr_db;
+        /* Two readings in a row more than SNR_GATE_DB to one side of the
+         * smoothed one move it to the nearer of them: smoothing is for a
+         * noisy estimate, not for a channel that has moved.  In the sim,
+         * step:-12:10, two MFSK frames at +10 dB read -0.8 smoothed, and the
+         * session climbed DATAC3, DATAC1, DATAC17 one exchange each.  One
+         * reading alone does not move it: a lucky frame does not open the
+         * ladder.  The margin keeps fading out of it: with none, fade:5 8 KB
+         * took 2.8 % longer; with 2 dB 0.2 %; with 3-8 dB the same as
+         * without the rule, and the steps gained as much (120 seeds). */
+        if (c->snr_valid) {
+            float lo = c->snr_last < snr_db ? c->snr_last : snr_db;
+            float hi = c->snr_last < snr_db ? snr_db : c->snr_last;
+            if (lo > c->snr_ema + SNR_GATE_DB) c->snr_ema = lo;
+            else if (hi < c->snr_ema - SNR_GATE_DB) c->snr_ema = hi;
+        }
         c->snr_last = snr_db;
         c->snr_valid = true;
         bool deaf = c->ctl_deaf ? c->snr_ema < CTL_DEAF_OFF_DB : c->snr_ema < CTL_DEAF_ON_DB;
