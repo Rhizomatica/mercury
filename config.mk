@@ -50,6 +50,31 @@ COMMON_CFLAGS += $(EXTRA_CPPFLAGS) $(EXTRA_CFLAGS)
 COMMON_LDFLAGS ?=
 COMMON_LDFLAGS += $(EXTRA_LDFLAGS)
 
+# Which implementation of the modules a host program can replace (the list is
+# in the top-level Makefile, under MERCURY_HOST):
+#   standalone  Mercury's own: audioio, radio_io, its websocket server and the
+#               vendored iniparser.  The mercury binary and the Fyne UI.
+#   daemon      provided by a program that links Mercury in
+#               (hermes-radio-daemon), which builds `libmercury_host.a`.
+MERCURY_HOST ?= standalone
+export MERCURY_HOST
+ifeq ($(filter standalone daemon,$(MERCURY_HOST)),)
+$(error MERCURY_HOST must be standalone or daemon, not '$(MERCURY_HOST)')
+endif
+
+# The source tree's top, as a path from the directory make runs in: this
+# file's own directory, taken while it is the file being read.
+MERCURY_TOP := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+
+# iniparser: the vendored copy, or the system's (the stations run 4.2.6,
+# whose API the vendored copy matches) so that a daemon already linking
+# -liniparser does not get a second copy.
+ifeq ($(MERCURY_HOST),daemon)
+INIPARSER_CFLAGS := $(shell pkg-config --cflags iniparser 2>/dev/null || echo -I/usr/include/iniparser)
+else
+INIPARSER_CFLAGS = -I$(MERCURY_TOP)/common/iniparser
+endif
+
 # Header dependency tracking.
 #
 # Without this, editing a header does NOT rebuild the objects that include it,

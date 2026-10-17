@@ -209,8 +209,31 @@ endif
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS) $(WS_TLS_LDFLAGS)
 
+# The modules a host program can replace, one implementation per build
+# (MERCURY_HOST, config.mk).  Each has one interface: audioio/audioio.h,
+# radio_io/radio_io.h, gui_interface/ui_transport.h, iniparser.h, and the
+# hermes_shm rings (ring_buffer_posix.h, shm_posix.h), which the daemon
+# carries an identical copy of.
+ifeq ($(MERCURY_HOST),standalone)
+HOST_AUDIO_OBJS = audioio/audioio.a
+HOST_RADIO_OBJS = radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
+ifeq ($(HAVE_HERMES_SHM),1)
+HOST_RADIO_OBJS += radio_io/sbitx_io.o radio_io/shm_utils.o
+endif
+ifeq ($(HAVE_HAMLIB),1)
+HOST_RADIO_OBJS += radio_io/rigctl_parse.o
+endif
+HOST_UI_OBJS = gui_interface/websocket/mercury_websocket.o gui_interface/websocket/ws_server.o \
+	gui_interface/websocket/ws_crypto.o gui_interface/websocket/ws_frame.o \
+	gui_interface/websocket/ws_tls.o gui_interface/websocket/web_packed.o
+HOST_INI_OBJS = common/iniparser/iniparser.o common/iniparser/dictionary.o
+HOST_SHM_OBJS = common/ring_buffer_posix.o common/shm_posix.o
+else
+$(error MERCURY_HOST=daemon: the host implementations (host/) are not in this tree yet)
+endif
+
 MERCURY_LINK_INPUTS = \
-	main.o common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
+	main.o common/cfg_utils.o $(HOST_INI_OBJS) \
 	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_arq/carousel.o datalink_arq/rs_erasure.o \
@@ -218,22 +241,11 @@ MERCURY_LINK_INPUTS = \
 	modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
 	modem/mfsk/mfsk_ldpc.o modem/mfsk/mfsk_ldpc_1_16.o modem/mfsk/mfsk_ldpc_2_16.o modem/mfsk/mfsk_ldpc_3_16.o \
 	modem/mfsk/mfsk_ldpc_5_16.o modem/mfsk/mfsk_ldpc_8_16.o modem/framer.o modem/channel_busy.o modem/monitor_frame.o modem/freedv/libfreedvdata.a \
-	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
+	$(HOST_AUDIO_OBJS) common/os_interop.o $(HOST_SHM_OBJS) common/crc6.o common/hermes_log.o common/virtual_clock.o \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o common/mercury_modes.o common/message_store.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o gui_interface/ui_history.o \
-	gui_interface/websocket/mercury_websocket.o gui_interface/websocket/ws_server.o \
-	gui_interface/websocket/ws_crypto.o gui_interface/websocket/ws_frame.o \
-	gui_interface/websocket/ws_json.o \
-	gui_interface/websocket/ws_tls.o gui_interface/websocket/web_packed.o \
-	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
-
-ifeq ($(HAVE_HERMES_SHM),1)
-MERCURY_LINK_INPUTS += radio_io/sbitx_io.o radio_io/shm_utils.o
-endif
-
-ifeq ($(HAVE_HAMLIB),1)
-MERCURY_LINK_INPUTS += radio_io/rigctl_parse.o
-endif
+	gui_interface/websocket/ws_json.o $(HOST_UI_OBJS) \
+	$(HOST_RADIO_OBJS)
 
 all: internal_deps utils
 ifeq ($(HAVE_HAMLIB),1)
@@ -341,7 +353,7 @@ MODEM_TOP_OBJS = modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem
 	modem/mfsk/mfsk_ldpc_5_16.o modem/mfsk/mfsk_ldpc_8_16.o
 
 MERCURY_CORE_OBJS = \
-	common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
+	common/cfg_utils.o $(HOST_INI_OBJS) \
 	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_arq/carousel.o datalink_arq/rs_erasure.o \
@@ -349,23 +361,12 @@ MERCURY_CORE_OBJS = \
 	modem/modem.o modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
 	modem/mfsk/mfsk_ldpc.o modem/mfsk/mfsk_ldpc_1_16.o modem/mfsk/mfsk_ldpc_2_16.o modem/mfsk/mfsk_ldpc_3_16.o \
 	modem/mfsk/mfsk_ldpc_5_16.o modem/mfsk/mfsk_ldpc_8_16.o modem/framer.o modem/channel_busy.o modem/monitor_frame.o \
-	common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
+	common/os_interop.o $(HOST_SHM_OBJS) common/crc6.o common/hermes_log.o common/virtual_clock.o \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o common/mercury_modes.o common/message_store.o \
 	data_interfaces/tcp_interfaces.o data_interfaces/net.o \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o gui_interface/ui_history.o \
-	gui_interface/websocket/mercury_websocket.o gui_interface/websocket/ws_server.o \
-	gui_interface/websocket/ws_crypto.o gui_interface/websocket/ws_frame.o \
-	gui_interface/websocket/ws_json.o \
-	gui_interface/websocket/ws_tls.o gui_interface/websocket/web_packed.o \
-	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
-
-ifeq ($(HAVE_HERMES_SHM),1)
-MERCURY_CORE_OBJS += radio_io/sbitx_io.o radio_io/shm_utils.o
-endif
-
-ifeq ($(HAVE_HAMLIB),1)
-MERCURY_CORE_OBJS += radio_io/rigctl_parse.o
-endif
+	gui_interface/websocket/ws_json.o $(HOST_UI_OBJS) \
+	$(HOST_RADIO_OBJS)
 
 # Simply-expanded (:=), so the dedupe below can refer to it without make
 # complaining that the variable references itself.

@@ -46,7 +46,8 @@ UNITY_CFLAGS = -DUNITY_SUPPORT_64
 
 # Project includes
 PROJECT_INC = -I../common -I../modem -I../modem/mfsk -I../datalink_arq -I../datalink_broadcast \
-              -I../data_interfaces -I../gui_interface -I../radio_io -I../audioio/ffaudio
+              -I../data_interfaces -I../gui_interface -I../radio_io -I../audioio/ffaudio \
+              $(INIPARSER_CFLAGS)
 
 CFLAGS = $(filter-out -MMD -MP,$(COMMON_CFLAGS)) $(UNITY_CFLAGS) $(UNITY_INC) $(PROJECT_INC)
 UNAME_S := $(shell uname -s)
