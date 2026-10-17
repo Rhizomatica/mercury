@@ -305,6 +305,11 @@ static void pulse_shared_uninit(void)
 }
 #endif
 
+bool audioio_rings_external(int audio_system)
+{
+    return audio_system == AUDIO_SUBSYSTEM_SHM;
+}
+
 int audioio_pick_default_subsystem(void)
 {
 #if defined(__linux__)

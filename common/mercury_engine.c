@@ -232,7 +232,7 @@ int mercury_engine_init(const mercury_config *cfg,
     }
 
     /* ---- audio I/O ---- */
-    if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
+    if (!audioio_rings_external(g_audio_system))
     {
         HLOGI("engine", "Initialising audio I/O (subsystem=%d)", g_audio_system);
         if (audioio_init_internal(g_input_dev, g_output_dev, g_audio_system,
@@ -249,7 +249,7 @@ int mercury_engine_init(const mercury_config *cfg,
     if (radio_io_init(&ptt_config) != 0)
     {
         fprintf(stderr, "mercury_engine: radio init failed\n");
-        if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
+        if (!audioio_rings_external(g_audio_system))
             audioio_deinit(&g_radio_capture, &g_radio_playback);
         hermes_log_shutdown();
         return -1;
@@ -268,7 +268,7 @@ int mercury_engine_init(const mercury_config *cfg,
     {
         test_shutdown_stall();
         shutdown_modem(&g_modem);
-        if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
+        if (!audioio_rings_external(g_audio_system))
             audioio_deinit(&g_radio_capture, &g_radio_playback);
         radio_io_shutdown();
         HLOGI("engine", "Test mode stopped");
@@ -293,7 +293,7 @@ int mercury_engine_init(const mercury_config *cfg,
         fprintf(stderr, "mercury_engine: ARQ init failed\n");
         mercury_stop = true;
         shutdown_modem(&g_modem);
-        if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
+        if (!audioio_rings_external(g_audio_system))
             audioio_deinit(&g_radio_capture, &g_radio_playback);
         hermes_log_shutdown();
         return -1;
@@ -316,7 +316,7 @@ int mercury_engine_init(const mercury_config *cfg,
         mercury_stop = true;
         interfaces_shutdown();
         shutdown_modem(&g_modem);
-        if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
+        if (!audioio_rings_external(g_audio_system))
             audioio_deinit(&g_radio_capture, &g_radio_playback);
         hermes_log_shutdown();
         return -1;
@@ -384,7 +384,7 @@ void mercury_engine_shutdown(void)
     shutdown_modem(&g_modem);
 
     g_shutdown_step = "audio";
-    if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
+    if (!audioio_rings_external(g_audio_system))
         audioio_deinit(&g_radio_capture, &g_radio_playback);
 
     g_shutdown_step = "ui";

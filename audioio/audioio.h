@@ -111,6 +111,11 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback);
 int audioio_pick_default_subsystem(void);
 
+/* True when the capture and playback rings belong to another process (-x shm:
+ * named SHM that sbitx_controller creates), so the engine does not start the
+ * audio I/O and modem.c attaches to them by name instead. */
+bool audioio_rings_external(int audio_system);
+
 /* Fill subsystems[0..max-1] with the AUDIO_SUBSYSTEM_* constants this build
  * can actually run, in the order a UI should offer them.  Returns the number
  * written.  A build with only one entry (e.g. CoreAudio on macOS) has no
