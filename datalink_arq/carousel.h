@@ -145,6 +145,7 @@ typedef struct {
                                      * control must reach me on MFSK (reported) */
     bool     peer_ctl_deaf;         /* ...and the peer, of me, as it reports */
     float    snr_ema;               /* SNR of what the peer sends us, smoothed */
+    float    snr_last;              /* ...and its latest reading */
     bool     snr_valid;
     uint64_t deadline[CAR_NTIMERS]; /* 0 = disarmed */
     uint64_t last_carrier_ms;       /* the peer was last heard on the air */

@@ -62,6 +62,14 @@ fallback) does not take a fallen-back S off the floor.
   to.  Violates `Delivered`: M at the floor, S on DATAC4 for ever (the
   explorer found it in the code: cliff:-5, a floor poll and two handovers
   lost).
+- `Mut_fs_noread.cfg`: S, having read the channel down, still names a
+  faster rung.  Violates `Delivered`.  The model has always had S name the
+  floor once its reading says so; the code did not until 2026-10-17.  With
+  every measured rung out, `choose_level` walked down one untried rung per
+  lost exchange from the connect's rung and ignored the readings.  The
+  ladder's height bounded that walk, where here it never ends; on air it
+  took 3-4 min to reach the floor.  `fall_level` now starts the walk at the
+  rung the latest reading would start a session on.
 
 Which model covers the other 2.0 changes:
 

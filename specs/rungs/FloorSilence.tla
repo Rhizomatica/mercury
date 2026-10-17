@@ -20,7 +20,8 @@
 (*                                                                         *)
 (*   S, the callee, answers what it decodes, naming the rung M's next     *)
 (*   round goes on -- any while the link is up (the SNR's, the next one), *)
-(*   the floor once it is down, as its measurement says -- and binds there;*)
+(*   the floor once it is down, as the reading of what it decoded says    *)
+(*   (choose_level's fall_level) -- and binds there;                      *)
 (*   a rung other than the one M's rounds came on arms its round timer    *)
 (*   (CAR_T_W): with nothing decoded, back to that rung (sPrev).  After   *)
 (*   FS exchanges with nothing decoded S falls back to the floor          *)
@@ -43,6 +44,7 @@ CONSTANTS N,      \* messages M sends
           Mutant  \* "none", or one rule broken (to show the model can fail):
                   \*   "nosilence": M never takes the control mode to be out
                   \*   "nostay":    S's round timer takes it off the floor it fell back to
+                  \*   "noread":    S, having read the channel down, names a faster rung
 
 Floor == 0
 Fast  == 1
@@ -103,7 +105,7 @@ Exchange(clean) ==
     /\ ~mDone
     /\ up' \in (IF up THEN BOOLEAN ELSE {FALSE})
     /\ \E lostM \in Lossy(lossM, clean), lostS \in Lossy(lossS, clean),
-          n \in (IF up THEN Rungs ELSE {Floor}) :
+          n \in (IF up \/ Mutant = "noread" THEN Rungs ELSE {Floor}) :
         LET round   == mSilent = 0                   \* after silence M sends control
             onRung  == IF round THEN mRung ELSE SCtl  \* the rung S must listen on for it
             heardS  == ~lostM /\ Decodes(onRung) /\
