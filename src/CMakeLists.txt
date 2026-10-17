@@ -36,6 +36,13 @@ target_compile_definitions(mercury PRIVATE _GNU_SOURCE)
 # Target sources
 target_sources(mercury PRIVATE main.c)
 
+# Generate web_packed.c
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c"
+    COMMAND "websocket/pack_web.sh websocket/web websocket/web_packed.c"
+)
+
+target_sources(mercury PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c")
+
 # audioio
 target_sources(mercury PRIVATE
     audioio/audio_dev_limits.h
