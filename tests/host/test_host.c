@@ -49,7 +49,7 @@ static void test_rx_reaches_capture_ring(void)
 /* TX drains what the modem queued, then silence; a NULL rx still drains. */
 static void test_tx_drains_then_silence(void)
 {
-    int32_t ring[2] = { 1000 << 16, -1000 << 16 };
+    int32_t ring[2] = { 1000 * 65536, -1000 * 65536 };   /* S16 << 16, without shifting a negative */
     int16_t tx[5];
 
     write_buffer(playback_buffer, (uint8_t *) ring, sizeof(ring));
