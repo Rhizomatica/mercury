@@ -562,6 +562,38 @@ void test_peer_calling_again_ends_teardown(void)
     TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);   /* the old session's end */
 }
 
+/* A connected callee hearing its caller CALL again: the caller has left the
+ * session (its lost-peer watchdog fired first), and its redial waited out
+ * ours.  The session ends and the CALL is answered.  A CALL from anyone else
+ * does not end it. */
+void test_connected_callee_takes_its_callers_redial(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "PU2UIT", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = 0x21;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    RESET_FAKE(fake_notify_disconnected);
+
+    arq_event_t call = make_event(ARQ_EV_RX_CALL);
+    call.session_id = 0x22;
+    strncpy(call.remote_call, "DST9", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_CONNECTED, sess.conn_state,
+        "a stranger's CALL ended our session");
+
+    strncpy(call.remote_call, "pu2uit", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x22, sess.session_id);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);   /* the old session's end */
+}
+
 /* A callee ending the session: its DISCONNECT went in its slot, and it waits
  * only for the answer.  On air that answer was lost, and the caller station's
  * next application called with another MYCALL (UUCP as PU2UIT, then NNCP as
@@ -1323,6 +1355,7 @@ int main(void)
     RUN_TEST(test_disconnect_after_ours_is_the_answer);
     RUN_TEST(test_peer_calling_again_ends_teardown);
     RUN_TEST(test_ending_callee_takes_a_call_from_any_callsign);
+    RUN_TEST(test_connected_callee_takes_its_callers_redial);
     RUN_TEST(test_deferred_connect_is_placed_after_teardown_timeout);
     RUN_TEST(test_disconnect_cancels_deferred_connect);
     RUN_TEST(test_listen_off_cancels_deferred_connect);

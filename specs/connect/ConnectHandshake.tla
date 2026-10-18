@@ -24,6 +24,11 @@
 (*   never answers after ARQ_CAR_PEER_LOST_MS, when E's kept seed, kept   *)
 (*   as long, also lapses (one step here: PeerLost).                       *)
 (*                                                                         *)
+(*   Both connected, C's lost-peer watchdog may fire first (it last heard *)
+(*   E earlier than E heard it): C is idle, E still connected until its   *)
+(*   own fires.  E connected, hearing C CALL another session, ends its    *)
+(*   own -- C has left it -- and answers (fsm_connected, RX_CALL).        *)
+(*                                                                         *)
 (* An exchange (a keydown and the answer to it) is one step; the turn     *)
 (* rules keep keydowns apart (specs/turns).  Any frame may be lost.  Not  *)
 (* modelled: the carrier (DATAC16 or MFSK: a CALL or ACCEPT is lost or   *)
@@ -34,7 +39,10 @@
 (*   NoDoom         C never holds an ACCEPT E no longer stands by (its   *)
 (*                  frames would fail E's CRC or land on the wrong rung, *)
 (*                  or the two would cap rungs and pick floors apart);   *)
-(*   NoHalfConnect  E connected means C connected, same session, nonce;   *)
+(*   NoHalfConnect  E connected means C connected, same session, nonce   *)
+(*                  -- or C left that session (its watchdog);             *)
+(*   NoDeafRedial   no CALL of C's heard goes unanswered for a session C *)
+(*                  has left;                                             *)
 (*   Settles        it ends with both connected, or both idle.            *)
 (***************************************************************************)
 EXTENDS Integers
@@ -50,20 +58,25 @@ CONSTANTS Sids,     \* session ids C may pick
                     \*   "remeasure": a repeated CALL gets a re-measured start rung
                     \*   "bwleak":    another station's CALL sets the session
                     \*                bandwidth (arq.c before the FSM owned it)
+                    \*   "ignorecall": E connected ignores every CALL (the code
+                    \*                before 2026-10-18): a redial waits out E's
+                    \*                watchdog
 
 VARIABLES
     cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw,
     eSt, eSid, eNonce, eLevel, eBw,
-    sent      \* every ACCEPT E has keyed: C may decode any of them, late
+    sent,     \* every ACCEPT E has keyed: C may decode any of them, late
               \* (one in flight while its next CALL already went out: R25)
+    eLeft,    \* ghost: E is connected in a session C has left
+    deaf      \* ghost: a CALL of C's heard by such an E went unanswered
 
-vars == <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSt, eSid, eNonce, eLevel, eBw, sent>>
+vars == <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSt, eSid, eNonce, eLevel, eBw, sent, eLeft, deaf>>
 cVars == <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw>>
 
 Init ==
     /\ cSt = "idle" /\ cSid = 0 /\ cCalls = 0 /\ cNonce = 0 /\ cLevel = 0 /\ cSessions = 0 /\ cBw = 0
     /\ eSt = "listening" /\ eSid = 0 /\ eNonce = 0 /\ eLevel = 0 /\ eBw = 0
-    /\ sent = {}
+    /\ sent = {} /\ eLeft = FALSE /\ deaf = FALSE
 
 \* E holds a session's seed: answering its CALLs, or keeping it after them.
 EHolds == eSt \in {"accepting", "fallback"}
@@ -75,6 +88,7 @@ AppConnect ==
     /\ cSt' = "calling" /\ cCalls' = R /\ cSessions' = cSessions + 1
     /\ cNonce' = 0 /\ cLevel' = 0
     /\ UNCHANGED <<eSt, eSid, eNonce, eLevel, eBw, sent>>
+    /\ UNCHANGED <<eLeft, deaf>>
 
 \* E's answer to a CALL of session s: the ACCEPT it would send, and its state.
 \* Fresh: a new nonce and a new measurement.  The same session: the same
@@ -94,13 +108,20 @@ Call ==
     /\ cCalls' = cCalls - 1
     /\ UNCHANGED <<cSt, cSid, cNonce, cLevel, cSessions, cBw>>
     /\ \E heard \in BOOLEAN, nonce \in Nonces, level \in Levels :
-        IF ~heard \/ eSt = "connected" \/ (eSt = "accepting" /\ eSid # cSid)
+        \* E connected hears C calling: C has left E's session (it stops
+        \* calling before its first frame, the one that connects E), so E
+        \* ends it and answers
+        LET busy == (eSt = "connected" /\ Mutant = "ignorecall") \/ (eSt = "accepting" /\ eSid # cSid)
+        IN
+        IF ~heard \/ busy
         THEN \* lost, or E is busy with another session: no ACCEPT
-             UNCHANGED <<eSt, eSid, eNonce, eLevel, eBw, sent>>
+             /\ UNCHANGED <<eSt, eSid, eNonce, eLevel, eBw, sent, eLeft>>
+             /\ deaf' = (deaf \/ (heard /\ eLeft))
         ELSE /\ EAnswer(cSid, nonce, level)
              \* ACCEPTs of E's current session only: an older one's left the air
              /\ sent' = (IF EHolds /\ eSid = cSid THEN sent ELSE {})
                         \cup {[sid |-> cSid, nonce |-> eNonce', level |-> eLevel', bw |-> eBw']}
+             /\ eLeft' = FALSE /\ deaf' = deaf
 
 \* C, still calling, decodes an ACCEPT of its session: any E keyed.
 HearAccept ==
@@ -109,18 +130,21 @@ HearAccept ==
         /\ a.sid = cSid
         /\ cSt' = "connected" /\ cNonce' = a.nonce /\ cLevel' = a.level /\ cBw' = a.bw
     /\ UNCHANGED <<cSid, cCalls, cSessions, eSt, eSid, eNonce, eLevel, eBw, sent>>
+    /\ UNCHANGED <<eLeft, deaf>>
 
 \* Out of CALLs: C gives up.
 CallGiveUp ==
     /\ cSt = "calling" /\ cCalls = 0
     /\ cSt' = "idle"
     /\ UNCHANGED <<cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSt, eSid, eNonce, eLevel, eBw, sent>>
+    /\ UNCHANGED <<eLeft, deaf>>
 
 \* Out of ACCEPT retries: E listens again, keeping the seed.
 EFallback ==
     /\ eSt = "accepting"
     /\ eSt' = "fallback"
     /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw, sent>>
+    /\ UNCHANGED <<eLeft, deaf>>
 
 \* The kept seed lapses (ARQ_CAR_PEER_LOST_MS) -- with no caller connected on
 \* it; one that is gives up at the same time (PeerLost).
@@ -128,12 +152,14 @@ EExpire ==
     /\ eSt = "fallback" /\ ~(cSt = "connected" /\ cSid = eSid)
     /\ eSt' = "listening"
     /\ sent' = {} /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw>>
+    /\ UNCHANGED <<eLeft, deaf>>
 
 \* An ACCEPT of C's session reaches a C that gave up: it sends a DISCONNECT.
 StaleAccept ==
     /\ cSt = "idle" /\ eSt = "accepting" /\ eSid = cSid
     /\ eSt' = "listening"
     /\ sent' = {} /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw>>
+    /\ UNCHANGED <<eLeft, deaf>>
 
 \* Another station's CALL for E while E answers C's: ignored -- but with the
 \* bandwidth leak, it set the session bandwidth E's next ACCEPT says.
@@ -142,6 +168,7 @@ ForeignCall ==
     /\ \E b \in Bws : eBw' = (IF Mutant = "bwleak" THEN b ELSE eBw)
     /\ sent' = {[a EXCEPT !.bw = eBw'] : a \in sent}
     /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSt, eSid, eNonce, eLevel>>
+    /\ UNCHANGED <<eLeft, deaf>>
 
 \* C's first round reaches E: on the rung E named, with E's nonce in its CRC.
 \* (On another bandwidth the ends cap their rungs and pick their floor apart:
@@ -151,6 +178,7 @@ FirstFrame ==
     /\ cNonce = eNonce /\ cLevel = eLevel
     /\ eSt' = "connected"
     /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw, sent>>
+    /\ UNCHANGED <<eLeft, deaf>>
 
 \* C connected, E never: both give up (ARQ_CAR_PEER_LOST_MS each).
 PeerLost ==
@@ -159,6 +187,20 @@ PeerLost ==
     /\ eSt' = (IF eSt = "fallback" /\ eSid = cSid THEN "listening" ELSE eSt)
     /\ sent' = (IF eSt' = "listening" THEN {} ELSE sent)
     /\ UNCHANGED <<cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw>>
+    /\ UNCHANGED <<eLeft, deaf>>
+
+\* Both connected, C's watchdog fires first: E stays connected, in a session
+\* C has left.
+CLinkLost ==
+    /\ cSt = "connected" /\ eSt = "connected" /\ eSid = cSid /\ ~eLeft
+    /\ cSt' = "idle" /\ eLeft' = TRUE
+    /\ UNCHANGED <<cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSt, eSid, eNonce, eLevel, eBw, sent, deaf>>
+
+\* ...and then E's.
+ELinkLost ==
+    /\ eSt = "connected" /\ eLeft
+    /\ eSt' = "listening" /\ eLeft' = FALSE /\ sent' = {}
+    /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw, deaf>>
 
 \* Over: both connected, or both idle with the application done connecting.
 Done == /\ \/ cSt = "connected" /\ eSt = "connected"
@@ -166,12 +208,13 @@ Done == /\ \/ cSt = "connected" /\ eSt = "connected"
         /\ UNCHANGED vars
 
 Next == AppConnect \/ Call \/ HearAccept \/ CallGiveUp \/ EFallback \/ EExpire \/ StaleAccept
-        \/ ForeignCall \/ FirstFrame \/ PeerLost \/ Done
+        \/ ForeignCall \/ FirstFrame \/ PeerLost \/ CLinkLost \/ ELinkLost \/ Done
 
 \* Timers run out and the channel is not an adversary for ever: C's first
 \* round, possible again and again, gets through at last.
 Spec == Init /\ [][Next]_vars
         /\ WF_vars(Call) /\ WF_vars(CallGiveUp) /\ WF_vars(EExpire) /\ WF_vars(PeerLost) /\ WF_vars(EFallback)
+        /\ WF_vars(ELinkLost)
         /\ SF_vars(FirstFrame)
 
 \* ---- properties ----
@@ -182,9 +225,11 @@ TypeOK ==
     /\ cNonce \in Nonces \cup {0} /\ cLevel \in Levels \cup {0}
     /\ eSt \in {"listening", "accepting", "fallback", "connected"} /\ eSid \in Sids \cup {0}
     /\ eNonce \in Nonces \cup {0} /\ eLevel \in Levels \cup {0}
+    /\ eLeft \in BOOLEAN /\ deaf \in BOOLEAN
 
 NoDoom == (cSt = "connected" /\ (EHolds \/ eSt = "connected") /\ eSid = cSid) =>
               (cNonce = eNonce /\ cLevel = eLevel /\ cBw = eBw)
-NoHalfConnect == eSt = "connected" => (cSt = "connected" /\ cSid = eSid /\ cNonce = eNonce /\ cLevel = eLevel)
+NoHalfConnect == eSt = "connected" /\ ~eLeft => (cSt = "connected" /\ cSid = eSid /\ cNonce = eNonce /\ cLevel = eLevel)
+NoDeafRedial == ~deaf
 Settles == <>[]((cSt = "connected" /\ eSt = "connected") \/ (cSt = "idle" /\ ~EHolds))
 =============================================================================

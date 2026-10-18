@@ -1563,6 +1563,23 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
 
     switch (ev->id)
     {
+    case ARQ_EV_RX_CALL:
+        /* Our peer calling: it has left this session (it stops calling before
+         * its first frame, the one that connects a callee), most likely on its
+         * lost-peer watchdog, which fires first at the end that heard the
+         * other last.  Its application's redial went unanswered until ours
+         * fired too (sim, nvis: 104 s).  End ours and answer it.  Only the
+         * peer's callsign: another station's CALL must not end a session
+         * (specs/connect, Mut_ignorecall). */
+        if (strcasecmp(ev->remote_call, sess->remote_call) != 0)
+            break;
+        HLOGI(LOG_COMP, "Session ended (%s is calling again)", ev->remote_call);
+        if (g_timing) arq_timing_record_disconnect(g_timing, "peer_recall");
+        notify_session_ended(sess);
+        enter_idle_after_call(sess);
+        arq_fsm_dispatch(sess, ev);   /* the CALL, now in LISTENING */
+        return;
+
     case ARQ_EV_APP_STOP_LISTEN:
         /* LISTEN OFF on a live link means "release the radio", so unlike
          * APP_DISCONNECT below we do NOT drain the TX backlog: the host is

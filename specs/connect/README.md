@@ -32,13 +32,22 @@ Properties:
 - `NoDoom`: the caller never holds an ACCEPT the callee no longer stands by:
   same nonce (the CRC seed), start rung (and piece size) and bandwidth (rung
   cap, MFSK floor).
-- `NoHalfConnect`: a connected callee means a connected caller, same session.
+- `NoHalfConnect`: a connected callee means a connected caller, same session
+  -- or a caller that has left it on its lost-peer watchdog.
+- `NoDeafRedial`: a connected callee never leaves a CALL of its caller's
+  unanswered.  The caller stops calling before its first frame, the one that
+  connects the callee, so a CALL heard there means the caller has left.
 - `Settles`: every attempt ends with both connected, or both idle.
 
 Results:
 
-- `ConnectHandshake.cfg`: the code's rules.  No error, 1425 distinct
-  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 4813.
+- `ConnectHandshake.cfg`: the code's rules.  No error, 1857 distinct
+  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 6421.
+  (1425 and 4813 before the caller's watchdog could fire first.)
+- `Mut_ignorecall.cfg`: a connected callee ignores every CALL, as the code
+  did before 2026-10-18.  Violates `NoDeafRedial`: the caller, its watchdog
+  first, redials, and the callee answers only once its own watchdog fires
+  (sim, nvis seed 28: 104 s later).
 - `Mut_renonce.cfg`: a repeated CALL gets a fresh nonce.  Violates `NoDoom`.
 - `Mut_remeasure.cfg`: a repeated CALL gets a re-measured start rung (as
   before spec R25).  Violates `NoDoom`.
