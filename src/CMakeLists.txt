@@ -31,16 +31,15 @@ target_compile_definitions(mercury PRIVATE _GNU_SOURCE)
 target_sources(mercury PRIVATE main.c)
 
 # Generate web_packed.c
-file(GLOB_RECURSE WEB_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE}/gui_interface/websocket/web/*")
+file(GLOB_RECURSE WEB_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gui_interface/websocket/web/*")
 
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c"
     COMMAND "sh"
-        "websocket/pack_web.sh"
-        "websocket/web"
+        "${CMAKE_CURRENT_SOURCE_DIR}/gui_interface/websocket/pack_web.sh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/gui_interface/websocket/web"
         "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c"
-    MAIN_DEPENDENCY "${CMAKE_CURRENT_SOURCE}/gui_interface/websocket/pack_web.sh"
+    MAIN_DEPENDENCY "${CMAKE_CURRENT_SOURCE_DIR}/gui_interface/websocket/pack_web.sh"
     DEPENDS ${WEB_FILES}
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/gui_interface"
     CODEGEN
 )
 
