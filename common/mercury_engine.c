@@ -340,8 +340,10 @@ int mercury_engine_init(const mercury_config *cfg,
     /* ---- UI / WebSocket ---- */
     if (ui_enabled)
     {
-        HLOGI("engine", "Initialising UI websocket (port=%u, tls=%d, waterfall=%d)",
-              ui_port, tls_enabled, waterfall_enabled);
+        /* No port here: the transport says where the UI goes (a websocket's
+         * URL, or the host program in the daemon build). */
+        HLOGI("engine", "Initialising the UI (tls=%d, waterfall=%d)",
+              tls_enabled, waterfall_enabled);
         if (ui_comm_init(&g_ui_ctx, ui_port, tls_enabled,
                          waterfall_enabled ? 1 : 0,
                          g_audio_system, g_input_dev, g_output_dev, rx_input_channel,

@@ -664,8 +664,8 @@ void *ui_publisher_thread(void *arg)
 {
     ui_ctx_t *ctx = (ui_ctx_t *)arg;
 
-    HLOGI(UI_LOG_TAG, "Publisher started - sending status every %dms via WebSocket (port %u)",
-           UI_PUBLISH_INTERVAL_US / 1000, ctx->ws_port);
+    HLOGI(UI_LOG_TAG, "Publisher started - sending status every %dms",
+           UI_PUBLISH_INTERVAL_US / 1000);
 
     while (!mercury_stop)
     {
@@ -1026,10 +1026,10 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
                           initial_cfg ? initial_cfg->tls_cert : CFG_SSL_CERT,
                           initial_cfg ? initial_cfg->tls_key  : CFG_SSL_KEY,
                           ws_command_handler, ws_connect_handler, ctx) != 0) {
-        HLOGE(UI_LOG_TAG, "Failed to init WebSocket server on port %u", ws_port);
+        HLOGE(UI_LOG_TAG, "Failed to init the UI transport (port %u)", ws_port);
         return -1;
     }
-    HLOGI(UI_LOG_TAG, "WebSocket server ready on port %u", ws_port);
+    HLOGI(UI_LOG_TAG, "UI transport ready");
 
     // Start publisher thread - periodic status broadcaster (via WebSocket)
     if (pthread_create(&ctx->pub_tid, NULL, ui_publisher_thread, ctx) != 0) {
