@@ -12,7 +12,6 @@
 #include "arq_fsm.h"
 #include "arq_timing.h"
 #include "freedv_api.h"
-#include "modem_mfsk.h"   /* mercury_mode_is_mfsk */
 
 #include <stdlib.h>
 #include <string.h>
@@ -326,10 +325,11 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
      * seed the station's decoders accept. */
     if (p->car && p->mode == SIM_MODE_PATTERN)
     {
-        /* A pattern carries no seed, and only the MFSK decoder detects one:
-         * a station listens for patterns where it listens on the floor. */
+        /* A pattern carries no seed, and the modem's detector reads the
+         * capture whatever the payload decoder is bound to (modem.c, the
+         * "3rd consumer"); the FSM decides whether one was due. */
         arq_session_t *rs = sim_endpoint_session(p->target);
-        if (!mercury_mode_is_mfsk(rs->peer_tx_mode))
+        if (!arq_fsm_expect_pattern(rs, sim_clock_now()))
             return;
         arq_event_t pev = { .id = ARQ_EV_RX_PATTERN, .pattern_break = p->frame[0] != 0 };
         arq_fsm_dispatch(rs, &pev);
