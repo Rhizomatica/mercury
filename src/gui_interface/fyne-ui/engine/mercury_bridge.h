@@ -14,7 +14,7 @@
 
 /* The UI status struct is defined once, in the engine — the bridge hands out
  * that same type rather than declaring a parallel copy. */
-#include "ui_status.h"
+#include "../../ui_status.h"
 
 #ifdef __cplusplus
 extern "C" {

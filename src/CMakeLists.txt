@@ -1,4 +1,6 @@
-add_executable(mercury)
+# Build mercury_core
+
+add_library(mercury_core STATIC)
 
 # Search for libraries
 find_package(PkgConfig REQUIRED)
@@ -8,13 +10,13 @@ pkg_check_modules(hidapi-libusb REQUIRED IMPORTED_TARGET hidapi-libusb)
 if(ENABLE_HAMLIB)
     pkg_check_modules(hamlib REQUIRED IMPORTED_TARGET hamlib)
 
-    target_link_libraries(mercury PRIVATE PkgConfig::hamlib)
-    target_compile_definitions(mercury PRIVATE "HAVE_HAMLIB")
+    target_link_libraries(mercury_core PRIVATE PkgConfig::hamlib)
+    target_compile_definitions(mercury_core PRIVATE "HAVE_HAMLIB")
 endif()
 
 find_package(Threads REQUIRED)
 
-target_link_libraries(mercury PRIVATE
+target_link_libraries(mercury_core PRIVATE
     Threads::Threads
     m
     ffaudio
@@ -25,10 +27,7 @@ target_link_libraries(mercury PRIVATE
 )
 
 # Add compile definitions
-target_compile_definitions(mercury PRIVATE _GNU_SOURCE)
-
-# Target sources
-target_sources(mercury PRIVATE main.c)
+target_compile_definitions(mercury_core PRIVATE _GNU_SOURCE)
 
 # Generate web_packed.c
 file(GLOB_RECURSE WEB_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gui_interface/websocket/web/*")
@@ -43,12 +42,12 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c"
     CODEGEN
 )
 
-target_include_directories(mercury PRIVATE gui_interface/websocket)
+target_include_directories(mercury_core PRIVATE gui_interface/websocket)
 
-target_sources(mercury PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c")
+target_sources(mercury_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c")
 
 # audioio
-target_sources(mercury PRIVATE
+target_sources(mercury_core PRIVATE
     audioio/audio_dev_limits.h
     audioio/audioio.c
     audioio/audioio.h
@@ -62,7 +61,7 @@ target_sources(mercury PRIVATE
 )
 
 # common
-target_sources(mercury PRIVATE
+target_sources(mercury_core PRIVATE
     common/cfg_utils.c
     common/cfg_utils.h
     common/chan.c
@@ -97,7 +96,7 @@ target_sources(mercury PRIVATE
 )
 
 # data_interfaces
-target_sources(mercury PRIVATE
+target_sources(mercury_core PRIVATE
     data_interfaces/net.c
     data_interfaces/net.h
     data_interfaces/tcp_interfaces.c
@@ -105,7 +104,7 @@ target_sources(mercury PRIVATE
 )
 
 # datalink_arq
-target_sources(mercury PRIVATE
+target_sources(mercury_core PRIVATE
     datalink_arq/arith.c
     datalink_arq/arq.c
     datalink_arq/arq_channels.c
@@ -131,7 +130,7 @@ target_sources(mercury PRIVATE
 )
 
 # datalink_broadcast
-target_sources(mercury PRIVATE
+target_sources(mercury_core PRIVATE
     datalink_broadcast/bcast_file.c
     datalink_broadcast/bcast_file.h
     datalink_broadcast/bcast_modes.h
@@ -142,7 +141,7 @@ target_sources(mercury PRIVATE
 )
 
 # gui_interface
-target_sources(mercury PRIVATE
+target_sources(mercury_core PRIVATE
     gui_interface/ui_communication.c
     gui_interface/ui_communication.h
     gui_interface/ui_devices.c
@@ -166,7 +165,7 @@ target_sources(mercury PRIVATE
 )
 
 # modem
-target_sources(mercury PRIVATE
+target_sources(mercury_core PRIVATE
     modem/channel_busy.c
     modem/channel_busy.h
     modem/framer.c
@@ -197,7 +196,7 @@ target_sources(mercury PRIVATE
 )
 
 # radio_io
-target_sources(mercury PRIVATE
+target_sources(mercury_core PRIVATE
     radio_io/cm108_ptt.c
     radio_io/cm108_ptt.h
     radio_io/radio_cmds.h
@@ -214,35 +213,58 @@ target_sources(mercury PRIVATE
     radio_io/shm_utils.h
 )
 
-# GUI building
-# if(BUILD_GUI)
+# Build CLI
 
-# endif()
+if(BUILD_CLI)
+    add_executable(mercury)
 
-# Install rules
-include(GNUInstallDirs)
+    target_sources(mercury PRIVATE main.c)
 
-# Packing up dependencies
-if(PACK_DEPS)
-    install(TARGETS mercury
-        DESTINATION "${CMAKE_INSTALL_BINDIR}"
-        RUNTIME_DEPENDENCY_SET DEPS
-    )
+    target_link_libraries(mercury PRIVATE mercury_core)
 
-    # Install runtime dependencies
-    install(RUNTIME_DEPENDENCY_SET DEPS
-        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-    )
+    # Packing up dependencies
+    if(PACK_DEPS)
+        install(TARGETS mercury
+            DESTINATION "${CMAKE_INSTALL_BINDIR}"
+            RUNTIME_DEPENDENCY_SET DEPS
+        )
 
-    # Set RPATH
-    if(LINUX)
-        set_target_properties(mercury PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
-    elseif(APPLE)
-        set_target_properties(mercury PROPERTIES INSTALL_RPATH "@executable_path/../lib")
+        # Install runtime dependencies
+        install(RUNTIME_DEPENDENCY_SET DEPS
+            LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        )
+
+        # Set RPATH
+        if(LINUX)
+            set_target_properties(mercury PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
+        elseif(APPLE)
+            set_target_properties(mercury PROPERTIES INSTALL_RPATH "@executable_path/../lib")
+        endif()
+    else()
+        install(TARGETS mercury
+            DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        )
     endif()
-else()
-    install(TARGETS mercury
-        DESTINATION "${CMAKE_INSTALL_BINDIR}"
+endif()
+
+# Build GUI
+if(BUILD_GUI)
+    find_program(GO "go" REQUIRED)
+
+    add_library(mercury_bridge STATIC gui_interface/fyne-ui/engine/mercury_bridge.c)
+    target_link_libraries(mercury_bridge PRIVATE mercury_core)
+
+    add_custom_target(mercury_gui ALL
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "CGO_ENABLED=1"
+            "${GO}" build
+            -buildmode=pie
+            -tags mercury_embedded
+            -o "${CMAKE_CURRENT_BINARY_DIR}/mercury-ui"
+            .
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/gui_interface/fyne-ui"
+        DEPENDS mercury_bridge
+        VERBATIM
     )
 endif()

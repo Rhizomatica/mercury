@@ -14,24 +14,24 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "cfg_utils.h"
-#include "mercury_engine.h"
-#include "mercury_cli.h"
+#include "../../../common/cfg_utils.h"
+#include "../../../common/mercury_engine.h"
+#include "../../../common/mercury_cli.h"
 #include "mercury_bridge.h"
 #include "radio_io.h"         /* radio_io_set_usb_fd */
 #include "audioio.h"          /* audioio_set_android_devices */
 #include "host/mercury_host.h"   /* the same lifecycle calls, for a host */
-#include "mercury_version.h"
-#include "hermes_log.h"
-#include "ui_communication.h"
-#include "modem.h"
-#include "modem_stats.h"   /* MODEM_STATS_NSPEC */
-#include "message_store.h"
-#include "bcast_file.h"
 #include "bcast_carousel.h"
 #ifndef _WIN32
 #include "bcast_rx_host.h"      /* the host build's receiver; not in the Windows archive */
 #endif
+#include "../../../common/mercury_version.h"
+#include "../../../common/hermes_log.h"
+#include "../../ui_communication.h"
+#include "../../../modem/modem.h"
+#include <freedv/modem_stats.h>   /* MODEM_STATS_NSPEC */
+#include "../../../common/message_store.h"
+#include "../../../datalink_broadcast/bcast_file.h"
 
 /* Print the startup version banner (same text the daemon prints), so the UI
  * announces its version on the terminal too.  Resolved here, in a unit the
