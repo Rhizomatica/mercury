@@ -42,7 +42,7 @@
 #include "arq.h"                   /* ARQ_BANDWIDTH_* */
 #include "arq_protocol.h"
 #include <freedv/freedv_api.h>
-#include "modem_mfsk.h"            /* MERCURY_MODE_MFSK */
+#include "../modem/modem_mfsk.h"            /* MERCURY_MODE_MFSK */
 
 #include <math.h>
 #include <stdarg.h>

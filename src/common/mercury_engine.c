@@ -19,16 +19,16 @@
 #endif
 
 #include <freedv/freedv_api.h>
-#include "arq.h"
-#include "modem.h"
-#include "broadcast.h"
+#include "../datalink_arq/arq.h"
+#include "../modem/modem.h"
+#include "../datalink_broadcast/broadcast.h"
 #include "defines_modem.h"
-#include "audioio/audioio.h"
-#include "tcp_interfaces.h"
+#include "../audioio/audioio.h"
+#include "../data_interfaces/tcp_interfaces.h"
 #include "hermes_log.h"
-#include "radio_io.h"
+#include "../radio_io/radio_io.h"
 #include "cfg_utils.h"
-#include "ui_communication.h"
+#include "../gui_interface/ui_communication.h"
 #include "mercury_engine.h"
 #include "virtual_clock.h"
 #include "message_store.h"

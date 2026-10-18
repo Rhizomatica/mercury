@@ -23,7 +23,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "modem.h"
+#include "../modem/modem.h"
 
 /* Function declarations */
 

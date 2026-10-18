@@ -22,7 +22,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arq.h"   /* CALLSIGN_MAX_SIZE */
+#include "../datalink_arq/arq.h"   /* CALLSIGN_MAX_SIZE */
 
 #define UI_AUDIO_ERR_MAX 192
 

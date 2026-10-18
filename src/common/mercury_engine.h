@@ -16,8 +16,8 @@
 #include <pthread.h>
 
 #include "cfg_utils.h"
-#include "ui_communication.h"
-#include "modem.h"
+#include "../gui_interface/ui_communication.h"
+#include "../modem/modem.h"
 
 /* Mercury's own run flag: set by the termination signal handler, by
  * mercury_engine_shutdown(), and by an init that fails after starting threads;

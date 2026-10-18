@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "defines_modem.h"
+#include "../common/defines_modem.h"
 
 #define ARQ_EVENT_TEXT_MAX 16
 

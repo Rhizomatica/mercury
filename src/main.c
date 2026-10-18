@@ -38,20 +38,20 @@
 
 #include <freedv/freedv_api.h>
 #include <freedv/ldpc_codes.h>
-#include "arq.h"
-#include "arq_trace.h"
-#include "modem.h"
-#include "broadcast.h"
-#include "defines_modem.h"
+#include "datalink_arq/arq.h"
+#include "datalink_arq/arq_trace.h"
+#include "modem/modem.h"
+#include "datalink_broadcast/broadcast.h"
+#include "common/defines_modem.h"
 #include "audioio/audioio.h"
-#include "tcp_interfaces.h"
-#include "hermes_log.h"
-#include "radio_io.h"
+#include "data_interfaces/tcp_interfaces.h"
+#include "common/hermes_log.h"
+#include "radio_io/radio_io.h"
 #include "gui_interface/ui_communication.h"
-#include "cfg_utils.h"
-#include "mercury_engine.h"
-#include "mercury_cli.h"
-#include "mercury_version.h"
+#include "common/cfg_utils.h"
+#include "common/mercury_engine.h"
+#include "common/mercury_cli.h"
+#include "common/mercury_version.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;

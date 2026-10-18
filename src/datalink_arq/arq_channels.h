@@ -11,7 +11,7 @@
 
 #include <stddef.h>
 
-#include "chan.h"
+#include "../common/chan.h"
 #include "arq_events.h"
 
 #define ARQ_CH_CAP_TCP_CMD 64

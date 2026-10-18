@@ -17,9 +17,9 @@
 #include <freedv/freedv_api.h>
 #include "modem_mfsk.h"
 #include "framer.h"
-#include "arq.h"
-#include "arq_protocol.h"
-#include "tcp_interfaces.h"
+#include "../datalink_arq/arq.h"
+#include "../datalink_arq/arq_protocol.h"
+#include "../data_interfaces/tcp_interfaces.h"
 
 #include "monitor_frame.h"
 

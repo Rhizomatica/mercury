@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "hermes_log.h"
+#include "../common/hermes_log.h"
 
 static int channel_open(chan_t **slot, size_t capacity)
 {

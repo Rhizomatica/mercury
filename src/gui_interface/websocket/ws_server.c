@@ -33,9 +33,9 @@
 #include <unistd.h>
 #endif
 
-#include "os_interop.h"
+#include "../../common/os_interop.h"
 
-#include "hermes_log.h"
+#include "../../common/hermes_log.h"
 #include "ws_crypto.h"
 #include "ws_frame.h"
 #include "ws_server.h"

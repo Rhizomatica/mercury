@@ -24,7 +24,9 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#include "ring_buffer_posix.h"
+#include <fcntl.h>
+
+#include "../common/ring_buffer_posix.h"
 
 #define AUDIO_SUBSYSTEM_ALSA 0
 #define AUDIO_SUBSYSTEM_PULSE 1

@@ -31,15 +31,16 @@
 #include <limits.h>
 
 #include "modem.h"
-#include "ring_buffer_posix.h"
+#include "../common/ring_buffer_posix.h"
 #include "framer.h"
-#include "arq.h"
-#include "arq_trace.h"
+#include "../datalink_arq/arq.h"
+#include "../datalink_arq/arq_trace.h"
 #include "monitor_frame.h"
 #include "../datalink_arq/arq_modem.h"
 #include "../datalink_arq/arq_protocol.h"
 #include "tcp_interfaces.h"
 #include "../datalink_broadcast/bcast_status.h"
+#include "../data_interfaces/tcp_interfaces.h"
 #include "channel_busy.h"
 #include "tx_pacing.h"
 #include <freedv/freedv_api.h>
@@ -49,10 +50,10 @@
 #include <freedv/fsk.h>
 #include <freedv/ldpc_codes.h>
 #include <freedv/ofdm_internal.h>
-#include "hermes_log.h"
-#include "virtual_clock.h"
+#include "../common/hermes_log.h"
+#include "../common/virtual_clock.h"
 
-#include "defines_modem.h"
+#include "../common/defines_modem.h"
 
 /* Here we read and write from the input and output buffers which are connected */
 /* to the radio dsp paths. */

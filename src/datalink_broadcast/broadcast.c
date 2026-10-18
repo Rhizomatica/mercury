@@ -30,13 +30,12 @@
 #include <arpa/inet.h>
 #endif
 
-#include "modem.h"
-#include "broadcast.h"
-#include "arq.h"
-#include "defines_modem.h"
-#include "ring_buffer_posix.h"
-#include "tcp_interfaces.h"
-#include "hermes_log.h"
+#include "../modem/modem.h"
+#include "../datalink_arq/arq.h"
+#include "../common/defines_modem.h"
+#include "../common/ring_buffer_posix.h"
+#include "../data_interfaces/tcp_interfaces.h"
+#include "../common/hermes_log.h"
 
 /* Must match the definition in common/mercury_engine.c: _Atomic, not
  * volatile.  This global is written from the termination signal handler and

@@ -17,10 +17,10 @@
 #include "mercury_cli.h"
 #include "mercury_version.h"
 #include <freedv/freedv_api.h>
-#include "modem_mfsk.h"
+#include "../modem/modem_mfsk.h"
 #include <freedv/ldpc_codes.h>
-#include "audioio/audioio.h"
-#include "radio_io.h"
+#include "../audioio/audioio.h"
+#include "../radio_io/radio_io.h"
 #include "hermes_log.h"
 
 /* The mode table itself lives in mercury_modes.c. */

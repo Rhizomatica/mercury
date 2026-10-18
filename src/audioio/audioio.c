@@ -32,20 +32,20 @@
 #include <signal.h>
 #include <string.h>
 #include <ffbase/stringz.h>
-#include "os_interop.h"
+#include "../common/os_interop.h"
 #include <ffaudio/audio.h>
 #include "std.h"
 #ifndef FF_WIN
 #include <time.h>
 #endif
 
-#include "ring_buffer_posix.h"
-#include "shm_posix.h"
-#include "defines_modem.h"
+#include "../common/ring_buffer_posix.h"
+#include "../common/shm_posix.h"
+#include "../common/defines_modem.h"
 
 #include "audioio.h"
-#include "hermes_log.h"
-#include "cfg_utils.h"
+#include "../common/hermes_log.h"
+#include "../common/cfg_utils.h"
 #include "resampler.h"
 #include "pcm24.h"
 #include "hl2.h"
@@ -634,7 +634,7 @@ static void fifo_ignore_sigpipe(void)
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include "virtual_clock.h"
+#include "../common/virtual_clock.h"
 #include "sock_wire.h"
 
 #ifndef MSG_NOSIGNAL

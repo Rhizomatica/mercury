@@ -28,8 +28,8 @@
 #include <stdatomic.h>
 #include <pthread.h>
 
-#include "websocket/ws_json.h"     /* ws_command_t */
-#include "cfg_utils.h"
+#include "websocket/mercury_websocket.h"
+#include "../common/cfg_utils.h"
 #include "ui_status.h"
 
 // ---- Default ports for UI <-> backend communication ----

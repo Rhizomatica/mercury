@@ -21,8 +21,8 @@
  */
 
 #include "net.h"
-#include "os_interop.h"
-#include "defines_modem.h"
+#include "../common/os_interop.h"
+#include "../common/defines_modem.h"
 
 #include <stdio.h>
 #include <stdlib.h>

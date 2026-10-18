@@ -35,24 +35,25 @@
 #include <netinet/in.h>
 #endif
 
-#include "os_interop.h"
+#include "../common/os_interop.h"
 
 #include "tcp_interfaces.h"
-#include "arq_tnc.h"
+#include "../datalink_arq/arq_tnc.h"
 #include <errno.h>
 #include <string.h>
-#include "ring_buffer_posix.h"
+#include "../common/ring_buffer_posix.h"
 #include "net.h"
-#include "arq.h"
-#include "defines_modem.h"
-#include "kiss.h"
-#include "modem.h"
-#include "mercury_cli.h"
-#include "framer.h"
-#include "hermes_log.h"
-#include "radio_io.h"
-#include "modem.h"
-#include "message_store.h"
+#include "../datalink_arq/arq.h"
+#include "../common/chan.h"
+#include "../common/defines_modem.h"
+#include "../datalink_broadcast/kiss.h"
+#include "../modem/modem.h"
+#include "../common/mercury_cli.h"
+#include "../modem/framer.h"
+#include "../common/hermes_log.h"
+#include "../radio_io/radio_io.h"
+#include "../modem/modem.h"
+#include "../common/message_store.h"
 
 static pthread_t tid[7];
 static bool tid_started[7];
