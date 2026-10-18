@@ -2324,6 +2324,14 @@ static void m_decide_recv(car_t *c, uint64_t now)
     if (c->idle_poll) {
         /* My poll only asked whether S has data. */
         c->idle_poll = false;
+        /* Unanswered above the floor: S, with data, answered on that rung
+         * with its round, and every time it went (sim, nvis, the callee's
+         * banner: DATAC1 asked for 240 s, and the session timed out).  One
+         * loss there, as a poll unanswered below. */
+        if (!c->m_heard && c->poll_level > 0) {
+            c->loss_est = 0.5 * c->loss_est + 0.5;
+            measure_level(c, c->poll_level, 1, 1.0, now);
+        }
         if (!c->m_heard || (c->round_seen == 0 && !c->peer_has_data)) { m_decide_idle(c, now); return; }
         c->idle = false; c->idle_backoff_ms = 0;
     }
@@ -2405,8 +2413,18 @@ static void m_timer(car_t *c, uint64_t now)
         /* Idle: ask whether S has data, for one frame on its rung. */
         m_enter(c, PH_RECV, now);
         c->idle_poll = true;
-        /* ...sized for what S would send: a line typed at its end, a reply */
-        int n = 1, lv = short_rung(c, c->poll_level, m_peer_expect(c), &n);
+        /* ...sized for what S would send: a line typed at its end, a reply;
+         * on the rung asked last, or the one below a rung that has had my
+         * asks and delivered nothing (sim, nvis: four lost on DATAC1 before
+         * the ladder left it, three more on DATAC3, and the callee's banner
+         * took 210 s).  Asks only: in a transfer a lossy rung's first rounds
+         * say little (nvis, BW500: DATAC3 left after two, +9 %). */
+        int lv = choose_level(c, now);
+        if (c->ctl_deaf && c->io.pattern) lv = 0;
+        if (lv > c->poll_level) lv = c->poll_level;
+        if (lv > 0 && lv == c->poll_level && c->lv_rounds[lv] && c->lv_sent[lv] - c->lv_lost[lv] < 0.5) lv--;
+        int n = 1;
+        lv = short_rung(c, lv, m_peer_expect(c), &n);
         m_plan(c, KD_POLL, lv, n);
         m_try(c, now);
         return;

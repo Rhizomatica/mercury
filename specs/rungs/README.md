@@ -93,6 +93,30 @@ Which model covers the other 2.0 changes:
   model has that choice;
 - a pattern only for the rung asked: the floor's patterns are outside
   `RungAgreement`; the rule only narrows when S answers with one, which
-  `FloorSilence` does not depend on.
+  `FloorSilence` does not depend on;
+- an unanswered ask scored, and the next ask one rung lower when the rung
+  asked has delivered nothing (`m_timer`, `m_decide_recv`): `PollRung`.
+
+## PollRung
+
+The other direction: on which rung the callee's rounds go when the caller
+asks for them (`PollRung.tla`).  Each poll names a rung, the caller binds
+its decoder there as it keys, and the callee answers on the rung named.  The
+rung is the one asked last, or lower (`choose_level`), and one lower than a
+rung that has had the caller's asks and delivered nothing.  Some rungs may
+carry nothing at all; the floor always carries.
+
+    java -cp /opt/TLA+Toolbox/tla2tools.jar tlc2.TLC -workers 4 \
+        -metadir /tmp/tlc-pollrung -config PollRung.cfg PollRung.tla
+
+- `PollRung.cfg`: the code's rules.  `Agree` and `Delivered` hold: no
+  error, 1477 distinct states (4 rungs, 2 messages, `L = 2`).
+- `Mut_noscore.cfg`: every ask names the rung asked last, as the code did
+  before 2026-10-18.  Violates `Delivered`: a session that starts on a rung
+  the channel does not carry asks there for ever.  In the sim (nvis, the
+  callee's 64-byte banner) 26 sessions of 60 asked for DATAC1 until the
+  lost-peer watchdog ended them; with the rule, 1.
+- `Mut_stale.cfg`: the callee answers on its own last rung, not the one
+  named.  Violates `Agree`.
 
 Give each TLC run its own `-metadir`.
