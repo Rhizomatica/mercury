@@ -9,13 +9,19 @@
 
 #pragma once
 
-#include <ffbase/string.h>
+/* The audio interface the rest of Mercury uses, one implementation per build
+ * (MERCURY_HOST in the Makefile): audioio.c and its sound-system backends for
+ * the standalone build, host/audio_host.c when a host program (the radio
+ * daemon) owns the audio and hands it to Mercury.  So nothing here may need a
+ * backend's headers. */
+
 #include "audio_dev_limits.h"
 
+#include <pthread.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <sys/types.h>
-
-#include <fcntl.h>
 
 #include "ring_buffer_posix.h"
 
@@ -71,10 +77,7 @@ audio_health_t audioio_playback_health(void);
 void audioio_health_reason(char *buf, size_t buflen);
 
 /* Convenience for status reporting: true when NEITHER path has failed.  On
- * failure `reason` receives the message.  Primitive types only, so a caller
- * can declare it extern rather than include this header (which drags in
- * ffbase) -- the convention ui_communication.c already uses for
- * audioio_restart. */
+ * failure `reason` receives the message. */
 bool audioio_health_ok(char *reason, size_t reasonlen);
 
 /* Reset both health flags to STOPPED and clear the reason.  audioio_restart
@@ -107,6 +110,11 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 
 int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback);
 int audioio_pick_default_subsystem(void);
+
+/* True when the capture and playback rings belong to another process (-x shm:
+ * named SHM that sbitx_controller creates), so the engine does not start the
+ * audio I/O and modem.c attaches to them by name instead. */
+bool audioio_rings_external(int audio_system);
 
 /* Fill subsystems[0..max-1] with the AUDIO_SUBSYSTEM_* constants this build
  * can actually run, in the order a UI should offer them.  Returns the number

@@ -46,7 +46,8 @@ UNITY_CFLAGS = -DUNITY_SUPPORT_64
 
 # Project includes
 PROJECT_INC = -I../common -I../modem -I../modem/mfsk -I../datalink_arq -I../datalink_broadcast \
-              -I../data_interfaces -I../gui_interface -I../radio_io -I../audioio/ffaudio
+              -I../data_interfaces -I../gui_interface -I../radio_io -I../audioio/ffaudio \
+              $(INIPARSER_CFLAGS)
 
 CFLAGS = $(filter-out -MMD -MP,$(COMMON_CFLAGS)) $(UNITY_CFLAGS) $(UNITY_INC) $(PROJECT_INC)
 UNAME_S := $(shell uname -s)
@@ -69,7 +70,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
             test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
             test_message_store test_ui_history test_ws_protocol \
-            test_monitor_frame test_hermes_log
+            test_monitor_frame test_hermes_log test_host
 
 .PHONY: all test clean
 
@@ -255,6 +256,12 @@ test_message_store: common/test_message_store.c $(UNITY_SRC) ../common/message_s
 	$(CC) $(CFLAGS) -o $@ common/test_message_store.c $(UNITY_SRC) ../common/message_store.c $(LDFLAGS)
 
 # UI history frame builder (pure string function; no engine/websocket deps).
+# host/: the daemon build's audio, radio and UI modules (MERCURY_HOST=daemon).
+test_host: host/test_host.c $(UNITY_SRC) ../host/audio_host.c ../host/radio_host.c ../host/ui_host.c \
+           ../common/ring_buffer_posix.c ../common/shm_posix.c ../common/hermes_log.c \
+           ../gui_interface/websocket/ws_json.c
+	$(CC) $(CFLAGS) -I../host -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 test_ui_history: gui_interface/test_ui_history.c $(UNITY_SRC) ../gui_interface/ui_history.c
 	$(CC) $(CFLAGS) -I../gui_interface -o $@ gui_interface/test_ui_history.c $(UNITY_SRC) ../gui_interface/ui_history.c $(LDFLAGS)
 

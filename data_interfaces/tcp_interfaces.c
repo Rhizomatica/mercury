@@ -105,7 +105,7 @@ extern cbuf_handle_t data_rx_buffer_broadcast;
  * polled by every worker loop; volatile orders nothing between threads, and
  * declaring the same object differently in different translation units is
  * undefined behaviour on top of that.  Plain assignment and test still work. */
-extern _Atomic bool shutdown_;
+extern _Atomic bool mercury_stop;
 
 extern arq_info arq_conn;
 
@@ -129,7 +129,7 @@ static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
 {
     size_t total_sent = 0;
 
-    while (total_sent < len && !shutdown_ && !bcast_client_done)
+    while (total_sent < len && !mercury_stop && !bcast_client_done)
     {
         ssize_t sent = send(socket_fd, (const char *)buffer + total_sent, len - total_sent, HERMES_SEND_FLAGS);
         if (sent < 0)
@@ -836,7 +836,7 @@ void *arq_reactor_thread(void *port)
     if (ctl_listener < 0)
     {
         HLOGE("tcp-ctl", "Could not open TCP port %d", tcp_base_port);
-        shutdown_ = true;
+        mercury_stop = true;
         return NULL;
     }
 
@@ -846,11 +846,11 @@ void *arq_reactor_thread(void *port)
         HLOGE("tcp-data", "Could not open TCP port %d", tcp_base_port + 1);
         SOCK_CLOSE(ctl_listener);
         net_set_status(CTL_TCP_PORT, NET_NONE);
-        shutdown_ = true;
+        mercury_stop = true;
         return NULL;
     }
 
-    while (!shutdown_)
+    while (!mercury_stop)
     {
         struct pollfd pfds[4];
         int nfds = 0;
@@ -1347,7 +1347,7 @@ void *send_thread(void *client_socket_ptr)
         return NULL;
     }
 
-    while (!shutdown_ && !bcast_client_done)
+    while (!mercury_stop && !bcast_client_done)
     {
         /* Re-read: a MODE command can change the broadcast framing while this
          * client stays connected. */
@@ -1397,7 +1397,7 @@ void *send_thread(void *client_socket_ptr)
               reply_cmd, payload_len, kiss_len);
         if (send_all(client_socket, kiss_buffer, (size_t)kiss_len) < 0)
         {
-            if (!shutdown_ && !bcast_client_done)
+            if (!mercury_stop && !bcast_client_done)
                 HLOGW("tcp-bcast", "Error sending KISS broadcast frame (err=%d)",
                       sock_errno());
             break;
@@ -1433,7 +1433,7 @@ void *recv_thread(void *client_socket_ptr)
 
     HLOGI("tcp-bcast", "Receive thread started (expected frame_size=%zu)", frame_size);
 
-    while (!shutdown_ && !bcast_client_done)
+    while (!mercury_stop && !bcast_client_done)
     {
         ssize_t received = recv(client_socket, (char *)buffer, DATA_TX_BUFFER_SIZE, 0);
         if (received > 0)
@@ -1528,11 +1528,11 @@ void *tcp_server_thread(void *port_ptr)
 
     HLOGI("tcp-bcast", "Waiting for a client to connect...");
 
-    while (!shutdown_)
+    while (!mercury_stop)
     {
         struct pollfd listener = { .fd = tcp_socket, .events = POLLIN };
         int ready = poll(&listener, 1, 100);
-        if (shutdown_)
+        if (mercury_stop)
             break;
         if (ready == 0 || (ready < 0 && sock_errno() == SOCK_EINTR))
             continue;
@@ -1546,12 +1546,12 @@ void *tcp_server_thread(void *port_ptr)
             if (err == SOCK_EINTR || err == SOCK_EAGAIN || err == SOCK_EWOULDBLOCK)
                 continue;
             HLOGE("tcp-bcast", "Failed to accept client connection: %s", strerror(errno));
-            if (shutdown_)
+            if (mercury_stop)
                 break; // Exit if shutdown flag is set
             continue; // Retry accepting a connection
         }
 
-        if (shutdown_ || set_nonblocking(client_socket) < 0)
+        if (mercury_stop || set_nonblocking(client_socket) < 0)
         {
             SOCK_CLOSE(client_socket);
             continue;
@@ -1589,11 +1589,11 @@ void *tcp_server_thread(void *port_ptr)
          * hangup/error, shut it down so recv() unblocks.  shutdown() keeps the
          * descriptor owned by this thread until the join, avoiding the
          * cross-thread close race. */
-        while (!shutdown_)
+        while (!mercury_stop)
         {
             struct pollfd cfd = { .fd = client_socket, .events = POLLIN | POLLERR | POLLHUP };
             int r = poll(&cfd, 1, 100);
-            if (shutdown_)
+            if (mercury_stop)
                 break;
             if (r < 0 && sock_errno() == SOCK_EINTR)
                 continue;
@@ -1872,7 +1872,7 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
     /* The reactor opens its two listeners asynchronously.  Wait for both to
      * reach LISTENING so a bind failure (bad base port, port already in use,
      * privileged port) is reported here as an init failure, not as a
-     * background shutdown_ that tears the process down *after*
+     * background mercury_stop that tears the process down *after*
      * mercury_engine_init() has already returned success — the confusing
      * "Mercury engine initialised" immediately followed by "Shutting down"
      * and an alarm-killed shutdown. */
@@ -1882,7 +1882,7 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
     {
         HLOGE("tcp", "ARQ listeners failed to start (ctl=%d data=%d)",
               ctl_status, data_status);
-        shutdown_ = true;
+        mercury_stop = true;
         pthread_join(tid[0], NULL);
         tid_started[0] = false;
         dispose_tnc_tx_queue();
@@ -1895,7 +1895,7 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
     if (pthread_create(&tid[6], NULL, tcp_server_thread, (void *)&broadcast_tcp_port_cfg) != 0)
     {
         HLOGE("tcp", "Failed to start broadcast TCP thread");
-        shutdown_ = true;
+        mercury_stop = true;
         if (tid_started[0])
         {
             pthread_join(tid[0], NULL);

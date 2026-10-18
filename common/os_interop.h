@@ -18,6 +18,7 @@
 #include <windows.h>
 #include <pthread.h>
 #include <io.h>
+#include <fcntl.h>      /* _O_RDONLY and the rest, below */
 #include <time.h>
 
 /* Socket compatibility */

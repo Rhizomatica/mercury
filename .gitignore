@@ -40,6 +40,7 @@ Thumbs.db
 mercury.ini
 
 .git_hash_stamp
+.mercury_host
 *.deb
 *.rpm
 *.tar.gz

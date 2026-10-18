@@ -18,7 +18,7 @@
  *
  */
 
-#include "iniparser/iniparser.h"
+#include <iniparser.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

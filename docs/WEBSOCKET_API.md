@@ -26,7 +26,7 @@ remote clients cannot diverge in behaviour.
 | Bind address | `0.0.0.0` | `mercury_websocket.c:137` |
 | Plain / TLS | `ws` or `wss`, chosen at startup (`ui_protocol` / `-T`); `wss` needs OpenSSL | `mercury.ini.example:20-23` |
 | Max concurrent connections | 32 | `ws_server.c:50` |
-| Max inbound message | 8192 bytes (`WS_MAX_MESSAGE_SIZE`) | `gui_interface/websocket/mercury_websocket.h:24` |
+| Max inbound message | 8192 bytes | `gui_interface/ui_transport.h` (`UI_MAX_MESSAGE_SIZE`) |
 | TLS certificate / key | PEM files (`ui_tls_cert` / `ui_tls_key`) | `mercury.ini.example:25-29` |
 
 Incoming **binary** frames from a client are ignored — clients only send text
@@ -395,8 +395,8 @@ WSS/TLS, `-W` disable the waterfall (see `mercury.1`).
 | File | Role |
 |---|---|
 | `gui_interface/ui_communication.c` | Command dispatcher (`ui_comm_handle_command`) and event publishers |
-| `gui_interface/websocket/mercury_websocket.c` | Adapter: JSON parse, ack/error replies, broadcast API |
-| `gui_interface/websocket/mercury_websocket.h` | Public WS API and `WS_MAX_MESSAGE_SIZE` |
+| `gui_interface/ui_transport.h` | The UI transport interface and `UI_MAX_MESSAGE_SIZE` |
+| `gui_interface/websocket/mercury_websocket.c` | Its websocket implementation: JSON parse, ack/error replies, broadcast |
 | `gui_interface/websocket/ws_server.c` | Poll loop, handshake, framing, HTTP, broadcast queue |
 | `gui_interface/websocket/ws_server.h` | Server options and callbacks |
 | `gui_interface/websocket/ws_frame.c` / `.h` | RFC 6455 frame codec |
