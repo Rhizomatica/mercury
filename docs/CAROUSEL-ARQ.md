@@ -169,6 +169,11 @@ frame on MFSK.
   revision; every 1.9.x release drops the type.  The versions do not
   connect to each other.  A 1.9.x CALL (type CALL) for this station is
   logged ("another protocol version (Mercury 1.9.x?)") and not answered.
+  Checked 2026-10-18 with the Go harness (`TestMercuryARQTransfer`,
+  `MERCURY_TEST_BIN_A`/`_B`), trunk fb53e38 (protocol 3) against arch-2.0:
+  either way round, the caller's six CALLs went unanswered and it gave up
+  at 110 s; neither end connected.  The 2.0 callee logged each v3 CALL; the
+  v3 callee dropped CALL2 without a word.
 - 1.9.x carried a 2-bit protocol version in type CALL's extension: 1 was
   1.9.18 (MFSK at 1531-2500 Hz), 2 was 1.9.19 (MFSK centred on 1500 Hz), 3
   gave a BW500 session its own floor; 3 was the last value it held.
