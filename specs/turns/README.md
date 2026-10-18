@@ -69,3 +69,7 @@ may move by up to `min(d/2, APP_GRACE_MS)` past the opening of its slot.
 With a decode `d` late, that start can fall up to
 `min(d/2, APP_GRACE_MS) - TG_MS` beyond M's window: 100 ms on MFSK (1 s
 against 0.9 s), and nothing on OFDM.  That is inside M's 700 ms guard.
+
+When M asks (the idle poll's delay, carousel.c `m_decide_idle`: the
+session's first ask at once, no backing off before S has been heard) is
+covered as it is: M may key at any time its slot rules allow.

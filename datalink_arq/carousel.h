@@ -162,6 +162,8 @@ typedef struct {
     uint8_t  mk;                    /* id of my next keydown, mod 16 */
     car_mlog_t mlog[CAR_MLOG];
     int      nmlog;
+    bool     m_keyed;               /* M: keyed at all this session */
+    bool     m_heard_ever;          /* M: heard S at all this session */
     int      m_kind;                /* my keydown on the air, its id, and the slots it opens: */
     uint8_t  m_id;
     uint32_t m_r, m_d, m_p;

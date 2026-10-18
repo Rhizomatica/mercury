@@ -2027,6 +2027,7 @@ static uint32_t my_ctl_d(const car_t *c) { return ctl_on_floor(c) ? D_MFSK_MS : 
 static void m_key_plan(car_t *c)
 {
     int kind = c->plan;
+    c->m_keyed = true;
     c->plan_not_before = 0;
     c->kd_allowed = kind_len(c, kind);
     c->plan = KD_NONE;
@@ -2237,11 +2238,18 @@ static void m_decide_idle(car_t *c, uint64_t now)
     c->idle = true;
     if (c->traffic) { c->traffic = false; c->idle_backoff_ms = 0; }
     m_enter(c, PH_IDLE, now);
-    c->idle_backoff_ms = !c->idle_backoff_ms ? IDLE_POLL_MIN_MS
+    /* ...and no backing off before S has been heard: until it hears me it
+     * cannot answer, nor is it connected (sim, fade:-5: one faded first ask,
+     * then asks 26, 59 and 103 s later, and the callee's 60 s ACCEPT window
+     * ran out between them). */
+    c->idle_backoff_ms = !c->idle_backoff_ms || !c->m_heard_ever ? IDLE_POLL_MIN_MS
                        : c->idle_backoff_ms * 2 > IDLE_POLL_MAX_MS ? IDLE_POLL_MAX_MS : c->idle_backoff_ms * 2;
     c->plan = KD_NONE;
     c->m_state = MS_IDLE;
-    arm(c, CAR_T_M, now + c->idle_backoff_ms);
+    /* The session's first ask goes at once: S is connected only once it
+     * hears me, and its application often speaks first (UUCP's banner, a
+     * Winlink RMS's SID).  3 s of silence opened every session. */
+    arm(c, CAR_T_M, now + (c->m_keyed ? c->idle_backoff_ms : 0));
 }
 
 /* My round, offering S its turn in the same exchange: on a clean link above
@@ -2410,6 +2418,7 @@ static void m_timer(car_t *c, uint64_t now)
 static void m_heard_end(car_t *c, uint64_t te, int mk, bool pat, int slot)
 {
     c->m_heard = true;
+    c->m_heard_ever = true;
     m_close_slot(c, te, mk, pat, slot);
     if (c->m_state != MS_IDLE) arm(c, CAR_T_M, te);
 }
