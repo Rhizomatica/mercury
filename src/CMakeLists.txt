@@ -1,33 +1,27 @@
 add_executable(mercury)
 
 # Search for libraries
-if(LINUX)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(hidapi-libusb REQUIRED IMPORTED_TARGET hidapi-libusb)
-    add_library(hidapi ALIAS PkgConfig::hidapi-libusb)
-endif()
-# For MacOS and Windows the libraries are already configured
+find_package(PkgConfig REQUIRED)
+
+pkg_check_modules(hidapi-libusb REQUIRED IMPORTED_TARGET hidapi-libusb)
 
 if(ENABLE_HAMLIB)
-    if(LINUX)
-        pkg_check_modules(hamlib REQUIRED IMPORTED_TARGET hamlib)
-        add_library(hamlib ALIAS PkgConfig::hamlib)
-    endif()
+    pkg_check_modules(hamlib REQUIRED IMPORTED_TARGET hamlib)
 
-    target_link_libraries(mercury hamlib)
+    target_link_libraries(mercury PRIVATE PkgConfig::hamlib)
     target_compile_definitions(mercury PRIVATE "HAVE_HAMLIB")
 endif()
 
 find_package(Threads REQUIRED)
 
-target_link_libraries(mercury
+target_link_libraries(mercury PRIVATE
     Threads::Threads
     m
     ffaudio
     freedv
     raptorq
     iniparser
-    hidapi
+    PkgConfig::hidapi-libusb
 )
 
 # Add compile definitions
@@ -37,7 +31,7 @@ target_compile_definitions(mercury PRIVATE _GNU_SOURCE)
 target_sources(mercury PRIVATE main.c)
 
 # Generate web_packed.c
-file(GLOB_RECURCE WEB_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE}/gui_interface/websocket/web/*")
+file(GLOB_RECURSE WEB_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE}/gui_interface/websocket/web/*")
 
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/web_packed.c"
     COMMAND "sh"
@@ -67,8 +61,6 @@ target_sources(mercury PRIVATE
     audioio/sock_wire.h
     audioio/std.h
 )
-
-target_include_directories(mercury PRIVATE audioio)
 
 # common
 target_sources(mercury PRIVATE
@@ -105,8 +97,6 @@ target_sources(mercury PRIVATE
     common/watterson.h
 )
 
-target_include_directories(mercury PRIVATE common)
-
 # data_interfaces
 target_sources(mercury PRIVATE
     data_interfaces/net.c
@@ -114,8 +104,6 @@ target_sources(mercury PRIVATE
     data_interfaces/tcp_interfaces.c
     data_interfaces/tcp_interfaces.h
 )
-
-target_include_directories(mercury PRIVATE data_interfaces)
 
 # datalink_arq
 target_sources(mercury PRIVATE
@@ -143,8 +131,6 @@ target_sources(mercury PRIVATE
     datalink_arq/rs_erasure.h
 )
 
-target_include_directories(mercury PRIVATE datalink_arq)
-
 # datalink_broadcast
 target_sources(mercury PRIVATE
     datalink_broadcast/bcast_file.c
@@ -155,8 +141,6 @@ target_sources(mercury PRIVATE
     datalink_broadcast/kiss.c
     datalink_broadcast/kiss.h
 )
-
-target_include_directories(mercury PRIVATE datalink_broadcast)
 
 # gui_interface
 target_sources(mercury PRIVATE
@@ -181,8 +165,6 @@ target_sources(mercury PRIVATE
     gui_interface/websocket/ws_tls.c
     gui_interface/websocket/ws_tls.h
 )
-
-target_include_directories(mercury PRIVATE gui_interface)
 
 # modem
 target_sources(mercury PRIVATE
@@ -215,8 +197,6 @@ target_sources(mercury PRIVATE
     modem/mfsk/mfsk_sync.h
 )
 
-target_include_directories(mercury PRIVATE modem)
-
 # radio_io
 target_sources(mercury PRIVATE
     radio_io/cm108_ptt.c
@@ -234,10 +214,6 @@ target_sources(mercury PRIVATE
     radio_io/shm_utils.c
     radio_io/shm_utils.h
 )
-
-target_include_directories(mercury PRIVATE radio_io)
-
-target_include_directories(mercury PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # GUI building
 # if(BUILD_GUI)
