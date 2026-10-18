@@ -6,8 +6,11 @@
  * Unlike ab_bench the channel applies from the first CALL: the connect is
  * what is measured.  B listens, A calls.  B's application writes a 64-byte
  * banner the moment B is connected, as UUCP's and a Winlink RMS's do (the
- * callee speaks first); once A has it A sends 1 KB, and once B has that A
- * hangs up (B with "callee").  Prints, in seconds of virtual time:
+ * callee speaks first); once A has it A sends 1 KB, B's application answers
+ * it with 16 bytes (a file's acknowledgement), and once A has those A hangs
+ * up -- or, with "callee", A answers with 8 bytes and B hangs up once it has
+ * them: an application hangs up after its peer's last word, by when its own
+ * are acknowledged.  Prints, in seconds of virtual time:
  *   connect=   A's CONNECT to A connected (-1: not in 10 min)
  *   connect_b= ...to B connected
  *   banner=    ...to B's banner delivered to A: what a user waits for
@@ -73,7 +76,7 @@ int main(int argc, char **argv)
     uint64_t t0 = sim_clock_now();
     sim_inject(s, sim_a(s), &conn);
 
-    static uint8_t banner[64], blob[1024], rx[2048];
+    static uint8_t banner[64], blob[1024], reply[16], bye[8], rx[2048];
     memset(banner, 'S', sizeof(banner));
     arq_event_t ready = { .id = ARQ_EV_APP_DATA_READY };
     uint64_t ta = 0, tb = 0, tbn = 0;
@@ -101,6 +104,20 @@ int main(int argc, char **argv)
     uint64_t t1 = sim_clock_now();
     while (sim_clock_now() - t1 < LIMIT_MS && sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)) < sizeof(blob))
         if (sim_run_until_idle(s, 100) == 0) break;     /* nothing more will happen */
+    memset(reply, 'K', sizeof(reply));
+    sim_endpoint_queue_tx(sim_b(s), reply, sizeof(reply));
+    sim_inject(s, sim_b(s), &ready);
+    while (sim_clock_now() - t1 < LIMIT_MS &&
+           sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)) < sizeof(banner) + sizeof(reply))
+        if (sim_run_until_idle(s, 100) == 0) break;
+    if (callee_ends) {
+        memset(bye, 'B', sizeof(bye));
+        sim_endpoint_queue_tx(sim_a(s), bye, sizeof(bye));
+        sim_inject(s, sim_a(s), &ready);
+        while (sim_clock_now() - t1 < LIMIT_MS &&
+               sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)) < sizeof(blob) + sizeof(bye))
+            if (sim_run_until_idle(s, 100) == 0) break;
+    }
 
     sim_endpoint_t *x = callee_ends ? sim_b(s) : sim_a(s);
     arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
