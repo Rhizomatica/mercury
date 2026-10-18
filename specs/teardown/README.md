@@ -55,27 +55,42 @@ Properties:
   neither end is in it.
 - `Answered`: a callee that is idle, or ending with its DISCONNECT out,
   never drops a CALL for it.
+- `NoUnasked`: the caller ends a session on an M_END only of that session.
+
+M_END (2026-10-18): a callee whose application hangs up while its
+DISCONNECT waits for its data to drain says so in its answers (poll type 3,
+`car_wish_end`).  The caller, connected and with everything delivered both
+ways, then ends the session as if its own application had asked
+(`fsm_connected_carousel`).  Not yet drained, it ignores the M_END, and the
+callee's own DISCONNECT ends the session later, as before.  In the model:
+`SWish`, `SEndPoll` and `SDrained`, and M taking an `end` frame of its
+session (`TakesEnd`).
 
 Results:
 
 - `SessionTeardown.cfg`: the code's rules, lossless, 2 sessions, 2 caller
-  callsigns.  No error, 2 069 distinct states (1 957 with DISCONNECT
-  frames as replies).
+  callsigns.  No error, 4 957 distinct states (2 069 before M_END).
 - `SessionTeardown_lossy.cfg`: the same with any frame lost.  No error,
-  52 041 distinct states (51 705).  `Clean` does not apply here.
+  124 141 distinct states (52 041 before M_END).  `Clean` does not apply
+  here.
 - `Mut_ignorepattern.cfg`: the end waiting for the answer to its
   DISCONNECT does not take the pattern.  It violates `Clean`: it retries
   and times out.
 - `ForeignPattern.cfg`: the code's rules, lossy, with another station's
-  patterns heard (`FPAT`).  No error, 349 393 distinct states: keyed by the
+  patterns heard (`FPAT`).  No error, 793 245 distinct states: keyed by the
   session, none is taken.  Safety only: unbounded foreign traffic keeps the
   queue full for ever, and `Mutual` fails on that, not on a rule.
 - `Mut_unkeyed.cfg`: the same, with a pattern taken whatever session keyed
   it.  It violates `NoForeign`.  The code did this at first: the replying
   end cleared its seed before the reply went out, and in the harness the
   peer, still in the session, never detected it (3 runs of 3).
+- `ForeignEnd.cfg`: the code's rules, lossy, with another station's M_END
+  frames heard (`FEND`).  No error, 664 427 distinct states: seeded by its
+  session, none is taken.  Safety only, as `ForeignPattern.cfg`.
+- `Mut_unkeyedend.cfg`: the same, with an M_END taken whatever session sent
+  it.  It violates `NoUnasked`.
 - `Mut_anypattern.cfg`: a pattern ends an end in any state, not only one
-  whose DISCONNECT is out.  No error, the same 52 041 states: as with the
+  whose DISCONNECT is out.  No error, the same 124 141 states: as with the
   session-id check below, frames in order and timers longer than an
   exchange mean no pattern reaches an end that is not waiting for one.
   In the code the rule keeps the carousel's own patterns (not modelled
@@ -102,10 +117,11 @@ Two things the model showed:
   the same id.  A mutant that dropped the check passed every property.  The
   check only filters other stations.
 - After a teardown whose DISCONNECTs were all lost, the callee is still
-  connected and drops the caller's redial: `fsm_connected` has no
-  `RX_CALL` case.  It takes the CALL only once its silence watchdog has
+  connected and dropped the caller's redial: `fsm_connected` had no
+  `RX_CALL` case, and took the CALL only once its silence watchdog had
   ended the session, up to `ARQ_CAR_PEER_LOST_MS` (240 s) after the
-  caller's last frame.  That is a delay, not a safety violation, and
-  `Mutual` holds.
+  caller's last frame.  A delay, not a safety violation (`Mutual` holds).
+  Since 2026-10-18 a connected station takes its peer's CALL
+  (specs/connect, `NoDeafRedial`).
 
 Give each TLC run its own `-metadir`.

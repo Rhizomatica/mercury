@@ -1470,13 +1470,14 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
 {
     uint64_t now = time_now_ms();
+    bool peer_end = false;            /* the callee's application has hung up (M_END) */
     switch (ev->id)
     {
     case ARQ_EV_RX_CAROUSEL:
         sess->car_last_rx_ms = now;
         if (g_timing) g_timing->frames_rx++;
-        car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr,
-                     ev->rx_age_ms);
+        peer_end = car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control,
+                                ev->rx_snr, ev->rx_age_ms);
         if (car_fail_closed(sess, now)) return true;
         break;
     case ARQ_EV_TX_COMPLETE:
@@ -1528,6 +1529,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             sess->disconnect_deadline_ms = now + budget;
             HLOGD(LOG_COMP, "DISCONNECT deferred until delivered (up to %llu s)",
                   (unsigned long long)(budget / 1000));
+            car_wish_end(sess->car);      /* the callee's polls say so: M_END */
             break;
         }
         car_begin_disconnect(sess, now);
@@ -1540,6 +1542,18 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     /* A deferred DISCONNECT goes once everything has been delivered. */
     if (sess->pending_disconnect && car_drained(sess) && !sess->tx_active)
         car_begin_disconnect(sess, now);
+    /* The callee's application has hung up (M_END), and everything is
+     * delivered both ways: the caller ends the session now, its DISCONNECT
+     * answered by a pattern.  Left to the callee, the DISCONNECT waited for a
+     * poll to give it a slot, and one to acknowledge its last data: below the
+     * inline poll, two keydowns more (sim, conn_bench cliff:-5, the callee
+     * hanging up: 16 s).  Not drained yet, the callee's own DISCONNECT ends
+     * it later, as before. */
+    else if (peer_end && car_drained(sess) && !sess->tx_active)
+    {
+        HLOGI(LOG_COMP, "The peer's application has hung up: ending the session");
+        car_begin_disconnect(sess, now);
+    }
     return true;
 }
 

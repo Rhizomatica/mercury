@@ -198,7 +198,9 @@ typedef struct {
         uint32_t d;                 /* its lateness allowance: my start may be this late */
         bool     waited;            /* its slot 0 already waited for my application */
     } anc;
-    bool     end_req;               /* S: my next slot carries the session's DISCONNECT */
+    uint8_t  end_req;               /* S: CAR_END_WISH, my application has hung up and my
+                                     * polls say so (M_END); CAR_END_SLOT, my next slot
+                                     * carries the session's DISCONNECT */
     int      req_lv, req_n;         /* a REQ: M's round I may not have heard */
     uint8_t  req_mk;
     uint8_t  rx_mk;                 /* the M round whose frames I am counting */
@@ -304,8 +306,8 @@ void car_start_receiver(car_t *c, uint64_t now);
  * for it, 0 when unknown.  age_ms: how long ago the frame ended (0 when the
  * decode was immediate); one older than its mode's decode bound is data,
  * never a time to answer at. */
-void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
-                  float snr_db, uint32_t age_ms);
+bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
+                  float snr_db, uint32_t age_ms);   /* true: the caller heard an M_END */
 void car_on_tx_done(car_t *c, uint64_t now);
 /* A pattern was heard: CAR_PATTERN_ACK or CAR_PATTERN_BREAK. */
 void car_on_pattern(car_t *c, uint64_t now, int kind);
@@ -368,6 +370,12 @@ bool     car_is_master(const car_t *c);
 uint64_t car_free_at(const car_t *c, uint64_t now, uint64_t len);
 void     car_log_ctl(car_t *c, uint64_t end, uint32_t tg);
 void     car_request_end(car_t *c);
+/* The callee whose application has hung up while its DISCONNECT waits for
+ * its data to be acknowledged: car_wish_end() makes its polls say so (type
+ * 3, M_END) once it has all of the caller's.  The caller, with all of the
+ * callee's, then ends the session itself (car_on_frame returns true). */
+enum { CAR_END_NONE, CAR_END_WISH, CAR_END_SLOT };
+void     car_wish_end(car_t *c);
 
 /* How long delivering what is left may take on the rung the session is on:
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds

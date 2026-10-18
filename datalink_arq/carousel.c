@@ -414,6 +414,7 @@ typedef struct {
     uint8_t  backlog;               /* CTL: ...and holds about this much (BL_*) */
     uint8_t  ctl[CAR_POLL_BYTES];
     uint64_t inline_end;            /* POLL: inline, its keydown ends then */
+    bool     ending;                /* POLL: S's application has hung up (type 3, M_END) */
 } msg_t;
 
 /* A control frame's SNR: 6 bits, 1 dB from -24 to +38, 63 for none.  Three
@@ -432,7 +433,7 @@ static void encode_ctl(const msg_t *m, uint8_t *b)
 {
     int snr = snr_code(m->snr_db);
     memset(b, 0, CAR_POLL_BYTES);
-    int type = m->type == M_POLL ? 0 : m->type == M_REQ ? 1 : 2;
+    int type = m->type == M_POLL ? (m->ending ? 3 : 0) : m->type == M_REQ ? 1 : 2;
     b[0] = (uint8_t)(type << 6 | (m->has_data ? 1 : 0) << 5 | (m->poll_id & 0x0F) << 1 |
                      (m->ctl_deaf ? 1 : 0));
     b[1] = (uint8_t)((m->level & 7) << 5 | (m->n & 0x0F) << 1 | (snr & 1));
@@ -472,8 +473,8 @@ static bool decode_ctl(const car_t *c, const uint8_t *b, size_t len, msg_t *m)
     if (len < CAR_POLL_BYTES) return false;
     memset(m, 0, sizeof(*m));
     int type = b[0] >> 6;
-    if (type > 2) return false;
-    m->type = type == 0 ? M_POLL : type == 1 ? M_REQ : M_STATUS;
+    m->type = type == 0 || type == 3 ? M_POLL : type == 1 ? M_REQ : M_STATUS;
+    m->ending = type == 3;
     m->has_data = (b[0] >> 5) & 1;
     m->poll_id = (b[0] >> 1) & 0x0F;
     m->ctl_deaf = b[0] & 1;
@@ -1674,6 +1675,9 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
     msg_t m;
     fill_poll(c, &m);
     m.type = M_POLL;
+    /* ...saying my application has hung up, once I have all of M's: M with
+     * all of mine then ends the session (car_peer_ending) */
+    m.ending = !c->master && c->end_req == CAR_END_WISH && peer_direction_done(c);
     m.poll_id = id;
     m.level = lv; m.n = n;
     c->poll_id = id;
@@ -2456,6 +2460,7 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
     take_peer_snr(c, now, m);
     if (m->type == M_POLL) {                 /* the peer's poll for my rounds */
         apply_need(c, m);
+        if (m->ending) car_trace(c, "the peer's application has hung up");
         c->peer_has_data = m->has_data;
         /* ...and what it holds, as in a status: an ack of my last round that
          * says it has nothing lets a DISCONNECT go at once, where an idle poll
@@ -2593,7 +2598,7 @@ static void s_answer_both(car_t *c, uint64_t now)
 static void s_slot(car_t *c, uint64_t now)
 {
     if (!c->anc.on) return;
-    if (c->end_req) {
+    if (c->end_req == CAR_END_SLOT) {
         /* Ending: the session's DISCONNECT goes in this slot instead of an
          * answer -- and in the next, if M keys again without hearing it. */
         car_trace(c, "tx: ending the session in slot %d", c->anc.i);
@@ -2876,7 +2881,7 @@ void car_seed_snr(car_t *c, float mine, float peers)
     }
 }
 
-void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
+bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
                   float snr_db, uint32_t age_ms)
 {
     msg_t m;
@@ -2916,29 +2921,32 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     if (!control && len >= 1 + CAR_POLL_BYTES && bytes[0] == CTL_FLOOR_MARK)   /* control, on the floor */
         ctl = decode_ctl(c, bytes + 1, len - 1, &m);
     if (control || ctl) {
-        if (!ctl) return;
+        if (!ctl) return false;
         c->heard_ms = now;
         note_peer_ctl_deaf(c, m.ctl_deaf);
         c->peer_short = m.short_rung; c->peer_backlog = m.backlog;
         if (c->master) m_on_ctl(c, now, &m);
         else           s_on_ctl(c, now, &m, control ? ARQ_CONTROL_MODE : mode);
-        return;
+        return c->master && m.type == M_POLL && m.ending;
     }
     int lv = level_of_mode(mode);
-    if (lv < 0 || !decode_data(bytes, len, &m, piece_of(c))) return;
-    if (m.left >= keydown_cap(c, lv)) return;   /* corrupt: no keydown on the rung is that long */
+    if (lv < 0 || !decode_data(bytes, len, &m, piece_of(c))) return false;
+    if (m.left >= keydown_cap(c, lv)) return false;   /* corrupt: no keydown on the rung is that long */
     c->heard_ms = now;
     note_peer_ctl_deaf(c, m.ctl_deaf);
     msg_t k;
+    bool ending = false;
     if (m.has_ctl && lv == c->rx_level && decode_ctl(c, m.ctl, CAR_POLL_BYTES, &k) && k.type == M_POLL && k.h_n) {
         /* the poll first: it says what the round it rides in is */
         k.inline_end = now + (uint64_t)m.left * (level_air(c, lv) + burst_gap_ms(c, lv)) + TAIL_MS;
         c->peer_short = k.short_rung; c->peer_backlog = k.backlog;
         if (c->master) m_on_ctl(c, now, &k);
         else           s_on_ctl(c, now, &k, mode);
+        ending = c->master && k.ending;
     }
     if (c->master) m_on_data(c, now, &m, lv);
     else           s_on_data(c, now, &m, lv);
+    return ending;
 }
 
 void car_on_tx_done(car_t *c, uint64_t now)
@@ -3095,9 +3103,16 @@ void car_log_ctl(car_t *c, uint64_t end, uint32_t tg)
     c->mlog[c->nmlog - 1].tg = tg;
 }
 
+void car_wish_end(car_t *c)
+{
+    if (c->master || c->end_req) return;
+    c->end_req = CAR_END_WISH;
+    car_trace(c, "ending: my application has hung up -- my polls say so");
+}
+
 void car_request_end(car_t *c)
 {
     if (c->master) return;
-    c->end_req = true;
+    c->end_req = CAR_END_SLOT;
     car_trace(c, "ending: the DISCONNECT goes in my next slot");
 }

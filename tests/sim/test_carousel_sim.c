@@ -284,6 +284,51 @@ void test_car_winlink_tail_ends_cleanly(void)
     sim_destroy(s);
 }
 
+/* The callee's application hangs up right after the caller's last word,
+ * with its own last reply not yet acknowledged: below the inline poll its
+ * DISCONNECT then waited for a poll to acknowledge the reply and another to
+ * give it a slot.  Its answer says it has hung up (M_END), and the caller,
+ * holding everything, ends the session itself: the caller is the one that
+ * keys the DISCONNECT. */
+void test_car_callee_hangup_is_ended_by_the_caller(void)
+{
+    sim_t *s = make_sim(1, 0.0);
+    sim_set_rx_snr(s, -5.0f);
+    sim_set_snr(s, -5.0);
+    connect_ab(s);
+    for (int i = 0; i < 1200 && !(state(sim_a(s)) == ARQ_CONN_CONNECTED &&
+                                  state(sim_b(s)) == ARQ_CONN_CONNECTED); i++)
+        sim_run_until_idle(s, 100);
+    uint8_t ff[40], fq[16], fb[8];
+    memset(ff, 'F', sizeof(ff)); memset(fq, 'Q', sizeof(fq)); memset(fb, 'B', sizeof(fb));
+    static uint8_t rx[256];
+    queue(s, sim_a(s), ff, sizeof(ff));
+    for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)) < sizeof(ff); i++)
+        sim_run_until_idle(s, 100);
+    queue(s, sim_b(s), fq, sizeof(fq));
+    for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)) < sizeof(fq); i++)
+        sim_run_until_idle(s, 100);
+    queue(s, sim_a(s), fb, sizeof(fb));
+    for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)) < sizeof(ff) + sizeof(fb); i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_EQUAL_size_t(sizeof(ff) + sizeof(fb), sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)));
+    arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+    sim_inject(s, sim_b(s), &disc);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_CONNECTED, state(sim_b(s)), "the reply was acknowledged already");
+    bool caller_ended = false;
+    for (int i = 0; i < 3000 && (state(sim_a(s)) != ARQ_CONN_DISCONNECTED ||
+                                 state(sim_b(s)) == ARQ_CONN_CONNECTED); i++) {
+        sim_run_until_idle(s, 100);
+        if (state(sim_a(s)) == ARQ_CONN_DISCONNECTING) caller_ended = true;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(caller_ended, "the callee's DISCONNECT, not the caller's, ended the session");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, state(sim_a(s)));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, state(sim_b(s)));
+    TEST_ASSERT_EQUAL_size_t(sizeof(fq), sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)));
+    TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+    sim_destroy(s);
+}
+
 /* The callee's ACCEPTs never reach the caller: it falls back to LISTENING
  * still seeded, to catch the caller's first round in case the caller did
  * connect.  The caller never comes, and the seed must not outlive the wait:
@@ -520,6 +565,7 @@ int main(void)
     RUN_TEST(test_car_disconnect_quiet_peer_one_try);
     RUN_TEST(test_car_disconnect_after_reply_is_prompt);
     RUN_TEST(test_car_winlink_tail_ends_cleanly);
+    RUN_TEST(test_car_callee_hangup_is_ended_by_the_caller);
     RUN_TEST(test_car_disconnect_after_transfer);
     RUN_TEST(test_car_abort_skips_the_drain);
     RUN_TEST(test_car_reply_during_final_poll);

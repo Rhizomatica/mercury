@@ -244,7 +244,7 @@ Encoder `encode_ctl` (C:225-241); decoder `decode_ctl` (C:262-291).
 
 | Byte | Bits | Field |
 |---|---|---|
-| b0 | [7:6] type (0 POLL, 1 HANDOVER, 2 STATUS; 3 → reject), [5] has_data, [4:1] poll_id, [0] ctl_deaf |
+| b0 | [7:6] type (0 POLL, 1 HANDOVER, 2 STATUS, 3 M_END: a POLL whose sender's application has hung up -- the callee's, holding all of the caller's data, while its DISCONNECT waits for its own to drain; see E10), [5] has_data, [4:1] poll_id, [0] ctl_deaf |
 | b1 | [7:5] level, [4:1] n (frames asked for), [0] 0 |
 | b2 | [7:4] loss16 = round(loss_est*15), [3:0] base = rbase mod 16 |
 | b3..b9 | 8 × 7-bit `need[o]` for blocks base+o, first block in the high bits; 127 = not seen (FB_UNSEEN) |
@@ -618,6 +618,7 @@ Predicates (`marginal = snr_valid && snr_ema < min_db + 3`, C:797-800):
 | E7 | RX DISCONNECT (session id matches) in CONNECTED → DISCONNECTED immediately (reply after G: an ACK pattern, keyed by the session seed, which the replying end keeps until it is out; only an end whose own DISCONNECT is out takes one, as the answer); whatever the carousel held is dropped, and the count is logged. Draining it would deliver nothing: the peer sends DISCONNECT when its application has hung up (its end then delivers nothing, `host_released`) or when its carousel has stopped trusting the session (`car_fail_closed`). | F:2508-2522 |
 | E8 | LISTEN OFF in CONNECTED → idle immediately, no DISCONNECT on air. | F:2413-2428 |
 | E9 | KEEPALIVE and late ACCEPT are swallowed while the carousel runs. | F:2366-2368 |
+| E10 | The callee's E3 deferral sets `end_req = CAR_END_WISH` (`car_wish_end`): its polls go as type 3 (M_END) once it has all of the caller's data. The caller, hearing one (`car_on_frame` returns true) with `car_drained && !tx_active`, begins its own DISCONNECT (as on APP_DISCONNECT); not drained then, it ignores it, and the callee's own DISCONNECT ends the session later. Below the inline poll this saves the exchange that acknowledged the callee's last data and the poll that gave its DISCONNECT a slot (sim, the callee hanging up: -5 dB 16 → 11 s, the floor 45 → 30 s). specs/teardown, `NoUnasked`. | F:fsm_connected_carousel, C:send_poll_ex |
 
 ---
 
