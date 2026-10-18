@@ -56,6 +56,8 @@ Properties:
 - `Answered`: a callee that is idle, or ending with its DISCONNECT out,
   never drops a CALL for it.
 - `NoUnasked`: the caller ends a session on an M_END only of that session.
+- `NoLostWord`: the caller never ends on an M_END while the callee holds a
+  last word the caller has not got.
 
 M_END (2026-10-18): a callee whose application hangs up while its
 DISCONNECT waits for its data to drain says so in its answers (poll type 3,
@@ -66,18 +68,30 @@ callee's own DISCONNECT ends the session later, as before.  In the model:
 `SWish`, `SEndPoll` and `SDrained`, and M taking an `end` frame of its
 session (`TakesEnd`).
 
+"Everything delivered" is judged by the caller from the M_END poll itself
+(`peer_ended`): the poll names the callee's latest block and whether bytes
+wait unopened, and the caller knows which blocks it holds.  At first it
+was `car_drained`, whose view of the callee's data is `status_seen`, which a
+round with nothing heard also sets.  On air (2026-10-18) the callee wrote
+its reply and hung up at once, and the caller ended on the M_END without
+the reply.  In the model the callee may hang up holding a last word
+(`word`), which reaches the caller while both are in the session
+(`SDeliver`); `Mut_endheld.cfg` has the old rule.
+
 Results:
 
 - `SessionTeardown.cfg`: the code's rules, lossless, 2 sessions, 2 caller
-  callsigns.  No error, 4 957 distinct states (2 069 before M_END).
+  callsigns.  No error, 10 645 distinct states (4 957 before the last
+  word, 2 069 before M_END).
 - `SessionTeardown_lossy.cfg`: the same with any frame lost.  No error,
-  124 141 distinct states (52 041 before M_END).  `Clean` does not apply
+  264 149 distinct states (124 141 before the last word, 52 041 before
+  M_END).  `Clean` does not apply
   here.
 - `Mut_ignorepattern.cfg`: the end waiting for the answer to its
   DISCONNECT does not take the pattern.  It violates `Clean`: it retries
   and times out.
 - `ForeignPattern.cfg`: the code's rules, lossy, with another station's
-  patterns heard (`FPAT`).  No error, 793 245 distinct states: keyed by the
+  patterns heard (`FPAT`).  No error, 1 655 453 distinct states: keyed by the
   session, none is taken.  Safety only: unbounded foreign traffic keeps the
   queue full for ever, and `Mutual` fails on that, not on a rule.
 - `Mut_unkeyed.cfg`: the same, with a pattern taken whatever session keyed
@@ -85,12 +99,15 @@ Results:
   end cleared its seed before the reply went out, and in the harness the
   peer, still in the session, never detected it (3 runs of 3).
 - `ForeignEnd.cfg`: the code's rules, lossy, with another station's M_END
-  frames heard (`FEND`).  No error, 664 427 distinct states: seeded by its
+  frames heard (`FEND`).  No error, 1 370 595 distinct states: seeded by its
   session, none is taken.  Safety only, as `ForeignPattern.cfg`.
 - `Mut_unkeyedend.cfg`: the same, with an M_END taken whatever session sent
   it.  It violates `NoUnasked`.
+- `Mut_endheld.cfg`: lossless, an M_END taken while the callee holds a last
+  word the caller has not got (the rule as first merged).  It violates
+  `NoLostWord`.
 - `Mut_anypattern.cfg`: a pattern ends an end in any state, not only one
-  whose DISCONNECT is out.  No error, the same 124 141 states: as with the
+  whose DISCONNECT is out.  No error, the same 264 149 states: as with the
   session-id check below, frames in order and timers longer than an
   exchange mean no pattern reaches an end that is not waiting for one.
   In the code the rule keeps the carousel's own patterns (not modelled

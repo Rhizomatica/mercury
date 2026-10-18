@@ -1368,6 +1368,16 @@ static bool peer_direction_done(const car_t *c)
     return c->status_seen || (!c->peer_unopened && peer_outstanding(c) == 0);
 }
 
+/* M heard S's M_END: S's application has hung up.  M ends the session on it
+ * only holding everything S has, as that poll says it (its latest block and
+ * whether bytes wait unopened) -- not on status_seen, which a round with
+ * nothing heard also sets.  S's last word, written just before the hang-up
+ * and not yet delivered, was dropped that way (on air, 2026-10-18). */
+static bool peer_ended(const car_t *c, bool ending)
+{
+    return c->master && ending && !c->peer_unopened && peer_outstanding(c) == 0;
+}
+
 /* What I hold, as the hint says it: the application's bytes not yet in a
  * block and what the receiver still needs of the open ones. */
 static uint8_t my_backlog(const car_t *c)
@@ -1676,7 +1686,7 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
     fill_poll(c, &m);
     m.type = M_POLL;
     /* ...saying my application has hung up, once I have all of M's: M with
-     * all of mine then ends the session (car_peer_ending) */
+     * all of mine then ends the session (peer_ended) */
     m.ending = !c->master && c->end_req == CAR_END_WISH && peer_direction_done(c);
     m.poll_id = id;
     m.level = lv; m.n = n;
@@ -2927,7 +2937,7 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
         c->peer_short = m.short_rung; c->peer_backlog = m.backlog;
         if (c->master) m_on_ctl(c, now, &m);
         else           s_on_ctl(c, now, &m, control ? ARQ_CONTROL_MODE : mode);
-        return c->master && m.type == M_POLL && m.ending;
+        return m.type == M_POLL && peer_ended(c, m.ending);
     }
     int lv = level_of_mode(mode);
     if (lv < 0 || !decode_data(bytes, len, &m, piece_of(c))) return false;
@@ -2942,11 +2952,11 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
         c->peer_short = k.short_rung; c->peer_backlog = k.backlog;
         if (c->master) m_on_ctl(c, now, &k);
         else           s_on_ctl(c, now, &k, mode);
-        ending = c->master && k.ending;
+        ending = k.ending;
     }
     if (c->master) m_on_data(c, now, &m, lv);
     else           s_on_data(c, now, &m, lv);
-    return ending;
+    return peer_ended(c, ending);
 }
 
 void car_on_tx_done(car_t *c, uint64_t now)
