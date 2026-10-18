@@ -1861,7 +1861,7 @@ static int floor_poll_every(const car_t *c)
 static void rx_trace(car_t *c)
 {
     if (!c->io.trace) return;
-    char gp[120]; int p = 0;
+    char gp[120] = ""; int p = 0;     /* empty until a rung has been measured */
     for (int l = 0; l < CAR_NLEVELS && p < (int)sizeof gp - 24; l++)
         if (c->lv_rounds[l])
             p += snprintf(gp + p, sizeof gp - (size_t)p, " %d:%.0f/%.2f%s", l, 1000.0 * level_goodput(c, l),
