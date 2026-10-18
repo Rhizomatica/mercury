@@ -8,7 +8,21 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"fyne.io/fyne/v2/canvas"
 )
+
+func TestCompactTelemetryRowKeepsLabelAndValueSeparate(t *testing.T) {
+	label := canvas.NewText("Client TCP", themeDim())
+	value := canvas.NewText("true", themeForeground())
+	row := compactTelemetryRow(label, value)
+	if got, want := row.MinSize().Width, label.MinSize().Width+value.MinSize().Width; got < want {
+		t.Fatalf("compactTelemetryRow width = %v, want at least %v", got, want)
+	}
+	if got, want := row.MinSize().Height, label.MinSize().Height; got < want {
+		t.Fatalf("compactTelemetryRow height = %v, want at least %v", got, want)
+	}
+}
 
 func TestPTTMethodOptions(t *testing.T) {
 	want := []string{"None", "Hamlib", "Serial (RTS/DTR)", "CM108 GPIO", "HERMES SHM"}

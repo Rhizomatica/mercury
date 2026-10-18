@@ -1284,21 +1284,20 @@ func main() {
 	// compact telemetry layout matching screenshot: left labels small, right values small-bold
 	txrxLabel := canvas.NewText("TX/RX", themeDim())
 	txrxLabel.TextSize = directionText.TextSize
-	telemetryGrid := container.NewGridWithColumns(2,
-		txrxLabel,
-		container.NewHBox(
+	telemetryGrid := container.NewVBox(
+		compactTelemetryRow(txrxLabel, container.NewHBox(
 			container.NewVBox(layout.NewSpacer(), container.NewGridWrap(fyne.NewSize(directionText.TextSize, directionText.TextSize), bindings.directionDot), layout.NewSpacer()),
 			bindings.directionText,
-		),
-		canvas.NewText("Bitrate", themeDim()), bindings.bitrateText,
-		bindings.snrRowLabel, bindings.snrText,
-		bindings.peerSnrRowLabel, bindings.peerSnrText,
-		canvas.NewText("My callsign", themeDim()), bindings.userCallsText,
-		canvas.NewText("Target callsign", themeDim()), bindings.destCallsText,
-		canvas.NewText("Client TCP Connected", themeDim()), bindings.tcpText,
-		canvas.NewText("Bytes transmitted", themeDim()), bindings.txBytesText,
-		canvas.NewText("Bytes received", themeDim()), bindings.rxBytesText,
-		canvas.NewText("Freq offset", themeDim()), bindings.freqOffsetText,
+		)),
+		compactTelemetryRow(canvas.NewText("Bitrate", themeDim()), bindings.bitrateText),
+		compactTelemetryRow(bindings.snrRowLabel, bindings.snrText),
+		compactTelemetryRow(bindings.peerSnrRowLabel, bindings.peerSnrText),
+		compactTelemetryRow(canvas.NewText("My callsign", themeDim()), bindings.userCallsText),
+		compactTelemetryRow(canvas.NewText("Target callsign", themeDim()), bindings.destCallsText),
+		compactTelemetryRow(canvas.NewText("Client TCP", themeDim()), bindings.tcpText),
+		compactTelemetryRow(canvas.NewText("Bytes transmitted", themeDim()), bindings.txBytesText),
+		compactTelemetryRow(canvas.NewText("Bytes received", themeDim()), bindings.rxBytesText),
+		compactTelemetryRow(canvas.NewText("Freq offset", themeDim()), bindings.freqOffsetText),
 	)
 	telemetryCard := widget.NewCard("Telemetry", "", telemetryGrid)
 
@@ -2130,6 +2129,16 @@ func getLogDir() string {
 // colours: they sit on a dark strip of their own.
 func themeForeground() color.Color { return theme.Color(theme.ColorNameForeground) }
 func themeDim() color.Color        { return theme.Color(theme.ColorNamePlaceHolder) }
+
+func compactTelemetryRow(label, value fyne.CanvasObject) fyne.CanvasObject {
+	if label == nil {
+		return value
+	}
+	if value == nil {
+		return label
+	}
+	return container.NewHBox(label, layout.NewSpacer(), value)
+}
 
 // halfWidthColumn stacks its children vertically, each left-aligned and
 // constrained to half the available width. The top control panel uses it so the
