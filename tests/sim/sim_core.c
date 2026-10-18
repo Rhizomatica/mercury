@@ -8,9 +8,11 @@
 #include "sim_core.h"
 #include "sim_clock.h"
 #include "sim_translate.h"
+#include "sim_channel.h"
 #include "arq_fsm.h"
 #include "arq_timing.h"
 #include "freedv_api.h"
+#include "modem_mfsk.h"   /* mercury_mode_is_mfsk */
 
 #include <stdlib.h>
 #include <string.h>
@@ -187,6 +189,7 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                 .fire_at_ms  = deliver_at,
                 .target      = peer,
                 .kind        = SIM_PENDING_FRAME,
+                .mode        = of.mode,
                 .frame_len   = of.len,
                 .rx_snr      = s->rx_snr_db, /* default 12 dB; sim_set_rx_snr models fades */
                 .tx_start_ms = now_ms,
@@ -321,6 +324,17 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
      * takes every DATAC16 frame, the one payload decoder only the mode it is
      * bound to (the session's peer_tx_mode), and a frame counts only with the
      * seed the station's decoders accept. */
+    if (p->car && p->mode == SIM_MODE_PATTERN)
+    {
+        /* A pattern carries no seed, and only the MFSK decoder detects one:
+         * a station listens for patterns where it listens on the floor. */
+        arq_session_t *rs = sim_endpoint_session(p->target);
+        if (!mercury_mode_is_mfsk(rs->peer_tx_mode))
+            return;
+        arq_event_t pev = { .id = ARQ_EV_RX_PATTERN, .pattern_break = p->frame[0] != 0 };
+        arq_fsm_dispatch(rs, &pev);
+        return;
+    }
     if (p->car)
     {
         arq_session_t *rs = sim_endpoint_session(p->target);
@@ -346,7 +360,13 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
     bool ok = sim_translate_frame(p->frame, p->frame_len, p->rx_snr,
                                    sim_endpoint_call(p->target), &ev);
     if (ok)
+    {
+        /* The mode it came on, as the modem reports it: an ACCEPT answers on
+         * the CALL's carrier (call_rx_mode), so with none the callee answered
+         * an MFSK CALL on DATAC16 and no session connected below it. */
+        ev.mode = p->mode;
         arq_fsm_dispatch(sim_endpoint_session(p->target), &ev);
+    }
 }
 
 /* ======================================================================

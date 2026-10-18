@@ -4,6 +4,7 @@
 #include "sim_endpoint.h"
 #include "sim_clock.h"
 #include "arq.h"    /* arq_conn, CALLSIGN_MAX_SIZE, ARQ_BANDWIDTH_FULL_HZ */
+#include "sim_channel.h"   /* SIM_MODE_PATTERN */
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -120,6 +121,22 @@ static void cb_send_keydown(const arq_keydown_t *kd)
     ep->kd_present = true;
 }
 
+/* A pattern: a keydown of one burst on SIM_MODE_PATTERN, its kind (ACK 0,
+ * BREAK 1) in its one byte, so the core keys, collides and delivers it as
+ * it does a keydown (sim_core.c turns it into RX_PATTERN). */
+static void cb_send_pattern(int pattern_kind)
+{
+    sim_endpoint_t *ep = s_active;
+    assert(!ep->kd_present && "a pattern before the last keydown went out");
+    memset(&ep->kd, 0, sizeof(ep->kd));
+    ep->kd.n = 1;
+    ep->kd.f[0].mode = SIM_MODE_PATTERN;
+    ep->kd.f[0].len = 1;
+    ep->kd.f[0].bytes[0] = (uint8_t)pattern_kind;
+    ep->kd.crc_seed = ep->crc_seed;
+    ep->kd_present = true;
+}
+
 static void cb_set_crc_seed(uint16_t seed) { s_active->crc_seed = seed; }
 
 /* ---- the shared FSM callbacks: all operate on s_active ---- */
@@ -192,6 +209,7 @@ const arq_fsm_callbacks_t *sim_endpoint_callbacks(void)
         .tx_read              = cb_tx_read,
         .send_buffer_status   = cb_send_buffer_status,
         .send_keydown         = cb_send_keydown,
+        .send_pattern         = cb_send_pattern,
         .set_crc_seed         = cb_set_crc_seed,
     };
     return &cbs;

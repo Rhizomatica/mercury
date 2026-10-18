@@ -63,6 +63,7 @@ tests/test_*
 tests/carousel_bench
 tests/carousel_bound
 tests/ab_bench
+tests/conn_bench
 
 # Bench/scratch artifacts (never commit)
 tap-*.f64
