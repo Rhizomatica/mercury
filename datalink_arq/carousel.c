@@ -1030,7 +1030,15 @@ static int level_earned(const car_t *c, int lv)
 {
     double got = c->lv_sent[lv] - c->lv_lost[lv];
     bool proven = c->lv_sent[lv] >= PROVEN_FRAMES && c->lv_lost[lv] < 0.05;
-    return 1 + (int)((level_marginal(c, lv) || !c->snr_valid) && !proven ? got : 2.0 * got);
+    double scale = (level_marginal(c, lv) || !c->snr_valid) && !proven ? 1.0 : 2.0;
+    /* Scale by the fraction the rung actually delivered of what it sent, so a
+     * rung that loses most of its frames earns a short round and the peer
+     * answers each one.  A full round on a lossy rung otherwise wastes the
+     * whole keydown and delays every ack (#397: a rung held a 4-frame keydown
+     * every round while losing most of it, and the transfer stalled against a
+     * full buffer).  On a clean rung delivery is 1 and this is unchanged. */
+    double delivery = c->lv_sent[lv] > 0.0 ? got / c->lv_sent[lv] : 0.0;
+    return 1 + (int)(scale * got * delivery);
 }
 /* What a measured rung delivers per second, in the rounds it has earned. */
 static double level_goodput(const car_t *c, int lv)
