@@ -19,6 +19,16 @@
  * and stops only Mercury.  mercury.ini's audio and PTT settings are ignored
  * in this build: audio is the exchange below, PTT is ops->key.
  *
+ * Stop calling mercury_host_audio_exchange, mercury_host_ui_command_json and
+ * mercury_host_ui_client_connected before mercury_shutdown: the UI command
+ * handler runs outside the UI lock, on engine state that shutdown frees.
+ *
+ * The archive leaves out Mercury's hermes_shm rings (common/
+ * ring_buffer_posix.o, shm_posix.o): the host links its own copy, which must
+ * be identical to common/ring_buffer_posix.[ch] and shm_posix.[ch].  The
+ * archive was compiled against those headers, so a copy that drifts changes
+ * the ring structs with no error.
+ *
  * The callbacks (key, get_frequency, broadcast_json, broadcast_binary) run
  * with Mercury's lock for them held: they must not call back into this header
  * (mercury_host_set_*, mercury_host_ui_*), or they deadlock.  Queue the work
@@ -81,7 +91,14 @@ void mercury_host_set_radio(const mercury_host_radio_ops *ops);
 /* ---- audio ---------------------------------------------------------------
  *
  * 8 kHz mono S16, the rtp_wire.h contract.  Call once per audio block on the
- * host's audio clock, keyed or not: TX drains only through this call.
+ * host's audio clock, keyed or not: TX drains only through this call.  So it
+ * must go on while keyed even when the host's capture stops (a half-duplex
+ * radio): clock it from the playback side or a timer then, with rx8k NULL.
+ *
+ * TX latency: Mercury unkeys on its own clock, the frame's airtime plus
+ * 100 ms after writing it to the ring, and the frame ends in 200 ms of
+ * silence.  The host's path from this call to the antenna may therefore
+ * add up to about 300 ms; more cuts off the end of the frame.
  *   rx8k  n samples heard, put in Mercury's capture ring; NULL when the
  *         host has nothing (e.g. RX muted while keyed).
  *   tx8k  receives n samples: Mercury's TX audio, then silence.
