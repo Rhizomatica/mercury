@@ -28,6 +28,11 @@ What it models:
   share one, as `(time & 0x7F) | 1` allows.
 - A DISCONNECT is taken on its session id alone, because its CRC is plain.
   Every other frame in a session is seeded with that session's nonce.
+- The reply to a DISCONNECT is an ACK pattern (`send_disconnect_reply`):
+  no session id, but keyed by the session's seed (`mfsk_pattern_set_session`),
+  which the replying end keeps until the reply is out (`car_stop`).  Only an
+  end whose own DISCONNECT is out takes one, as the answer, and only one of
+  its own session.
 - Time is abstract.  A timer fires only once nothing more is coming, since
   the timers are far longer than an exchange.  On a lossy channel a timer
   may fire whenever nothing is queued to it.  The channel keeps frames in
@@ -42,6 +47,8 @@ Not modelled:
 Properties:
 
 - `NoKill`: no end leaves a session on another session's frame.
+- `NoStale`, `NoForeign`: no end leaves on the pattern that answered an
+  earlier session's DISCONNECT, nor on another station's.
 - `Clean`: on a lossless channel no end ever times out, so every teardown
   is answered.
 - `Mutual` (liveness): once one end has finished a session, eventually
@@ -52,9 +59,27 @@ Properties:
 Results:
 
 - `SessionTeardown.cfg`: the code's rules, lossless, 2 sessions, 2 caller
-  callsigns.  No error, 1 957 distinct states.
+  callsigns.  No error, 2 069 distinct states (1 957 with DISCONNECT
+  frames as replies).
 - `SessionTeardown_lossy.cfg`: the same with any frame lost.  No error,
-  51 705 distinct states.  `Clean` does not apply here.
+  52 041 distinct states (51 705).  `Clean` does not apply here.
+- `Mut_ignorepattern.cfg`: the end waiting for the answer to its
+  DISCONNECT does not take the pattern.  It violates `Clean`: it retries
+  and times out.
+- `ForeignPattern.cfg`: the code's rules, lossy, with another station's
+  patterns heard (`FPAT`).  No error, 349 393 distinct states: keyed by the
+  session, none is taken.  Safety only: unbounded foreign traffic keeps the
+  queue full for ever, and `Mutual` fails on that, not on a rule.
+- `Mut_unkeyed.cfg`: the same, with a pattern taken whatever session keyed
+  it.  It violates `NoForeign`.  The code did this at first: the replying
+  end cleared its seed before the reply went out, and in the harness the
+  peer, still in the session, never detected it (3 runs of 3).
+- `Mut_anypattern.cfg`: a pattern ends an end in any state, not only one
+  whose DISCONNECT is out.  No error, the same 52 041 states: as with the
+  session-id check below, frames in order and timers longer than an
+  exchange mean no pattern reaches an end that is not waiting for one.
+  In the code the rule keeps the carousel's own patterns (not modelled
+  here) from ending a session.
 - `Mut_crossedsilent.cfg`: an ending end that hears the peer's DISCONNECT
   before its own went out ends without a reply.  The code did this before
   the crossed-DISCONNECT fix (car24).  It violates `Clean`, because the peer

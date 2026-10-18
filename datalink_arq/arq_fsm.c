@@ -437,13 +437,20 @@ static void notify_session_ended(arq_session_t *sess)
         g_cbs.notify_disconnected(false);
 }
 
-/* The reply to the peer's DISCONNECT, if it is still owed. */
+/* The reply to the peer's DISCONNECT, if it is still owed: an ACK pattern.
+ * 0.64 s on the air where a DISCONNECT frame is 3.7 s (13.5 s at the floor),
+ * and heard ~10 dB deeper; the peer, its DISCONNECT out, expects one
+ * (arq_fsm_expect_pattern).  The session id it lacks is not needed: only
+ * an end that has already sent its DISCONNECT takes one as the answer. */
 static void send_disconnect_reply(arq_session_t *sess)
 {
     if (!sess->pending_disconnect_reply)
         return;
     sess->pending_disconnect_reply = false;
-    send_disconnect_frame(sess);
+    if (g_cbs.send_pattern)
+        g_cbs.send_pattern(CAR_PATTERN_ACK);
+    else
+        send_disconnect_frame(sess);
 }
 
 /* ======================================================================
@@ -458,7 +465,19 @@ static void send_disconnect_reply(arq_session_t *sess)
 bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now)
 {
     (void)now;
+    /* My DISCONNECT is out: the answer is an ACK pattern (send_disconnect_reply). */
+    if (sess->conn_state == ARQ_CONN_DISCONNECTING && sess->disconnect_sent && !sess->tx_active)
+        return true;
     return sess->car_active && sess->car && car_expect_pattern(sess->car);
+}
+
+/* The peer answered my DISCONNECT. */
+static void disconnect_answered(arq_session_t *sess)
+{
+    HLOGI(LOG_COMP, "Disconnect finalized (peer ack)");
+    notify_session_ended(sess);   /* silent if a call is queued behind it */
+    if (g_timing) arq_timing_record_disconnect(g_timing, "peer_ack");
+    enter_idle_after_call(sess);
 }
 
 /* Silence after which the peer is gone -- idle or not.  An idle session hears
@@ -678,7 +697,12 @@ static void car_stop(arq_session_t *sess)
     sess->car_active = false;
     sess->car_session = false;
     sess->car_ending = false;
-    if (sess->crc_seed)
+    /* The reply to the peer's DISCONNECT is an ACK pattern, and patterns are
+     * the session's (the seed keys them: modem_apply_crc_seed): the seed
+     * stays until it has gone out.  Cleared first, the reply went out on the
+     * station-wide patterns and the peer, still in the session, never
+     * detected it (harness, a callee ending at the floor: 3 runs of 3). */
+    if (sess->crc_seed && !sess->pending_disconnect_reply)
         car_set_seed(sess, 0);
 }
 
@@ -1267,6 +1291,14 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                      ev->rx_age_ms);
             return;
         case ARQ_EV_RX_PATTERN:
+            /* My DISCONNECT went in a slot instead of an answer, so the
+             * caller's ACK now is its answer to it: the caller acks only
+             * rounds, and I send none while ending. */
+            if (sess->disconnect_sent && !ev->pattern_break)
+            {
+                disconnect_answered(sess);
+                return;
+            }
             car_on_pattern(sess->car, now, ev->pattern_break ? CAR_PATTERN_BREAK
                                                                               : CAR_PATTERN_ACK);
             return;
@@ -1373,10 +1405,13 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                        time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
             break;
         }
-        HLOGI(LOG_COMP, "Disconnect finalized (peer ack)");
-        notify_session_ended(sess);   /* silent if a call is queued behind it */
-        if (g_timing) arq_timing_record_disconnect(g_timing, "peer_ack");
-        enter_idle_after_call(sess);
+        disconnect_answered(sess);
+        break;
+
+    case ARQ_EV_RX_PATTERN:
+        /* The answer to my DISCONNECT (send_disconnect_reply). */
+        if (sess->disconnect_sent && !ev->pattern_break)
+            disconnect_answered(sess);
         break;
 
     case ARQ_EV_RX_CALL:

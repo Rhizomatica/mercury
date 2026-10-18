@@ -331,6 +331,11 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
         arq_session_t *rs = sim_endpoint_session(p->target);
         if (!arq_fsm_expect_pattern(rs, sim_clock_now()))
             return;
+        /* ...and the seed keys the patterns (mfsk_pattern_set_session): a
+         * station hears only those of its own session, or with none, the
+         * station-wide ones. */
+        if (p->seed != sim_endpoint_crc_seed(p->target))
+            return;
         arq_event_t pev = { .id = ARQ_EV_RX_PATTERN, .pattern_break = p->frame[0] != 0 };
         arq_fsm_dispatch(rs, &pev);
         return;
