@@ -247,6 +247,27 @@ target_include_directories(mercury PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 # Install rules
 include(GNUInstallDirs)
 
-install(TARGETS mercury
-    DESTINATION "${CMAKE_INSTALL_BINDIR}"
-)
+# Packing up dependencies
+if(PACK_DEPS)
+    install(TARGETS mercury
+        DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        RUNTIME_DEPENDENCY_SET DEPS
+    )
+
+    # Install runtime dependencies
+    install(RUNTIME_DEPENDENCY_SET DEPS
+        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    )
+
+    # Set RPATH
+    if(LINUX)
+        set_target_properties(mercury PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
+    elseif(APPLE)
+        set_target_properties(mercury PROPERTIES INSTALL_RPATH "@executable_path/../lib")
+    endif()
+else()
+    install(TARGETS mercury
+        DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    )
+endif()
