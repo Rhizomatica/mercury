@@ -2385,7 +2385,18 @@ static void m_decide_recv(car_t *c, uint64_t now)
             c->loss_est = 0.5 * c->loss_est + 0.5;
             measure_level(c, c->poll_level, 1, 1.0, now);
         }
-        if (!c->m_heard || (c->round_seen == 0 && !c->peer_has_data)) { m_decide_idle(c, now); return; }
+        if (!c->m_heard || (c->round_seen == 0 && !c->peer_has_data)) {
+            m_decide_idle(c, now);
+            /* Unanswered: the poll or its answer was lost.  Both ends' lost-
+             * peer watchdogs count 240 s from the last frame heard, and asked
+             * again only at the backoff (60 s), two or three losses in a row
+             * ended a live session (sim, a fifth of frames lost: 11 of 20 in
+             * 30 min, test_car_idle_lossy_link_stays_connected).  Ask again
+             * soon, in the first gap clear of the slots the poll opened
+             * (m_free_from): at the floor, before its continuation slots. */
+            if (!c->m_heard && c->m_state == MS_IDLE) arm(c, CAR_T_M, now + IDLE_POLL_MIN_MS);
+            return;
+        }
         c->idle = false; c->idle_backoff_ms = 0;
     }
     if (c->m_kind == KD_DONE) { m_decide_idle(c, now); return; }

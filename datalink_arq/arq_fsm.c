@@ -500,11 +500,14 @@ static void disconnect_answered(arq_session_t *sess)
     enter_idle_after_call(sess);
 }
 
-/* Silence after which the peer is gone -- idle or not.  An idle session hears
- * its peer at least once per idle poll (one every ~90 s at most), so 240 s is
- * two or more polls unanswered.  It used to apply only with data in flight,
- * and an idle session whose peer had left polled it for ever (#384: 10 min,
- * until the operator aborted). */
+/* Silence after which the peer is gone -- idle or not.  An idle caller polls
+ * about once a minute (the 60 s backoff and the exchange), and when a poll
+ * goes unanswered it asks again 3 s after it gives up on the answer
+ * (carousel.c, m_decide_recv): a try every 15 s above the floor, 24-35 s at
+ * the floor with DATAC16 control, 37 s with MFSK control (sim, frames lost).
+ * So 240 s is a run of polls lost, not two or three at the backoff.  It used
+ * to apply only with data in flight, and an idle session whose peer had left
+ * polled it for ever (#384: 10 min, until the operator aborted). */
 #define ARQ_CAR_PEER_LOST_MS 240000
 /* Silence after which a DISCONNECT is not worth repeating: the peer misses
  * one, and its own lost-peer watchdog ends the session (#384: three tries,
