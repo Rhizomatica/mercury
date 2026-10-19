@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"image"
+	"image/color"
 	"math"
 	"reflect"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 )
 
@@ -18,9 +20,11 @@ import (
 // to twice its widest child: Layout hands each child half the container width,
 // so a smaller MinSize would resize the cards below their own minimum.
 func TestHalfWidthColumnMinSizeReservesTwiceWidestChild(t *testing.T) {
-	wide := canvas.NewText("", themeDim())
+	test.NewTempApp(t)
+
+	wide := canvas.NewRectangle(color.Transparent)
 	wide.SetMinSize(fyne.NewSize(200, 20))
-	narrow := canvas.NewText("", themeDim())
+	narrow := canvas.NewRectangle(color.Transparent)
 	narrow.SetMinSize(fyne.NewSize(60, 40))
 
 	var col halfWidthColumn
