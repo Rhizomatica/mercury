@@ -198,9 +198,9 @@ listed).
 
 ### 2.5 Link adaptation (receiver measures the peer's direction)
 
-Per rung `lv`: `lv_sent`, `lv_lost` (decayed frame counts), `lv_rounds`,
-`lv_dead_run`, `lv_probe_fails`, `lv_round_at` (value of `polls` when last
-measured), `lv_probe_at` (ms), `lv_backoff_ms` (H:145-149). All 0 at init.
+Per rung `lv`: `rung[lv].sent`, `rung[lv].lost` (decayed frame counts), `rung[lv].rounds`,
+`rung[lv].dead_run`, `rung[lv].probe_fails`, `rung[lv].round_at` (value of `polls` when last
+measured), `rung[lv].probe_at` (ms), `rung[lv].backoff_ms` (H:145-149). All 0 at init.
 
 ---
 
@@ -519,7 +519,7 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 | T4 | **floor fallback**: `probe_off_floor && !floor_fallback && !round_seen && !status_seen && !round_heard` | `floor_fallback = true; poll_level = 0; poll_n = 2`; Bind(0); `round_seen = 0; round_frames = 2; round_heard = false; done_in_round = 0`; disarm SENSE; `T_POLL := max(now + 13700, probe_after_ms + peer_floor_wait_max + H) + 3000`; return. |
 | T5 | **floor hold**: `poll_level == 0 && io.pattern && !floor_hold && !floor_fallback && !peer_ctl_deaf && !round_seen && !status_seen && !round_heard` and `until = floor_round_end + peer_floor_wait_max + 3000 > now` | `floor_hold = true; T_POLL := until`; return. |
 | T6 | always | `floor_hold = false`. |
-| T7 | **unscored re-poll**: `!floor_fallback && poll_level > 0 && !round_seen && !status_seen && !round_heard && round_frames > 0 && silent_polls == 0 && lv_sent[poll_level] ≥ 2 && level_delivery(poll_level) ≥ 0.5` | `silent_polls = 1`; `send_poll_as(poll_level, poll_n, repeat = true)` (same poll id); return. |
+| T7 | **unscored re-poll**: `!floor_fallback && poll_level > 0 && !round_seen && !status_seen && !round_heard && round_frames > 0 && silent_polls == 0 && rung[lv].sent[poll_level] ≥ 2 && level_delivery(poll_level) ≥ 0.5` | `silent_polls = 1`; `send_poll_as(poll_level, poll_n, repeat = true)` (same poll id); return. |
 | T8 | measure | `probe_failed = floor_fallback && !round_seen && !status_seen && !round_heard`; `probe_off_floor = floor_fallback = false`. If probe_failed: `loss_est = 0.5*loss_est + 0.5`; `measure_level(probe_lv, probe_n, 1.0)`. Else if `!status_seen`: `frames = max(round_frames,1)`; `loss = max(0, 1 - round_seen/frames)`; `loss_est = 0.5*loss_est + 0.5*loss`; `measure_level(poll_level, frames, loss)`. |
 | T9 | always | `deliver_in_order()`. |
 | T10 | **handover**: `has_data && (done || quantum)` where `done = peer_direction_done`, `held = now - drive_start`, `quantum = (done_in_round > 0 && held ≥ 30000) || held ≥ 45000` | `send_start_ms = now; send_handover()`; return. |
@@ -574,10 +574,10 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 
 ### 5.10 Link adaptation (receiver side, summarized precisely)
 
-`measure_level(lv, frames, loss, now)` (C:751-768): `lv_sent = 0.8*lv_sent + frames`;
-`lv_lost = 0.8*lv_lost + frames*loss`; `lv_dead_run = (loss ≥ 1) ? lv_dead_run + frames : 0`;
-`lv_probe_fails = (loss ≥ 0.5) ? +1 : 0`; `lv_rounds++`; `lv_round_at = ++polls`;
-`lv_probe_at = now`; `lv_backoff_ms = loss ≥ 0.9 ? (0 → 60000, else ×2 capped 480000) : 0`.
+`measure_level(lv, frames, loss, now)` (C:751-768): `rung[lv].sent = 0.8*rung[lv].sent + frames`;
+`rung[lv].lost = 0.8*rung[lv].lost + frames*loss`; `rung[lv].dead_run = (loss ≥ 1) ? rung[lv].dead_run + frames : 0`;
+`rung[lv].probe_fails = (loss ≥ 0.5) ? +1 : 0`; `rung[lv].rounds++`; `rung[lv].round_at = ++polls`;
+`rung[lv].probe_at = now`; `rung[lv].backoff_ms = loss ≥ 0.9 ? (0 → 60000, else ×2 capped 480000) : 0`.
 
 Predicates (`marginal = snr_valid && snr_ema < min_db + 3`, C:797-800):
 - `delivery(lv)` = marginal ? `(sent - lost)/(sent + 1)` : `1 - (lost + 0.5)/(sent + 2)` (C:737-742).

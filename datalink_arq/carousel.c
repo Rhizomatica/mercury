@@ -927,8 +927,8 @@ static bool level_marginal(const car_t *c, int lv);
 static double level_delivery(const car_t *c, int lv)
 {
     if (level_marginal(c, lv))
-        return (c->lv_sent[lv] - c->lv_lost[lv]) / (c->lv_sent[lv] + 1.0);
-    return 1.0 - (c->lv_lost[lv] + 0.5) / (c->lv_sent[lv] + 2.0);
+        return (c->rung[lv].sent - c->rung[lv].lost) / (c->rung[lv].sent + 1.0);
+    return 1.0 - (c->rung[lv].lost + 0.5) / (c->rung[lv].sent + 2.0);
 }
 
 /* Near its SNR threshold two lost frames in a row are enough: the SNR already
@@ -942,35 +942,35 @@ static double level_delivery(const car_t *c, int lv)
 static bool level_dead(const car_t *c, int lv)
 {
     int run = level_marginal(c, lv) ? 2 : DEAD_RUN;
-    double p = c->lv_p_ok[lv];
+    double p = c->rung[lv].p_ok;
     if (p > 0.0) {
         if (p > 0.95) p = 0.95;
         int need = (int)ceil(log(DEAD_P) / log(1.0 - p));
         if (need > run) run = need;
     }
-    return c->lv_dead_run[lv] >= run;
+    return c->rung[lv].dead_run >= run;
 }
 
 static void measure_level(car_t *c, int lv, int frames, double loss, uint64_t now)
 {
-    c->lv_sent[lv] = LV_DECAY * c->lv_sent[lv] + frames;
-    c->lv_lost[lv] = LV_DECAY * c->lv_lost[lv] + frames * loss;
-    if (loss >= 1.0) c->lv_dead_run[lv] += frames;
+    c->rung[lv].sent = LV_DECAY * c->rung[lv].sent + frames;
+    c->rung[lv].lost = LV_DECAY * c->rung[lv].lost + frames * loss;
+    if (loss >= 1.0) c->rung[lv].dead_run += frames;
     else {
-        c->lv_dead_run[lv] = 0;
-        c->lv_p_ok[lv] = 1.0 - c->lv_lost[lv] / c->lv_sent[lv];   /* what it delivers */
+        c->rung[lv].dead_run = 0;
+        c->rung[lv].p_ok = 1.0 - c->rung[lv].lost / c->rung[lv].sent;   /* what it delivers */
     }
-    if (loss >= 0.5) c->lv_probe_fails[lv]++;
-    else             c->lv_probe_fails[lv] = 0;
-    c->lv_rounds[lv]++;
-    c->lv_round_at[lv] = ++c->polls;
-    c->lv_probe_at[lv] = now;
+    if (loss >= 0.5) c->rung[lv].probe_fails++;
+    else             c->rung[lv].probe_fails = 0;
+    c->rung[lv].rounds++;
+    c->rung[lv].round_at = ++c->polls;
+    c->rung[lv].probe_at = now;
     if (loss >= 0.9)
-        c->lv_backoff_ms[lv] = !c->lv_backoff_ms[lv] ? DEAD_PROBE_MS
-                             : c->lv_backoff_ms[lv] * 2 > DEAD_PROBE_MAX_MS ? DEAD_PROBE_MAX_MS
-                             : c->lv_backoff_ms[lv] * 2;
+        c->rung[lv].backoff_ms = !c->rung[lv].backoff_ms ? DEAD_PROBE_MS
+                             : c->rung[lv].backoff_ms * 2 > DEAD_PROBE_MAX_MS ? DEAD_PROBE_MAX_MS
+                             : c->rung[lv].backoff_ms * 2;
     else
-        c->lv_backoff_ms[lv] = 0;
+        c->rung[lv].backoff_ms = 0;
 }
 
 /* May this level be chosen?  Not if it is dead; and not if a lower one is,
@@ -1008,7 +1008,7 @@ static bool level_marginal(const car_t *c, int lv)
 static bool level_gated(const car_t *c, int lv)
 {
     return c->snr_valid && c->snr_ema < level_min_db(lv) - SNR_GATE_DB &&
-           !(c->lv_sent[lv] >= 3.0 && level_delivery(c, lv) >= 0.7);
+           !(c->rung[lv].sent >= 3.0 && level_delivery(c, lv) >= 0.7);
 }
 
 static bool level_allowed(const car_t *c, int lv)
@@ -1016,7 +1016,7 @@ static bool level_allowed(const car_t *c, int lv)
     if (level_dead(c, lv) || level_gated(c, lv)) return false;
     for (int b = 0; b < lv; b++)
         if (level_dead(c, b))
-            return c->lv_sent[lv] - c->lv_lost[lv] >= 0.5;
+            return c->rung[lv].sent - c->rung[lv].lost >= 0.5;
     return true;
 }
 
@@ -1029,9 +1029,9 @@ static bool reprobe_due(const car_t *c, int lv, uint64_t now)
     /* A rung the SNR has excluded and nobody has tried is not probed: its
      * probe clock starts at 0, and "due" at 60 s probed QAM16C2 at 8 dB
      * first thing in a session. */
-    if (!c->lv_rounds[lv] && level_gated(c, lv)) return false;
-    uint64_t wait = c->lv_backoff_ms[lv] ? c->lv_backoff_ms[lv] : DEAD_PROBE_MS;
-    return now - c->lv_probe_at[lv] >= wait;
+    if (!c->rung[lv].rounds && level_gated(c, lv)) return false;
+    uint64_t wait = c->rung[lv].backoff_ms ? c->rung[lv].backoff_ms : DEAD_PROBE_MS;
+    return now - c->rung[lv].probe_at >= wait;
 }
 
 /* Nothing measured yet, the peer starts where the SNR measured here puts it.
@@ -1096,14 +1096,14 @@ static double air_fraction(const car_t *c, int lv, int frames)
 static bool level_marginal(const car_t *c, int lv);
 static int level_earned(const car_t *c, int lv)
 {
-    double got = c->lv_sent[lv] - c->lv_lost[lv];
-    bool proven = c->lv_sent[lv] >= PROVEN_FRAMES && c->lv_lost[lv] < 0.05;
+    double got = c->rung[lv].sent - c->rung[lv].lost;
+    bool proven = c->rung[lv].sent >= PROVEN_FRAMES && c->rung[lv].lost < 0.05;
     /* A rung the SNR puts well above its threshold, whose probe delivered
      * and that has lost nothing: full rounds at once, not 2 then 4 frames
      * (sim, 8 KB at 20 dB -13.5 %, NVIS -3.5..-5.9 %).  Any loss and it
      * earns them as before: NVIS reads 10 dB where DATAC3 loses most frames,
      * and on the SNR alone it asked for 7-frame rounds at 67-93 % loss. */
-    if (!level_marginal(c, lv) && c->snr_valid && got >= 0.5 && c->lv_lost[lv] < 0.05) return keydown_cap(c, lv);
+    if (!level_marginal(c, lv) && c->snr_valid && got >= 0.5 && c->rung[lv].lost < 0.05) return keydown_cap(c, lv);
     return 1 + (int)((level_marginal(c, lv) || !c->snr_valid) && !proven ? got : 2.0 * got);
 }
 /* What a measured rung delivers per second, in the rounds it has earned. */
@@ -1132,7 +1132,7 @@ static int probe_every(const car_t *c, int lv)
      * (marginal for DATAC3), and backed off it stayed on DATAC4 for 42-46
      * frames where the build without the backoff was back on DATAC3 after 8. */
     if (!level_marginal(c, lv) || level_delivery(c, lv) >= PROBE_UP_DELIVERY) return PROBE_EVERY;
-    int f = c->lv_probe_fails[lv] < 3 ? c->lv_probe_fails[lv] : 3;
+    int f = c->rung[lv].probe_fails < 3 ? c->rung[lv].probe_fails : 3;
     return PROBE_EVERY << f;
 }
 
@@ -1175,7 +1175,7 @@ static int choose_level(const car_t *c, uint64_t now)
     int best = -1;
     double best_gp = -1.0;
     for (int lv = 0; lv <= c->max_level; lv++) {
-        if (!c->lv_rounds[lv] || !level_allowed(c, lv)) continue;
+        if (!c->rung[lv].rounds || !level_allowed(c, lv)) continue;
         double gp = level_goodput(c, lv);
         if (gp > best_gp) { best_gp = gp; best = lv; }
     }
@@ -1183,19 +1183,19 @@ static int choose_level(const car_t *c, uint64_t now)
         /* A start stays where the connect's SNR put it: a fade's reading
          * started fading +10 one rung low, and seed 58 took 17 % longer. */
         int top = c->polls ? fall_level(c, c->snr_level) : c->snr_level;
-        if (!c->lv_rounds[top]) return top;
+        if (!c->rung[top].rounds) return top;
         /* The SNR's rung was tried and is out: the next one down not tried
          * yet, not the floor.  At 12 dB two DATAC17 polls lost in a row
          * dropped the session to MFSK past four rungs with margin to spare,
          * and it took 220 s to climb back (sim, awgn:0.25 seed 6). */
         for (int lv = top - 1; lv > 0; lv--)
-            if (!c->lv_rounds[lv]) return lv;
+            if (!c->rung[lv].rounds) return lv;
         return 0;
     }
     /* Nothing measured gets through: go down to a rung not tried yet. */
     if (best_gp <= 0.0) {
         for (int lv = fall_level(c, best - 1); lv >= 0; lv--)
-            if (!c->lv_rounds[lv]) return lv;
+            if (!c->rung[lv].rounds) return lv;
     }
     /* A faster rung needs more SNR than the best one does, so probe upward
      * only while that one is delivering: after DATAC1 lost a frame at 8 dB,
@@ -1216,8 +1216,8 @@ static int choose_level(const car_t *c, uint64_t now)
      * came is more likely luck than the rung working (sim, cliff:10: a
      * QAM16C2 frame at 10 dB, then two lost, +5 %). */
     for (int up = best + 1; up <= c->max_level; up++)
-        if (c->lv_rounds[up] && c->lv_round_at[up] == c->polls && c->lv_sent[up] < 3.0 &&
-            c->lv_lost[up] < 0.05 && level_allowed(c, up) && level_potential(c, up) > best_gp &&
+        if (c->rung[up].rounds && c->rung[up].round_at == c->polls && c->rung[up].sent < 3.0 &&
+            c->rung[up].lost < 0.05 && level_allowed(c, up) && level_potential(c, up) > best_gp &&
             !(c->snr_valid && c->snr_ema < level_min_db(up) - SNR_GATE_DB / 2)) {
             car_trace(c, "rx confirms lv=%d", up);
             return up;
@@ -1228,7 +1228,7 @@ static int choose_level(const car_t *c, uint64_t now)
     if (c->snr_valid) {
         int up = cap_level(c, car_start_level(c->snr_ema));
         if (up > best && level_potential(c, up) > best_gp &&
-            (level_allowed(c, up) ? !c->lv_rounds[up] || c->polls - c->lv_round_at[up] >= probe_every(c, up)
+            (level_allowed(c, up) ? !c->rung[up].rounds || c->polls - c->rung[up].round_at >= probe_every(c, up)
                                   : reprobe_due(c, up, now)))
             return up;
     }
@@ -1243,10 +1243,10 @@ static int choose_level(const car_t *c, uint64_t now)
          * at 6.1-6.8 dB, DATAC17 (7 dB) was never tried, and the session
          * stayed on DATAC1; the build before reached DATAC17 there, and it
          * delivered. */
-        if (!c->lv_rounds[up] && c->snr_valid && c->snr_ema < level_min_db(up) - SNR_GATE_DB / 2) break;
+        if (!c->rung[up].rounds && c->snr_valid && c->snr_ema < level_min_db(up) - SNR_GATE_DB / 2) break;
         if (!level_allowed(c, up)) {
             if (!reprobe_due(c, up, now)) break;
-        } else if (c->lv_rounds[up] && c->polls - c->lv_round_at[up] < probe_every(c, up)) {
+        } else if (c->rung[up].rounds && c->polls - c->rung[up].round_at < probe_every(c, up)) {
             break;                      /* measured and fresh: the argmax decided */
         }
         return up;                      /* a probe: its earned round is one frame */
@@ -1602,8 +1602,9 @@ static void m_log_add(car_t *c, uint64_t e)
         c->nmlog--;
     }
     car_mlog_t *l = &c->mlog[c->nmlog++];
-    l->e = e; l->r = c->m_r; l->d = c->m_d; l->k = c->m_k; l->p = c->m_p; l->done = 0; l->tg = TG_MS;
-    l->mk = c->m_id; l->pat = c->m_kind == KD_PATTERN_ACK || c->m_kind == KD_PATTERN_BREAK;
+    *l = c->m_kd;
+    l->e = e; l->done = 0; l->tg = TG_MS;
+    l->pat = c->m_kind == KD_PATTERN_ACK || c->m_kind == KD_PATTERN_BREAK;
 }
 
 /* The earliest time from s at which M may key for len ms: clear, with a guard
@@ -1883,7 +1884,7 @@ static void rx_trace(car_t *c)
     if (!c->io.trace) return;
     char gp[120] = ""; int p = 0;     /* empty until a rung has been measured */
     for (int l = 0; l < CAR_NLEVELS && p < (int)sizeof gp - 24; l++)
-        if (c->lv_rounds[l])
+        if (c->rung[l].rounds)
             p += snprintf(gp + p, sizeof gp - (size_t)p, " %d:%.0f/%.2f%s", l, 1000.0 * level_goodput(c, l),
                           level_delivery(c, l), level_allowed(c, l) ? "" : "x");
     car_trace(c, "rx round lv=%d seen=%d/%d status=%d snr=%.1f%s gp[lv:B/s/deliv]%s",
@@ -2039,8 +2040,8 @@ static uint64_t plan_len(const car_t *c) { return kind_len(c, c->plan); }
 
 static void m_note(car_t *c, int kind, uint32_t r, uint32_t d, int k, uint32_t rp)
 {
-    c->m_kind = kind; c->m_r = r; c->m_d = d; c->m_k = (uint8_t)k;
-    c->m_p = k ? slot_period(c, d, rp) : 0;
+    c->m_kind = kind; c->m_kd.r = r; c->m_kd.d = d; c->m_kd.k = (uint8_t)k;
+    c->m_kd.p = k ? slot_period(c, d, rp) : 0;
 }
 static uint32_t my_ctl_d(const car_t *c) { return ctl_on_floor(c) ? D_MFSK_MS : D_OFDM_MS; }
 
@@ -2054,7 +2055,7 @@ static void m_key_plan(car_t *c)
     c->m_state = MS_WAIT;
     uint8_t id = c->mk;
     c->mk = (c->mk + 1) & 0x0F;
-    c->m_id = id;
+    c->m_kd.mk = id;
     c->m_heard = false; c->s_answered = false;
     c->floor_waiting = c->pat_waiting = false;
     uint32_t ctl = s_ctl_for(c, c->ctl_deaf);  /* S answers this keydown's bit */
@@ -2367,7 +2368,7 @@ static void m_decide_recv(car_t *c, uint64_t now)
      * two lost polls scored in a row threw DATAC17 away at 12 dB (sim,
      * awgn:0.25: 169 s -> 719 s). */
     if (!c->m_heard && c->poll_level > 0 && c->round_frames > 0 && c->silent_polls == 0 &&
-        c->lv_sent[c->poll_level] >= 2.0 && level_delivery(c, c->poll_level) >= 0.5) {
+        c->rung[c->poll_level].sent >= 2.0 && level_delivery(c, c->poll_level) >= 0.5) {
         c->silent_polls = 1;
         car_trace(c, "rx round lv=%d unheard: asking again", c->poll_level);
         m_plan(c, KD_POLL, c->poll_level, c->poll_n);
@@ -2442,7 +2443,7 @@ static void m_timer(car_t *c, uint64_t now)
         int lv = choose_level(c, now);
         if (c->ctl_deaf && c->io.pattern) lv = 0;
         if (lv > c->poll_level) lv = c->poll_level;
-        if (lv > 0 && lv == c->poll_level && c->lv_rounds[lv] && c->lv_sent[lv] - c->lv_lost[lv] < 0.5) lv--;
+        if (lv > 0 && lv == c->poll_level && c->rung[lv].rounds && c->rung[lv].sent - c->rung[lv].lost < 0.5) lv--;
         int n = 1;
         lv = short_rung(c, lv, m_peer_expect(c), &n);
         m_plan(c, KD_POLL, lv, n);

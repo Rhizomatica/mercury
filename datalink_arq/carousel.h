@@ -164,10 +164,9 @@ typedef struct {
     int      nmlog;
     bool     m_keyed;               /* M: keyed at all this session */
     bool     m_heard_ever;          /* M: heard S at all this session */
-    int      m_kind;                /* my keydown on the air, its id, and the slots it opens: */
-    uint8_t  m_id;
-    uint32_t m_r, m_d, m_p;
-    uint8_t  m_k;
+    int      m_kind;                /* my keydown on the air, */
+    car_mlog_t m_kd;                /* ...its id and the slots it opens, as its log
+                                     * entry will hold them (e, done, tg, pat: then) */
     int      m_state;               /* waiting for S's answer, or for a free time */
     int      plan, plan_lv, plan_n; /* the keydown decided */
     bool     m_heard;               /* S keyed since my last keydown, and I heard it end */
@@ -235,13 +234,15 @@ typedef struct {
     int      rx_data_lv;            /* the rung of the last data frame I took; -1 none */
     bool     peer_has_data;         /* the peer said it has data for me */
 
-    /* as receiver: the peer's direction, measured here */
-    double   lv_sent[CAR_NLEVELS], lv_lost[CAR_NLEVELS];
-    int      lv_rounds[CAR_NLEVELS], lv_dead_run[CAR_NLEVELS];
-    int      lv_probe_fails[CAR_NLEVELS]; /* its rounds in a row that lost half */
-    double   lv_p_ok[CAR_NLEVELS];  /* the delivery it showed when it last delivered */
-    uint32_t lv_round_at[CAR_NLEVELS];
-    uint64_t lv_probe_at[CAR_NLEVELS], lv_backoff_ms[CAR_NLEVELS];
+    /* as receiver: the peer's direction, measured here, per rung */
+    struct {
+        double   sent, lost;        /* frames, decayed (measure_level) */
+        int      rounds, dead_run;
+        int      probe_fails;       /* its rounds in a row that lost half */
+        double   p_ok;              /* the delivery it showed when it last delivered */
+        uint32_t round_at;          /* polls, when last measured */
+        uint64_t probe_at, backoff_ms;
+    } rung[CAR_NLEVELS];
     uint32_t polls;
     double   loss_est;
     double   polled_loss;        /* the loss my last poll told the sender */
