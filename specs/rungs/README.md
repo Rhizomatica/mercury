@@ -95,7 +95,12 @@ Which model covers the other 2.0 changes:
   `RungAgreement`; the rule only narrows when S answers with one, which
   `FloorSilence` does not depend on;
 - an unanswered ask scored, and the next ask one rung lower when the rung
-  asked has delivered nothing (`m_timer`, `m_decide_recv`): `PollRung`.
+  asked has delivered nothing (`m_timer`, `m_decide_recv`): `PollRung`;
+- full rounds at once on a rung well above its threshold that has lost
+  nothing (`level_earned`): it changes only how many frames a poll asks
+  for, within the 1 .. `keydown_cap` that `poll_size` already gave, which
+  no model constrains (rounds are atomic in `RungAgreement` and `PollRung`;
+  `CarouselTurns` bounds keydowns by the cap).
 
 ## PollRung
 

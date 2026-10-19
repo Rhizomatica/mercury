@@ -1098,6 +1098,12 @@ static int level_earned(const car_t *c, int lv)
 {
     double got = c->lv_sent[lv] - c->lv_lost[lv];
     bool proven = c->lv_sent[lv] >= PROVEN_FRAMES && c->lv_lost[lv] < 0.05;
+    /* A rung the SNR puts well above its threshold, whose probe delivered
+     * and that has lost nothing: full rounds at once, not 2 then 4 frames
+     * (sim, 8 KB at 20 dB -13.5 %, NVIS -3.5..-5.9 %).  Any loss and it
+     * earns them as before: NVIS reads 10 dB where DATAC3 loses most frames,
+     * and on the SNR alone it asked for 7-frame rounds at 67-93 % loss. */
+    if (!level_marginal(c, lv) && c->snr_valid && got >= 0.5 && c->lv_lost[lv] < 0.05) return keydown_cap(c, lv);
     return 1 + (int)((level_marginal(c, lv) || !c->snr_valid) && !proven ? got : 2.0 * got);
 }
 /* What a measured rung delivers per second, in the rounds it has earned. */
