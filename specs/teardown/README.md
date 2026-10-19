@@ -58,6 +58,8 @@ Properties:
 - `NoUnasked`: the caller ends a session on an M_END only of that session.
 - `NoLostWord`: the caller never ends on an M_END while the callee holds a
   last word the caller has not got.
+- `NoInherited`: the callee holds a DISCONNECT back only for the session
+  whose application hung up.  No teardown step outlives its session.
 
 M_END (2026-10-18): a callee whose application hangs up while its
 DISCONNECT waits for its data to drain says so in its answers (poll type 3,
@@ -77,6 +79,16 @@ its reply and hung up at once, and the caller ended on the M_END without
 the reply.  In the model the callee may hang up holding a last word
 (`word`), which reaches the caller while both are in the session
 (`SDeliver`); `Mut_endheld.cfg` has the old rule.
+
+Teardown steps (2026-10-19): the code kept the steps in seven flags, and
+three outlived the state they belong to: a DISCONNECT held to drain, from a
+session the peer left by calling again, ended the next session at once; a
+notice owed when the host dialed inside the reply guard made a later
+LISTEN ON a no-op; and another transmission's TX_COMPLETE ended a teardown
+whose reply had not gone out.  They are one field now
+(`arq_session_t.teardown`), reset on every state change.  The model always
+had it so: a CALL taken resets `wish`, and `reply` ends only with `Reply`.
+`Mut_staleteardown.cfg` and `Mut_skipreply.cfg` have the old code's rules.
 
 Results:
 
@@ -106,6 +118,11 @@ Results:
 - `Mut_endheld.cfg`: lossless, an M_END taken while the callee holds a last
   word the caller has not got (the rule as first merged).  It violates
   `NoLostWord`.
+- `Mut_staleteardown.cfg`: lossless, a CALL taken keeps the DISCONNECT the
+  last session held back to drain.  It violates `NoInherited`.
+- `Mut_skipreply.cfg`: lossless, an end owing the reply to its peer's
+  DISCONNECT goes idle without keying it.  It violates `Clean`: the peer
+  retries and times out.
 - `Mut_anypattern.cfg`: a pattern ends an end in any state, not only one
   whose DISCONNECT is out.  No error, the same 264 149 states: as with the
   session-id check below, frames in order and timers longer than an

@@ -131,12 +131,16 @@ static void car_stop(arq_session_t *sess);
 static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev);
 static void car_begin_disconnect(arq_session_t *sess, uint64_t now);
 
-static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
-                       uint64_t deadline_ms, arq_event_id_t deadline_event)
+/* The station enters a connection state, at teardown step td (ARQ_TD_NONE
+ * but for a reply owed to the peer's DISCONNECT): no step outlives its
+ * state. */
+static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_teardown_t td,
+                          uint64_t deadline_ms, arq_event_id_t deadline_event)
 {
     HLOGD(LOG_COMP, "conn: %s -> %s",
           arq_conn_state_name(sess->conn_state),
           arq_conn_state_name(new_state));
+    sess->teardown = td;
     if (new_state == ARQ_CONN_CONNECTED && sess->conn_state != ARQ_CONN_CONNECTED)
     {
         sess->host_released  = false;        /* a new session: a new reader */
@@ -144,11 +148,10 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     if (new_state == ARQ_CONN_DISCONNECTING && sess->conn_state != ARQ_CONN_DISCONNECTING)
     {
         sess->disc_defer_count = 0;          /* a fresh teardown: a fresh budget */
-        sess->disconnect_sent  = false;
     }
     /* The carousel runs only in CONNECTED; its seed lasts until the station is
      * idle, so the teardown still hears its peer. */
-    if (new_state != ARQ_CONN_CONNECTED && !(new_state == ARQ_CONN_DISCONNECTING && sess->car_ending))
+    if (new_state != ARQ_CONN_CONNECTED && !(new_state == ARQ_CONN_DISCONNECTING && !car_is_master(sess->car)))
     {
         /* The DISCONNECT exchange after it keeps the carousel's view of the
          * peer (session_ctl_mode): here, not in car_stop, which runs only
@@ -164,15 +167,6 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     sess->state_enter_ms = time_now_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
-    /* A deferred LISTEN OFF must SURVIVE the transition that the grace period
-     * exists to protect.  Clearing it here meant the successful case — the
-     * handshake completes and we enter CONNECTED — silently swallowed the
-     * host's channel release: the interlock was honoured only when the call
-     * failed anyway.  Carry it into CONNECTED and act on it there; drop it only
-     * when the session is already going idle, where it has nothing left to
-     * release. */
-    if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
-        sess->deferred_listen_off = false;
     /* The right to complete a session from LISTENING is granted only by the
      * ACCEPT-exhaustion fallback, which sets it right after this call. */
     sess->accept_fallback = false;
@@ -188,6 +182,32 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
         sess->peer_tx_mode      = sess->initial_payload_mode;
         sess->tx_inflight_bytes = 0;
     }
+}
+
+static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
+                       uint64_t deadline_ms, arq_event_id_t deadline_event)
+{
+    sess_enter_td(sess, new_state, ARQ_TD_NONE, deadline_ms, deadline_event);
+}
+
+/* The callee ends a carousel session in the carousel's slots (car_io_end),
+ * and only then does the carousel run through DISCONNECTING (sess_enter). */
+static bool callee_ending(const arq_session_t *sess)
+{
+    return sess->conn_state == ARQ_CONN_DISCONNECTING && sess->car_active;
+}
+
+/* A CONNECT that came during the teardown waits to be placed. */
+static bool call_queued(const arq_session_t *sess)
+{
+    return sess->pending_connect_call[0] != '\0';
+}
+
+/* The peer's DISCONNECT is still being answered: its reply or, after it, the
+ * host's DISCONNECTED. */
+static bool answering_peer_end(const arq_session_t *sess)
+{
+    return sess->teardown == ARQ_TD_REPLYING || sess->teardown == ARQ_TD_NOTIFYING;
 }
 
 
@@ -431,7 +451,7 @@ static void enter_idle_after_call(arq_session_t *sess)
  * queue alone (arq.c's disconnect callback clears both). */
 static void notify_session_ended(arq_session_t *sess)
 {
-    if (sess->pending_connect)
+    if (call_queued(sess))
         return;
     if (g_cbs.notify_disconnected)
         g_cbs.notify_disconnected(false);
@@ -444,9 +464,9 @@ static void notify_session_ended(arq_session_t *sess)
  * an end that has already sent its DISCONNECT takes one as the answer. */
 static void send_disconnect_reply(arq_session_t *sess)
 {
-    if (!sess->pending_disconnect_reply)
+    if (sess->teardown != ARQ_TD_REPLYING)
         return;
-    sess->pending_disconnect_reply = false;
+    sess->teardown = ARQ_TD_NOTIFYING;
     if (g_cbs.send_pattern)
         g_cbs.send_pattern(CAR_PATTERN_ACK);
     else
@@ -466,7 +486,7 @@ bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now)
 {
     (void)now;
     /* My DISCONNECT is out: the answer is an ACK pattern (send_disconnect_reply). */
-    if (sess->conn_state == ARQ_CONN_DISCONNECTING && sess->disconnect_sent && !sess->tx_active)
+    if (sess->conn_state == ARQ_CONN_DISCONNECTING && sess->teardown == ARQ_TD_SENT && !sess->tx_active)
         return true;
     return sess->car_active && sess->car && car_expect_pattern(sess->car);
 }
@@ -627,7 +647,7 @@ static void car_io_end(void *ctx)
     arq_session_t *sess = ctx;
     HLOGI(LOG_COMP, "carousel: DISCONNECT in my slot");
     send_disconnect_frame(sess);
-    sess->disconnect_sent = true;
+    sess->teardown = ARQ_TD_SENT;
 }
 
 static void car_io_trace(void *ctx, const char *line)
@@ -684,7 +704,6 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     sess->ctl_floor_at_stop = false;
     sess->car_active = true;
     sess->car_session = true;
-    sess->car_ending = false;
     sess->car_last_rx_ms = now;
     if (is_caller)
         car_start_sender(sess->car, now);
@@ -696,13 +715,12 @@ static void car_stop(arq_session_t *sess)
 {
     sess->car_active = false;
     sess->car_session = false;
-    sess->car_ending = false;
     /* The reply to the peer's DISCONNECT is an ACK pattern, and patterns are
      * the session's (the seed keys them: modem_apply_crc_seed): the seed
      * stays until it has gone out.  Cleared first, the reply went out on the
      * station-wide patterns and the peer, still in the session, never
      * detected it (harness, a callee ending at the floor: 3 runs of 3). */
-    if (sess->crc_seed && !sess->pending_disconnect_reply)
+    if (sess->crc_seed && sess->teardown != ARQ_TD_REPLYING)
         car_set_seed(sess, 0);
 }
 
@@ -729,8 +747,7 @@ static bool car_fail_closed(arq_session_t *sess, uint64_t now)
 #define ARQ_CAR_END_WAIT_MS 180000
 static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
 {
-    sess->pending_disconnect = false;
-    sess->disconnect_deadline_ms = 0;
+    sess->teardown_deadline_ms = 0;
     bool quiet = car_peer_quiet(sess, now);
     sess->tx_retries_left = quiet ? 0 : ARQ_DISCONNECT_RETRY_SLOTS;
     if (car_is_master(sess->car))
@@ -752,10 +769,9 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
         enter_idle_after_call(sess);
         return;
     }
-    sess->car_ending = true;
-    sess->car_end_deadline_ms = now + ARQ_CAR_END_WAIT_MS;
+    sess->teardown_deadline_ms = now + ARQ_CAR_END_WAIT_MS;
     car_request_end(sess->car);
-    sess_enter(sess, ARQ_CONN_DISCONNECTING, sess->car_end_deadline_ms, ARQ_EV_TIMER_CAROUSEL);
+    sess_enter(sess, ARQ_CONN_DISCONNECTING, sess->teardown_deadline_ms, ARQ_EV_TIMER_CAROUSEL);
 }
 
 /* The caller's DISCONNECT: when it would run into a slot of the callee's,
@@ -793,9 +809,8 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_TX_COMPLETE:
         /* Deferred from RX_DISCONNECT: fire now that DISCONNECT ACK is sent,
          * giving the TCP data thread time to drain data_rx_buffer_arq. */
-        if (sess->pending_disconnect_notify)
+        if (sess->teardown == ARQ_TD_NOTIFYING)
         {
-            sess->pending_disconnect_notify = false;
             notify_session_ended(sess);
             /* Call fully torn down — restore the pre-call idle status. */
             enter_idle_after_call(sess);
@@ -806,7 +821,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         /* Still finishing the peer's teardown: the listen intent is recorded
          * (listen_enabled) and enter_idle_after_call() restores LISTENING once
          * our reply is out.  Entering it now would drop the reply's timer. */
-        if (sess->pending_disconnect_notify)
+        if (answering_peer_end(sess))
             break;
         sess_enter(sess, ARQ_CONN_LISTENING, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         break;
@@ -818,8 +833,6 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->call_sends_done = 0;
         sess->call_carrier    = 0;
-        sess->pending_disconnect = false;  /* clear stale deferred disconnect from prior session */
-        sess->disconnect_deadline_ms = 0;
         sess->payload_mode       = FREEDV_MODE_DATAC15;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         send_call_accept(sess, false);
@@ -938,7 +951,6 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         if (ev->session_id != sess->session_id ||
             ev->car_called_crc != arq_protocol_callsign_crc16(sess->remote_call))
             break;
-        sess->pending_disconnect = false;
         arq_set_session_bw(ev->bw_hz, false);
         sess->car_peer_ctl_deaf = ev->car_ctl_deaf;
         sess->car_tx_level = sess->car_peer_ctl_deaf ? 0 : ev->car_level;
@@ -1023,12 +1035,14 @@ static void car_connect_callee(arq_session_t *sess, const arq_event_t *ev)
         g_cbs.notify_connected(sess->remote_call, sess->local_call);
     if (g_timing)
         arq_timing_record_connect(g_timing, sess->control_mode);
-    bool release = sess->deferred_listen_off;
+    /* A LISTEN OFF deferred by the grace period is honoured here, read before
+     * entering CONNECTED resets it: dropped on the way, the successful
+     * handshake silently swallowed the host's channel release. */
+    bool release = sess->teardown == ARQ_TD_LISTEN_OFF;
     sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_CAROUSEL);
     if (release)
     {
         HLOGI(LOG_COMP, "connected with a deferred LISTEN OFF — releasing the radio");
-        sess->deferred_listen_off = false;
         if (g_timing) arq_timing_record_disconnect(g_timing, "listen_off");
         notify_session_ended(sess);
         enter_idle_after_call(sess);
@@ -1121,10 +1135,9 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TIMER_RETRY:
-        if (sess->deferred_listen_off &&
+        if (sess->teardown == ARQ_TD_LISTEN_OFF &&
             time_now_ms() - sess->state_enter_ms >= ARQ_LISTEN_OFF_GRACE_MS)
         {
-            sess->deferred_listen_off = false;
             if (g_cbs.notify_cancelpending)
                 g_cbs.notify_cancelpending();
             notify_session_ended(sess);
@@ -1191,7 +1204,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_APP_STOP_LISTEN:
         if (time_now_ms() - sess->state_enter_ms < ARQ_LISTEN_OFF_GRACE_MS)
         {
-            sess->deferred_listen_off = true;
+            sess->teardown = ARQ_TD_LISTEN_OFF;
             sess->deadline_ms = sess->state_enter_ms + ARQ_LISTEN_OFF_GRACE_MS;
             break;
         }
@@ -1214,11 +1227,10 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
  * session can end places the call, not only the ones that were thought of. */
 static void fire_deferred_connect(arq_session_t *sess)
 {
-    if (!sess->pending_connect)
+    if (!call_queued(sess))
         return;
     arq_event_t ev = { .id = ARQ_EV_APP_CONNECT };
     snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", sess->pending_connect_call);
-    sess->pending_connect = false;
     sess->pending_connect_call[0] = '\0';
     HLOGI(LOG_COMP, "Teardown complete: placing deferred call to %s", ev.remote_call);
     arq_fsm_dispatch(sess, &ev);
@@ -1282,7 +1294,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 
     /* The callee ending a carousel session: the carousel keeps its slots, and
      * its next one carries our DISCONNECT (car_io_end). */
-    if (sess->car_ending && sess->car_active)
+    if (callee_ending(sess))
     {
         switch (ev->id)
         {
@@ -1294,7 +1306,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
             /* My DISCONNECT went in a slot instead of an answer, so the
              * caller's ACK now is its answer to it: the caller acks only
              * rounds, and I send none while ending. */
-            if (sess->disconnect_sent && !ev->pattern_break)
+            if (sess->teardown == ARQ_TD_SENT && !ev->pattern_break)
             {
                 disconnect_answered(sess);
                 return;
@@ -1306,7 +1318,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
             car_on_tx_done(sess->car, now);
             return;
         case ARQ_EV_TIMER_CAROUSEL:
-            if (now >= sess->car_end_deadline_ms)
+            if (now >= sess->teardown_deadline_ms)
             {
                 HLOGI(LOG_COMP, "Disconnect finalized (timeout: the caller never answered)");
                 notify_session_ended(sess);
@@ -1345,7 +1357,6 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
          * fails.  The old session's own teardown notice is suppressed then
          * (see fire_deferred_connect below): arriving after the new CONNECT,
          * it would read as "your call failed". */
-        sess->pending_connect = true;
         snprintf(sess->pending_connect_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         HLOGI(LOG_COMP, "CONNECT to %s deferred until the teardown completes",
               sess->pending_connect_call);
@@ -1354,10 +1365,9 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_APP_DISCONNECT:
         /* The host changed its mind about a deferred call: drop it.  The
          * teardown already in progress carries on regardless. */
-        if (sess->pending_connect)
+        if (call_queued(sess))
         {
             HLOGI(LOG_COMP, "Deferred CONNECT to %s cancelled", sess->pending_connect_call);
-            sess->pending_connect = false;
             sess->pending_connect_call[0] = '\0';
         }
         break;
@@ -1367,9 +1377,8 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
          * free, and the peer will time out without them.  That also rules
          * out a deferred call, so drop it and say so -- otherwise the client
          * would wait for a CONNECTED that is not coming. */
-        if (sess->pending_connect)
+        if (call_queued(sess))
         {
-            sess->pending_connect = false;
             sess->pending_connect_call[0] = '\0';
             notify_session_ended(sess);
         }
@@ -1381,7 +1390,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         if (car_disconnect_must_wait(sess, ev, now) || disconnect_must_wait(sess))
             break;
         send_disconnect_frame(sess);
-        sess->disconnect_sent = true;
+        sess->teardown = ARQ_TD_SENT;
         tm = arq_protocol_mode_timing(session_ctl_mode(sess));
         sess->deadline_ms    = retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f);
         sess->deadline_event = ARQ_EV_TIMER_RETRY;
@@ -1395,14 +1404,12 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
          * it retrying for 21 s, deaf to the CALL that came next (on air, car24,
          * gateway <- IC-7100: the redial failed).  Answer it as CONNECTED
          * does, one reply guard later. */
-        if (!sess->disconnect_sent)
+        if (sess->teardown != ARQ_TD_SENT)
         {
             HLOGI(LOG_COMP, "Disconnect crossed the peer's before ours went out: replying");
-            sess->pending_disconnect_reply  = true;
-            sess->pending_disconnect_notify = true;
             if (g_timing) arq_timing_record_disconnect(g_timing, "peer_ack");
-            sess_enter(sess, ARQ_CONN_DISCONNECTED,
-                       time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+            sess_enter_td(sess, ARQ_CONN_DISCONNECTED, ARQ_TD_REPLYING,
+                          time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
             break;
         }
         disconnect_answered(sess);
@@ -1410,7 +1417,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_RX_PATTERN:
         /* The answer to my DISCONNECT (send_disconnect_reply). */
-        if (sess->disconnect_sent && !ev->pattern_break)
+        if (sess->teardown == ARQ_TD_SENT && !ev->pattern_break)
             disconnect_answered(sess);
         break;
 
@@ -1425,9 +1432,9 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
          * end wait.  So that one takes a CALL for it from anyone
          * (specs/teardown, Mut_samecall).  Not with a call of our own queued:
          * that one goes out first. */
-        if (!sess->pending_connect && sess->listen_enabled &&
+        if (!call_queued(sess) && sess->listen_enabled &&
             (strncmp(ev->remote_call, sess->remote_call, CALLSIGN_MAX_SIZE) == 0 ||
-             (sess->car_ending && sess->disconnect_sent)))
+             (callee_ending(sess) && sess->teardown == ARQ_TD_SENT)))
         {
             HLOGI(LOG_COMP, "Disconnect finalized (%s is calling)", ev->remote_call);
             notify_session_ended(sess);
@@ -1445,7 +1452,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                 break;
             sess->tx_retries_left--;
             send_disconnect_frame(sess);
-            sess->disconnect_sent = true;
+            sess->teardown = ARQ_TD_SENT;
             tm = arq_protocol_mode_timing(session_ctl_mode(sess));
             sess->deadline_ms = retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f);
             HLOGD(LOG_COMP, "Disconnect tx retry=%d", sess->tx_retries_left);
@@ -1504,10 +1511,9 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         car_on_time(sess->car, now);
         break;
     case ARQ_EV_APP_DISCONNECT:
-        if (sess->pending_connect)
+        if (call_queued(sess))
         {
             HLOGI(LOG_COMP, "Deferred CONNECT to %s cancelled", sess->pending_connect_call);
-            sess->pending_connect = false;
             sess->pending_connect_call[0] = '\0';
         }
         /* Deliver what is queued or in flight first (bounded by the drain
@@ -1525,8 +1531,8 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             uint64_t budget = (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000ULL;
             uint64_t car_budget = car_drain_budget_ms(sess->car);
             if (car_budget > budget) budget = car_budget;
-            sess->pending_disconnect = true;
-            sess->disconnect_deadline_ms = now + budget;
+            sess->teardown = ARQ_TD_DRAINING;
+            sess->teardown_deadline_ms = now + budget;
             HLOGD(LOG_COMP, "DISCONNECT deferred until delivered (up to %llu s)",
                   (unsigned long long)(budget / 1000));
             car_wish_end(sess->car);      /* the callee's polls say so: M_END */
@@ -1540,7 +1546,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         return false;
     }
     /* A deferred DISCONNECT goes once everything has been delivered. */
-    if (sess->pending_disconnect && car_drained(sess) && !sess->tx_active)
+    if (sess->teardown == ARQ_TD_DRAINING && car_drained(sess) && !sess->tx_active)
         car_begin_disconnect(sess, now);
     /* The callee's application has hung up (M_END), and everything is
      * delivered both ways: the caller ends the session now, its DISCONNECT
@@ -1562,8 +1568,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
     /* A deferred APP_DISCONNECT whose drain deadline has passed: tear down
      * now, whatever is still undelivered, so the rig is never keyed on after
      * the host has disconnected (K7EK "Mercury kept hanging on"). */
-    if (sess->pending_disconnect && sess->disconnect_deadline_ms != 0 &&
-        time_now_ms() >= sess->disconnect_deadline_ms)
+    if (sess->teardown == ARQ_TD_DRAINING && time_now_ms() >= sess->teardown_deadline_ms)
     {
         HLOGW(LOG_COMP,
               "Deferred DISCONNECT drain timeout (%ds) — forcing teardown",
@@ -1604,9 +1609,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          * already in the air finishes; truncating a keydown mid-frame only
          * leaves the peer decoding garbage, since the transmitter is keyed
          * either way. */
-        sess->pending_disconnect = false;
-        sess->pending_connect    = false;   /* releasing the radio rules out a queued call */
-        sess->pending_connect_call[0] = '\0';
+        sess->pending_connect_call[0] = '\0';   /* releasing the radio rules out a queued call */
         notify_session_ended(sess);
         enter_idle_after_call(sess);
         return;
@@ -1621,9 +1624,8 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          *
          * Without a disconnect already under way this is a CONNECT on a live
          * session, which is a host error; it stays ignored. */
-        if (sess->pending_disconnect)
+        if (sess->teardown == ARQ_TD_DRAINING)
         {
-            sess->pending_connect = true;
             snprintf(sess->pending_connect_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
             HLOGI(LOG_COMP, "CONNECT to %s deferred until the teardown completes",
                   sess->pending_connect_call);
@@ -1639,12 +1641,6 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          * decodes before its tail has played out -- on air (bench run 14) the
          * DISCONNECT decoded 186 ms before the peer's TX_COMPLETE -- and a
          * reply keyed at once (40 ms) clipped it. */
-        sess->pending_disconnect_reply = true;
-        /* Peer-initiated disconnect supersedes any locally deferred one. */
-        sess->pending_disconnect = false;
-        /* Defer notify until TX_COMPLETE so data_rx_buffer_arq has time to
-         * drain to the TCP socket before UUCP sees the DISCONNECTED signal. */
-        sess->pending_disconnect_notify = true;
         if (g_timing) arq_timing_record_disconnect(g_timing, "rx_disconnect");
         /* What of ours the peer never got is dropped, not drained: its
          * DISCONNECT means its application hung up (from then on its end
@@ -1657,8 +1653,11 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
             if (left)
                 HLOGW(LOG_COMP, "Peer ended the session: %zu bytes of ours undelivered", left);
         }
-        sess_enter(sess, ARQ_CONN_DISCONNECTED,
-                   time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+        /* It supersedes a DISCONNECT of ours held to drain.  The host hears
+         * DISCONNECTED once the reply is out (ARQ_TD_NOTIFYING), so
+         * data_rx_buffer_arq has drained to the TCP socket first. */
+        sess_enter_td(sess, ARQ_CONN_DISCONNECTED, ARQ_TD_REPLYING,
+                      time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
         return;
 
     default:
@@ -1762,7 +1761,7 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
      * idle -- whichever way the session ended.  Not while a peer-initiated
      * disconnect's notice is still pending: that waits for the DISCONNECT ack
      * frame to finish transmitting, and a CALL must not be queued over it. */
-    if (sess->pending_connect && !sess->pending_disconnect_notify &&
+    if (call_queued(sess) && !answering_peer_end(sess) &&
         (sess->conn_state == ARQ_CONN_DISCONNECTED ||
          sess->conn_state == ARQ_CONN_LISTENING))
         fire_deferred_connect(sess);
@@ -1770,10 +1769,10 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     /* CONNECTED with the carousel has no deadline of its own: the runtime
      * fires the carousel's (and the lost-peer and drain watchdogs') through
      * the one deadline it knows. */
-    if (sess->car_active && sess->conn_state == ARQ_CONN_DISCONNECTING && sess->car_ending)
+    if (callee_ending(sess))
     {
         uint64_t d = car_next_deadline(sess->car);
-        if (sess->car_end_deadline_ms < d) d = sess->car_end_deadline_ms;
+        if (sess->teardown_deadline_ms < d) d = sess->teardown_deadline_ms;
         sess->deadline_ms    = d;
         sess->deadline_event = ARQ_EV_TIMER_CAROUSEL;
     }
@@ -1783,9 +1782,8 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
         uint64_t d = car_next_deadline(sess->car);
         if (sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS < d)
             d = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
-        if (sess->pending_disconnect && sess->disconnect_deadline_ms &&
-            sess->disconnect_deadline_ms < d)
-            d = sess->disconnect_deadline_ms;
+        if (sess->teardown == ARQ_TD_DRAINING && sess->teardown_deadline_ms < d)
+            d = sess->teardown_deadline_ms;
         sess->deadline_ms    = d;
         sess->deadline_event = ARQ_EV_TIMER_CAROUSEL;
     }
