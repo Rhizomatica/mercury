@@ -382,8 +382,18 @@ func TestMercuryARQTransfer(t *testing.T) {
 	// MFSK, and estacao2 polled until its uucico was killed.
 	if by := os.Getenv("MERCURY_TEST_DISCONNECT_BY"); by == "A" || by == "B" {
 		hang, hangRW, other, otherRW, name := connA, rwA, connB, rwB, "B"
+		hangData, otherData := dataA, dataB
 		if by == "B" {
 			hang, hangRW, other, otherRW, name = connB, rwB, connA, rwA, "A"
+			hangData, otherData = dataB, dataA
+		}
+		// A last word written just before the DISCONNECT, as a Winlink client
+		// sends FQ and hangs up: it must reach the peer.  Data and command
+		// travel on separate sockets, and on air the DISCONNECT overtook it
+		// and the session ended with the word dropped.
+		lastWord := []byte("LAST-WORD-0123")
+		if _, err := hangData.Write(lastWord); err != nil {
+			t.Fatalf("write last word: %v", err)
 		}
 		// Not sendControlCommand: the control port is busy with notifications
 		// (BUFFER, PTT, ...) by now, and the first line need not be the reply.
@@ -421,6 +431,18 @@ func TestMercuryARQTransfer(t *testing.T) {
 		}
 		if !heard {
 			failWithLogs("%s never heard %s's DISCONNECT", name, by)
+		}
+		var got []byte
+		_ = otherData.SetReadDeadline(time.Now().Add(5 * time.Second))
+		for len(got) < len(lastWord) {
+			n, err := otherData.Read(buf)
+			got = append(got, buf[:n]...)
+			if err != nil {
+				break
+			}
+		}
+		if string(got) != string(lastWord) {
+			failWithLogs("%s got %q of %s's last word %q", name, got, by, lastWord)
 		}
 		t.Logf("%s heard %s's DISCONNECT after %.1f s", name, by, time.Since(t0).Seconds())
 	}

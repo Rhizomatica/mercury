@@ -943,29 +943,11 @@ void *arq_reactor_thread(void *port)
             }
         }
 
-        if (ctl_client >= 0)
-        {
-            short events = pfds[2].revents;
-            if (events & (POLLERR | POLLHUP | POLLNVAL))
-            {
-                close_ctl_client(&ctl_client, &data_client, true);
-            }
-            else if (events & POLLIN)
-            {
-                ssize_t n = recv(ctl_client, (char *)rx_buf, sizeof(rx_buf), 0);
-                if (n > 0)
-                {
-                    HLOGD("tcp-ctl", "recv %zd bytes from control client", n);
-                    process_control_bytes(ctl_line, &ctl_len, rx_buf, n);
-                }
-                else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
-                {
-                    HLOGW("tcp-ctl", "Control recv returned %zd (err=%d), closing", n, sock_errno());
-                    close_ctl_client(&ctl_client, &data_client, true);
-                }
-            }
-        }
-
+        /* The data socket before the control socket: an application writes
+         * its last bytes and then DISCONNECT, and a pass that finds both must
+         * queue the bytes first, or the FSM ends a session it thinks drained
+         * and drops them.  (And its pfds index is as poll() saw it: the
+         * control block may close ctl_client.) */
         if (data_client >= 0)
         {
             short events = pfds[(ctl_client >= 0) ? 3 : 2].revents;
@@ -989,6 +971,29 @@ void *arq_reactor_thread(void *port)
                 {
                     HLOGW("tcp-data", "Data recv returned %zd (err=%d), closing", n, sock_errno());
                     close_data_client(&data_client);
+                }
+            }
+        }
+
+        if (ctl_client >= 0)
+        {
+            short events = pfds[2].revents;
+            if (events & (POLLERR | POLLHUP | POLLNVAL))
+            {
+                close_ctl_client(&ctl_client, &data_client, true);
+            }
+            else if (events & POLLIN)
+            {
+                ssize_t n = recv(ctl_client, (char *)rx_buf, sizeof(rx_buf), 0);
+                if (n > 0)
+                {
+                    HLOGD("tcp-ctl", "recv %zd bytes from control client", n);
+                    process_control_bytes(ctl_line, &ctl_len, rx_buf, n);
+                }
+                else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
+                {
+                    HLOGW("tcp-ctl", "Control recv returned %zd (err=%d), closing", n, sock_errno());
+                    close_ctl_client(&ctl_client, &data_client, true);
                 }
             }
         }

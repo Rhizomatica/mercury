@@ -29,6 +29,7 @@
 #include <stdatomic.h>
 
 #include "../common/hermes_log.h"
+#include "../common/os_interop.h"
 #include "../common/virtual_clock.h"
 #include "../common/defines_modem.h"
 #include "../common/ring_buffer_posix.h"
@@ -461,6 +462,22 @@ int arq_get_bw(void)
  * CMD bridge worker
  * ====================================================================== */
 
+/* Payload messages put on the bus, and those the payload bridge has written
+ * to g_app_tx_buf.  The two bridges run apart, so a DISCONNECT right behind
+ * the application's last bytes could reach the FSM before them: nothing
+ * queued, the session ended at once and the bytes were dropped (on air,
+ * 2026-10-18: a reply, then DISCONNECT, the same millisecond). */
+static atomic_uint g_payload_sent, g_payload_written;
+
+/* Until every payload put on the bus before now is in g_app_tx_buf.  Bounded:
+ * a full buffer holds the bridge, and then the FSM sees bytes queued anyway. */
+static void wait_payload_written(void)
+{
+    unsigned target = atomic_load(&g_payload_sent);
+    for (int i = 0; i < 1000 && (int)(atomic_load(&g_payload_written) - target) < 0; i++)
+        hermes_usleep(1000);
+}
+
 static void handle_cmd(const arq_cmd_msg_t *msg)
 {
     arq_event_t ev = {0};
@@ -624,6 +641,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
          * air-side DISCONNECT handshake.  The retry-exhaustion path bounds the
          * drain so a dead channel still tears down quickly (see arq_fsm.c). */
         arq_tnc_send_disconnected();
+        wait_payload_written();
         ev.id = ARQ_EV_APP_DISCONNECT;
         break;
 
@@ -641,6 +659,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         break;
 
     case ARQ_CMD_CLIENT_DISCONNECT:
+        wait_payload_written();
         ev.id = ARQ_EV_APP_DISCONNECT;
         break;
 
@@ -688,8 +707,12 @@ static void *arq_payload_bridge_worker(void *arg)
     while (arq_channel_bus_recv_payload(&g_bus, &payload) == 0)
     {
         if (payload.len == 0 || payload.len > INT_BUFFER_SIZE)
+        {
+            atomic_fetch_add(&g_payload_written, 1);
             continue;
+        }
         write_buffer(g_app_tx_buf, payload.data, payload.len);
+        atomic_fetch_add(&g_payload_written, 1);
 
         arq_event_t ev = { .id = ARQ_EV_APP_DATA_READY };
         evq_push(&ev);
@@ -1279,6 +1302,7 @@ int arq_submit_tcp_payload(const uint8_t *data, size_t len)
     int rc = arq_channel_bus_try_send_payload(&g_bus, data, len);
     if (rc == 0)
     {
+        atomic_fetch_add(&g_payload_sent, 1);
         char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
         arq_conn_get_calls(my_call, src, dst, CALLSIGN_MAX_SIZE);
         const char *peer = (dst[0] && strcmp(dst, my_call) != 0) ? dst : src;
