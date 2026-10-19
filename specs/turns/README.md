@@ -73,3 +73,8 @@ against 0.9 s), and nothing on OFDM.  That is inside M's 700 ms guard.
 When M asks (the idle poll's delay, carousel.c `m_decide_idle`: the
 session's first ask at once, no backing off before S has been heard) is
 covered as it is: M may key at any time its slot rules allow.
+
+M_END (poll type 3, `car_wish_end`) is S's ordinary poll with its type
+changed: it goes in the same slots, with the same length, so the slot
+rules here cover it as they cover any poll of S's.  Which end may end the
+session on it, and when, is `specs/teardown` (`NoUnasked`, `NoLostWord`).
