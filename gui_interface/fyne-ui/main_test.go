@@ -9,18 +9,27 @@ import (
 	"testing"
 	"time"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/theme"
 )
 
-func TestCompactTelemetryRowKeepsLabelAndValueSeparate(t *testing.T) {
-	label := canvas.NewText("Client TCP", themeDim())
-	value := canvas.NewText("true", themeForeground())
-	row := compactTelemetryRow(label, value)
-	if got, want := row.MinSize().Width, label.MinSize().Width+value.MinSize().Width; got < want {
-		t.Fatalf("compactTelemetryRow width = %v, want at least %v", got, want)
+// TestHalfWidthColumnMinSizeReservesTwiceWidestChild pins the layout's MinSize
+// to twice its widest child: Layout hands each child half the container width,
+// so a smaller MinSize would resize the cards below their own minimum.
+func TestHalfWidthColumnMinSizeReservesTwiceWidestChild(t *testing.T) {
+	wide := canvas.NewText("", themeDim())
+	wide.SetMinSize(fyne.NewSize(200, 20))
+	narrow := canvas.NewText("", themeDim())
+	narrow.SetMinSize(fyne.NewSize(60, 40))
+
+	var col halfWidthColumn
+	min := col.MinSize([]fyne.CanvasObject{wide, narrow})
+	if got, want := min.Width, float32(400); got != want {
+		t.Fatalf("MinSize width = %v, want %v", got, want)
 	}
-	if got, want := row.MinSize().Height, label.MinSize().Height; got < want {
-		t.Fatalf("compactTelemetryRow height = %v, want at least %v", got, want)
+	if got, want := min.Height, float32(20+40+theme.Padding()); got != want {
+		t.Fatalf("MinSize height = %v, want %v", got, want)
 	}
 }
 

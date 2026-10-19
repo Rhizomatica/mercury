@@ -1276,9 +1276,12 @@ func main() {
 	)
 
 	txCard := widget.NewCard("", "", container.NewVBox(
-		bindings.txGainLabel,
+		container.NewHBox(
+			bindings.txGainLabel,
+			layout.NewSpacer(),
+			bindings.txPeakLabel,
+		),
 		txGainSlider,
-		bindings.txPeakLabel,
 	))
 
 	// compact telemetry layout matching screenshot: left labels small, right values small-bold
@@ -1294,7 +1297,7 @@ func main() {
 		compactTelemetryRow(bindings.peerSnrRowLabel, bindings.peerSnrText),
 		compactTelemetryRow(canvas.NewText("My callsign", themeDim()), bindings.userCallsText),
 		compactTelemetryRow(canvas.NewText("Target callsign", themeDim()), bindings.destCallsText),
-		compactTelemetryRow(canvas.NewText("Client TCP", themeDim()), bindings.tcpText),
+		compactTelemetryRow(canvas.NewText("Client connected", themeDim()), bindings.tcpText),
 		compactTelemetryRow(canvas.NewText("Bytes transmitted", themeDim()), bindings.txBytesText),
 		compactTelemetryRow(canvas.NewText("Bytes received", themeDim()), bindings.rxBytesText),
 		compactTelemetryRow(canvas.NewText("Freq offset", themeDim()), bindings.freqOffsetText),
@@ -2131,12 +2134,6 @@ func themeForeground() color.Color { return theme.Color(theme.ColorNameForegroun
 func themeDim() color.Color        { return theme.Color(theme.ColorNamePlaceHolder) }
 
 func compactTelemetryRow(label, value fyne.CanvasObject) fyne.CanvasObject {
-	if label == nil {
-		return value
-	}
-	if value == nil {
-		return label
-	}
 	return container.NewHBox(label, layout.NewSpacer(), value)
 }
 
@@ -2179,5 +2176,8 @@ func (halfWidthColumn) MinSize(objects []fyne.CanvasObject) fyne.Size {
 		}
 		addPadding = true
 	}
+	// Layout hands each child half the width, so the column needs twice the
+	// widest child to avoid resizing the cards below their own minimum.
+	minSize.Width *= 2
 	return minSize
 }
