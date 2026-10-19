@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <math.h>
 
 #include "chanutil.h"
@@ -21,11 +22,17 @@ struct chanutil { watterson_t w; };
 int chanutil_preset_from_name(const char *s)
 {
     if (!s) return -1;
-    if (!strcmp(s, "awgn") || !strcmp(s, "AWGN")) return CHAN_AWGN;
-    if (!strcmp(s, "mpp")  || !strcmp(s, "MPP"))  return CHAN_MPP;
-    if (!strcmp(s, "mpg")  || !strcmp(s, "MPG"))  return CHAN_MPG;
-    if (!strcmp(s, "mpd")  || !strcmp(s, "MPD"))  return CHAN_MPD;
-    if (!strcmp(s, "awgnc"))                      return CHAN_AWGN_C;
+    /* Case-insensitive throughout, so CHAN=MPP and CHAN=CCIR-POOR both work. */
+    if (!strcasecmp(s, "awgn"))  return CHAN_AWGN;
+    if (!strcasecmp(s, "mpp"))   return CHAN_MPP;
+    if (!strcasecmp(s, "mpg"))   return CHAN_MPG;
+    if (!strcasecmp(s, "mpd"))   return CHAN_MPD;
+    if (!strcasecmp(s, "awgnc")) return CHAN_AWGN_C;
+    {
+        int n; const watterson_preset_t *all = watterson_presets(&n);
+        for (int i = 0; i < n; i++)
+            if (!strcasecmp(s, all[i].name)) return CHAN_STD_BASE + i;
+    }
     return -1;
 }
 
@@ -34,11 +41,16 @@ const char *chanutil_preset_name(int preset)
     switch (preset)
     {
     case CHAN_AWGN:   return "AWGN";
-    case CHAN_MPP:    return "MPP (2 path, 1.0 ms, 1.0 Hz)";
-    case CHAN_MPG:    return "MPG (2 path, 0.5 ms, 0.1 Hz)";
-    case CHAN_MPD:    return "MPD (2 path, 2.0 ms, 2.0 Hz)";
+    case CHAN_MPP:    return "MPP (legacy Butterworth: 2 path, 1.0 ms, 1.0 Hz cutoff)";
+    case CHAN_MPG:    return "MPG (legacy Butterworth: 2 path, 0.5 ms, 0.1 Hz cutoff)";
+    case CHAN_MPD:    return "MPD (legacy Butterworth: 2 path, 2.0 ms, 2.0 Hz cutoff)";
     case CHAN_AWGN_C: return "AWGN via the complex pipeline (calibration)";
-    default:          return "?";
+    default:
+        {
+            int n; const watterson_preset_t *all = watterson_presets(&n);
+            if (preset >= CHAN_STD_BASE && preset < CHAN_STD_BASE + n) return all[preset - CHAN_STD_BASE].title;
+            return "?";
+        }
     }
 }
 
@@ -52,32 +64,48 @@ static int add_paths(watterson_t *w, int preset)
          * the AWGN and faded rows are produced by identical machinery. */
         return watterson_add_path(w, 0.0f, 0.0f, 0.0f, 1.0f) < 0 ? -1 : 0;
     case CHAN_MPG:
+        watterson_set_spectrum(w, WATTERSON_SPECTRUM_LEGACY);
         if (watterson_add_path(w, 0.0f, 0.1f, 0.0f, 0.7f) < 0) return -1;
         if (watterson_add_path(w, 0.5f, 0.1f, 0.0f, 0.7f) < 0) return -1;
         return 0;
     case CHAN_MPP:
+        watterson_set_spectrum(w, WATTERSON_SPECTRUM_LEGACY);
         if (watterson_add_path(w, 0.0f, 1.0f, 0.0f, 0.7f) < 0) return -1;
         if (watterson_add_path(w, 1.0f, 1.0f, 0.0f, 0.7f) < 0) return -1;
         return 0;
     case CHAN_MPD:
+        watterson_set_spectrum(w, WATTERSON_SPECTRUM_LEGACY);
         if (watterson_add_path(w, 0.0f, 2.0f, 0.0f, 0.7f) < 0) return -1;
         if (watterson_add_path(w, 2.0f, 2.0f, 0.0f, 0.7f) < 0) return -1;
         return 0;
     default:
-        return -1;
+        {
+            int n; const watterson_preset_t *all = watterson_presets(&n);
+            if (preset >= CHAN_STD_BASE && preset < CHAN_STD_BASE + n)
+                return watterson_apply_preset(w, &all[preset - CHAN_STD_BASE]);
+            return -1;
+        }
     }
 }
 
-/* Settle the Doppler taps before any burst is presented.
+/* Settle the channel before any burst is presented.
  *
- * watterson_init() zeroes the tap IIR state, and the taps are produced by
- * filtering the model's own white noise -- so they START AT ZERO and ramp to
- * their steady-state distribution over a few filter time constants.  A burst
- * handed to a fresh channel therefore opens inside an artificial deep fade,
- * which is exactly where its preamble is, so the damage lands on acquisition
- * and reads as a catastrophically bad mode.  Measured: DATAC16 on MPP showed
- * 10 % delivered at -7.3 dB against the 67 % in docs/MODES.md until the taps
- * were warmed first.
+ * This exists for the LEGACY (Butterworth IIR) presets mpg/mpp/mpd.  Their
+ * taps are produced by filtering the model's own white noise through an IIR
+ * whose state watterson_add_path() primes with only 1000 draws, so at a low
+ * cutoff they start far below their steady-state power and ramp up over a few
+ * filter time constants.  A burst handed to a fresh channel therefore opens
+ * inside an artificial deep fade, which is exactly where its preamble is, so
+ * the damage lands on acquisition and reads as a catastrophically bad mode.
+ * Measured: DATAC16 on MPP showed 10 % delivered at -7.3 dB against the 67 %
+ * in docs/MODES.md until the taps were warmed first.
+ *
+ * The Gaussian presets (ccir-*, itur-*) do not need this: their FIR history
+ * is pre-filled with noise, so the tap is in its steady-state distribution
+ * from sample 0 (see gaussian_tap_setup in common/watterson.c).  For them the
+ * warm-up only flushes the delay line, at most 56 samples (7 ms at 8 kHz),
+ * and advances the random stream.  It is still run so that one seed names
+ * one realisation for every preset in the same way.
  *
  * Zeros are the right warm-up input -- the tap generator does not depend on
  * the signal -- and the measurement accumulators are reset afterwards so the

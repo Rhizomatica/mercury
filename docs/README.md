@@ -29,7 +29,8 @@ having — they are not updated as the code moves on.
 | [WEBSOCKET_API.md](WEBSOCKET_API.md) | The WebSocket UI API end to end: transport, every command, every event, reply and error, and the binary waterfall frame. |
 | [MODES.md](MODES.md) | All modulation modes by index, where each is used, and measured bandwidth, payload, FEC and delivery rates — including the Mercury-specific DATAC15/16/17, MFSK and QAM16C2. |
 | [BROADCAST-WIRE-FORMAT.md](BROADCAST-WIRE-FORMAT.md) | The broadcast plane on the wire: frame layout, RaptorQ symbol sizing, and mode agreement. |
-| [watterson_model.md](watterson_model.md) | The HF channel simulator used for every measurement in these docs, and how its noise axis is calibrated. |
+| [CHANNEL-MODEL.md](CHANNEL-MODEL.md) | The Watterson HF channel simulator as it is today: the Gaussian Doppler spectrum of CCIR 520-2 / ITU-R F.1487, the named presets (`ccir-poor`, `itur-mm`, ...), the legacy Butterworth presets kept for older results, and the validation of every preset: the C unit tests that CI runs, and a dated one-off comparison with MATLAB's channel objects kept as data. |
+| [watterson_model.md](watterson_model.md) | The Watterson simulator's noise axis (how `--No` maps to SNR3k and how that relates to codec2's `ch`), its API, and the double-precision filter state. Its preset table describes the legacy presets; see CHANNEL-MODEL.md for the current model. Not every measurement in these docs used this simulator: `MODES.md` used `ch`. |
 
 ## Guides — doing a particular thing
 

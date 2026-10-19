@@ -54,7 +54,10 @@ func TestMercuryARQBidirectional(t *testing.T) {
 		params.No_dBHz = no
 	}
 	if v := os.Getenv("MERCURY_CH_FADING"); v != "" {
-		params.Fading = v // ch: mpg|mpp|mpd ; watterson: good|moderate|poor
+		// ch: mpg|mpp|mpd.  watterson: any name from utils/watterson_test
+		// --list-presets, e.g. ccir-poor or itur-mm (standard), or the legacy
+		// good/moderate/poor/flutter/mpg/mpp/mpd (Butterworth taps).
+		params.Fading = v
 	}
 	requireChFading(t, repoRoot, params)
 	if v := os.Getenv("MERCURY_CH_GAIN"); v != "" {

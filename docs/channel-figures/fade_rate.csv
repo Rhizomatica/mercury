@@ -1,0 +1,5 @@
+standard_preset,spread_hz,legacy_preset,legacy_cutoff_hz,seconds_legacy,seconds_standard,seed_legacy,seed_standard,fades_per_s_legacy,fades_per_s_standard,fades_per_s_matlab,fades_per_s_closed_form,n_fades_legacy,n_fades_standard,n_fades_matlab
+ccir-good,0.1,good,0.1,4500,4500,21,7,0.0992,0.0514,0.0487,0.0507,446,231,219
+ccir-moderate,0.5,moderate,1,900,900,22,8,0.9732,0.2503,0.2722,0.2536,871,224,245
+ccir-poor,1,poor,1,900,900,23,9,1.0067,0.5151,0.4889,0.5072,901,461,440
+ccir-flutter,10,flutter,10,900,900,24,10,9.8313,5.0547,5.07,5.0716,8799,4524,4563

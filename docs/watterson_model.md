@@ -1,5 +1,18 @@
 # Watterson Model Implementation Summary
 
+> **Superseded in part (2026-10-12).** This page describes the Watterson
+> simulator as it shipped up to and including release 1.9.18: Doppler taps
+> shaped by a second-order Butterworth filter with its cutoff at the quoted
+> frequency, and the four presets `--good`, `--moderate`, `--poor`,
+> `--flutter`. Since the `channel-model` change those are the **legacy**
+> presets (`WATTERSON_SPECTRUM_LEGACY`), kept unchanged so that older results
+> can be reproduced. The current model (Gaussian Doppler spectrum, `doppler_hz`
+> = the ITU-R spread of 2 sigma, the CCIR 520-2 and ITU-R F.1487 presets
+> `ccir-*` and `itur-*`, the exact delay line, the validation)
+> is described in [CHANNEL-MODEL.md](CHANNEL-MODEL.md). The sections below on
+> the noise calibration, the SNR3k measurement, the API and the double-precision
+> filter state are still current; the preset table and the examples are legacy.
+
 ## Files Created/Modified
 
 | File | Status | Purpose |
@@ -46,6 +59,13 @@ After the fix the reported `SNR3k` tracks `--No` with the correct slope and **ag
 
 ### SNR calibration vs `ch.c`
 
+> Note (2026-10-12): the paragraph below is the state at the time it was
+> written. The review of the `channel-model` change measured the printed SNR3k
+> against the output: it follows the `ch.c` convention (faded analytic-signal
+> power over complex noise power in 3 kHz, before the SSB filter) and equals
+> the in-band SNR of the real output with `--ssbfilt 1`; with `--ssbfilt 0` it
+> reads 3.01 dB high. See "The tool" in [CHANNEL-MODEL.md](CHANNEL-MODEL.md).
+
 `watterson_test` reads ~3 dB **lower** than `modem/freedv/ch.c` at the same `--No` in AWGN-only mode (a signal-power convention difference; the modem's measured SNR sits between the two). When using SNR thresholds derived with `ch` (e.g. `docs/MODES.md`), read the **reported** `SNR3k` rather than assuming `ch`-equivalent `--No` values. Note the `--No` operating range also differs from `ch` (watterson needs a more-negative `--No` for the same SNR), and a fading preset further lowers the mean SNR by the (physical) fade loss.
 
 ### API
@@ -62,11 +82,17 @@ watterson_dispose(&w);
 
 Supports up to 4 paths (`WATTERSON_MAX_PATHS`).
 
-### Presets (CLI)
+### Presets (CLI) — legacy Butterworth presets
 
-| Preset | Doppler σ | Delay | Paths |
+The quoted frequency is the Butterworth 3 dB cutoff, which is the spectrum's
+rms width; in the standard's sense (2 sigma) each is about twice the number
+shown. `--good` is a single path with no delay. The standard presets are
+listed by `utils/watterson_test --list-presets` and in
+[CHANNEL-MODEL.md](CHANNEL-MODEL.md).
+
+| Preset | Butterworth cutoff (legacy) | Delay | Paths |
 |--------|-----------|-------|-------|
-| `--good` | 0.1 Hz | 0.5 ms | 1 |
+| `--good` | 0.1 Hz | none | 1 |
 | `--moderate` | 1.0 Hz | 1.0 ms | 2 |
 | `--poor` | 1.0 Hz | 2.0 ms | 2 |
 | `--flutter` | 10.0 Hz | 2.0 ms | 2 |
@@ -95,7 +121,10 @@ cd ../utils && make watterson_test
 # AWGN only
 ./utils/watterson_test in.raw out.raw --No -95
 
-# CCIR Poor channel
+# CCIR Poor channel (2 ms, 1 Hz Doppler spread, Gaussian spectrum)
+./utils/watterson_test in.raw out.raw --ccir-poor --No -95
+
+# the legacy "poor" preset (Butterworth, about a 2 Hz spread), unchanged
 ./utils/watterson_test in.raw out.raw --poor --No -95
 
 # Custom 2 paths with ±10 Hz Doppler offset

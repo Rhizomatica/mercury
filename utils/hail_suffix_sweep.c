@@ -137,9 +137,20 @@ int main(int argc, char **argv)
      * column, which is why the header says which was used. */
     int    winmult = (argc > 6) ? atoi(argv[6]) : 3;
     if (winmult < 1) winmult = 1;
-    if (chan < 0) { fprintf(stderr, "unknown channel (awgn|mpg|mpp|mpd)\n"); return 1; }
+    if (chan < 0)
+    {
+        fprintf(stderr, "unknown channel '%s': awgn, awgnc, mpg, mpp, mpd (legacy Butterworth presets)\n"
+                        "or any watterson preset name, e.g. ccir-poor, itur-mm (case-insensitive;\n"
+                        "utils/watterson_test --list-presets prints them)\n", argv[5]);
+        return 1;
+    }
     if (trials <= 0 || sufflen <= 0 || sufflen > SUFFIX_MAX)
-    { fprintf(stderr, "usage: %s [trials] [suffix_len] [snr_lo] [snr_hi]\n", argv[0]); return 1; }
+    {
+        fprintf(stderr, "usage: %s [trials] [suffix_len] [snr_lo] [snr_hi] [channel] [window_bursts]\n"
+                        "  channel: awgn (default), awgnc, mpg, mpp, mpd, or any watterson preset\n"
+                        "           name, e.g. ccir-poor (utils/watterson_test --list-presets)\n", argv[0]);
+        return 1;
+    }
 
     mfsk_t m;
     ofdm_frame_t o;

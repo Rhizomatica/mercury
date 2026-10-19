@@ -84,7 +84,7 @@ conditions (all optional; default is codec2 `ch` on an effectively clean link):
 | `MERCURY_CH_ENGINE` | `ch` (default, codec2 AWGN/MPP), `watterson` (in-tree ITU-R fading), or `pathsim` (AE4JY reference — requires `MERCURY_PATHSIM_BIN`) |
 | `MERCURY_PATHSIM_BIN` | path to a streaming-mode `pathsim` binary (`MERCURY_CH_ENGINE=pathsim`) |
 | `MERCURY_CH_NO` | AWGN noise density dBHz (`ch`/`watterson`; SNR3k ≈ −No − 14.82). For `pathsim`, carries its native `--snr` dB instead |
-| `MERCURY_CH_FADING` | fading profile — `ch`: `mpg`/`mpp`/`mpd`; `watterson`: `good`/`moderate`/`poor`/`flutter`; `pathsim`: a preset name, e.g. `ccir-poor`, `midlat-dist-nvis` |
+| `MERCURY_CH_FADING` | fading profile — `ch`: `mpg`/`mpp`/`mpd`; `watterson`: any name from `utils/watterson_test --list-presets`, e.g. `ccir-poor` or `itur-mm` (standard), or the legacy `good`/`moderate`/`poor`/`flutter`/`mpg`/`mpp`/`mpd` (Butterworth taps; the watterson `mpg`/`mpp`/`mpd` are not `ch`'s profiles); `pathsim`: a preset name, e.g. `ccir-poor`, `midlat-dist-nvis` |
 | `MERCURY_CH_GAIN` | linear channel gain (default 1.0) |
 | `MERCURY_CH_NO_FWD` / `_REV` | per-direction noise override (asymmetric link: A→B forward data vs B→A reverse polls and patterns) |
 | `MERCURY_CH_FADING_FWD` / `_REV` | per-direction fading profile (`none` disables one direction) |
