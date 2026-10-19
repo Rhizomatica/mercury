@@ -2,7 +2,8 @@
 
 add_library(mercury_core STATIC)
 
-# Search for libraries
+### LIBRARIES ###
+
 find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(hidapi-libusb REQUIRED IMPORTED_TARGET hidapi-libusb)
@@ -10,13 +11,13 @@ pkg_check_modules(hidapi-libusb REQUIRED IMPORTED_TARGET hidapi-libusb)
 if(ENABLE_HAMLIB)
     pkg_check_modules(hamlib REQUIRED IMPORTED_TARGET hamlib)
 
-    target_link_libraries(mercury_core PRIVATE PkgConfig::hamlib)
-    target_compile_definitions(mercury_core PRIVATE "HAVE_HAMLIB")
+    target_link_libraries(mercury_core PUBLIC PkgConfig::hamlib)
+    target_compile_definitions(mercury_core PUBLIC "HAVE_HAMLIB")
 endif()
 
 find_package(Threads REQUIRED)
 
-target_link_libraries(mercury_core PRIVATE
+target_link_libraries(mercury_core PUBLIC
     Threads::Threads
     m
     ffaudio
@@ -27,7 +28,9 @@ target_link_libraries(mercury_core PRIVATE
 )
 
 # Add compile definitions
-target_compile_definitions(mercury_core PRIVATE _GNU_SOURCE)
+target_compile_definitions(mercury_core PUBLIC _GNU_SOURCE)
+
+### SOURCES ###
 
 # Generate web_packed.c
 file(GLOB_RECURSE WEB_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gui_interface/websocket/web/*")
