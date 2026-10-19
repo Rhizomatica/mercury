@@ -39,6 +39,8 @@ void           sim_channel_set_snr_asym(sim_channel_t *ch, double snr_dir0_db, d
  * Takes precedence over the cliff model while installed (count > 0). */
 typedef struct { int freedv_mode; double per; } sim_mode_per_t;
 #define SIM_MODE_PER_MAX 12
+/* With per-mode PER: the return direction (1) is also lost below this SNR. */
+void           sim_channel_set_return_snr(sim_channel_t *ch, double snr_db);
 void           sim_channel_set_mode_per(sim_channel_t *ch,
                                         const sim_mode_per_t *table, int count);
 

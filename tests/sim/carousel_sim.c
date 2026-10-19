@@ -559,6 +559,14 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
         sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
         snr_db = 10.0;
     }
+    else if (!strncmp(chan, "nvisa:", 6)) {  /* nvisa:B  nvis, and only B dB back (#397) */
+        sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
+        snr_dir[0] = 10.0; snr_dir[1] = atof(chan + 6);
+        sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
+        sim_channel_set_return_snr(ch, snr_dir[1]);
+        asym = true;
+        snr_db = snr_dir[1] < snr_dir[0] ? snr_dir[1] : snr_dir[0];
+    }
     if (snr_out) *snr_out = snr_db;
     return ch;
 }

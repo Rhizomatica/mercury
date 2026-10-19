@@ -20,6 +20,8 @@ struct sim_channel {
     bool     cliff_enabled;   /* mode-aware erasure (see sim_channel_set_snr) */
     double   snr_db;          /* current channel SNR when cliff_enabled */
     bool     asym;            /* per-direction SNR (sim_channel_set_snr_asym) */
+    double   return_cliff_db; /* with per-mode PER: direction 1 also below this
+                               * SNR, as a cliff (sim_channel_set_return_snr) */
     double   snr_dir_db[2];
     sim_mode_per_t mode_per[SIM_MODE_PER_MAX]; /* empirical per-mode erasure */
     int      mode_per_count;
@@ -70,6 +72,7 @@ sim_channel_t *sim_channel_create(const sim_channel_cfg_t *cfg)
     ch->state    = cfg->seed ? cfg->seed : 0x9E3779B97F4A7C15ULL;
     ch->per      = cfg->per;
     ch->guard_ms = cfg->guard_ms;
+    ch->return_cliff_db = NAN;
     return ch;
 }
 
@@ -107,6 +110,18 @@ void sim_channel_set_snr_asym(sim_channel_t *ch, double snr_dir0_db, double snr_
     ch->asym = true;
     ch->snr_dir_db[0] = snr_dir0_db;
     ch->snr_dir_db[1] = snr_dir1_db;
+}
+
+void sim_channel_set_return_snr(sim_channel_t *ch, double snr_db)
+{
+    if (ch) ch->return_cliff_db = snr_db;
+}
+
+/* Direction 1 behind the return path's cliff (nvisa:B), on top of the
+ * per-mode PER. */
+static bool below_return(const sim_channel_t *ch, int dir, int freedv_mode)
+{
+    return (dir & 1) && !isnan(ch->return_cliff_db) && ch->return_cliff_db < mode_cliff_db(freedv_mode);
 }
 
 void sim_channel_set_mode_per(sim_channel_t *ch,
@@ -220,8 +235,8 @@ bool sim_channel_syncable(const sim_channel_t *ch, uint64_t now_ms,
     if (ch->mode_per_count > 0) {
         for (int i = 0; i < ch->mode_per_count; i++)
             if (ch->mode_per[i].freedv_mode == freedv_mode)
-                return ch->mode_per[i].per < 0.5;
-        return true;
+                return ch->mode_per[i].per < 0.5 && !below_return(ch, dir, freedv_mode);
+        return !below_return(ch, dir, freedv_mode);
     }
     if (ch->cliff_enabled)
         return (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) >= cliff;
@@ -238,6 +253,7 @@ double sim_channel_frame_per(const sim_channel_t *ch, uint64_t now_ms, int dir, 
     } else if (ch->mode_per_count > 0) {
         for (int i = 0; i < ch->mode_per_count; i++)
             if (ch->mode_per[i].freedv_mode == freedv_mode) { per = ch->mode_per[i].per; break; }
+        if (below_return(ch, dir, freedv_mode)) per = SIM_CLIFF_PER;
     } else if (ch->cliff_enabled &&
                (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode)) {
         per = SIM_CLIFF_PER;
@@ -265,6 +281,8 @@ bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                 per = ch->mode_per[i].per;
                 break;
             }
+        if (below_return(ch, dir, freedv_mode))
+            per = SIM_CLIFF_PER;
     }
     else if (ch->cliff_enabled &&
              (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode))
