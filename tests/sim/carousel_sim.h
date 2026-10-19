@@ -29,6 +29,9 @@ typedef struct {
     int      kd_unexplained;      /* ... over a keydown of the peer that could be sensed */
     const char *failed;           /* a station failed the session (car_failed), or NULL */
     uint64_t air_ms[2];           /* each station on the air */
+    uint64_t silent_ms[2];        /* each station's longest time hearing nothing of its peer, frame
+                                     or pattern, to the end of the run: what the FSM's lost-peer
+                                     watchdog counts (240 s ends a session) */
     int      msgs;                /* a traffic script's messages (0: a transfer) */
     uint64_t msg_delay_ms[CAR_SIM_MSGS];   /* ...each from written to delivered (UINT64_MAX: never) */
 } car_sim_result_t;
@@ -51,7 +54,8 @@ void carousel_sim_force_spurious_break(const int *keydown_idx, int n);
 void carousel_sim_force_corrupt(const int *frame_idx, int n);
 
 /* A connected session, A sending first, B too when bidir; chan as in
- * ab_bench (clean | awgn:<per> | cliff:<snr> | nvis | fade:<snr>:<hz>). */
+ * ab_bench (clean | awgn:<per> | cliff:<snr> | nvis | fade:<snr>:<hz>);
+ * cliff:<snr>:<per> loses that share of the frames above the cliff too. */
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res);
 
 /* The channel such a run uses (fresh, seeded): for bounds. */

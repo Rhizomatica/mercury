@@ -210,7 +210,11 @@ What the rules became in `carousel.c`, beyond §2-§4:
   the round's rung, so S can score a loss); a round on a rung S had not had
   yet is first resent on the last one S answered on, where S, hearing
   nothing, went back to listening.  S falls back to listening at the floor
-  after 90 s of nothing from M.
+  after 90 s of nothing from M.  An idle poll unanswered is asked again 3 s
+  after M decides so, in the first gap clear of the slots it opened (at the
+  floor, before its continuation slots), not at the idle backoff (up to
+  60 s): three of those fill the 240 s lost-peer watchdog, and a lossy link
+  lost three in a row often enough to end idle sessions.
 - **Both ways in one exchange** above the floor on a clean link: M's poll
   carries M's round after it, S answers with its poll and its round.  At
   the floor, or lossy, M takes turns of at least two rounds.

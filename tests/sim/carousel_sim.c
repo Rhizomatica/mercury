@@ -95,6 +95,7 @@ typedef struct {
     bool     nav_ok, nav_sent;
     uint64_t nav_from;
     uint64_t air_ms;               /* on the air, all keydowns */
+    uint64_t heard_at, silent_ms;  /* the peer last heard (frame or pattern); the longest gap */
 } station_t;
 
 static station_t S[2];
@@ -536,7 +537,11 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
         snr_db = m;
     }
     else if (!strncmp(chan, "awgn:", 5)) sim_channel_set_per(ch, atof(chan + 5));
-    else if (!strncmp(chan, "cliff:", 6)) { sim_channel_set_snr(ch, atof(chan + 6)); snr_db = atof(chan + 6); }
+    else if (!strncmp(chan, "cliff:", 6)) {   /* cliff:S, or cliff:S:P: P of the frames above it lost too */
+        double per;
+        sim_channel_set_snr(ch, atof(chan + 6)); snr_db = atof(chan + 6);
+        if (sscanf(chan + 6, "%*f:%lf", &per) == 1) sim_channel_set_per(ch, per);
+    }
     else if (!strncmp(chan, "step:", 5)) {   /* step:A:B:T  A dB, then B dB from T s on */
         sscanf(chan + 5, "%lf:%lf:%lf", &step_from, &step_to, &step_at_s);
         sim_channel_set_snr(ch, step_from); snr_db = step_from;
@@ -553,6 +558,13 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
     }
     if (snr_out) *snr_out = snr_db;
     return ch;
+}
+
+/* s heard its peer at now_ms: the silence the FSM's lost-peer watchdog counts. */
+static void heard(station_t *s)
+{
+    if (now_ms - s->heard_at > s->silent_ms) s->silent_ms = now_ms - s->heard_at;
+    s->heard_at = now_ms;
 }
 
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res)
@@ -651,11 +663,15 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                 collisions++;
                 if (trace) printf("%9.1f COLLISION at %c\n", now_ms / 1000.0, 'A' + s->id);
             } else if (e.mode == SIM_MODE_PATTERN) {
-                if (!getenv("CAR_NOPATTERN_RX"))
+                if (!getenv("CAR_NOPATTERN_RX")) {
+                    heard(s);
                     car_on_pattern(&s->car, now_ms, (int)e.len);
+                }
             } else if (e.mode == ARQ_CONTROL_MODE) {
+                heard(s);
                 car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)), 0);
             } else if (e.mode == s->rx_mode && (!cs_decodable || s->bound_at <= e.f_start)) {
+                heard(s);
                 car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)), 0);
             }
             free(e.bytes);
@@ -683,6 +699,8 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                   !memcmp(S[0].rx, S[1].tx, S[0].rx_len < S[1].tx_len ? S[0].rx_len : S[1].tx_len);
     res->done_ms = done_ms;
     res->air_ms[0] = S[0].air_ms; res->air_ms[1] = S[1].air_ms;
+    now_ms = done_ms ? done_ms : limit_ms;              /* ...and the silence still running */
+    for (int i = 0; i < 2; i++) { heard(&S[i]); res->silent_ms[i] = S[i].silent_ms; }
     res->msgs = script ? sc_n : 0;
     for (int k = 0; k < res->msgs; k++)
         res->msg_delay_ms[k] = sc[k].delivered ? sc[k].delivered - sc[k].written : UINT64_MAX;

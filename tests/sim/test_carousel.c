@@ -2,8 +2,9 @@
  * sim's channel: every run completes, delivers exactly what was sent, and
  * never keys over the peer.
  *
- * Timing is not asserted: tests/sim/README.md has the throughput matrix, run
- * with carousel_bench.
+ * Timing is not asserted, except that an idle station keeps hearing its peer
+ * within the lost-peer watchdog's 240 s: tests/sim/README.md has the
+ * throughput matrix, run with carousel_bench.
  *
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -21,7 +22,10 @@
 void setUp(void) {}
 /* Here, not at the end of a test: a failed assertion leaves the test at once,
  * and the next one would run with its sensing. */
-void tearDown(void) { unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); }
+void tearDown(void)
+{
+    unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_SCRIPT");
+}
 
 static void check(uint64_t seed, const char *chan, bool bidir)
 {
@@ -177,6 +181,35 @@ static void test_carousel_request_response_completes(void)
     }
 }
 
+/* Idle on a lossy link, with patterns (the floor's continuation slots): each
+ * station keeps hearing the other within the 240 s after which the FSM's
+ * lost-peer watchdog ends the session.  An unanswered idle poll was asked
+ * again only at the backoff (60 s), and these seeds went 240 s without a
+ * frame: cliff:10:0.2 13 of 20, cliff:-5:0.1 and cliff:-9:0.1 9 of 20.  A
+ * try takes longer at the floor (37 s with MFSK control), so some runs still
+ * do there: of seeds 1-100, cliff:-9:0.1 1 (seed 98), cliff:-5:0.2 7 and
+ * cliff:-9:0.2 9. */
+static void test_carousel_idle_keeps_hearing_the_peer(void)
+{
+    static const char *CHANS[] = { "cliff:10:0.2", "cliff:-5:0.1", "cliff:-9:0.1" };
+    setenv("CAR_CS_DECODABLE", "1", 1);
+    setenv("CAR_SCRIPT", "A30,B30+1800000", 1);   /* 30 min idle between two lines */
+    for (size_t c = 0; c < sizeof(CHANS) / sizeof(CHANS[0]); c++)
+        for (uint64_t seed = 1; seed <= 20; seed++) {
+            car_sim_result_t r;
+            char what[64];
+            carousel_sim_run(seed, CHANS[c], false, LIMIT_MS, &r);
+            snprintf(what, sizeof(what), "seed %llu %s", (unsigned long long)seed, CHANS[c]);
+            TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
+            TEST_ASSERT_NOT_EQUAL_MESSAGE(0, r.done_ms, what);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.collisions, what);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.overruns, what);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.kd_overlaps, what);
+            TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(240000, r.silent_ms[0], what);
+            TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(240000, r.silent_ms[1], what);
+        }
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -241,5 +274,6 @@ int main(void)
     RUN_TEST(test_carousel_piece_size_agrees);
     RUN_TEST(test_carousel_bandwidth_max_level);
     RUN_TEST(test_carousel_request_response_completes);
+    RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }
