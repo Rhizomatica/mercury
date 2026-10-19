@@ -301,8 +301,12 @@ static uint64_t level_air(const car_t *c, int lv) { return mode_air(lmode(c, lv)
  * the control mode: my control goes on the floor, where the peer listens
  * after S_FALLBACK_MS of silence, and the first frame either way measures
  * the link again.  At 30 s NVIS, which loses most fast frames to its
- * multipath, went to a floor it did not need (+19 %, sim). */
-#define SILENT_MS 90000
+ * multipath, went to a floor it did not need (+19 %, sim).  At 90 s it still
+ * did both ways: the silence counts my own keydowns, and a receiver whose
+ * DATAC17 rounds were all lost moved its control to MFSK while the peer was
+ * answering every poll (sim, nvis bidir: 3813 s median, trunk 3451; at 150 s
+ * 3347, and the floor 155 s after step:10:-12, where 90 s took 100). */
+#define SILENT_MS 150000
 #define CTL_DEAF_ON_DB   (ARQ_SNR_MIN_DATAC15_DB - 0.5f)
 #define CTL_DEAF_OFF_DB  (ARQ_SNR_MIN_DATAC15_DB + 1.0f)
 /* How the peer hears me now: its last reading of me, moved by as much as my
