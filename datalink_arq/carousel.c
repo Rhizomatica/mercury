@@ -1053,7 +1053,10 @@ static bool reprobe_due(const car_t *c, int lv, uint64_t now)
 #define FLOOR_OVERHEAD_MS (PATTERN_AIR_MS + GUARD_MS + ISS_GUARD_MS + HEAD_MS + TAIL_MS)
 static uint64_t round_overhead(const car_t *c, int lv)
 {
-    return lv == 0 && c->io.pattern ? FLOOR_OVERHEAD_MS : ROUND_OVERHEAD_MS;
+    if (lv == 0 && c->io.pattern) return FLOOR_OVERHEAD_MS;
+    /* The poll goes on the floor to a peer deaf to the control mode: its
+     * MFSK frame, not the 4.4 s it is otherwise. */
+    return ctl_on_floor(c) ? ROUND_OVERHEAD_MS - 4400 + level_air(c, 0) : ROUND_OVERHEAD_MS;
 }
 static int keydown_cap(const car_t *c, int lv);
 /* For bounds (tests/sim/carousel_bound.c): a rung's geometry as the carousel
