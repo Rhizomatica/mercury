@@ -359,8 +359,10 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
 /* --- CALL/ACCEPT of Mercury 2.0 (PACKET_TYPE_ARQ_CALL2) ---
  *
  * 14 bytes (a DATAC16 frame), padded to the frame on MFSK.  Byte 0 is the
- * framer: type CALL2, and in its extension the bandwidth token (2 bits) and
- * the 2.x minor revision (3 bits, 0).  Every 1.9.x release drops the type,
+ * framer: type CALL2, and in its extension the bandwidth token (2 bits), the
+ * 2.x minor revision (2 bits, 0) and the encryption bit (ARQ_CONNECT_EXT_CRYPTO:
+ * on a CALL the caller offers an encrypted session, on an ACCEPT the callee
+ * takes it; arq_crypto.h).  Every 1.9.x release drops the type,
  * and a CALL of theirs (PACKET_TYPE_ARQ_CALL) addressed to this station is
  * logged, not answered: the versions do not connect (docs/CAROUSEL-ARQ.md,
  * "Wire formats").
@@ -385,7 +387,8 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
 #define ARQ_CONNECT_MINOR             0
 #define ARQ_CONNECT_EXT_BW_MASK       0x03
 #define ARQ_CONNECT_EXT_MINOR_SHIFT   2
-#define ARQ_CONNECT_EXT_MINOR_MASK    0x1C
+#define ARQ_CONNECT_EXT_MINOR_MASK    0x0C
+#define ARQ_CONNECT_EXT_CRYPTO        0x10
 #define ARQ_ACCEPT_CALLED_CRC_IDX     4
 #define ARQ_ACCEPT_NONCE_IDX          6
 #define ARQ_ACCEPT_LEVEL_IDX          8
@@ -394,24 +397,29 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                                                the control mode */
 #define ARQ_ACCEPT_SNR_IDX            9
 
-/** Build a CALL.  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
+/** Build a CALL.  crypto: offer an encrypted session.
+ *  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
                             uint8_t session_id,
                             const char *caller, const char *called,
-                            int bw_hz);
+                            int bw_hz, bool crypto);
 
 /** Build an ACCEPT.  called: the callsign the CALL was addressed to (the
  *  callee's primary or a secondary); start_level 0..6; ctl_deaf: the callee
  *  hears the caller below the control mode; call_snr_db: what it read the
- *  CALL at (NAN: unknown).  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
+ *  CALL at (NAN: unknown); crypto: take the encrypted session the CALL
+ *  offered.  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                               uint8_t session_id,
                               const char *called, const char *caller,
                               int bw_hz, int start_level, bool ctl_deaf,
-                              float call_snr_db, uint16_t nonce);
+                              float call_snr_db, uint16_t nonce, bool crypto);
 
 /** Is buf a CALL or ACCEPT of this protocol (2.0, any minor revision)? */
 bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len);
+
+/** A CALL's or ACCEPT's encryption bit (ARQ_CONNECT_EXT_CRYPTO). */
+bool arq_protocol_connect_crypto(const uint8_t *buf);
 
 /** Is a CALL or ACCEPT addressed to callsign (bytes 2-3, all 16 bits)? */
 bool arq_protocol_connect_dst_matches(const uint8_t *buf, const char *callsign);

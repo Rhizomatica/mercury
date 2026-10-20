@@ -310,6 +310,9 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     char my_call[CALLSIGN_MAX_SIZE];
     arq_conn_get_calls(my_call, NULL, NULL, sizeof(my_call));
     int bw_hz = is_accept ? arq_reported_bandwidth_hz() : arq_get_bw();
+    bool crypto = g_cbs.crypto_negotiate &&
+                  g_cbs.crypto_negotiate(is_accept ? ARQ_NEG_ACCEPT_OUT : ARQ_NEG_CALL_OUT,
+                                         sess->remote_call, sess->session_id, false);
     if (is_accept)
     {
         /* The callsign the caller dialed: a station answering on a secondary
@@ -319,7 +322,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
                                       called, sess->remote_call, bw_hz,
                                       accept_level(sess), sess->car_ctl_deaf,
                                       sess->car_call_snr != 0.0f ? sess->car_call_snr : NAN,
-                                      sess->car_nonce);
+                                      sess->car_nonce, crypto);
         /* The ACCEPT is the carousel's first poll: from here the caller's
          * frames carry the session seed, and its first round comes on the rung
          * the ACCEPT names. */
@@ -329,7 +332,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     }
     else
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
-                                    my_call, sess->remote_call, bw_hz);
+                                    my_call, sess->remote_call, bw_hz, crypto);
     if (n > 0)
     {
         /* A CALL escalates to the MFSK floor once the fast slots are spent; an
@@ -864,6 +867,8 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = ev->session_id;
         sess->call_rx_mode    = ev->mode;
+        if (g_cbs.crypto_negotiate)
+            g_cbs.crypto_negotiate(ARQ_NEG_CALL_IN, ev->remote_call, ev->session_id, ev->crypto);
         if (!same_session)
         {
             /* A new session takes the CALL's bandwidth; a repeat keeps the
@@ -969,6 +974,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB || mercury_mode_is_mfsk(ev->mode);
         if (sess->car_ctl_deaf) sess->car_rx_level = 0;
         sess->car_my_snr   = ev->rx_snr;
+        if (g_cbs.crypto_negotiate)
+            g_cbs.crypto_negotiate(ARQ_NEG_ACCEPT_IN, sess->remote_call, sess->session_id, ev->crypto);
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call);
         if (g_timing)
