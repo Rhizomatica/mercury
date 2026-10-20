@@ -1231,8 +1231,14 @@ static int choose_level(const car_t *c, uint64_t now)
         }
     /* Where the SNR would start a session, if that is above: a probe there
      * directly, not one rung at a time (sim, step:-12:10: the floor to
-     * DATAC17 took four probes, one exchange each). */
-    if (c->snr_valid) {
+     * DATAC17 took four probes, one exchange each).  Not while my control
+     * goes on the floor: there the channel has not risen both ways, only the
+     * reading of the peer's direction says so, and each probe costs MFSK
+     * exchanges -- on NVIS with the way back at -10 dB the 10 dB reading sent
+     * the session to DATAC1, which delivers 11 % of its frames there, every
+     * time its re-probe came due (sim, nvisa:-10 50 KB: +4.1 % on trunk;
+     * without, a tie, 15 seeds of 30 each way). */
+    if (c->snr_valid && !ctl_on_floor(c)) {
         int up = cap_level(c, car_start_level(c->snr_ema));
         if (up > best && level_potential(c, up) > best_gp &&
             (level_allowed(c, up) ? !c->rung[up].rounds || c->polls - c->rung[up].round_at >= probe_every(c, up)

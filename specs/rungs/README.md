@@ -105,6 +105,8 @@ Which model covers the other 2.0 changes:
   when the poll goes on the floor (`round_overhead`): it changes only the
   goodput S scores rungs by, so S's choice; `RungAgreement` lets S name any
   rung, and agreement and delivery hold for whichever it names.
+- no direct probe while S's control goes on the floor (`choose_level`): it
+  only narrows the rungs S names, which `RungAgreement` leaves free.
 
 ## PollRung
 
