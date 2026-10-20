@@ -249,6 +249,7 @@ else
 HOST_AUDIO_OBJS = host/audio_host.o
 HOST_RADIO_OBJS = host/radio_host.o
 HOST_UI_OBJS = host/ui_host.o
+HOST_API_OBJS = host/api_host.o
 HOST_INI_OBJS =
 HOST_SHM_OBJS =
 endif
@@ -430,13 +431,13 @@ HOST_CFLAGS = $(CFLAGS) -Ihost $(INIPARSER_CFLAGS)
 host/%.o: host/%.c host/mercury_host.h
 	$(CC) $(HOST_CFLAGS) -c $< -o $@
 
-libmercury_host.a: internal_deps $(BCAST_FILE_OBJS) $(MODEM_TOP_OBJS) $(HOST_AUDIO_OBJS) $(HOST_RADIO_OBJS) $(HOST_UI_OBJS)
+libmercury_host.a: internal_deps $(BCAST_FILE_OBJS) $(MODEM_TOP_OBJS) $(HOST_AUDIO_OBJS) $(HOST_RADIO_OBJS) $(HOST_UI_OBJS) $(HOST_API_OBJS)
 ifneq ($(MERCURY_HOST),daemon)
 	$(error libmercury_host.a is the daemon build: make libmercury_host.a MERCURY_HOST=daemon)
 endif
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	rm -f $@
-	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(HOST_AUDIO_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(HOST_AUDIO_OBJS) $(HOST_API_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
 
 # The OS=Windows_NT internal_deps sub-make compiles cm108_ptt.o with
 # -DHAVE_HIDAPI, so the archive must carry the matching vendored hidapi object.

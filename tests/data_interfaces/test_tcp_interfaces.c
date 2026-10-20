@@ -1048,6 +1048,37 @@ void test_cmd_callint_negative(void)
  * This used to be passed through unchanged, inferred from the payload's first
  * byte.  A sender that means "this is a modem frame" now says so with
  * CMD_MODEM_FRAME; CMD_DATA no longer carries a second meaning. */
+/* A host's broadcast chat line (mercury_host_chat_send): framed as a client's
+ * CMD_DATA message -- header, length, padded to the frame -- without touching
+ * the TCP client's reply framing, and refused, never truncated, past one
+ * frame. */
+void test_broadcast_send_message_frames_or_refuses(void)
+{
+    const size_t fsz = 30;
+    broadcast_frame_size_cfg = 0;
+    TEST_ASSERT_EQUAL_INT(-1, broadcast_send_message((const uint8_t *)"hi", 2));   /* no mode yet */
+
+    broadcast_frame_size_cfg = fsz;
+    atomic_store_explicit(&bcast_reply_cmd, CMD_AX25CALLSIGN, memory_order_relaxed);
+    TEST_ASSERT_EQUAL_size_t(fsz - 3, broadcast_message_max());
+    TEST_ASSERT_EQUAL_INT(0, broadcast_send_message((const uint8_t *)"hello", 5));
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    TEST_ASSERT_EQUAL_HEX8(PACKET_TYPE_BROADCAST_DATA, frame_header_packet_type(last_write_buffer_data[0]));
+    TEST_ASSERT_TRUE(frame_header_extension(last_write_buffer_data[0]) & BCAST_EXT_LEN_PREFIX);
+    TEST_ASSERT_EQUAL_HEX8(0, last_write_buffer_data[1]);
+    TEST_ASSERT_EQUAL_HEX8(5, last_write_buffer_data[2]);
+    TEST_ASSERT_EQUAL_MEMORY("hello", last_write_buffer_data + 3, 5);
+    TEST_ASSERT_EQUAL_HEX8(CMD_AX25CALLSIGN, atomic_load(&bcast_reply_cmd));      /* untouched */
+
+    int calls = write_buffer_call_count;
+    uint8_t big[64];
+    memset(big, 'x', sizeof(big));
+    TEST_ASSERT_EQUAL_INT(-2, broadcast_send_message(big, fsz - 2));
+    TEST_ASSERT_EQUAL_INT(calls, write_buffer_call_count);                         /* nothing queued */
+    TEST_ASSERT_EQUAL_INT(0, broadcast_send_message(big, fsz - 3));                /* exactly fits */
+    broadcast_frame_size_cfg = 0;
+}
+
 void test_bcast_rx_cmd_data_exact_size(void)
 {
     const size_t fsz = 10;
@@ -1948,6 +1979,7 @@ int main(void)
     RUN_TEST(test_tnc_send_monitor);
     RUN_TEST(test_tnc_send_monitor_never_drops_a_line);
     /* Broadcast framing helper tests */
+    RUN_TEST(test_broadcast_send_message_frames_or_refuses);
     RUN_TEST(test_bcast_rx_cmd_data_exact_size);
     RUN_TEST(test_bcast_rx_cmd_data_0x60_is_not_special);
     RUN_TEST(test_bcast_rx_cmd_data_short_lowercase_wrapped);

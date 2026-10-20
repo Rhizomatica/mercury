@@ -132,6 +132,52 @@ int mercury_host_ui_command_json(const char *json, size_t len);
  * a client gets once (device lists, radio list, history). */
 void mercury_host_ui_client_connected(void);
 
+/* ---- results of the calls below ---------------------------------------- */
+#define MERCURY_HOST_OK        0
+#define MERCURY_HOST_BAD     (-1)   /* bad argument, or not possible at all     */
+#define MERCURY_HOST_BUSY    (-2)   /* not now: an ARQ session (or a carousel)  */
+#define MERCURY_HOST_NO_LINK (-3)   /* plane arq with no session up             */
+#define MERCURY_HOST_TOO_LONG (-4)  /* does not fit one broadcast frame         */
+#define MERCURY_HOST_FULL    (-5)   /* the session's queue is full: try again   */
+
+/* ---- chat ------------------------------------------------------------------
+ *
+ * The chat lines Mercury keeps (message_store: what went and came on either
+ * plane, across restarts), each a JSONL object:
+ *   {"seq":N,"ts":..,"ms":..,"plane":"arq"|"bcast","dir":"rx"|"tx",
+ *    "peer":"CALL","text":"..."}
+ * seq is 1, 2, 3, ... in the order stored, never reused, kept across
+ * restarts.  Keep the last one taken and ask for what came after.
+ *
+ * mercury_host_chat_since: the lines after after_seq (0: all held), oldest
+ * first, newline-terminated, whole lines only (the rest next call); a cursor
+ * older than the ring starts at the oldest held.  *last_seq gets the seq of
+ * the last line copied, after_seq if none.  Returns the bytes written.
+ *
+ * mercury_host_chat_send: one line, at most 1024 bytes, on plane "arq" (the
+ * session's stream: MERCURY_HOST_NO_LINK with none up, MERCURY_HOST_FULL when
+ * its queue is) or "bcast" (one broadcast frame at the listen mode:
+ * MERCURY_HOST_TOO_LONG past mercury_host_bcast_chat_max(), never truncated;
+ * held while an ARQ session is up, sent after).  Stored as sent, like a
+ * TCP client's. */
+size_t   mercury_host_chat_since(uint64_t after_seq, char *out, size_t out_len, uint64_t *last_seq);
+uint64_t mercury_host_chat_last_seq(void);
+int      mercury_host_chat_send(const char *plane, const char *text);
+size_t   mercury_host_bcast_chat_max(void);
+
+/* ---- the listen mode -------------------------------------------------------
+ *
+ * The payload mode Mercury sits on while no ARQ session is up: what the
+ * broadcast plane hears and sends at.  Indexes are those of -m, `mercury -l`
+ * and the MODE command.  Setting it: MERCURY_HOST_BUSY while an ARQ session
+ * is up, MERCURY_HOST_BAD for a mode not switchable at runtime. */
+int         mercury_host_mode_count(void);
+const char *mercury_host_mode_name(int index);       /* NULL out of range */
+bool        mercury_host_mode_switchable(int index);  /* MODE accepts it */
+bool        mercury_host_mode_carries_files(int index);
+int         mercury_host_listen_mode(void);            /* -1 unknown */
+int         mercury_host_set_listen_mode(int index);
+
 #ifdef __cplusplus
 }
 #endif

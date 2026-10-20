@@ -70,7 +70,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
             test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
             test_message_store test_ui_history test_ws_protocol \
-            test_monitor_frame test_hermes_log test_host
+            test_monitor_frame test_hermes_log test_host test_api_host
 
 .PHONY: all test clean
 
@@ -265,6 +265,9 @@ test_message_store: common/test_message_store.c $(UNITY_SRC) ../common/message_s
 
 # UI history frame builder (pure string function; no engine/websocket deps).
 # host/: the daemon build's audio, radio and UI modules (MERCURY_HOST=daemon).
+test_api_host: host/test_api_host.c $(UNITY_SRC) ../host/api_host.c
+	$(CC) $(CFLAGS) -I../host -I../datalink_broadcast -I../data_interfaces -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 test_host: host/test_host.c $(UNITY_SRC) ../host/audio_host.c ../host/radio_host.c ../host/ui_host.c \
            ../common/ring_buffer_posix.c ../common/shm_posix.c ../common/hermes_log.c \
            ../gui_interface/websocket/ws_json.c

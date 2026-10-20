@@ -63,6 +63,11 @@ void tnc_send_connected();
 void tnc_send_cqframe(const char *source_call, int bw_hz);
 void tnc_send_disconnected();
 void tnc_send_buffer(uint32_t bytes);
+/* A broadcast chat message from the host program, at the listen mode's frame
+ * size: 0, -1 with no broadcast frame size yet, -2 too long for one frame. */
+int broadcast_send_message(const uint8_t *msg, size_t len);
+/* The longest such message at the listen mode, 0 with none set yet. */
+size_t broadcast_message_max(void);
 /* Is a periodic BUFFER report due: the count changed, or -- in a session,
  * with bytes still to confirm -- no BUFFER line went for
  * TNC_BUFFER_REPEAT_MS (50 s)?  (#397) */

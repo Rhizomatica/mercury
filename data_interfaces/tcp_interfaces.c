@@ -1103,6 +1103,9 @@ void *server_worker_thread_ctl(void *port)
  *
  * Returns true if the frame was queued, false if it was discarded.
  */
+static bool bcast_frame_and_queue(uint8_t *decoded_frame, int frame_len,
+                                  uint8_t kiss_cmd, size_t frame_size);
+
 static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
                                          uint8_t kiss_cmd, size_t frame_size)
 {
@@ -1111,7 +1114,38 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
         (kiss_cmd == CMD_AX25 || kiss_cmd == CMD_AX25CALLSIGN)
             ? CMD_AX25CALLSIGN : CMD_DATA,
         memory_order_relaxed);
+    return bcast_frame_and_queue(decoded_frame, frame_len, kiss_cmd, frame_size);
+}
 
+/* A message from the host program (mercury_host_chat_send, plane bcast): a
+ * CMD_DATA message as a client's would be, but leaving the client's reply
+ * framing alone, and refused -- not truncated -- when it does not fit one
+ * frame.  0; -1 with no broadcast frame size yet; -2 too long. */
+int broadcast_send_message(const uint8_t *msg, size_t len)
+{
+    uint8_t frame[MAX_PAYLOAD + 8];
+    size_t frame_size = atomic_load(&broadcast_frame_size_cfg);
+
+    if (frame_size == 0 || frame_size > MAX_PAYLOAD)
+        return -1;
+    if (!msg || len == 0 || len > frame_size - HEADER_SIZE - BCAST_LEN_SIZE)
+        return -2;
+    memcpy(frame, msg, len);
+    return bcast_frame_and_queue(frame, (int)len, CMD_DATA, frame_size) ? 0 : -1;
+}
+
+size_t broadcast_message_max(void)
+{
+    size_t frame_size = atomic_load(&broadcast_frame_size_cfg);
+    return frame_size > HEADER_SIZE + BCAST_LEN_SIZE ? frame_size - HEADER_SIZE - BCAST_LEN_SIZE : 0;
+}
+
+/* Frame a client's (or the host's) payload for the air and queue it: a raw
+ * modem frame as it is, a message behind Mercury's header and length.
+ * decoded_frame must have room for frame_size bytes. */
+static bool bcast_frame_and_queue(uint8_t *decoded_frame, int frame_len,
+                                  uint8_t kiss_cmd, size_t frame_size)
+{
     /* CMD_DATA is used by two very different clients:
      *   - hermes-broadcast: a modem frame with a Mercury broadcast header
      *     already in place (PACKET_TYPE_BROADCAST_CONTROL/_DATA) → pass raw.

@@ -600,6 +600,8 @@ static bool is_payload_split_mode(int mode)
            mode == MERCURY_MODE_MFSK_N32;
 }
 
+bool modem_listen_mode_switchable(int mode) { return is_payload_split_mode(mode); }
+
 /* Which backend owns a given mode. Every current mode is FreeDV; the MFSK
  * fringe mode registers its own backend here (Stage 2). */
 static const modem_backend_t *backend_for_mode(int mode)
