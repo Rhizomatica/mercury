@@ -163,10 +163,25 @@ void test_set_file_same_path_announced_once(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, count, "log location announced more than once");
 }
 
+/* A logger already running belongs to whoever started it: a second init says
+ * so (1), and leaves it running with its settings -- the embedded engine under
+ * a host that runs its own (hermes-radio-daemon). */
+void test_init_reports_a_logger_already_running(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, hermes_log_init(64));
+    hermes_log_set_level(HERMES_LOG_LEVEL_WARN);
+    TEST_ASSERT_EQUAL_INT(1, hermes_log_init(64));
+    TEST_ASSERT_EQUAL_INT(1, hermes_log_init(1024));
+    hermes_log_shutdown();
+    TEST_ASSERT_EQUAL_INT(0, hermes_log_init(64));   /* stopped: starts again */
+    hermes_log_shutdown();
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_set_file_null_path_is_rejected);
+    RUN_TEST(test_init_reports_a_logger_already_running);
     RUN_TEST(test_set_file_unopenable_path_warns_on_stderr);
     RUN_TEST(test_set_file_records_entries);
     RUN_TEST(test_set_file_same_path_announced_once);

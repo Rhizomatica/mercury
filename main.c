@@ -310,6 +310,7 @@ int main(int argc, char *argv[])
                             cli.startup_mode, cli.test_mode) != 0)
     {
         fprintf(stderr, "Mercury engine init failed.\n");
+        hermes_log_shutdown();
         return EXIT_FAILURE;
     }
 
@@ -326,6 +327,7 @@ int main(int argc, char *argv[])
 #endif
 
     mercury_engine_shutdown();
+    hermes_log_shutdown();          /* ours: started above, before the engine */
 
     return 0;
 }

@@ -23,6 +23,9 @@ typedef enum
     HERMES_LOG_LEVEL_ERROR  = 4
 } hermes_log_level_t;
 
+/* Start the logger: 0 when this call started it, 1 when it was running
+ * already (its owner sets the level and the file, and stops it), -1 on
+ * failure. */
 int  hermes_log_init(size_t capacity);
 void hermes_log_shutdown(void);
 void hermes_log_set_level(hermes_log_level_t level);

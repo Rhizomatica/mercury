@@ -118,6 +118,15 @@ static void test_shutdown_stall(void)
         hermes_usleep(10000);
 }
 
+/* The engine started the logger (mercury_engine_init), and so stops it. */
+static bool g_engine_owns_log = false;
+static void engine_log_shutdown(void)
+{
+    if (g_engine_owns_log)
+        hermes_log_shutdown();
+    g_engine_owns_log = false;
+}
+
 int mercury_engine_init(const mercury_config *cfg,
                         const char *config_path,
                         const char *log_path,
@@ -200,7 +209,14 @@ int mercury_engine_init(const mercury_config *cfg,
         virtual_clock_enable(VIRTUAL_CLOCK_EPOCH_MS);
 
     /* ---- logging ---- */
-    if (hermes_log_init(1024) == 0)
+    /* A host that runs the logger itself (hermes-radio-daemon: hermes_log_init
+     * first thing in main, then its own level and file) keeps it: the engine
+     * sets the level and the file, and stops the logger, only when it started
+     * it.  Before, mercury_init overrode the host's settings and the shutdown
+     * stopped the host's logger under it, losing its last lines. */
+    int log_rc = hermes_log_init(1024);
+    g_engine_owns_log = (log_rc == 0);
+    if (log_rc == 0)
     {
         hermes_log_level_t min_level = cfg->trace ? HERMES_LOG_LEVEL_TRACE
                                       : verbose ? HERMES_LOG_LEVEL_DEBUG
@@ -214,7 +230,9 @@ int mercury_engine_init(const mercury_config *cfg,
                                 log_jsonl);
         HLOGI("engine", "Logger initialised (min_level=%s)",
               cfg->trace ? "TRACE" : verbose ? "DEBUG" : "INFO");
-
+    }
+    if (log_rc >= 0)
+    {
         /* Report any port substitution now that there is somewhere to report
          * it.  Warned, not silent: a host told to use the configured port will
          * find nothing listening there. */
@@ -246,7 +264,7 @@ int mercury_engine_init(const mercury_config *cfg,
                                   &g_radio_capture, &g_radio_playback) != 0)
         {
             fprintf(stderr, "mercury_engine: audio I/O init failed\n");
-            hermes_log_shutdown();
+            engine_log_shutdown();
             return -1;
         }
     }
@@ -257,7 +275,7 @@ int mercury_engine_init(const mercury_config *cfg,
         fprintf(stderr, "mercury_engine: radio init failed\n");
         if (!audioio_rings_external(g_audio_system))
             audioio_deinit(&g_radio_capture, &g_radio_playback);
-        hermes_log_shutdown();
+        engine_log_shutdown();
         return -1;
     }
 
@@ -278,7 +296,7 @@ int mercury_engine_init(const mercury_config *cfg,
             audioio_deinit(&g_radio_capture, &g_radio_playback);
         radio_io_shutdown();
         HLOGI("engine", "Test mode stopped");
-        hermes_log_shutdown();
+        engine_log_shutdown();
         return 0;
     }
 
@@ -301,7 +319,7 @@ int mercury_engine_init(const mercury_config *cfg,
         shutdown_modem(&g_modem);
         if (!audioio_rings_external(g_audio_system))
             audioio_deinit(&g_radio_capture, &g_radio_playback);
-        hermes_log_shutdown();
+        engine_log_shutdown();
         return -1;
     }
 
@@ -324,7 +342,7 @@ int mercury_engine_init(const mercury_config *cfg,
         shutdown_modem(&g_modem);
         if (!audioio_rings_external(g_audio_system))
             audioio_deinit(&g_radio_capture, &g_radio_playback);
-        hermes_log_shutdown();
+        engine_log_shutdown();
         return -1;
     }
 
@@ -405,7 +423,7 @@ void mercury_engine_shutdown(void)
     g_shutdown_step = "done";
 
     HLOGI("engine", "Mercury engine shut down");
-    hermes_log_shutdown();
+    engine_log_shutdown();
 
 #ifdef _WIN32
     WSACleanup();

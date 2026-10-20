@@ -54,7 +54,9 @@ extern "C" {
  * mercury_init: argv as on the command line, e.g. {"mercury", "-C",
  * "/etc/mercury/mercury.ini"}; default_config is used when there is no -C,
  * log_path when there is no -L (NULL: no log file; the log always goes to
- * stderr).  Returns once the engine is up: 0, MERCURY_INIT_CONFIG_ERROR when
+ * stderr).  A host that started hermes_log itself keeps it: Mercury then
+ * leaves the level and the file (log_path, -L, -v) to the host and does not
+ * stop the logger in mercury_shutdown.  Returns once the engine is up: 0, MERCURY_INIT_CONFIG_ERROR when
  * the configuration file cannot be read in full, or -1.  In a TX/RX test (-t,
  * -r) it returns only after mercury_request_shutdown(), so call it on a
  * thread of its own there.
