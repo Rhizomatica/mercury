@@ -173,6 +173,12 @@ carousel_bound: sim/carousel_bound.c $(CAROUSEL_SIM_SRC)
 carousel_bench: sim/carousel_bench.c $(CAROUSEL_SIM_SRC)
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
+# Idle sessions at the floor, with patterns: the runs a station went 240 s
+# without hearing its peer (a bench, not run by `make test`):
+#   CAR_CS_DECODABLE=1 CAR_SCRIPT='A30,B30+1800000' ./floor_idle 1 100 cliff:-9:0.2
+floor_idle: sim/floor_idle.c $(CAROUSEL_SIM_SRC)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 # The carousel's invariants: completes, delivers intact, never keys over the peer
 test_carousel: sim/test_carousel.c $(CAROUSEL_SIM_SRC) $(UNITY_SRC)
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
@@ -196,6 +202,15 @@ test_carousel_sim: sim/test_carousel_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) 
 # Deterministic A/B bench (not part of `make test`):
 #   SIM_CS=400 ./ab_bench <seed> <channel> [bidir]
 ab_bench: sim/ab_bench.c $(ARQ_STUBS) $(SIM_SRC) \
+          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+          ../datalink_arq/arq_protocol.c \
+          ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# Idle sessions under the full FSM: how often the lost-peer watchdog ends one
+# while frames are lost (a bench, not run by `make test`):
+#   ./idle_drop <snr_db> <per> <seeds> <idle_s> [fade_hz]
+idle_drop: sim/idle_drop.c $(ARQ_STUBS) $(SIM_SRC) \
           ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
           ../datalink_arq/arq_protocol.c \
           ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
