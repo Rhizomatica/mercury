@@ -63,6 +63,11 @@ void tnc_send_connected();
 void tnc_send_cqframe(const char *source_call, int bw_hz);
 void tnc_send_disconnected();
 void tnc_send_buffer(uint32_t bytes);
+/* Is a periodic BUFFER report due: the count changed, or -- in a session,
+ * with bytes still to confirm -- no BUFFER line went for
+ * TNC_BUFFER_REPEAT_MS (50 s)?  (#397) */
+bool tnc_buffer_report_due(int buffered, int last_reported, bool connected,
+                           uint64_t now_ms, uint64_t last_sent_ms);
 void tnc_send_registered(const char *callsign);
 void tnc_send_sn(float snr);
 void tnc_send_busy(bool busy);

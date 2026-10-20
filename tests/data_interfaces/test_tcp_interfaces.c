@@ -38,6 +38,9 @@
 static int test_server_join(pthread_t thread, void **result);
 #define pthread_join test_server_join
 /* include source to get access to static functions */
+/* The control-line queue: captured here, not put in a ring (see below). */
+static int capture_queued_line(const uint8_t *line, size_t len);
+#define TNC_TXQ_PUT(q, data, len) capture_queued_line((data), (len))
 #include "../../data_interfaces/tcp_interfaces.c"
 #undef pthread_join
 
@@ -147,6 +150,11 @@ ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size)
 
 void net_set_status(int pt, int st) { (void)pt; (void)st; }
 int net_get_status(int pt) { (void)pt; return NET_CONNECTED; }
+ssize_t tcp_send_some(int port_type, const uint8_t *buffer, size_t len)
+{
+    (void)port_type; (void)buffer;
+    return (ssize_t)len;
+}
 int net_wait_for_status(int p, int s, int t) { (void)p; (void)s; (void)t; return 0; }
 int net_wait_while_status(int p, int s, int t) { (void)p; (void)s; (void)t; return 0; }
 int listen4connection(int p) { (void)p; return 0; }
@@ -268,10 +276,9 @@ void kiss_reset_state(void) { }
 static uint8_t mock_kiss_last_command_val = CMD_DATA;
 uint8_t kiss_last_command(void) { return mock_kiss_last_command_val; }
 
-/* ---- chan stubs ---- */
+/* ---- control-line capture (TNC_TXQ_PUT) ---- */
 
 static char last_queued_line[256];
-static int chan_select_call_count = 0;
 /* How many tcp_write() calls had already happened when a line was queued.
  * Lets a test pin the ORDER of a direct write against a queued notification. */
 static int queued_after_tcp_writes = -1;
@@ -280,57 +287,22 @@ static int queued_after_tcp_writes = -1;
 #define MAX_QUEUED_LINES 8
 static char queued_lines[MAX_QUEUED_LINES][256];
 static int  queued_line_count = 0;
+static int  queued_total = 0;            /* every line queued, never dropped */
 
-chan_t *chan_init(size_t capacity)
+static int capture_queued_line(const uint8_t *data, size_t len)
 {
-    (void)capacity;
-    static chan_t dummy;
-    return &dummy;
-}
-
-void chan_dispose(chan_t *chan) { (void)chan; }
-/* How full the TX channel looks: tnc_send_monitor yields above half. */
-static int mock_chan_size = 0;
-int chan_size(chan_t *chan) { (void)chan; return mock_chan_size; }
-int chan_close(chan_t *chan) { (void)chan; return 0; }
-
-int chan_select(chan_t *recv_chans[], int recv_count, void **recv_out,
-               chan_t *send_chans[], int send_count, void *send_msgs[])
-{
-    (void)recv_chans; (void)recv_count; (void)recv_out;
-    (void)send_chans;
-
-    chan_select_call_count++;
-
-    /* Capture the tnc_tx_msg_t data for status emitter tests.
-     * tcp_interfaces.c defines tnc_tx_msg_t locally, but since we'll
-     * #include it, the type will be visible at this point only AFTER
-     * the include. For now, just capture raw bytes. */
-    if (send_count > 0 && send_msgs && send_msgs[0]) {
-        /* tnc_tx_msg_t layout: { size_t len; uint8_t data[128]; } */
-        size_t len;
-        memcpy(&len, send_msgs[0], sizeof(size_t));
-        uint8_t *data_ptr = (uint8_t *)send_msgs[0] + sizeof(size_t);
-        memset(last_queued_line, 0, sizeof(last_queued_line));
-        if (len < sizeof(last_queued_line))
-            memcpy(last_queued_line, data_ptr, len);
-        queued_after_tcp_writes = tcp_write_call_count;
-        if (queued_line_count < MAX_QUEUED_LINES && len < sizeof(queued_lines[0]))
-        {
-            memset(queued_lines[queued_line_count], 0, sizeof(queued_lines[0]));
-            memcpy(queued_lines[queued_line_count], data_ptr, len);
-            queued_line_count++;
-        }
-        /* Returning 0 signals the message was accepted by the channel, so
-         * tnc_queue_line() transfers ownership and does not free it (in
-         * production the send_thread consumer frees each msg).  This mock is
-         * that terminal consumer, so it must free the msg or it leaks — which
-         * LeakSanitizer flags in the tnc_send_* tests. */
-        free(send_msgs[0]);
-        return 0;
+    memset(last_queued_line, 0, sizeof(last_queued_line));
+    if (len < sizeof(last_queued_line))
+        memcpy(last_queued_line, data, len);
+    queued_after_tcp_writes = tcp_write_call_count;
+    if (queued_line_count < MAX_QUEUED_LINES && len < sizeof(queued_lines[0]))
+    {
+        memset(queued_lines[queued_line_count], 0, sizeof(queued_lines[0]));
+        memcpy(queued_lines[queued_line_count], data, len);
+        queued_line_count++;
     }
-
-    return -1;
+    queued_total++;
+    return 0;
 }
 
 /* ---- External globals used by tcp_interfaces.c ---- */
@@ -356,7 +328,7 @@ void setUp(void)
     captured_cmd_count = 0;
     arq_submit_return = 0;
     memset(last_queued_line, 0, sizeof(last_queued_line));
-    chan_select_call_count = 0;
+    queued_total = 0;
     queued_after_tcp_writes = -1;
     memset(queued_lines, 0, sizeof(queued_lines));
     queued_line_count = 0;
@@ -370,9 +342,8 @@ void setUp(void)
     mock_kiss_last_command_val = CMD_DATA;
     atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
 
-    /* tnc_queue_line() needs tnc_tx_chan non-NULL */
-    static chan_t dummy_chan;
-    tnc_tx_chan = &dummy_chan;
+    /* tnc_queue_line() refuses lines until the queue is open */
+    atomic_store_explicit(&tnc_txq_open, true, memory_order_release);
 
     /* Reset dedup */
     atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
@@ -885,6 +856,21 @@ void test_tnc_send_buffer(void)
     TEST_ASSERT_EQUAL_STRING("BUFFER 1234\r", last_queued_line);
 }
 
+/* A VARA client gives up when no BUFFER comes for a minute while its data
+ * waits (Pat: "write: buffer timeout"), and a carousel block's bytes are
+ * confirmed only when the whole block is through: in a session, with bytes
+ * to confirm and no BUFFER line for 50 s, the count is said again; otherwise
+ * BUFFER goes only when it changes (#397). */
+void test_tnc_buffer_report_repeats_unchanged_backlog(void)
+{
+    TEST_ASSERT_TRUE(tnc_buffer_report_due(1322, -1, true, 1000, 0));          /* first */
+    TEST_ASSERT_TRUE(tnc_buffer_report_due(800, 1322, true, 1000, 900));       /* changed */
+    TEST_ASSERT_FALSE(tnc_buffer_report_due(1322, 1322, true, 50899, 900));    /* 49.999 s */
+    TEST_ASSERT_TRUE(tnc_buffer_report_due(1322, 1322, true, 50900, 900));     /* 50 s */
+    TEST_ASSERT_FALSE(tnc_buffer_report_due(1322, 1322, false, 90000, 900));   /* no session */
+    TEST_ASSERT_FALSE(tnc_buffer_report_due(0, 0, true, 90000, 900));          /* empty */
+}
+
 void test_tnc_send_sn(void)
 {
     tnc_send_sn(5.5f);
@@ -926,20 +912,15 @@ void test_tnc_send_monitor(void)
                              last_queued_line);
 }
 
-/* A busy band brings MONITOR lines by the dozen: they stop at half the TX
- * channel, so the host's state lines (PTT, CONNECTED, ...) always find room. */
-void test_tnc_send_monitor_leaves_room_for_state_lines(void)
+/* A busy band brings MONITOR lines by the dozen: every one is queued, and so
+ * is the host's state line after them -- the control queue drops nothing. */
+void test_tnc_send_monitor_never_drops_a_line(void)
 {
-    int before = chan_select_call_count;
-    mock_chan_size = TNC_MONITOR_MAX_QUEUED;
-    tnc_send_monitor("DATAC17", "DATA", "SID=1", 10.0f);
-    TEST_ASSERT_EQUAL_INT(before, chan_select_call_count);   /* dropped, not queued */
-    tnc_send_busy(true);                                      /* a state line still goes */
+    for (int i = 0; i < 300; i++)                 /* the old channel held 256 */
+        tnc_send_monitor("DATAC17", "DATA", "SID=1", 10.0f);
+    tnc_send_busy(true);
+    TEST_ASSERT_EQUAL_INT(301, queued_total);
     TEST_ASSERT_EQUAL_STRING("BUSY ON\r", last_queued_line);
-    mock_chan_size = TNC_MONITOR_MAX_QUEUED - 1;
-    tnc_send_monitor("DATAC17", "DATA", "SID=1", 10.0f);
-    TEST_ASSERT_EQUAL_STRING("MONITOR DATAC17 DATA SID=1 SNR=10.0\r", last_queued_line);
-    mock_chan_size = 0;
 }
 
 /* ---- VARA compatibility command tests ---- */
@@ -1958,13 +1939,14 @@ int main(void)
     RUN_TEST(test_tnc_send_pending);
     RUN_TEST(test_tnc_send_cancelpending);
     RUN_TEST(test_tnc_send_buffer);
+    RUN_TEST(test_tnc_buffer_report_repeats_unchanged_backlog);
     RUN_TEST(test_tnc_send_sn);
     RUN_TEST(test_tnc_send_bitrate);
     RUN_TEST(test_tnc_send_connected);
     RUN_TEST(test_tnc_send_cqframe);
     RUN_TEST(test_tnc_send_registered);
     RUN_TEST(test_tnc_send_monitor);
-    RUN_TEST(test_tnc_send_monitor_leaves_room_for_state_lines);
+    RUN_TEST(test_tnc_send_monitor_never_drops_a_line);
     /* Broadcast framing helper tests */
     RUN_TEST(test_bcast_rx_cmd_data_exact_size);
     RUN_TEST(test_bcast_rx_cmd_data_0x60_is_not_special);
