@@ -142,7 +142,7 @@ listed).
 
 | Field | Meaning | Init |
 |---|---|---|
-| `ctl_deaf` | I hear the peer below the control mode (hysteresis: on if `snr_ema < -7.5`, off if `snr_ema >= -6.0`, C:1610-1614); reported in every frame I send | seeded at connect (C:1594-1600) |
+| `ctl_deaf` | I hear the peer below the control mode (hysteresis: on if `snr_ema < -7.5`, off if `snr_ema >= -6.0`, C:1610-1614); reported in every frame I send. `CAR_DEAF_HARD`: deaf at connect though the SNR says the control mode works (the CALL or ACCEPT came only on MFSK); no MFSK reading clears it, only a decoded OFDM frame or the peer reporting it hears me; while HARD a poll may name the ladder's rung for one frame (`deaf_rung`), else the floor | seeded at connect (C:1594-1600; HARD in `car_seed_snr`) |
 | `peer_ctl_deaf` | the peer reports it hears me below the control mode; overwritten by the bit in every decoded frame (C:1583-1590, 1617, 1621, 1625) | seeded at connect |
 
 ### 2.3 Sender side
@@ -446,9 +446,9 @@ If `retired > 0` → `io.tx_confirmed(retired)` (F:1450-1456 updates BUFFER).
 
 | # | Rule | Cite |
 |---|---|---|
-| S1 | Callee on CALL (LISTENING): new nonce; `car_rx_level = min(car_start_level(CALL SNR), max_level)`; `car_ctl_deaf = CALL SNR < -7`; `car_peer_ctl_deaf = false`; ACCEPT after `G`. **[carousel-only]** A repeat of the same session's CALL (same id and caller, in ACCEPTING, or in LISTENING after the ACCEPT-retry fallback) keeps the nonce, rung and deafness and gets the same ACCEPT, on the CALL's carrier; another station's CALL is ignored while ACCEPTING. | `fsm_listening`, `fsm_accepting` |
+| S1 | Callee on CALL (LISTENING): new nonce; `car_rx_level = min(car_start_level(CALL SNR), max_level)`; `car_ctl_deaf = CALL SNR < -7 or the CALL came on MFSK` (then `car_rx_level = 0`); `car_peer_ctl_deaf = false`; ACCEPT after `G`. **[carousel-only]** A repeat of the same session's CALL (same id and caller, in ACCEPTING, or in LISTENING after the ACCEPT-retry fallback) keeps the nonce, rung and deafness and gets the same ACCEPT, on the CALL's carrier; another station's CALL is ignored while ACCEPTING. | `fsm_listening`, `fsm_accepting` |
 | S2 | Callee sending the ACCEPT: ACCEPT level = `car_ctl_deaf ? 7 : car_rx_level`; **seed set now**; payload decoder bound to `LADDER[car_rx_level]`. | F:904-918 |
-| S3 | Caller on ACCEPT (CALLING, matching session id and called CRC): `car_peer_ctl_deaf = (level == 7)`; `car_tx_level = min(peer_ctl_deaf ? 0 : level, max_level)`; `car_rx_level = min(car_start_level(ACCEPT SNR), max_level)`; `car_ctl_deaf = ACCEPT SNR < -7`; → CONNECTED; seed set; `car_start(is_caller)`. | F:1745-1760 |
+| S3 | Caller on ACCEPT (CALLING, matching session id and called CRC): `car_peer_ctl_deaf = (level == 7)`; `car_tx_level = min(peer_ctl_deaf ? 0 : level, max_level)`; `car_rx_level = min(car_start_level(ACCEPT SNR), max_level)`; `car_ctl_deaf = ACCEPT SNR < -7 or the ACCEPT came on MFSK` (then `car_rx_level = 0`); → CONNECTED; seed set; `car_start(is_caller)`. | F:1745-1760 |
 | S4 | `car_start`: `car_init(rx_level, tx_level)` (snr_level = rx_level; peer_snr_level = tx_level ≥ 0 ? tx_level : rx_level; tx_level = -1; loss_est = tx_loss = 0.1); seed ctl_deaf/peer_ctl_deaf; `car_last_rx_ms = now`; caller → S5, callee → S6. | F:1495-1513, C:1553-1561 |
 | S5 | `car_start_sender`: `sending = true; send_start_ms = now; tx_level = peer_snr_level; tx_n = 1; tx_poll_id = 1; handover_unconfirmed = true; T_SEND := now`. | C:1568-1575 |
 | S6 | Callee: the **first seeded frame of any kind** (ACCEPTING, or LISTENING after the ACCEPT-retry fallback with seed still set) → `car_connect_callee`: `car_tx_level = -1`, → CONNECTED, `car_start(callee)` = `start_driving(1, snr_level, 1, now, now)` (C:1578-1581), then the frame is processed by `car_on_frame`. | F:1869-1893, F:1899-1902, F:1661-1664 |

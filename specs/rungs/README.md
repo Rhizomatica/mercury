@@ -107,6 +107,13 @@ Which model covers the other 2.0 changes:
   rung, and agreement and delivery hold for whichever it names.
 - no direct probe while S's control goes on the floor (`choose_level`): it
   only narrows the rungs S names, which `RungAgreement` leaves free.
+- a connect heard only on MFSK starts deaf to the control mode
+  (`CAR_DEAF_HARD`, arq_fsm.c), and an MFSK reading does not clear that;
+  a deaf S may then name, for one frame, the rung its ladder chose
+  (`deaf_rung`); a decoded OFDM frame, or the peer's report that it hears
+  mine, ends the deafness.  The probe is a sized poll naming a rung, which
+  `RungAgreement` allows for any rung, so agreement and delivery hold; the
+  deafness itself is the `ctl_deaf` decision no model has (above).
 
 ## PollRung
 

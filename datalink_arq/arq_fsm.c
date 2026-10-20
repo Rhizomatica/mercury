@@ -875,8 +875,15 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             /* How the caller hears us it reports in its first frame, which
              * comes before we send any control.  (Not "an MFSK CALL means it
              * cannot hear us": the caller escalates just the same when it is
-             * we who cannot hear its control-mode CALLs.) */
-            sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
+             * we who cannot hear its control-mode CALLs.)  But we may not
+             * hear them: a CALL that reached us only on MFSK says so whatever
+             * its SNR -- under a Doppler spread no OFDM mode decodes, and a
+             * session started on DATAC1 by the SNR sent its first round into
+             * a callee that never heard it (Go harness, ccir-flutter, itur-ld,
+             * -hm, -hd: 0 bytes at every SNR).  The floor then, until an OFDM
+             * frame proves otherwise (carousel.c, CAR_DEAF_HARD). */
+            sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB || mercury_mode_is_mfsk(ev->mode);
+            if (sess->car_ctl_deaf) sess->car_rx_level = 0;
             sess->car_call_snr = ev->rx_snr;
             sess->car_my_snr   = ev->rx_snr;
         }
@@ -958,7 +965,9 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         if (sess->car_tx_level > session_max_level())
             sess->car_tx_level = session_max_level();
         sess->car_rx_level = session_start_level(ev->rx_snr);
-        sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
+        /* An ACCEPT heard only on MFSK: as the callee's MFSK CALL above. */
+        sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB || mercury_mode_is_mfsk(ev->mode);
+        if (sess->car_ctl_deaf) sess->car_rx_level = 0;
         sess->car_my_snr   = ev->rx_snr;
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call);

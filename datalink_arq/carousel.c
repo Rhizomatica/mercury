@@ -307,6 +307,12 @@ static uint64_t level_air(const car_t *c, int lv) { return mode_air(lmode(c, lv)
  * answering every poll (sim, nvis bidir: 3813 s median, trunk 3451; at 150 s
  * 3347, and the floor 155 s after step:10:-12, where 90 s took 100). */
 #define SILENT_MS 150000
+/* car_t.ctl_deaf: deaf by the SNR reading, or HARD -- deaf though the reading
+ * says the control mode works (the connect got through on MFSK only).  A
+ * reading on an MFSK frame does not clear HARD: MFSK copes with what may be
+ * killing the control mode, a Doppler spread or a multipath the SNR does not
+ * show.  Only a frame of the peer's on an OFDM mode does. */
+enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2 };
 #define CTL_DEAF_ON_DB   (ARQ_SNR_MIN_DATAC15_DB - 0.5f)
 #define CTL_DEAF_OFF_DB  (ARQ_SNR_MIN_DATAC15_DB + 1.0f)
 /* How the peer hears me now: its last reading of me, moved by as much as my
@@ -1939,6 +1945,20 @@ static size_t s_peer_expect(const car_t *c)
     return peer_backlog_bytes(c);
 }
 
+/* The rung a poll of mine may name while I hear the peer's control only on
+ * MFSK: the floor -- or, deaf by evidence (CAR_DEAF_HARD), a probe of the
+ * ladder's choice, one frame (level_earned): the reading says OFDM works, and
+ * only an OFDM frame decoded proves it (car_on_frame).  Where it does not (a
+ * Doppler spread), the probe is lost and the rung dead, re-probed with the
+ * ladder's backoff (reprobe_due); without the probe a connect that went to
+ * MFSK stayed on it to the end (Go harness, itur-mq at 15 dB with the callee
+ * late: 1820 s for 8 KB, 175 s without the late callee's MFSK). */
+static int deaf_rung(const car_t *c, int lv)
+{
+    if (!c->ctl_deaf || !c->io.pattern) return lv;
+    return c->ctl_deaf == CAR_DEAF_HARD && lv > 0 && level_earned(c, lv) <= 1 ? lv : 0;
+}
+
 static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
 {
     if (peer_direction_done(c)) {
@@ -1950,9 +1970,9 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
     int lv = choose_level(c, now);
     /* Leave the floor only when a poll can reach the sender: asking for
      * another rung re-binds my decoder to it at once.  And a receiver that
-     * hears the peer's control only on MFSK stays there. */
+     * hears the peer's control only on MFSK stays there (deaf_rung). */
     if (floor && lv > 0 && !(c->snr_valid && c->snr_ema >= ARQ_SNR_MIN_DATAC15_DB)) lv = 0;
-    if (c->ctl_deaf && c->io.pattern) lv = 0;
+    lv = deaf_rung(c, lv);
     /* A pattern answers a sender that is streaming the floor: one of its
      * floor rounds has come since my last poll. */
     if (c->round_seen > 0 && c->poll_level == 0) c->floor_streaming = true;
@@ -2244,8 +2264,7 @@ static void m_start_recv(car_t *c, uint64_t now)
 {
     m_enter(c, PH_RECV, now);
     c->silent_polls = 0;
-    int lv = choose_level(c, now);
-    if (c->ctl_deaf && c->io.pattern) lv = 0;
+    int lv = deaf_rung(c, choose_level(c, now));
     int n = poll_size(c, lv, now);
     int sl = short_rung(c, lv, m_peer_expect(c), &n);
     if (sl != lv) car_trace(c, "rx: a small backlog -- lv=%d n=%d, not lv=%d", sl, n, lv);
@@ -2880,6 +2899,15 @@ static void note_peer_ctl_deaf(car_t *c, bool deaf)
         c->peer_ctl_deaf = deaf;
         car_trace(c, "the peer hears me %s the control mode: control on %s",
                   deaf ? "below" : "above", deaf ? "MFSK" : "the control mode");
+        /* A peer that decodes my OFDM again ends my CAR_DEAF_HARD too: what
+         * kills the control mode where the SNR does not say so -- a Doppler
+         * spread, a multipath -- is the path's, the same both ways.  Else a
+         * receiver whose probe got through still heard its sender only on
+         * MFSK, and its polls stayed 13.5 s MFSK frames to the end. */
+        if (!deaf && c->ctl_deaf == CAR_DEAF_HARD) {
+            c->ctl_deaf = c->snr_ema < CTL_DEAF_OFF_DB ? CAR_DEAF_SNR : 0;
+            car_trace(c, "the peer hears my OFDM: so do I, by the SNR (%.1f dB)", c->snr_ema);
+        }
     }
 }
 
@@ -2901,6 +2929,10 @@ void car_seed_ctl_deaf(car_t *c, bool mine, bool peers)
 void car_seed_snr(car_t *c, float mine, float peers)
 {
     if (mine == 0.0f || isnan(mine)) return;
+    /* Deaf at connect though my reading says the control mode works: the
+     * connect got through on MFSK only (arq_fsm.c), and the reading is not to
+     * be trusted for it (CAR_DEAF_HARD). */
+    if (c->ctl_deaf && mine >= CTL_DEAF_OFF_DB) c->ctl_deaf = CAR_DEAF_HARD;
     c->snr_ema = c->snr_last = mine;
     c->snr_ms = 0;
     c->snr_valid = true;
@@ -2941,10 +2973,12 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
         c->snr_last = snr_db;
         c->snr_ms = now;
         c->snr_valid = true;
-        bool deaf = c->ctl_deaf ? c->snr_ema < CTL_DEAF_OFF_DB : c->snr_ema < CTL_DEAF_ON_DB;
-        if (deaf != c->ctl_deaf) {
-            c->ctl_deaf = deaf;
-            car_trace(c, "I hear the peer %s the control mode (%.1f dB)", deaf ? "below" : "above", c->snr_ema);
+        if (!(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
+            bool was = c->ctl_deaf != 0;
+            bool deaf = was ? c->snr_ema < CTL_DEAF_OFF_DB : c->snr_ema < CTL_DEAF_ON_DB;
+            c->ctl_deaf = deaf ? CAR_DEAF_SNR : 0;
+            if (deaf != was)
+                car_trace(c, "I hear the peer %s the control mode (%.1f dB)", deaf ? "below" : "above", c->snr_ema);
         }
     }
     bool ctl = control && decode_ctl(c, bytes, len, &m);

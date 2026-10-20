@@ -23,6 +23,7 @@ DEFINE_FFF_GLOBALS;
 #include "arq_protocol.h"
 #include "virtual_clock.h"   /* time_now_ms(), to stage a busy channel */
 #include "freedv/freedv_api.h"
+#include "modem_mfsk.h"        /* MERCURY_MODE_MFSK */
 
 /* Provided by arq_test_stubs.c */
 extern void mock_set_uptime_ms(uint64_t ms);
@@ -378,6 +379,47 @@ void test_accept_transitions_to_connected(void)
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
+}
+
+/* A connect that got through only on MFSK starts the session deaf to the
+ * control mode, on the floor, whatever its SNR says: under a Doppler spread
+ * no OFDM mode decodes, and a session the SNR started on DATAC1 sent its
+ * first round into a callee that never heard it (Go harness, ccir-flutter,
+ * itur-ld/-hm/-hd: 0 bytes).  The same CALL on the control mode does not. */
+void test_mfsk_only_connect_starts_deaf_on_the_floor(void)
+{
+    for (int mfsk = 0; mfsk <= 1; mfsk++) {
+        arq_fsm_init(&sess);
+        arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_RX_CALL);
+        ev.session_id = 0x42;
+        ev.rx_snr = 10.0f;
+        ev.mode = mfsk ? MERCURY_MODE_MFSK : FREEDV_MODE_DATAC16;
+        strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+        TEST_ASSERT_EQUAL(mfsk, sess.car_ctl_deaf);
+        if (mfsk) TEST_ASSERT_EQUAL_INT(0, sess.car_rx_level);
+        else      TEST_ASSERT_GREATER_THAN(0, sess.car_rx_level);
+
+        arq_fsm_init(&sess);
+        ev = make_event(ARQ_EV_APP_LISTEN);
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_APP_CONNECT);
+        strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_RX_ACCEPT);
+        ev.session_id = sess.session_id;
+        ev.rx_snr = 10.0f;
+        ev.mode = mfsk ? MERCURY_MODE_MFSK : FREEDV_MODE_DATAC16;
+        strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+        TEST_ASSERT_EQUAL(mfsk, sess.car_ctl_deaf);
+        if (mfsk) TEST_ASSERT_EQUAL_INT(0, sess.car_rx_level);
+        else      TEST_ASSERT_GREATER_THAN(0, sess.car_rx_level);
+    }
 }
 
 /* The listen mode (initial_payload_mode) is an operator setting for the IDLE
@@ -1434,6 +1476,7 @@ int main(void)
     RUN_TEST(test_incoming_call_transitions_to_accepting);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
+    RUN_TEST(test_mfsk_only_connect_starts_deaf_on_the_floor);
     RUN_TEST(test_listen_mode_does_not_leak_into_inbound_session);
     RUN_TEST(test_listen_mode_restored_after_session_ends);
     RUN_TEST(test_disconnect_from_connected);

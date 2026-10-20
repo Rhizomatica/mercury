@@ -141,7 +141,8 @@ typedef struct {
     int      max_level;             /* the highest rung the session's bandwidth
                                      * allows (car_set_max_level) */
     int      floor_mode;            /* rung 0's mode (car_set_floor_mode) */
-    bool     ctl_deaf;              /* I hear the peer below the control mode: its
+    uint8_t  ctl_deaf;              /* I hear the peer below the control mode (by
+                                     * its SNR, or CAR_DEAF_HARD: see car_seed_snr): its
                                      * control must reach me on MFSK (reported) */
     bool     peer_ctl_deaf;         /* ...and the peer, of me, as it reports */
     float    snr_ema;               /* SNR of what the peer sends us, smoothed */
