@@ -29,11 +29,10 @@ presents the result to your application as an ordinary TCP connection.
 
 Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
 
-**On-air compatibility.** Since the carousel-only build, Mercury's connect
-frames carry a protocol version, and Mercury 1.9.x stations do not connect to
-it in either direction.  The version changed again after 1.9.18, when MFSK
-moved to 1500 Hz, so 1.9.18 does not connect to later releases either.  Both
-ends of a session must run a release from the same protocol version; see
+**On-air compatibility.** Mercury 2.0's connect frames have a packet type of
+their own, and no 1.9.x release connects to it in either direction (within
+1.9.x, 1.9.18 and 1.9.19 did not connect to each other either).  Both ends of
+a session must run a release from the same protocol version; see
 [docs/RELEASE-1.9.19.md](docs/RELEASE-1.9.19.md) and
 [docs/UPGRADING-TO-1.9.18.md](docs/UPGRADING-TO-1.9.18.md) before upgrading.
 

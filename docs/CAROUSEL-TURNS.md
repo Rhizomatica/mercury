@@ -112,8 +112,8 @@ the keydowns carry, which rung, how much) is unchanged carousel.
   S's response then carries its status and its round.  M's scheduling policy
   decides how to alternate directions; it replaces the turn quantum and the
   handover.
-- **Disconnect.** M sends DISCONNECT and S answers.  S asks for it by a flag
-  in a response.
+- **Disconnect.** M sends DISCONNECT and S answers with an ACK pattern.  S
+  asks for it by a flag in a response.
 - **Silence.** S never keys without an anchor, so a lost session makes it go
   quiet, never talk blindly.  M gives up after its own timeout.
 
@@ -218,6 +218,10 @@ What the rules became in `carousel.c`, beyond §2-§4:
   reply slot logged; the callee sends its own only in a slot.  With nothing heard from the peer in 120 s, the caller sends one
   DISCONNECT, not three, and the callee, with no slot to send in, ends at
   once: the peer's own lost-peer watchdog (240 s, idle or not) ends its end.
+  Either end answers the other's DISCONNECT with an ACK pattern keyed by the
+  session (0.64 s, where
+  a DISCONNECT frame is 3.7 s, 13.5 s at the floor), which only an end whose
+  DISCONNECT is out takes as the answer.
 - **NAV headers** are not sent in a session; the bounds count a 300 ms lead
   margin.
 - **Inline polls** (branch carousel-nvis): a poll may ride in the first frame

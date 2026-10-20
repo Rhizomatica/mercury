@@ -140,13 +140,18 @@ typedef struct {
     int      snr_level;             /* where the SNR measured here starts the peer */
     int      max_level;             /* the highest rung the session's bandwidth
                                      * allows (car_set_max_level) */
-    bool     ctl_deaf;              /* I hear the peer below the control mode: its
+    int      floor_mode;            /* rung 0's mode (car_set_floor_mode) */
+    uint8_t  ctl_deaf;              /* I hear the peer below the control mode (by
+                                     * its SNR, or CAR_DEAF_HARD: see car_seed_snr): its
                                      * control must reach me on MFSK (reported) */
     bool     peer_ctl_deaf;         /* ...and the peer, of me, as it reports */
     float    snr_ema;               /* SNR of what the peer sends us, smoothed */
+    float    snr_last;              /* ...and its latest reading */
+    uint64_t snr_ms;                /* ...and when it came */
     bool     snr_valid;
     uint64_t deadline[CAR_NTIMERS]; /* 0 = disarmed */
     uint64_t last_carrier_ms;       /* the peer was last heard on the air */
+    uint64_t heard_ms;              /* ...last decoded: a frame or a pattern */
     bool     tx_busy;               /* our keydown is on the air */
     uint8_t  held;                  /* why the planned keydown waits (HELD_*):
                                      * logged once per hold */
@@ -158,10 +163,11 @@ typedef struct {
     uint8_t  mk;                    /* id of my next keydown, mod 16 */
     car_mlog_t mlog[CAR_MLOG];
     int      nmlog;
-    int      m_kind;                /* my keydown on the air, its id, and the slots it opens: */
-    uint8_t  m_id;
-    uint32_t m_r, m_d, m_p;
-    uint8_t  m_k;
+    bool     m_keyed;               /* M: keyed at all this session */
+    bool     m_heard_ever;          /* M: heard S at all this session */
+    int      m_kind;                /* my keydown on the air, */
+    car_mlog_t m_kd;                /* ...its id and the slots it opens, as its log
+                                     * entry will hold them (e, done, tg, pat: then) */
     int      m_state;               /* waiting for S's answer, or for a free time */
     int      plan, plan_lv, plan_n; /* the keydown decided */
     bool     m_heard;               /* S keyed since my last keydown, and I heard it end */
@@ -192,7 +198,9 @@ typedef struct {
         uint32_t d;                 /* its lateness allowance: my start may be this late */
         bool     waited;            /* its slot 0 already waited for my application */
     } anc;
-    bool     end_req;               /* S: my next slot carries the session's DISCONNECT */
+    uint8_t  end_req;               /* S: CAR_END_WISH, my application has hung up and my
+                                     * polls say so (M_END); CAR_END_SLOT, my next slot
+                                     * carries the session's DISCONNECT */
     int      req_lv, req_n;         /* a REQ: M's round I may not have heard */
     uint8_t  req_mk;
     uint8_t  rx_mk;                 /* the M round whose frames I am counting */
@@ -220,16 +228,22 @@ typedef struct {
     uint8_t  floor_blk;             /* the block my last floor round carried */
     int      peer_snr_level;        /* where the SNR the peer measures starts me */
     bool     peer_level_known;      /* ...as the peer reported it (ACCEPT, poll) */
+    float    peer_snr_db;           /* how the peer hears me, as its last control
+                                     * frame said (dB) */
+    uint64_t peer_snr_ms;           /* ...and when (0: never) */
+    float    peer_snr_mine;         /* ...and how I heard the peer then (NAN: unknown) */
     int      rx_data_lv;            /* the rung of the last data frame I took; -1 none */
     bool     peer_has_data;         /* the peer said it has data for me */
 
-    /* as receiver: the peer's direction, measured here */
-    double   lv_sent[CAR_NLEVELS], lv_lost[CAR_NLEVELS];
-    int      lv_rounds[CAR_NLEVELS], lv_dead_run[CAR_NLEVELS];
-    int      lv_probe_fails[CAR_NLEVELS]; /* its rounds in a row that lost half */
-    double   lv_p_ok[CAR_NLEVELS];  /* the delivery it showed when it last delivered */
-    uint32_t lv_round_at[CAR_NLEVELS];
-    uint64_t lv_probe_at[CAR_NLEVELS], lv_backoff_ms[CAR_NLEVELS];
+    /* as receiver: the peer's direction, measured here, per rung */
+    struct {
+        double   sent, lost;        /* frames, decayed (measure_level) */
+        int      rounds, dead_run;
+        int      probe_fails;       /* its rounds in a row that lost half */
+        double   p_ok;              /* the delivery it showed when it last delivered */
+        uint32_t round_at;          /* polls, when last measured */
+        uint64_t probe_at, backoff_ms;
+    } rung[CAR_NLEVELS];
     uint32_t polls;
     double   loss_est;
     double   polled_loss;        /* the loss my last poll told the sender */
@@ -273,9 +287,16 @@ void car_set_max_level(car_t *c, int lv);
 /* The highest rung a session bandwidth (Hz, VARA's BW500/BW2300/BW2750)
  * allows. */
 int  car_max_level_for_bw(int bw_hz);
+/* The session's floor, rung 0 (arq_floor_mode of its bandwidth): the 1 kHz
+ * MFSK unless set.  Both ends set the same, after car_init. */
+void car_set_floor_mode(car_t *c, int mode);
 /* Seed, from the connect exchange, whether each end hears the other below the
  * control mode (see ctl_on_floor in carousel.c).  Frames keep both current. */
 void car_seed_ctl_deaf(car_t *c, bool mine, bool peers);
+/* The connect's SNRs (0: unknown): mine, the reading of the peer's connect
+ * frame -- the carousel's first, so its first control frame reports one --
+ * and the peer's of mine (the caller has it from the ACCEPT). */
+void car_seed_snr(car_t *c, float mine, float peers);
 /* The peer hears us below the control mode, as it last reported: our control
  * frames go on MFSK.  The session's own control frames follow the same rule. */
 bool car_peer_ctl_deaf(const car_t *c);
@@ -287,8 +308,8 @@ void car_start_receiver(car_t *c, uint64_t now);
  * for it, 0 when unknown.  age_ms: how long ago the frame ended (0 when the
  * decode was immediate); one older than its mode's decode bound is data,
  * never a time to answer at. */
-void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
-                  float snr_db, uint32_t age_ms);
+bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
+                  float snr_db, uint32_t age_ms);   /* true: the caller heard an M_END */
 void car_on_tx_done(car_t *c, uint64_t now);
 /* A pattern was heard: CAR_PATTERN_ACK or CAR_PATTERN_BREAK. */
 void car_on_pattern(car_t *c, uint64_t now, int kind);
@@ -303,7 +324,8 @@ void     car_on_time(car_t *c, uint64_t now);
 
 /* The ladder rung for an SNR, mapped the way trunk enters a mode from DATAC15. */
 int  car_start_level(float snr_db);
-int  car_level_mode(int level);
+int  car_level_mode(int level);              /* on the 1 kHz floor's ladder */
+int  car_session_level_mode(const car_t *c, int level);
 /* The session's piece size, from the rung the callee's ACCEPT starts the
  * caller's rounds on (both ends know it; the FSM also folds it into the
  * session seed, so ends that disagree hear none of each other's frames). */
@@ -350,6 +372,12 @@ bool     car_is_master(const car_t *c);
 uint64_t car_free_at(const car_t *c, uint64_t now, uint64_t len);
 void     car_log_ctl(car_t *c, uint64_t end, uint32_t tg);
 void     car_request_end(car_t *c);
+/* The callee whose application has hung up while its DISCONNECT waits for
+ * its data to be acknowledged: car_wish_end() makes its polls say so (type
+ * 3, M_END) once it has all of the caller's.  The caller, with all of the
+ * callee's, then ends the session itself (car_on_frame returns true). */
+enum { CAR_END_NONE, CAR_END_WISH, CAR_END_SLOT };
+void     car_wish_end(car_t *c);
 
 /* How long delivering what is left may take on the rung the session is on:
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds

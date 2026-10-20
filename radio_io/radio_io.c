@@ -252,6 +252,7 @@ static int hamlib_open(const ptt_config_t *config)
                                                config->hamlib_conf);
     radio_io_warn_port_mismatch(config->hamlib_model, config->device);
 
+    errno = 0;                      /* see hamlib_set */
     int ret = rig_open(g_radio);
     /* A port without modem-control lines -- a pty from socat or ser2net, a
      * com0com pair, some Bluetooth serial links -- refuses the ioctl, and
@@ -265,6 +266,7 @@ static int hamlib_open(const ptt_config_t *config)
             rig_set_conf(g_radio, rig_token_lookup(g_radio, "rts_state"), "Unset");
         if (defaulted & 2)
             rig_set_conf(g_radio, rig_token_lookup(g_radio, "dtr_state"), "Unset");
+        errno = 0;
         ret = rig_open(g_radio);
     }
     if (ret != RIG_OK)
@@ -284,6 +286,7 @@ static int hamlib_open(const ptt_config_t *config)
 
     if (g_radio->caps->rig_model == RIG_MODEL_NETRIGCTL)
     {
+        errno = 0;
         int rc = rig_set_vfo_opt(g_radio, netrigctl_get_vfo_mode(g_radio));
         if (rc != RIG_OK)
             HLOGW(RADIO_LOG_TAG, "Failed to set NetRigCtl VFO option: %d", rc);
@@ -297,10 +300,19 @@ static int hamlib_open(const ptt_config_t *config)
     return 0;
 }
 
+/* A workaround for the older Hamlib the stations run (4.6.2), fixed in later
+ * releases, so not a bug to report: its read_string_generic() (iofunc.c)
+ * sleeps 5 ms after every reply byte while errno == EAGAIN, and never clears
+ * errno, since a successful read leaves it alone.  A thread that reaches
+ * Hamlib with an EAGAIN left from its own non-blocking I/O pays that per
+ * byte -- ~60 ms more key-up for an Icom CI-V echo + ack (seen as 23 -> 134
+ * ms get_level in hermes-radio-daemon).  So errno is cleared before every
+ * Hamlib call that talks to the radio: open, keying, frequency poll, close. */
 static int hamlib_set(bool on)
 {
     if (!g_radio)
         return -1;
+    errno = 0;
     int ret = rig_set_ptt(g_radio, RIG_VFO_CURR,
                           on ? RIG_PTT_ON : RIG_PTT_OFF);
     if (ret != RIG_OK)
@@ -318,7 +330,9 @@ static void hamlib_close(void)
 {
     if (!g_radio)
         return;
+    errno = 0;                      /* see hamlib_set */
     (void)rig_set_ptt(g_radio, RIG_VFO_CURR, RIG_PTT_OFF);
+    errno = 0;                      /* ...which Hamlib's own reads may set */
     rig_close(g_radio);
     rig_cleanup(g_radio);
     g_radio = NULL;
@@ -730,15 +744,18 @@ bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz,
         freq_t freq = 0;
         uint64_t started_ms = now;
         g_frequency_attempt_ms = now;
+        errno = 0;                  /* see hamlib_set */
         int ret = rig_get_freq(g_radio, RIG_VFO_CURR, &freq);
         if (ret != RIG_OK)
         {
             vfo_t current_vfo = RIG_VFO_NONE;
+            errno = 0;
             int vfo_ret = rig_get_vfo(g_radio, &current_vfo);
             if (vfo_ret == RIG_OK && current_vfo != RIG_VFO_NONE &&
                 current_vfo != RIG_VFO_CURR)
             {
                 freq = 0;
+                errno = 0;
                 ret = rig_get_freq(g_radio, current_vfo, &freq);
             }
         }

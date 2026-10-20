@@ -8,11 +8,10 @@ carousel's first poll, and a DISCONNECT ends it.
 [CAROUSEL-SPEC.md](CAROUSEL-SPEC.md) specifies the protocol state by state,
 from the code; this page is the overview.
 
-The connect frames carry a protocol version (1) and the carousel bit in the
-framer extension (see Wire formats).  1.9.x stations, and earlier carousel
-builds, do not connect to this one in either direction: each drops the
-other's CALL and ACCEPT.  A CALL from another version that is addressed to
-this station is logged ("from another protocol version") and not answered.
+The connect frames of Mercury 2.0 have their own packet type (see Wire
+formats).  1.9.x stations do not connect to this one in either direction:
+each drops the other's CALL and ACCEPT.  A 1.9.x CALL addressed to this
+station is logged ("from another protocol version") and not answered.
 
 ## How it works
 
@@ -52,8 +51,29 @@ rungs that could beat it; a rung's round is capped at one frame more than it
 recently delivered; 4 frames lost in a row is a dead verdict, re-probed after
 60 s, doubling to 8 min.  A direction starts on the rung the connect's SNR
 supports (`ARQ_SNR_MIN_*`), as a one-frame probe.  The session's bandwidth caps the
-ladder in both directions: BW500 uses MFSK, DATAC15, DATAC4 and DATAC3;
-BW2300 and BW2750 use every rung (nothing is wider than 2.1 kHz yet).
+ladder in both directions: BW500 uses its own MFSK floor, DATAC15, DATAC4
+and DATAC3; BW2300 and BW2750 use every rung (nothing is wider than 2.1 kHz
+yet).
+
+**The BW500 floor.**  A BW500 session's rung 0 is the 500 Hz MFSK (`MFSK500`,
+mode 103): the same 98-byte frame on 32 tones 15.6 Hz apart, 80 ms symbols,
+26.2 s on the air, centred on 1500 Hz.  A station at BW500 may sit behind a
+500 Hz filter, which no 1 kHz MFSK passes (sim and on air).  Per bit the two
+floors reach equally far on AWGN -- the narrow one's 3 dB lower threshold
+(90 % at −14.1 dB SNR3k against −11.1) is its doubled airtime -- the 1 kHz
+one further on flutter, and in half the keydown, so wider sessions keep it.
+Everything at the floor follows the session's floor: data rounds, control
+to a control-deaf peer, the session's DISCONNECT, ACK/BREAK patterns and
+NAV headers (`arq_floor_mode`, `car_set_floor_mode`,
+`mfsk_pattern_set_geometry`).  A caller escalates its CALLs to the floor of
+its own bandwidth, and the MFSK call listener decodes the floor of the
+station's own: a BW500 station hears a 2300 caller's MFSK CALLs only through
+a filter wide enough for them, which is the point.  A floor keydown holds
+one frame (`MAX_KEYDOWN_MS` 30 s).  The narrow floor's decoder searches at
+2 kHz and reads the payload at 8 kHz, so a listening station spends less
+than on the 1 kHz floor (0.34 % against 0.5-0.6 % of an x86 core) and a
+decode about 0.25 s longer on a Pi 4 (0.4 s against 0.16 s), inside the
+floor's 4.5 s decode allowance.
 
 **The turn.**  The receiver takes it with a HANDOVER poll that announces its
 own first round, sent in the same keydown; the peer's control decoder reads
@@ -118,36 +138,45 @@ POLL / HANDOVER / STATUS, in DATAC16 (14 bytes):
 | byte | field |
 |---|---|
 | 0 | type (2), has data (1), poll id (4), control-deaf (1) |
-| 1 | mode rung (3), frames asked for (4) |
+| 1 | mode rung (3), frames asked for (4), SNR bit 0 |
 | 2 | loss (4), window base mod 16 (4) |
 | 3-9 | pieces each block from the base still needs, 8 x 7 bits (127: none seen) |
 | 10 | the first data piece missing from the base block (255: none) |
-| 11 | start rung for the peer (3), handover round's rung (3) |
+| 11 | SNR bits 5-3 (3), handover round's rung (3), SNR bits 2-1 (2) |
 | 12 | handover round's frames (4), its id (4) |
 | 13 | highest block opened (4), data not yet cut (1) |
 
-CALL and ACCEPT, protocol version 2: 14 bytes (a DATAC16 frame), padded to
-the frame on MFSK.
+The SNR is how the frame's sender hears the peer now: 6 bits, dB + 24 from
+-24 to +38 dB, 63 before any reading.  The peer starts its own direction on
+the rung that SNR would start a session on (in 1.9.x the field held that
+rung, fixed at connect).
+
+CALL and ACCEPT of Mercury 2.0: 14 bytes (a DATAC16 frame), padded to the
+frame on MFSK.
 
 | byte | CALL | ACCEPT |
 |---|---|---|
-| 0 | framer: type CALL (3 bits); extension: bandwidth token (2), protocol version (2, = 2), carousel (1) | the same |
+| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (3, = 0) | the same |
 | 1 | 0, session id (7) | 1, session id (7) |
 | 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
 | 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |
 | 6-7 | | the callee's session nonce |
-| 8 | | the caller's start rung (3 bits; 7: the callee hears it below the control mode, so the floor), 5 bits zero |
-| 9-13 | | zero |
+| 8 | | the caller's start rung (3 bits, 0-6), the callee hears the caller below the control mode (1; the rung is then the floor), 4 bits zero |
+| 9 | | the SNR the callee read the CALL at, dB + 128 (0: unknown) |
+| 10-13 | | zero |
 
-- A station takes a CALL or ACCEPT only with version 2 and the carousel bit
-  set; a 1.9.x station reads that extension as an unknown bandwidth token
-  and drops the frame.  The versions do not connect to each other.
-- Version 1 was 1.9.18, whose MFSK sat at 1531-2500 Hz.  Version 2 centres
-  MFSK on 1500 Hz (1015.6-1984.4 Hz), like the codec2 modes.  The frames are
-  unchanged; the version only keeps 1.9.18 and later stations apart, which
-  would otherwise connect on DATAC16 and then never hear each other at the
-  floor.  A station logs a CALL for it from another version ("another
-  protocol version (Mercury 1.9.18 or older?)") and does not answer.
+- A station takes a CALL or ACCEPT only of type CALL2, any 2.x minor
+  revision; every 1.9.x release drops the type.  The versions do not
+  connect to each other.  A 1.9.x CALL (type CALL) for this station is
+  logged ("another protocol version (Mercury 1.9.x?)") and not answered.
+  Checked 2026-10-18 with the Go harness (`TestMercuryARQTransfer`,
+  `MERCURY_TEST_BIN_A`/`_B`), trunk fb53e38 (protocol 3) against arch-2.0:
+  either way round, the caller's six CALLs went unanswered and it gave up
+  at 110 s; neither end connected.  The 2.0 callee logged each v3 CALL; the
+  v3 callee dropped CALL2 without a word.
+- 1.9.x carried a 2-bit protocol version in type CALL's extension: 1 was
+  1.9.18 (MFSK at 1531-2500 Hz), 2 was 1.9.19 (MFSK centred on 1500 Hz), 3
+  gave a BW500 session its own floor; 3 was the last value it held.
 - An ACCEPT with a reserved bit set is dropped.  The caller takes an ACCEPT
   only if its session id, its own CRC and the called station's CRC all
   match: 39 bits, and every one of them full.

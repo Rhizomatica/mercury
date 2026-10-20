@@ -63,6 +63,7 @@ tests/test_*
 tests/carousel_bench
 tests/carousel_bound
 tests/ab_bench
+tests/conn_bench
 
 # Bench/scratch artifacts (never commit)
 tap-*.f64
@@ -93,3 +94,7 @@ radio_io/hidapi-w64/*.o
 utils/shortframe_sweep
 utils/hail_suffix_sweep
 utils/mfsk_puncture_sweep
+
+# TLC error-trace dumps (written next to the spec on a violation)
+*_TTrace_*.tla
+*_TTrace_*.bin

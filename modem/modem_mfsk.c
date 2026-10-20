@@ -29,7 +29,8 @@
 
 /* Passband geometry — matches the validated offline harness (docs/MFSK-PORT.md). */
 #define MFSK_FS       8000.0
-#define MFSK_NFFT     256
+#define MFSK_NFFT     256          /* the floor's; the 500 Hz modes vary it */
+#define MFSK_NFFT_MAX 512
 /* Carrier.  The 32 tones are the middle 32 of the 50 DC-centred subcarriers,
  * bins -16..+15 at baseband.  mfsk_synth takes the real part against the
  * conjugate carrier, which mirrors the spectrum: on the air they are bins
@@ -46,7 +47,9 @@
  * whole number of carrier cycles, or the phase jumps every period and no
  * burst decodes (test_mfsk_modem's round trips). */
 #define MFSK_FC        (1500.0 - 0.5 * MFSK_FS / MFSK_NFFT)   /* 1484.375 Hz */
-#define MFSK_FC_PERIOD 512
+/* 1024 holds a whole number of cycles of both carriers: 1484.375 Hz (190
+ * cycles) and, for the 15.625 Hz-spaced mode, 1492.1875 Hz (191). */
+#define MFSK_FC_PERIOD 1024
 #define MFSK_NCAR     50
 #define MFSK_GI       0.25
 #define MFSK_M        32
@@ -93,20 +96,74 @@
  * tuned link pays for exactly one correlation, as before. */
 #define MFSK_FREQ_HYPS   13
 #define MFSK_FREQ_HYP_LO (-6)          /* in half-bins */
+/* At half the spacing the same +/-94 Hz takes twice the hypotheses. */
+#define MFSK_FREQ_HYPS_MAX 25
 
 #define MFSK_LPF_TAPS 63
+/* The 500 Hz modes' payload decoder filters to their tones (see mfsk_be_open). */
+#define MFSK_LPF_NARROW_FC   400.0
+#define MFSK_LPF_NARROW_TAPS 191
+#define MFSK_LPF_TAPS_MAX    MFSK_LPF_NARROW_TAPS
 #define MFSK_LPF_FC   1000.0
+
+/* Sample-clock error the payload decoder searches, as receiver samples per
+ * transmitted sample: 1 +/- MFSK_RATE_MAX in MFSK_RATE_STEP steps.
+ *
+ * The burst is read symbol by symbol at the nominal spacing, so a clock
+ * error walks the FFT window off its symbols: past about +/-0.2 % the last
+ * symbols of a 13 s burst sit a whole guard interval out and no frame
+ * decodes.  A sound card is normally within 100 ppm, but an audio chain that
+ * converts rates need not be: on the bench, a capture through ALSA's plug
+ * converter at 8 kHz ran 1.5 % slow, and no MFSK frame decoded from it until
+ * it was resampled, while the OFDM modes, which track timing, carried on.
+ * (Mercury's own paths on the bench measured no error.)  Acquisition still finds the burst -- each preamble
+ * symbol is correlated on its own, and the shift of 1500 Hz the clock causes
+ * (23 Hz at 1.5 %) is just another dial offset to the frequency search -- so
+ * only the payload needs the ratio, and it has hundreds of symbols to measure
+ * it with.  (At 1.5 % the floor still needs about 1 dB more than on a good
+ * clock, most of it the frequency grid's: 23 Hz is midway between two
+ * hypotheses, and a dial 23 Hz off costs the same.)
+ * The step is under the +/-0.2 % a payload tolerates, and a finer pass
+ * halves it. */
+#define MFSK_RATE_MAX  0.02
+#define MFSK_RATE_STEP 0.0025
+
+/* A gap in the transmitted audio.  When the transmitting station's playback
+ * runs dry (radiod logs "radio playback: underrun ... played as silence"),
+ * silence goes into the burst and everything after it arrives late: on air
+ * 25 ms of it, about 4.5 s into a 13 s floor frame, and the frame was lost at
+ * 18 dB SNR -- both stations' radiod did this every minute or two.  The
+ * preamble then places the symbols before the gap and the postamble those
+ * after it, and neither all of them, so a payload whose two anchors disagree
+ * by MFSK_SLIP_MIN samples up to MFSK_SLIP_MAX_SYMB symbols is also read with
+ * a switch from the one to the other, at the symbol that makes the tones
+ * strongest (mfsk_try_split).  Below MFSK_SLIP_MIN the guard interval
+ * absorbs it. */
+#define MFSK_SLIP_MIN      8
+#define MFSK_SLIP_MAX_SYMB 2
 
 typedef struct {
     int mode;
+    int nfft;                       /* MFSK_NFFT, or 512 for 15.625 Hz tones */
+    int fcg;                        /* carrier table: 0 = MFSK_FC, 1 = the 512-point one */
+    int nhyp, hyp_lo;               /* frequency hypotheses, in half-bins */
+    double snr_bin_to_3k_db;        /* one bin's width against 3 kHz */
     mfsk_t m;
     ofdm_frame_t o;
+    /* The receiver runs at MFSK_FS / dec after its filter (mfsk_downmix):
+     * orx, nfft_r and Nr are o, nfft and Nofdm at that rate, and every
+     * position in bf -- anchors, payload starts, b_abs -- counts its samples.
+     * dec is 1 but for the 500 Hz geometry. */
+    int dec;
+    ofdm_frame_t orx;
+    int nfft_r, Nr;
     const mfsk_ldpc_code_t *code;   /* rate 8/16 */
     mfsk_ldpc_ws_t *ldpc;           /* this decoder's own LDPC workspace */
     int Nofdm, P, bps, NPAY;
     size_t frame_bytes;             /* K/8 (payload + CRC16) */
 
-    double lpf[MFSK_LPF_TAPS];
+    double lpf[MFSK_LPF_TAPS_MAX];
+    int    lpf_taps;
     long tx_n;                      /* TX carrier phase counter (per burst) */
     double complex tx_tail[MFSK_XFADE]; /* last symbol's faded-out suffix */
     int      tx_have_tail;          /* ...to add to the next symbol's head */
@@ -124,9 +181,17 @@ typedef struct {
                                      * mfsk_downmix) */
     int      bb_len;                /* samples of bb that are downmixed        */
     int      bf_len;                /* samples of bf that are FINAL (filtered) */
+    /* The same filtered baseband at the full rate, for the payload reads:
+     * bf itself when dec is 1; otherwise filled only once a burst's preamble
+     * is in view (mfsk_full_rate), so an idle listener never pays for it.
+     * Payload positions, keys and pre_fail_abs count its samples (n_abs). */
+    double complex *bf8;
+    int      bf8_len;
+    int      bf8_lo;                /* bf8 below this was never computed       */
     long     n_abs;                 /* absolute index of rxbuf[0] — keeps the
                                      * carrier phase tied to the sample, not to
                                      * its position in a sliding buffer        */
+    long     b_abs;                 /* ...and of bf[0]: n_abs / dec            */
     mfsk_cplx      *rb;             /* NPAY*NCAR depadded bins */
     int             nb;             /* NPAY*bps transmitted bit slots (>= N) */
     int            *ilv;            /* interleaver: coded index per tx slot   */
@@ -142,9 +207,25 @@ typedef struct {
      * error shifts every tone; beyond half a subcarrier (15.6 Hz here) the
      * nominal FFT bins see nothing and the mode goes stone deaf. Measured on
      * the unmodified decoder: 12 Hz decoded 10/10, 16 Hz decoded 0/10. */
-    double complex *preT_hyp[MFSK_FREQ_HYPS];
+    double complex *preT_hyp[MFSK_FREQ_HYPS_MAX];
     int             freq_hb;        /* latched hypothesis, in HALF subcarriers */
     int             freq_locked;    /* a decode confirmed freq_hb            */
+    /* Receiver samples per transmitted sample (see MFSK_RATE_MAX): the last
+     * frame's, which the next burst is read at first, 1.0 until one is. */
+    double          rate;
+    /* The decode last attempted (mfsk_decode_at): its anchor (an absolute
+     * index, -1 for none), sample ratio and dial offset in half subcarriers.
+     * Its LLRs are in llr_di and its SNR sums in dm_snr_s/_n. */
+    long            dm_key;
+    double          dm_rate, dm_hb, dm_snr_s, dm_snr_n;
+    long            pst_tried_abs;  /* furthest postamble whose payload was tried */
+    long            pre_fail_abs;   /* where the payload of the last preamble whose
+                                     * read failed starts (nominal rate), or -1:
+                                     * the other anchor of a burst with a gap */
+    /* The last frame's offset on air, Hz (positive: above nominal), for
+     * get_freq_offset. */
+    float           foff_hz;
+    int             foff_valid;
     double          preE[MFSK_MAX_PREAMBLE_SYMB], pstE[MFSK_MAX_PREAMBLE_SYMB];
     int             preN, pstN;
 
@@ -170,38 +251,47 @@ typedef struct {
 } mfsk_modem_t;
 
 /* Windowed-sinc low-pass (matches the harness). */
-static void mklpf(double *lpf, double fc)
+static void mklpf_n(double *lpf, double fc, int taps)
 {
     double s = 0.0;
-    for (int i = 0; i < MFSK_LPF_TAPS; i++)
+    for (int i = 0; i < taps; i++)
     {
-        int k = i - MFSK_LPF_TAPS / 2;
+        int k = i - taps / 2;
         double h = (k == 0) ? 2.0 * M_PI * fc / MFSK_FS
                             : sin(2.0 * M_PI * fc / MFSK_FS * k) / (M_PI * k);
-        h *= 0.54 - 0.46 * cos(2.0 * M_PI * i / (MFSK_LPF_TAPS - 1));
+        h *= 0.54 - 0.46 * cos(2.0 * M_PI * i / (taps - 1));
         lpf[i] = h; s += h;
     }
-    for (int i = 0; i < MFSK_LPF_TAPS; i++) lpf[i] /= s;
+    for (int i = 0; i < taps; i++) lpf[i] /= s;
 }
 
-/* The carrier phasor e^(j*2*pi*MFSK_FC*n/MFSK_FS), one period of it. */
-static double complex g_fc_ph[MFSK_FC_PERIOD];
+static void mklpf(double *lpf, double fc) { mklpf_n(lpf, fc, MFSK_LPF_TAPS); }
+
+/* The carrier phasor e^(j*2*pi*fc*n/MFSK_FS), one period of it, for the
+ * 256-point geometry (g 0) and the 512-point one (g 1).  Either way the tones
+ * are centred on 1500 Hz: fc sits half a bin below it. */
+static double complex g_fc_ph[2][MFSK_FC_PERIOD];
 static pthread_once_t g_fc_once = PTHREAD_ONCE_INIT;
 
 static void fc_table_init(void)
 {
-    for (int n = 0; n < MFSK_FC_PERIOD; n++)
+    for (int g = 0; g < 2; g++)
     {
-        double ph = 2.0 * M_PI * MFSK_FC / MFSK_FS * (double)n;
-        g_fc_ph[n] = cos(ph) + I * sin(ph);
+        double fc = 1500.0 - 0.5 * MFSK_FS / (double)(MFSK_NFFT << g);
+        for (int n = 0; n < MFSK_FC_PERIOD; n++)
+        {
+            double ph = 2.0 * M_PI * fc / MFSK_FS * (double)n;
+            g_fc_ph[g][n] = cos(ph) + I * sin(ph);
+        }
     }
 }
 
 /* n is an absolute sample index (never negative). */
-static inline double complex fc_phasor(long n)
+static inline double complex fc_phasor_g(int g, long n)
 {
-    return g_fc_ph[n & (MFSK_FC_PERIOD - 1)];
+    return g_fc_ph[g][n & (MFSK_FC_PERIOD - 1)];
 }
+static inline double complex fc_phasor(long n) { return fc_phasor_g(0, n); }
 
 /* ---- lifecycle -------------------------------------------------------- */
 
@@ -213,8 +303,16 @@ static void *mfsk_be_open(int mode)
     if (!h) return NULL;
 
     h->mode = mode;
-    mfsk_init(&h->m, MFSK_M, MFSK_NCAR, 1);
-    ofdm_frame_init(&h->o, MFSK_NFFT, MFSK_NCAR, MFSK_GI, 0);
+    int M = MFSK_M;
+    h->nfft = MFSK_NFFT;
+    if (mode == MERCURY_MODE_MFSK_N16) M = 16;
+    if (mode == MERCURY_MODE_MFSK_N32) h->nfft = 2 * MFSK_NFFT;
+    h->fcg = h->nfft == MFSK_NFFT ? 0 : 1;
+    h->hyp_lo = MFSK_FREQ_HYP_LO * (h->nfft / MFSK_NFFT);
+    h->nhyp = 1 - 2 * h->hyp_lo;
+    h->snr_bin_to_3k_db = MFSK_SNR_BIN_TO_3K_DB - 10.0 * log10((double)h->nfft / MFSK_NFFT);
+    mfsk_init(&h->m, M, MFSK_NCAR, 1);
+    ofdm_frame_init(&h->o, h->nfft, MFSK_NCAR, MFSK_GI, 0);
     /* Code rate.  All five ported codes share N=1600, so the burst is 13.5 s
      * whatever the rate -- a lower rate costs payload, not airtime.  Measured
      * anyway: with acquisition fixed, rate 1/8 buys only ~0.5 dB over rate 1/2
@@ -223,12 +321,44 @@ static void *mfsk_be_open(int mode)
      * airtime per byte, so the fringe rung stays at rate 1/2. */
     h->code  = &mfsk_ldpc_8_16;          /* rate 1/2: 100-byte frame */
     h->Nofdm = ofdm_frame_nofdm(&h->o);
+    /* The 500 Hz geometry's receiver at 2 kHz.  Its tones span 500 Hz and its
+     * filter passes 400 Hz either side of the carrier (below), so a quarter
+     * of the rate holds all of it, and a 128-point FFT there has the 512-point
+     * one's 15.625 Hz bins: the same symbols, the same templates, at a
+     * quarter of the cost.  At 8 kHz its idle listener took 3.3 times the
+     * floor's CPU, nearly all of it the preamble search (25 hypotheses of
+     * 512-sample symbols against 13 of 256). */
+    h->dec = mode == MERCURY_MODE_MFSK_N32 ? 4 : 1;
+    if (h->dec == 1)
+        h->orx = h->o;
+    else
+        ofdm_frame_init(&h->orx, h->nfft / h->dec, MFSK_NCAR, MFSK_GI, 0);
+    h->nfft_r = h->orx.Nfft;
+    h->Nr     = ofdm_frame_nofdm(&h->orx);
     h->P     = h->m.preamble_nSymb;
     h->bps   = mfsk_bits_per_symbol(&h->m);
     h->NPAY  = (h->code->N + h->bps - 1) / h->bps;
     h->frame_bytes = (size_t)h->code->K / 8;
     pthread_once(&g_fc_once, fc_table_init);
-    mklpf(h->lpf, MFSK_LPF_FC);
+    /* The 500 Hz modes filter to their tones.  The sync statistic divides
+     * by the energy the filter passes (mfsk_sync_search), so noise outside the
+     * tones costs acquisition: at 15.625 Hz spacing, where the code needs 3 dB
+     * less than the floor's, acquisition was the limit, and passing 2 kHz of
+     * noise for 500 Hz of tones cost 2.5 dB (AWGN 50 % at -12.3 dB SNR3k, -14.6
+     * filtered to 360 Hz).  400 Hz keeps the outer tones of a burst at the
+     * edge of the +/-94 Hz dial search, and 191 taps keep the band edge sharp:
+     * it measured as well as 360 Hz over 127 taps on frequency, and better
+     * (37/40 against 31/40 at 500 Hz and 0/40 unfiltered, -13 dB) 90 Hz off.
+     * A narrower band raises what noise alone scores; 360 Hz still gave 0
+     * false syncs in 1296 s of noise. */
+    h->lpf_taps = MFSK_LPF_TAPS;
+    if (h->m.M * MFSK_FS / h->nfft <= 500.0)
+    {
+        h->lpf_taps = MFSK_LPF_NARROW_TAPS;
+        mklpf_n(h->lpf, MFSK_LPF_NARROW_FC, h->lpf_taps);
+    }
+    else
+        mklpf(h->lpf, MFSK_LPF_FC);
 
     /* RX window: one full burst (pre + data + post) plus a few symbols slack. */
     /* Two bursts of window, not one.
@@ -251,9 +381,12 @@ static void *mfsk_be_open(int mode)
     h->rxcap  = h->rxhold + (h->P + h->NPAY) * h->Nofdm;
     h->rxbuf = (int16_t *)malloc((size_t)h->rxcap * sizeof(int16_t));
     h->bf    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
+    h->bf8   = h->dec == 1 ? h->bf : (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
+    h->bf8_len = h->bf8_lo = 0;
     h->bb    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
     h->bb_len = h->bf_len = 0;
     h->n_abs  = 0;
+    h->b_abs  = 0;
     h->anchor_abs = -1;
     h->tried_abs  = -1;
     h->reject_abs = -1;
@@ -274,34 +407,39 @@ static void *mfsk_be_open(int mode)
     h->ldpc  = mfsk_ldpc_ws_new();
     h->preT  = (double complex *)malloc((size_t)h->P * h->Nofdm * sizeof(double complex));
     h->pstT  = (double complex *)malloc((size_t)h->P * h->Nofdm * sizeof(double complex));
-    if (!h->rxbuf || !h->bf || !h->rb || !h->llr || !h->llr_di || !h->llr_acc || !h->ilv ||
+    if (!h->rxbuf || !h->bf || !h->bf8 || !h->rb || !h->llr || !h->llr_di || !h->llr_acc || !h->ilv ||
         !h->info || !h->ldpc || !h->preT || !h->pstT)
     {
+        if (h->bf8 != h->bf) free(h->bf8);
         free(h->rxbuf); free(h->bf); free(h->rb); free(h->llr); free(h->llr_di); free(h->llr_acc);
         free(h->ilv); free(h->info); mfsk_ldpc_ws_free(h->ldpc); free(h->preT); free(h->pstT); free(h);
         return NULL;
     }
     mfsk_interleave_init(h->ilv, h->nb);
-    h->preN = mfsk_sync_build_template(&h->m, &h->o, h->preT, h->preE);
+    h->preN = mfsk_sync_build_template(&h->m, &h->orx, h->preT, h->preE);
     /* One template per hypothesis: rotating the TEMPLATE by +k bins matches a
      * received signal shifted by +k bins, and costs nothing at run time beyond
      * the extra correlations. Rotation is continuous across the whole template
      * because the received burst is. */
-    for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++)
+    for (int hy = 0; hy < h->nhyp; hy++)
     {
-        int hb = MFSK_FREQ_HYP_LO + hy;   /* half-bins */
-        h->preT_hyp[hy] = (double complex *)malloc((size_t)h->preN * h->Nofdm *
+        int hb = h->hyp_lo + hy;          /* half-bins */
+        h->preT_hyp[hy] = (double complex *)malloc((size_t)h->preN * h->Nr *
                                                    sizeof(double complex));
         if (!h->preT_hyp[hy]) { mfsk_be_close(h); return NULL; }
-        for (int n = 0; n < h->preN * h->Nofdm; n++)
+        for (int n = 0; n < h->preN * h->Nr; n++)
         {
-            double ph = M_PI * (double)hb * (double)n / (double)MFSK_NFFT;
+            double ph = M_PI * (double)hb * (double)n / (double)h->nfft_r;
             h->preT_hyp[hy][n] = h->preT[n] * (cos(ph) + I * sin(ph));
         }
     }
     h->freq_hb = 0;
     h->freq_locked = 0;
-    h->pstN = mfsk_sync_build_postamble_template(&h->m, &h->o, h->pstT, h->pstE);
+    h->rate = 1.0;
+    h->dm_key = -1;
+    h->pst_tried_abs = -1;
+    h->pre_fail_abs = -1;
+    h->pstN = mfsk_sync_build_postamble_template(&h->m, &h->orx, h->pstT, h->pstE);
     return h;
 }
 
@@ -311,7 +449,8 @@ static void mfsk_be_close(void *ctx)
     if (!h) return;
     /* bb was never freed here: it is rxcap complex doubles (~3.4 MB), leaked on
      * every open/close cycle. */
-    for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++) free(h->preT_hyp[hy]);
+    for (int hy = 0; hy < h->nhyp; hy++) free(h->preT_hyp[hy]);
+    if (h->bf8 != h->bf) free(h->bf8);
     free(h->rxbuf); free(h->bf); free(h->bb); free(h->rb);
     free(h->llr); free(h->llr_di); free(h->llr_acc); free(h->ilv);
     free(h->info); mfsk_ldpc_ws_free(h->ldpc); free(h->preT); free(h->pstT); free(h);
@@ -343,7 +482,7 @@ static int mfsk_be_sample_rate(void *ctx)   { (void)ctx; return (int)MFSK_FS; }
 static int mfsk_be_bandwidth_hz(void *ctx)
 {
     const mfsk_t *m = &((mfsk_modem_t *)ctx)->m;
-    double spacing = MFSK_FS / (double)MFSK_NFFT;
+    double spacing = MFSK_FS / (double)((mfsk_modem_t *)ctx)->nfft;
     return (int)((double)(m->nStreams * m->M) * spacing + 0.5);
 }
 
@@ -378,7 +517,7 @@ static uint64_t mfsk_now_ms(void)
  * *tx_n is the carrier phase counter (absolute sample index in the burst);
  * tail/have_tail carry the pending fade-out across calls, so preamble, data
  * and postamble join as smoothly as symbols do. */
-static int mfsk_synth(const ofdm_frame_t *o, int nofdm, const mfsk_cplx *syms, int nsym,
+static int mfsk_synth(const ofdm_frame_t *o, int g, int nofdm, const mfsk_cplx *syms, int nsym,
                       int16_t *out, long *tx_n, double complex *tail, int *have_tail, int last)
 {
     static double rise[MFSK_XFADE];
@@ -391,7 +530,7 @@ static int mfsk_synth(const ofdm_frame_t *o, int nofdm, const mfsk_cplx *syms, i
     int written = 0;
     for (int s = 0; s < nsym; s++)
     {
-        double complex bins[MFSK_NCAR], pad[MFSK_NFFT], t[MFSK_NFFT], cp[MFSK_NFFT + 128];
+        double complex bins[MFSK_NCAR], pad[MFSK_NFFT_MAX], t[MFSK_NFFT_MAX], cp[MFSK_NFFT_MAX * 2];
         for (int k = 0; k < MFSK_NCAR; k++)
             bins[k] = syms[s * MFSK_NCAR + k].re + syms[s * MFSK_NCAR + k].im * I;
         ofdm_zero_padder(o, bins, pad);
@@ -408,7 +547,7 @@ static int mfsk_synth(const ofdm_frame_t *o, int nofdm, const mfsk_cplx *syms, i
         *have_tail = !(last && s == nsym - 1);
         for (int n = 0; n < nofdm; n++)
         {
-            double complex p = fc_phasor((*tx_n)++);
+            double complex p = fc_phasor_g(g, (*tx_n)++);
             double v = MFSK_TXAMP * (creal(cp[n]) * creal(p) + cimag(cp[n]) * cimag(p));
             if (v > 32767.0) v = 32767.0; else if (v < -32768.0) v = -32768.0;
             out[written++] = (int16_t)lrint(v);
@@ -419,7 +558,7 @@ static int mfsk_synth(const ofdm_frame_t *o, int nofdm, const mfsk_cplx *syms, i
 
 static int mfsk_emit(mfsk_modem_t *h, const mfsk_cplx *syms, int nsym, int16_t *out, int last)
 {
-    return mfsk_synth(&h->o, h->Nofdm, syms, nsym, out, &h->tx_n,
+    return mfsk_synth(&h->o, h->fcg, h->Nofdm, syms, nsym, out, &h->tx_n,
                       h->tx_tail, &h->tx_have_tail, last);
 }
 
@@ -501,20 +640,22 @@ static void mfsk_downmix(mfsk_modem_t *h)
      * The carrier phase is taken from the ABSOLUTE sample index (n_abs), so
      * sliding the buffer does not rotate previously computed samples. */
     for (int i = h->bb_len; i < h->rxlen; i++)
-        h->bb[i] = 2.0 * (double)h->rxbuf[i] * fc_phasor(h->n_abs + (long)i);
+        h->bb[i] = 2.0 * (double)h->rxbuf[i] * fc_phasor_g(h->fcg, h->n_abs + (long)i);
     h->bb_len = h->rxlen;
 
-    /* bf[i] needs bb up to i + TAPS/2, so it is final only once that has
-     * arrived.  Everything below bf_len is already final and is never
-     * recomputed. */
-    int last = h->bb_len - MFSK_LPF_TAPS / 2;
-    if (last > h->rxlen) last = h->rxlen;
+    /* bf[i] is the filter's output at bb[i * dec] (the receiver's rate,
+     * see dec): it needs bb up to i * dec + TAPS/2, so it is final only once
+     * that has arrived.  Everything below bf_len is already final and is
+     * never recomputed, and the outputs decimation drops are never computed. */
+    int D = h->dec;
+    int last = (h->bb_len - h->lpf_taps / 2 + D - 1) / D;
+    if (last > (h->rxlen + D - 1) / D) last = (h->rxlen + D - 1) / D;
     for (int i = h->bf_len; i < last; i++)
     {
         double complex a = 0;
-        for (int k = 0; k < MFSK_LPF_TAPS; k++)
+        for (int k = 0; k < h->lpf_taps; k++)
         {
-            int j = i - k + MFSK_LPF_TAPS / 2;
+            int j = i * D - k + h->lpf_taps / 2;
             if (j >= 0 && j < h->bb_len) a += h->lpf[k] * h->bb[j];
         }
         h->bf[i] = a;
@@ -522,14 +663,255 @@ static void mfsk_downmix(mfsk_modem_t *h)
     if (last > h->bf_len) h->bf_len = last;
 }
 
-/* Demod one MFSK burst whose payload symbols start at bf[payoff], decode LDPC,
- * verify CRC16. Returns frame_bytes on success (bytes_out filled), else 0. */
-static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
+/* The payload reads' baseband, bf8, at the full rate up to what bb makes
+ * final.  Not bf at the receiver's rate: the FFT's rectangular window
+ * spreads every in-band component into sidelobes across the band, and
+ * taking every dec-th sample folds the sidelobes 2 kHz away back onto the
+ * tones -- on noise, 0.4 dB more in every bin, and at mode 103's floor
+ * (-15 dB SNR3k) 13 frames of 40 became none.  The preamble search
+ * correlates in time, which folding does not touch: its metric is the same
+ * at either rate. */
+static void mfsk_full_rate(mfsk_modem_t *h, int from)
 {
-    if (payoff < 0 || payoff + h->NPAY * h->Nofdm > h->bf_len)
-        return 0;
+    if (h->dec == 1) { h->bf8_len = h->bf_len; return; }
+    /* Only from where a read can reach: the window holds two bursts, and
+     * filtering all of it at 8 kHz was most of a mode-103 frame's decode. */
+    if (from < 0) from = 0;
+    if (h->bf8_len < from) h->bf8_lo = h->bf8_len = from;
+    int lo = from < h->bf8_lo ? from : h->bf8_lo;   /* a read reaching lower: fill below */
+    for (int i = lo; i < h->bf8_lo; i++)
+    {
+        double complex a = 0;
+        for (int k = 0; k < h->lpf_taps; k++)
+        {
+            int j = i - k + h->lpf_taps / 2;
+            if (j >= 0 && j < h->bb_len) a += h->lpf[k] * h->bb[j];
+        }
+        h->bf8[i] = a;
+    }
+    h->bf8_lo = lo;
+    int last = h->bb_len - h->lpf_taps / 2;
+    if (last > h->rxlen) last = h->rxlen;
+    for (int i = h->bf8_len; i < last; i++)
+    {
+        double complex a = 0;
+        for (int k = 0; k < h->lpf_taps; k++)
+        {
+            int j = i - k + h->lpf_taps / 2;
+            if (j >= 0 && j < h->bb_len) a += h->lpf[k] * h->bb[j];
+        }
+        h->bf8[i] = a;
+    }
+    if (last > h->bf8_len) h->bf8_len = last;
+}
 
-    double sig = 0.0;                /* LLR magnitude, for HARQ below */
+/* bf at a fractional index: 4-point Lagrange interpolation.  The baseband is
+ * filtered to 1 kHz or less at 8 kHz, so it is smooth enough at that order;
+ * x - 1 and x + 2 must be in bf. */
+static inline double complex bf_at(const mfsk_modem_t *h, double x)
+{
+    long i = (long)floor(x);
+    double t = x - (double)i;
+    const double complex *p = &h->bf8[i - 1];
+    if (t == 0.0) return p[1];
+    return -t * (t - 1.0) * (t - 2.0) / 6.0 * p[0]
+         + (t + 1.0) * (t - 1.0) * (t - 2.0) / 2.0 * p[1]
+         - (t + 1.0) * t * (t - 2.0) / 2.0 * p[2]
+         + (t + 1.0) * t * (t - 1.0) / 6.0 * p[3];
+}
+
+/* One symbol's depadded bins, read from bf at pos onwards, one sample every
+ * `rate`, with a dial offset of hb half subcarriers undone so the tones land
+ * back on their nominal bins.  The phase restarts each symbol, which is
+ * harmless: the demod is non-coherent, only the frequency matters. */
+static void mfsk_sym_bins(const mfsk_modem_t *h, double pos, double rate, double hb,
+                          double complex *dep)
+{
+    double complex rmv[MFSK_NFFT_MAX], ff[MFSK_NFFT_MAX], sym[MFSK_NFFT_MAX * 2];
+    const double complex *src = sym;
+    double ph = -M_PI * hb / (double)h->nfft;
+    double complex w = cos(ph) + I * sin(ph), p = 1.0;
+    if (rate == 1.0 && pos == floor(pos))
+    {
+        int b = (int)pos;
+        if (hb == 0.0)
+            src = &h->bf8[b];
+        else
+            for (int n = 0; n < h->Nofdm; n++, p *= w)
+                sym[n] = h->bf8[b + n] * p;
+    }
+    else
+        for (int n = 0; n < h->Nofdm; n++, p *= w)
+            sym[n] = bf_at(h, pos + (double)n * rate) * p;
+    ofdm_gi_remover(&h->o, src, rmv);
+    ofdm_fft(&h->o, rmv, ff);
+    ofdm_zero_depadder(&h->o, ff, dep);
+}
+
+/* Where the payload starts at sample ratio `rate`.  It is anchored ref
+ * symbols from payoff -- the preamble's start (ref P) or the postamble's
+ * (ref -NPAY) -- and payoff is where it starts at the nominal rate, so the
+ * burst stretches or shrinks about the anchor. */
+static double mfsk_pay_start(const mfsk_modem_t *h, int payoff, int ref, double rate)
+{
+    return (double)payoff + (double)ref * h->Nofdm * (rate - 1.0);
+}
+
+/* Is the whole payload, read from start at `rate`, in bf (with the
+ * interpolator's reach either side)? */
+static int mfsk_pay_fits(const mfsk_modem_t *h, double start, double rate)
+{
+    return start >= (double)h->bf8_lo + 1.0 &&
+           start + (double)(h->NPAY * h->Nofdm - 1) * rate + 2.0 < (double)h->bf8_len;
+}
+
+/* How a payload is read: symbol s starts at start + s Nofdm rate, or, from
+ * symbol ksplit on, at start2 + s Nofdm rate (a burst with a gap; ksplit is
+ * NPAY when there is none). */
+typedef struct {
+    double start, start2, rate;
+    int    ksplit;
+} mfsk_read_t;
+
+static mfsk_read_t mfsk_read_one(const mfsk_modem_t *h, double start, double rate)
+{
+    mfsk_read_t rd = { start, start, rate, h->NPAY };
+    return rd;
+}
+
+static inline double mfsk_read_pos(const mfsk_modem_t *h, const mfsk_read_t *rd, int s)
+{
+    return (s < rd->ksplit ? rd->start : rd->start2) + (double)s * h->Nofdm * rd->rate;
+}
+
+/* Can every ratio be tried, i.e. is the payload in at the slowest clock? */
+static int mfsk_pay_ready(const mfsk_modem_t *h, int payoff, int ref)
+{
+    double r = 1.0 + MFSK_RATE_MAX;
+    double end = mfsk_pay_start(h, payoff, ref, r) + (double)(h->NPAY * h->Nofdm - 1) * r + 2.0;
+    return end < (double)h->bf8_len;
+}
+
+/* One symbol's strongest tone per stream, summed: how well a position, ratio
+ * and offset line its tone up with the bins.  *all (if not NULL) gets every
+ * tone bin's energy, which a misplaced window keeps and silence does not. */
+static double mfsk_sym_energy(const mfsk_modem_t *h, double pos, double rate, double hb,
+                              double *all)
+{
+    double complex dep[MFSK_NCAR];
+    double e = 0.0, a = 0.0;
+    mfsk_sym_bins(h, pos, rate, hb, dep);
+    for (int st = 0; st < h->m.nStreams; st++)
+    {
+        double emax = 0.0;
+        for (int t = 0; t < h->m.M; t++)
+        {
+            double complex v = dep[h->m.stream_offsets[st] + t];
+            double en = creal(v * conj(v));
+            if (en > emax) emax = en;
+            a += en;
+        }
+        e += emax;
+    }
+    if (all) *all = a;
+    return e;
+}
+
+/* ...summed over every `every`-th symbol of a payload read. */
+static double mfsk_pay_energy(const mfsk_modem_t *h, const mfsk_read_t *rd, double hb, int every)
+{
+    double e = 0.0;
+    for (int s = 0; s < h->NPAY; s += every)
+        e += mfsk_sym_energy(h, mfsk_read_pos(h, rd, s), rd->rate, hb, NULL);
+    return e;
+}
+
+/* The dial offset to an eighth of a subcarrier.
+ *
+ * Acquisition picks among hypotheses half a subcarrier apart, which leaves up
+ * to a quarter of one between the burst and the bins it is read on.  That
+ * quarter costs a lot: the tone's energy leaks into its neighbours, and at
+ * SNR3k -14 dB the 15.625 Hz geometry delivered 37/40 bursts on a hypothesis
+ * and 14/40 between two (the 31.25 Hz one loses the same way at its own floor).
+ * So the payload is read at the hypothesis and at a quarter and an eighth of
+ * a subcarrier either side, and the offset whose strongest tones carry the
+ * most energy over the whole payload wins: hundreds of symbols choose it
+ * reliably where the preamble's few could not. */
+static double mfsk_refine_hb(const mfsk_modem_t *h, const mfsk_read_t *rd, double hb0)
+{
+    double best_e = -1.0, best_hb = hb0;
+    for (int k = -2; k <= 2; k++)
+    {
+        double hb = hb0 + 0.25 * k;
+        double e = mfsk_pay_energy(h, rd, hb, 1);
+        if (e > best_e) { best_e = e; best_hb = hb; }
+    }
+    return best_hb;
+}
+
+/* The sample ratio, from the payload: every MFSK_RATE_STEP over +/-
+ * MFSK_RATE_MAX on every other symbol, then half a step either side of the
+ * best, and the ratio last decoded at, on all of them.  The frequency stays
+ * acquisition's: a clock error shifts 1500 Hz by far more than it spreads
+ * the tones about it, and that shift is what acquisition found. */
+static double mfsk_search_rate(const mfsk_modem_t *h, int payoff, int ref, long key)
+{
+    int K = (int)lround(MFSK_RATE_MAX / MFSK_RATE_STEP);
+    double best_e = -1.0, best = 1.0;
+    for (int k = -K; k <= K; k++)
+    {
+        double r = 1.0 + k * MFSK_RATE_STEP, st = mfsk_pay_start(h, payoff, ref, r);
+        if (!mfsk_pay_fits(h, st, r)) continue;
+        mfsk_read_t rd = mfsk_read_one(h, st, r);
+        double e = mfsk_pay_energy(h, &rd, h->freq_hb * r, 2);
+        if (e > best_e) { best_e = e; best = r; }
+    }
+    double cand[4] = { best - 0.5 * MFSK_RATE_STEP, best, best + 0.5 * MFSK_RATE_STEP,
+                       h->dm_key == key ? h->dm_rate : best };
+    best_e = -1.0;
+    double pick = best;
+    for (int c = 0; c < 4; c++)
+    {
+        double r = cand[c], st = mfsk_pay_start(h, payoff, ref, r);
+        if (!mfsk_pay_fits(h, st, r)) continue;
+        mfsk_read_t rd = mfsk_read_one(h, st, r);
+        double e = mfsk_pay_energy(h, &rd, h->freq_hb * r, 1);
+        if (e > best_e) { best_e = e; pick = r; }
+    }
+    return pick;
+}
+
+/* Info bits -> bytes (MSB-first, matching TX), then the CRC16 over the
+ * payload (all but the last 2) against its trailer -- FreeDV's contract. */
+static int mfsk_frame_crc_ok(mfsk_modem_t *h, const int *bits, uint8_t *bytes_out)
+{
+    size_t nbytes = h->frame_bytes;
+    for (size_t by = 0; by < nbytes; by++)
+    {
+        uint8_t v = 0;
+        for (int bit = 0; bit < 8; bit++)
+            v = (uint8_t)((v << 1) | (bits[by * 8 + bit] & 1));
+        bytes_out[by] = v;
+    }
+    uint16_t crc = freedv_gen_crc16(bytes_out, (int)(nbytes - 2));
+    uint16_t got = (uint16_t)((bytes_out[nbytes - 2] << 8) | bytes_out[nbytes - 1]);
+    if (h->crc_seed && (uint16_t)(crc ^ h->crc_seed) == got)
+        h->rx_seeded = 1;
+    else if ((!h->crc_seed || h->crc_accept_plain) && crc == got)
+        h->rx_seeded = 0;
+    else
+        return 0;
+    return 1;
+}
+
+/* Demod and decode the payload as rd reads it, the dial offset refined about
+ * acquisition's.  Leaves the LLRs in llr_di and what it did in dm_*; returns
+ * whether the frame passed its CRC (bytes_out filled). */
+static int mfsk_decode_at(mfsk_modem_t *h, long key, const mfsk_read_t *rd, uint8_t *bytes_out)
+{
+    double rate = rd->rate;
+    double hb = mfsk_refine_hb(h, rd, h->freq_hb * rate);
+
     /* SNR: per symbol, the strongest tone bin of each stream (signal + noise)
      * against the mean of the bins outside every stream's band (noise). */
     double snr_s = 0.0, snr_n = 0.0;
@@ -537,26 +919,8 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
     int band_hi = h->m.stream_offsets[h->m.nStreams - 1] + h->m.M;
     for (int s = 0; s < h->NPAY; s++)
     {
-        int b = payoff + s * h->Nofdm;
-        double complex rmv[MFSK_NFFT], ff[MFSK_NFFT], dep[MFSK_NCAR];
-        double complex sym[MFSK_NFFT * 2];
-        const double complex *src = &h->bf[b];
-        if (h->freq_hb != 0)
-        {
-            /* Undo the dial offset the acquisition found, so the tones land
-             * back on their nominal bins. Phase restarts each symbol, which is
-             * harmless: the demod is non-coherent, only the frequency matters. */
-            for (int n = 0; n < h->Nofdm; n++)
-            {
-                double ph = -M_PI * (double)h->freq_hb * (double)n /
-                            (double)MFSK_NFFT;
-                sym[n] = h->bf[b + n] * (cos(ph) + I * sin(ph));
-            }
-            src = sym;
-        }
-        ofdm_gi_remover(&h->o, src, rmv);
-        ofdm_fft(&h->o, rmv, ff);
-        ofdm_zero_depadder(&h->o, ff, dep);
+        double complex dep[MFSK_NCAR];
+        mfsk_sym_bins(h, mfsk_read_pos(h, rd, s), rate, hb, dep);
         for (int k = 0; k < MFSK_NCAR; k++)
         {
             h->rb[s * MFSK_NCAR + k].re = creal(dep[k]);
@@ -586,7 +950,128 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
         int j = h->ilv[t];
         if (j < h->code->N) h->llr_di[j] = h->llr[t];   /* undo the scatter */
     }
-    for (int i = 0; i < h->code->N; i++) sig += fabs(h->llr_di[i]);
+    h->dm_key = key;
+    h->dm_rate = rate;
+    h->dm_hb = hb;
+    h->dm_snr_s = snr_s;
+    h->dm_snr_n = snr_n;
+
+    /* The CRC decides, not the LDPC's parity check: an unconverged decode
+     * can still carry the right info bits. */
+    int out_bits[MFSK_LDPC_MAXK];   /* not static: decoders run side by side */
+    (void)mfsk_ldpc_decode_ws(h->ldpc, h->code, h->llr_di, out_bits, 50);
+    return mfsk_frame_crc_ok(h, out_bits, bytes_out);
+}
+
+/* A burst with a gap (MFSK_SLIP_MIN): its payload read from the preamble's
+ * place up to symbol k and from the postamble's from k on.  Read at the
+ * ratio the last frame came at, not the one just searched: a gap moves the
+ * payload, not the clock, and the search bends the clock to spread a gap
+ * over the burst.
+ *
+ * k is first where the strongest tones carry the most energy: each symbol's
+ * on both placements is one pass over the payload, and the best k one sum.
+ * That fails for a gap of about a whole number of symbols: then both
+ * placements line a window up with a symbol everywhere, one of them the
+ * neighbour's, and every k scores alike (a 300-sample gap in a 320-sample
+ * symbol: k came out 1 of 320).  The gap itself is silence, though, and the
+ * symbol holding it has less energy in its tone bins on any placement, so
+ * that symbol and the next are tried as well.  A gap that took samples out
+ * (a lost packet on a network audio path) leaves no silence: for one of
+ * about a whole number of symbols -- within a guard interval of it -- k is
+ * also tried at every eighth of the payload, and a k that far off misreads
+ * at most a sixteenth of the symbols, which the code corrects.  The CRC
+ * picks.  Returns whether a read decoded (as mfsk_decode_at). */
+static int mfsk_try_split(mfsk_modem_t *h, long key, int payoff, int ref, int pre_payoff,
+                          uint8_t *bytes_out)
+{
+    double r = h->rate, hb = h->freq_hb * r;
+    double a = mfsk_pay_start(h, pre_payoff, h->P, r);
+    double b = mfsk_pay_start(h, payoff, ref, r);
+    double d = fabs(b - a);
+    if (d < MFSK_SLIP_MIN || d > (double)(MFSK_SLIP_MAX_SYMB * h->Nofdm))
+        return 0;
+    if (!mfsk_pay_fits(h, a, r) || !mfsk_pay_fits(h, b, r))
+        return 0;
+    double *ea = malloc((size_t)h->NPAY * 3 * sizeof(double));
+    if (!ea)
+        return 0;
+    double *eb = ea + h->NPAY, *ta = eb + h->NPAY, tot_b = 0.0;
+    for (int s = 0; s < h->NPAY; s++)
+    {
+        double off = (double)s * h->Nofdm * r;
+        ea[s] = mfsk_sym_energy(h, a + off, r, hb, &ta[s]);
+        eb[s] = mfsk_sym_energy(h, b + off, r, hb, NULL);
+        tot_b += eb[s];
+    }
+    /* sum_{s<k} ea + sum_{s>=k} eb, for k = 1 .. NPAY-1 (0 and NPAY are the
+     * two single placements, already read) */
+    double run = tot_b, best = -1.0;
+    int k_best = 1, s_dip = 1;
+    for (int k = 1; k < h->NPAY; k++)
+    {
+        run += ea[k - 1] - eb[k - 1];
+        if (run > best) { best = run; k_best = k; }
+        if (ta[k] < ta[s_dip]) s_dip = k;
+    }
+    free(ea);
+    int cand[3 + 7] = { k_best, s_dip, s_dip + 1 }, nc = 3, pass = 0;
+    double res = fmod(d, (double)h->Nofdm), gi = (double)(h->Nofdm - h->nfft);
+    if (d >= h->Nofdm - gi && (res < gi || res > h->Nofdm - gi))
+        for (int e = 1; e < 8; e++)
+            cand[nc++] = e * h->NPAY / 8;
+    for (int c = 0; c < nc && !pass; c++)
+    {
+        int k = cand[c], seen = 0;
+        for (int j = 0; j < c; j++) seen |= cand[j] == k;
+        if (k < 1 || k >= h->NPAY || seen)
+            continue;
+        mfsk_read_t rd = { a, b, r, k };
+        pass = mfsk_decode_at(h, key, &rd, bytes_out);
+    }
+    return pass;
+}
+
+/* Demod one MFSK burst whose payload starts at bf[payoff] at the nominal
+ * rate, anchored ref symbols from there (mfsk_pay_start), decode LDPC, verify
+ * CRC16.  Returns frame_bytes on success (bytes_out filled), else 0.
+ *
+ * It is read first at the sample ratio the last frame came at, as soon as
+ * that much of it is in, so a frame from a well-clocked peer costs what it
+ * always did.  Only if that fails, once the burst is in at the slowest ratio
+ * searched (mfsk_pay_ready -- the caller treats the anchor as settled from
+ * then on), is the ratio searched and the frame read again at the best one
+ * if that differs.  And if that fails too and the burst's other anchor
+ * placed the payload elsewhere (pre_payoff, the preamble's payload start, or
+ * -1), it is read once more with a switch between the two (mfsk_try_split). */
+static int mfsk_try_split(mfsk_modem_t *h, long key, int payoff, int ref, int pre_payoff,
+                          uint8_t *bytes_out);
+static int mfsk_try_payload(mfsk_modem_t *h, int payoff, int ref, int pre_payoff,
+                            uint8_t *bytes_out)
+{
+    long key = h->n_abs + (long)payoff;
+    int pass = 0;
+    if (h->dm_key != key)
+    {
+        double st = mfsk_pay_start(h, payoff, ref, h->rate);
+        if (!mfsk_pay_fits(h, st, h->rate))
+            return 0;
+        mfsk_read_t rd = mfsk_read_one(h, st, h->rate);
+        pass = mfsk_decode_at(h, key, &rd, bytes_out);
+    }
+    if (!pass)
+    {
+        if (!mfsk_pay_ready(h, payoff, ref))
+            return 0;
+        double r = mfsk_search_rate(h, payoff, ref, key);
+        if (h->dm_key != key || r != h->dm_rate)
+        {
+            mfsk_read_t rd = mfsk_read_one(h, mfsk_pay_start(h, payoff, ref, r), r);
+            pass = mfsk_decode_at(h, key, &rd, bytes_out);
+        }
+    }
+    if (!pass && pre_payoff >= 0)
+        pass = mfsk_try_split(h, key, payoff, ref, pre_payoff, bytes_out);
 
     /* HARQ Chase combining across separated bursts.
      *
@@ -601,11 +1086,9 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
      * Decode the single shot FIRST and only fall back to the combined buffer
      * when it fails: a good copy must never be corrupted by summing it with
      * stale ones -- that ordering mistake once turned HARQ into a data-plane
-     * outage here (issue #223 lineage), so it is deliberate.
+     * outage here (issue #223 lineage), so it is deliberate.  The copy summed
+     * is the one read at the best sample ratio found (llr_di, dm_*).
      */
-    int out_bits[MFSK_LDPC_MAXK];   /* not static: decoders run side by side */
-    int ok = mfsk_ldpc_decode_ws(h->ldpc, h->code, h->llr_di, out_bits, 50);
-
     if (h->harq_on)
     {
         /* Bound what may be summed together.
@@ -636,52 +1119,42 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
 
         for (int i = 0; i < h->code->N; i++) h->llr_acc[i] += h->llr_di[i];
         h->harq_copies++;
-        if (!ok && h->harq_copies > 1)
+        if (!pass && h->harq_copies > 1)
         {
             /* Average, not raw sum: the min-sum decoder is scale-sensitive,
              * so a growing magnitude changes its behaviour as copies pile up. */
             float inv = 1.0f / (float)h->harq_copies;
             for (int i = 0; i < h->code->N; i++) h->llr_di[i] = h->llr_acc[i] * inv;
-            ok = mfsk_ldpc_decode_ws(h->ldpc, h->code, h->llr_di, out_bits, 50);
+            int out_bits[MFSK_LDPC_MAXK];
+            (void)mfsk_ldpc_decode_ws(h->ldpc, h->code, h->llr_di, out_bits, 50);
+            pass = mfsk_frame_crc_ok(h, out_bits, bytes_out);
         }
-        if (ok)
+        if (pass)
         {
             memset(h->llr_acc, 0, (size_t)h->code->N * sizeof(float));
             h->harq_copies = 0;
             h->harq_first_ms = 0;
         }
     }
-    (void)ok;
-
-    /* pack info bits -> bytes (MSB-first, matching TX) */
-    size_t nbytes = h->frame_bytes;
-    for (size_t by = 0; by < nbytes; by++)
-    {
-        uint8_t v = 0;
-        for (int bit = 0; bit < 8; bit++)
-            v = (uint8_t)((v << 1) | (out_bits[by * 8 + bit] & 1));
-        bytes_out[by] = v;
-    }
-    /* CRC16 over payload (all but last 2), compare trailer — FreeDV's contract */
-    uint16_t crc = freedv_gen_crc16(bytes_out, (int)(nbytes - 2));
-    uint16_t got = (uint16_t)((bytes_out[nbytes - 2] << 8) | bytes_out[nbytes - 1]);
-    if (h->crc_seed && (uint16_t)(crc ^ h->crc_seed) == got)
-        h->rx_seeded = 1;
-    else if ((!h->crc_seed || h->crc_accept_plain) && crc == got)
-        h->rx_seeded = 0;
-    else
+    if (!pass)
         return 0;
 
     /* The SNR used to be the mean |LLR|, which saturates (it read +5 at -9 dB
      * and at +7 dB alike on the air).  Now: tone energy over bin noise,
      * summed over the streams' tones, referred to 3 kHz. */
     {
-        double lin = snr_n > 0.0 ? snr_s / snr_n * h->m.nStreams : 0.0;
+        double lin = h->dm_snr_n > 0.0 ? h->dm_snr_s / h->dm_snr_n * h->m.nStreams : 0.0;
         if (lin < 1e-4) lin = 1e-4;
-        h->last_snr = (float)(10.0 * log10(lin) + MFSK_SNR_BIN_TO_3K_DB + MFSK_SNR_CAL_DB);
+        h->last_snr = (float)(10.0 * log10(lin) + h->snr_bin_to_3k_db + MFSK_SNR_CAL_DB);
     }
-    (void)sig;
-    return (int)nbytes;
+    /* The next burst is read at this one's ratio first.  The offset is
+     * reported as it reached us: in the receiver's own samples, of the burst's
+     * centre.  The spectrum is mirrored at baseband (see MFSK_FC), so a burst
+     * above nominal reads as a negative hb. */
+    h->rate = h->dm_rate;
+    h->foff_hz = (float)(-h->dm_hb * 0.5 * MFSK_FS / (double)h->nfft / h->dm_rate + 0.0);
+    h->foff_valid = 1;
+    return (int)h->frame_bytes;
 }
 
 /* Carrier sense: is a burst on the air now?  The search above looks only at
@@ -699,34 +1172,34 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
 #define SCAN_OVERLAP_SYMB 2
 static int mfsk_carrier_sense(mfsk_modem_t *h, int search_len)
 {
-    int burst = (h->P + h->NPAY) * h->Nofdm;
-    long end_abs = h->n_abs + h->bf_len;
+    int burst = (h->P + h->NPAY) * h->Nr;
+    long end_abs = h->b_abs + h->bf_len;
     if (h->carrier_abs >= 0) {
-        if (h->carrier_abs >= h->n_abs && h->carrier_abs + burst > end_abs)
+        if (h->carrier_abs >= h->b_abs && h->carrier_abs + burst > end_abs)
             return 1;                        /* still arriving */
         h->carrier_abs = -1;                 /* resident or slid out */
     }
     /* From where the last look stopped, one symbol back so a preamble that
      * straddled it is seen whole; never below the resident-payload range. */
-    int resident_end = search_len - h->P * h->Nofdm;   /* the search above ends here */
-    long from_abs = h->n_abs + (resident_end > 0 ? resident_end : 0);
-    if (h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nofdm > from_abs)
-        from_abs = h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nofdm;
-    int base = (int)(from_abs - h->n_abs);
+    int resident_end = search_len - h->P * h->Nr;   /* the search above ends here */
+    long from_abs = h->b_abs + (resident_end > 0 ? resident_end : 0);
+    if (h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nr > from_abs)
+        from_abs = h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nr;
+    int base = (int)(from_abs - h->b_abs);
     int len  = h->bf_len - base;
-    if (len < (h->P + 1) * h->Nofdm)
+    if (len < (h->P + 1) * h->Nr)
         return 0;
     int best = -1;
     double best_metric = -1.0;
-    for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++) {
-        if (h->freq_locked && hy != h->freq_hb - MFSK_FREQ_HYP_LO) continue;
+    for (int hy = 0; hy < h->nhyp; hy++) {
+        if (h->freq_locked && hy != h->freq_hb - h->hyp_lo) continue;
         double m = 0.0;
         int o = mfsk_sync_search(h->bf + base, len, 1, h->preT_hyp[hy], h->preE,
-                                 h->preN, h->Nofdm, 0, &m);
+                                 h->preN, h->Nr, 0, &m);
         if (o >= 0 && m > best_metric) { best_metric = m; best = o; }
     }
     /* Positions within P symbols of the end cannot be tested yet. */
-    h->carrier_scan_abs = end_abs - (long)(h->P + 2) * h->Nofdm;
+    h->carrier_scan_abs = end_abs - (long)(h->P + 2) * h->Nr;
     if (best < 0) return 0;
     h->carrier_abs = from_abs + best;
     return h->carrier_abs + burst > end_abs;
@@ -741,16 +1214,25 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     if (h->rxlen + chunk > h->rxcap)
     {
         int drop = h->rxlen + chunk - h->rxhold;
+        /* A whole number of the receiver's samples, so bf keeps its grid. */
+        drop = (drop + h->dec - 1) / h->dec * h->dec;
+        int bdrop = drop / h->dec;
         memmove(h->rxbuf, h->rxbuf + drop, (size_t)(h->rxlen - drop) * sizeof(int16_t));
         /* Keep the derived buffers aligned with the raw one, or the incremental
          * downmix would recompute the wrong region. */
         if (h->bb_len > drop)
             memmove(h->bb, h->bb + drop, (size_t)(h->bb_len - drop) * sizeof(double complex));
-        if (h->bf_len > drop)
-            memmove(h->bf, h->bf + drop, (size_t)(h->bf_len - drop) * sizeof(double complex));
+        if (h->bf_len > bdrop)
+            memmove(h->bf, h->bf + bdrop, (size_t)(h->bf_len - bdrop) * sizeof(double complex));
+        if (h->bf8 != h->bf && h->bf8_len > drop)
+            memmove(h->bf8, h->bf8 + drop, (size_t)(h->bf8_len - drop) * sizeof(double complex));
         h->bb_len = (h->bb_len > drop) ? h->bb_len - drop : 0;
-        h->bf_len = (h->bf_len > drop) ? h->bf_len - drop : 0;
+        h->bf_len = (h->bf_len > bdrop) ? h->bf_len - bdrop : 0;
+        h->bf8_len = h->bf8 == h->bf ? h->bf_len : (h->bf8_len > drop) ? h->bf8_len - drop : 0;
+        h->bf8_lo  = (h->bf8_lo > drop) ? h->bf8_lo - drop : 0;
+        if (h->bf8_lo > h->bf8_len) h->bf8_lo = h->bf8_len;
         h->n_abs += drop;
+        h->b_abs += bdrop;
         h->rxlen -= drop;
     }
     memcpy(h->rxbuf + h->rxlen, demod_in, (size_t)chunk * sizeof(int16_t));
@@ -772,7 +1254,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * peer's floor frame 1.3 s into it. */
     if (h->rxlen < burst)
     {
-        h->last_sync = mfsk_carrier_sense(h, h->bf_len - h->NPAY * h->Nofdm);
+        h->last_sync = mfsk_carrier_sense(h, h->bf_len - h->NPAY * h->Nr);
         return 0;
     }
 
@@ -793,11 +1275,11 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * runs at all on a 32-bit Pi. */
     double metric = 0.0;
     int off = -1;
-    int search_len = h->bf_len - h->NPAY * h->Nofdm;
+    int search_len = h->bf_len - h->NPAY * h->Nr;
 
     if (h->anchor_abs >= 0)
     {
-        long rel = h->anchor_abs - h->n_abs;
+        long rel = h->anchor_abs - h->b_abs;
         if (rel >= 0 && rel <= (long)search_len)
         {
             off = (int)rel;          /* still in view: no correlation needed */
@@ -809,7 +1291,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
         }
     }
 
-    if (off < 0 && search_len > h->P * h->Nofdm)
+    if (off < 0 && search_len > h->P * h->Nr)
     {
         /* Resume past a peak we already proved wrong.  The search returns the
          * EARLIEST offset above threshold, so a rejected peak at X means there
@@ -819,9 +1301,9 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
         int start_symb = 0;
         if (h->reject_abs >= 0)
         {
-            long rel = h->reject_abs - h->n_abs;
+            long rel = h->reject_abs - h->b_abs;
             if (rel < 0) h->reject_abs = -1;                 /* slid out */
-            else start_symb = (int)(rel / h->Nofdm) + 1;
+            else start_symb = (int)(rel / h->Nr) + 1;
         }
         /* Nor search again what an earlier look already found empty: the
          * window only grows at its end, and a correlation reads only the
@@ -832,8 +1314,8 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
          * downmix filter's still-settling tail. */
         if (h->pre_scan_abs >= 0)
         {
-            long rel = h->pre_scan_abs - h->n_abs - (long)SCAN_OVERLAP_SYMB * h->Nofdm;
-            int s = rel > 0 ? (int)(rel / h->Nofdm) : 0;
+            long rel = h->pre_scan_abs - h->b_abs - (long)SCAN_OVERLAP_SYMB * h->Nr;
+            int s = rel > 0 ? (int)(rel / h->Nr) : 0;
             if (s > start_symb) start_symb = s;
         }
         /* Sweep frequency hypotheses, not just time. Without this a dial
@@ -854,10 +1336,10 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
          * fails CRC, so a wrong latch cannot wedge the decoder. */
         if (h->freq_locked)
         {
-            int hy = h->freq_hb - MFSK_FREQ_HYP_LO;
-            if (hy >= 0 && hy < MFSK_FREQ_HYPS)
+            int hy = h->freq_hb - h->hyp_lo;
+            if (hy >= 0 && hy < h->nhyp)
                 off = mfsk_sync_search(h->bf, search_len, 1, h->preT_hyp[hy],
-                                       h->preE, h->preN, h->Nofdm, start_symb,
+                                       h->preE, h->preN, h->Nr, start_symb,
                                        &metric);
             if (off < 0) h->freq_locked = 0;   /* stale lock: re-sweep below */
         }
@@ -866,17 +1348,17 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
         {
             double best_metric = -1.0;
             int    best_off = -1, best_hb = h->freq_hb;
-            for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++)
+            for (int hy = 0; hy < h->nhyp; hy++)
             {
                 double m = 0.0;
                 int o = mfsk_sync_search(h->bf, search_len, 1, h->preT_hyp[hy],
-                                         h->preE, h->preN, h->Nofdm,
+                                         h->preE, h->preN, h->Nr,
                                          start_symb, &m);
                 if (o >= 0 && m > best_metric)
                 {
                     best_metric = m;
                     best_off    = o;
-                    best_hb     = MFSK_FREQ_HYP_LO + hy;
+                    best_hb     = h->hyp_lo + hy;
                 }
             }
             if (best_off >= 0)
@@ -892,29 +1374,37 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
          * anchor must never be taken again, or it is tried once and then
          * sits there as "already tried" while the burst behind it goes by. */
         bool none_found = off < 0;   /* every hypothesis searched to the end */
-        if (off >= 0 && h->reject_abs >= 0 && h->n_abs + (long)off <= h->reject_abs)
+        if (off >= 0 && h->reject_abs >= 0 && h->b_abs + (long)off <= h->reject_abs)
             off = -1;
         if (off >= 0)
-            h->anchor_abs = h->n_abs + (long)off;
+            h->anchor_abs = h->b_abs + (long)off;
         else if (none_found)   /* every offset with a whole preamble in view */
-            h->pre_scan_abs = h->n_abs + (long)(search_len / h->Nofdm - h->P) * h->Nofdm;
+            h->pre_scan_abs = h->b_abs + (long)(search_len / h->Nr - h->P) * h->Nr;
     }
-    int payoff = (off >= 0) ? off + h->P * h->Nofdm : -1;
+    int payoff = (off >= 0) ? off + h->P * h->Nr : -1;
+    /* ...and at the full rate, where the payload is read (bf8). */
+    int payoff8 = payoff >= 0 ? payoff * h->dec : -1;
+    /* the clock search moves the start by up to NPAY symbols times
+     * MFSK_RATE_MAX, a gap's read by two symbols */
+    int reach8 = (int)(h->NPAY * h->Nofdm * MFSK_RATE_MAX) + (MFSK_SLIP_MAX_SYMB + 1) * h->Nofdm;
+    if (payoff8 >= 0)
+        mfsk_full_rate(h, payoff8 - reach8);
     /* Decode a given burst ONCE.  Once the anchor is fixed and the payload is
      * fully resident, the samples feeding the demod no longer change, so
      * re-running a 50-iteration LDPC decode every 4 symbols cannot produce a
      * different answer -- it just burns CPU in bursts, and a spike is exactly
      * what makes a real-time capture overrun and lose the NEXT burst.  (The
      * FIFO path blocks instead of dropping, which is why it completes transfers
-     * while ALSA and PulseAudio both stall after one frame.) */
-    int payload_resident = (payoff >= 0) &&
-                           (payoff + h->NPAY * h->Nofdm <= h->bf_len);
+     * while ALSA and PulseAudio both stall after one frame.)  "Resident"
+     * means in at the slowest sample clock searched, which is when
+     * mfsk_try_payload has tried everything it will. */
+    int payload_resident = (payoff8 >= 0) && mfsk_pay_ready(h, payoff8, h->P);
     int already_tried = (h->anchor_abs >= 0) && (h->tried_abs == h->anchor_abs);
     int nbytes = 0;
     if (payoff >= 0 && !already_tried)
     {
-        nbytes = mfsk_try_payload(h, payoff, bytes_out);
-        if (payload_resident && h->anchor_abs >= 0)
+        nbytes = mfsk_try_payload(h, payoff8, h->P, -1, bytes_out);
+        if ((payload_resident || nbytes > 0) && h->anchor_abs >= 0)
         {
             if (nbytes > 0)
             {
@@ -935,6 +1425,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
                 if (h->anchor_abs > h->reject_abs) h->reject_abs = h->anchor_abs;
                 h->tried_abs  = h->anchor_abs;
                 h->anchor_abs = -1;
+                h->pre_fail_abs = h->n_abs + (long)payoff8;   /* for its postamble */
             }
         }
     }
@@ -953,33 +1444,43 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * whose payload was present and still failed.  While the burst is merely
      * incomplete there is nothing for this to recover, and running it on every
      * such attempt doubled the search cost for no chance of a frame. */
-    int payload_was_resident = (payoff >= 0) &&
-                               (payoff + h->NPAY * h->Nofdm <= h->bf_len);
+    int payload_was_resident = payload_resident;
     if (nbytes <= 0 && (off < 0 || payload_was_resident))
     {
         double pmetric = 0.0;
         int pstart = 0;
         if (h->pst_scan_abs >= 0)
         {
-            long rel = h->pst_scan_abs - h->n_abs - (long)SCAN_OVERLAP_SYMB * h->Nofdm;
-            pstart = rel > 0 ? (int)(rel / h->Nofdm) : 0;
+            long rel = h->pst_scan_abs - h->b_abs - (long)SCAN_OVERLAP_SYMB * h->Nr;
+            pstart = rel > 0 ? (int)(rel / h->Nr) : 0;
         }
         int poff = mfsk_sync_search(h->bf, h->bf_len, 1, h->pstT, h->pstE,
-                                    h->pstN, h->Nofdm, pstart, &pmetric);
-        if (poff >= 0)
+                                    h->pstN, h->Nr, pstart, &pmetric);
+        /* The search refines its candidate and can land back on a postamble
+         * it was told to start past, as the preamble's can (above), and a
+         * payload is tried once: re-reading a failed one every 4 symbols,
+         * sample-clock search and all, would be most of the decoder's CPU. */
+        if (poff >= 0 && h->b_abs + (long)poff <= h->pst_tried_abs)
         {
-            int ppayoff = poff - h->NPAY * h->Nofdm;
-            int pn = (ppayoff >= 0) ? mfsk_try_payload(h, ppayoff, bytes_out) : 0;
+            h->pst_scan_abs = h->b_abs + (long)poff + (long)(SCAN_OVERLAP_SYMB + 1) * h->Nr;
+        }
+        else if (poff >= 0)
+        {
+            int ppayoff8 = (poff - h->NPAY * h->Nr) * h->dec;
+            long pre = h->pre_fail_abs - h->n_abs;   /* that burst's preamble, if it failed */
+            mfsk_full_rate(h, (pre >= 0 && pre < ppayoff8 ? (int)pre : ppayoff8) - reach8);
+            int pn = mfsk_try_payload(h, ppayoff8, -h->NPAY, pre >= 0 ? (int)pre : -1, bytes_out);
+            h->pst_tried_abs = h->b_abs + (long)poff;
             if (pn > 0)
             {
                 off = poff;
                 nbytes = pn;
             }
             else   /* its payload failed, or is not in view: it will not change */
-                h->pst_scan_abs = h->n_abs + (long)poff + (long)(SCAN_OVERLAP_SYMB + 1) * h->Nofdm;
+                h->pst_scan_abs = h->b_abs + (long)poff + (long)(SCAN_OVERLAP_SYMB + 1) * h->Nr;
         }
         else
-            h->pst_scan_abs = h->n_abs + (long)(h->bf_len / h->Nofdm - h->P) * h->Nofdm;
+            h->pst_scan_abs = h->b_abs + (long)(h->bf_len / h->Nr - h->P) * h->Nr;
     }
 
     /* Sync means "a burst is arriving": its preamble located, its payload not
@@ -988,7 +1489,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * above leaves it untouched, and that is ~13 s after a burst had ended --
      * so the carousel's receiver deferred its answer to a round until the
      * sender, hearing nothing, had keyed the next one. */
-    int arriving = off >= 0 && off + (h->P + h->NPAY) * h->Nofdm > h->bf_len;
+    int arriving = off >= 0 && off + (h->P + h->NPAY) * h->Nr > h->bf_len;
     if (nbytes <= 0 && !arriving)
         arriving = mfsk_carrier_sense(h, search_len);
     h->last_sync = nbytes <= 0 && arriving;
@@ -997,10 +1498,12 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     h->carrier_abs = h->carrier_scan_abs = -1;
     h->pre_scan_abs = h->pst_scan_abs = -1;
     h->n_abs += h->rxlen;
-    h->rxlen = h->bb_len = h->bf_len = 0;   /* burst consumed */
+    h->b_abs = h->n_abs / h->dec;           /* rxlen is whole chunks: a multiple of dec */
+    h->rxlen = h->bb_len = h->bf_len = h->bf8_len = h->bf8_lo = 0;   /* burst consumed */
     h->anchor_abs = -1;
     h->tried_abs  = -1;
     h->reject_abs = -1;                     /* next burst searches from the top */
+    h->pre_fail_abs = -1;
     return nbytes;
 }
 
@@ -1013,6 +1516,14 @@ static void mfsk_be_get_stats(void *ctx, int *sync, float *snr)
 
 static int mfsk_be_get_rx_status(void *ctx) { (void)ctx; return 0; }
 
+static int mfsk_be_get_freq_offset(void *ctx, float *hz)
+{
+    mfsk_modem_t *h = ctx;
+    if (!h->foff_valid) return 0;
+    *hz = h->foff_hz;
+    return 1;
+}
+
 /* ======================================================================
  * Pattern ACK (Welch-Costas tone burst) — TX and detect
  *
@@ -1024,11 +1535,21 @@ static int mfsk_be_get_rx_status(void *ctx) { (void)ctx; return 0; }
  * without holding a full mfsk_modem_t.
  * ====================================================================== */
 
-static mfsk_t       g_pat_m;
-static ofdm_frame_t g_pat_o;
-static double       g_pat_lpf[MFSK_LPF_TAPS];
-static int          g_pat_nofdm;
-static bool         g_pat_ready = false;
+/* One geometry per MFSK mode, built once, and the one in use: a session's
+ * floor (mfsk_pattern_set_geometry) can change while the RX thread runs its
+ * detector, so each call reads the selection once and works on that. */
+typedef struct {
+    mfsk_t       m;
+    ofdm_frame_t o;
+    double       lpf[MFSK_LPF_TAPS];
+    int          nofdm;
+    int          fcg;      /* carrier table, as mfsk_modem_t.fcg */
+} pat_geom_t;
+static const int      g_pat_modes[] = { MERCURY_MODE_MFSK, MERCURY_MODE_MFSK_N16, MERCURY_MODE_MFSK_N32 };
+#define PAT_NGEOM ((int)(sizeof(g_pat_modes) / sizeof(g_pat_modes[0])))
+static pat_geom_t     g_pat_geoms[PAT_NGEOM];
+static pthread_once_t g_pat_once = PTHREAD_ONCE_INIT;
+static _Atomic int    g_pat_sel = 0;
 /* The ACK and BREAK lists in use: the session's while a carousel session
  * seeds the modem (mfsk_pattern_set_session), the global ones otherwise. */
 static pthread_mutex_t g_pat_lists_mtx = PTHREAD_MUTEX_INITIALIZER;
@@ -1036,23 +1557,50 @@ static int          g_pat_ack[MFSK_MAX_ACK_TONES], g_pat_brk[MFSK_MAX_ACK_TONES]
 static bool         g_pat_lists_set = false;
 static _Atomic unsigned g_pat_gen = 1;     /* bumped on every change */
 
-static void mfsk_pattern_lazy_init(void)
+static void pat_geoms_init(void)
 {
-    if (g_pat_ready) return;
-    mfsk_init(&g_pat_m, MFSK_M, MFSK_NCAR, 1);
-    ofdm_frame_init(&g_pat_o, MFSK_NFFT, MFSK_NCAR, MFSK_GI, 0);
-    g_pat_nofdm = ofdm_frame_nofdm(&g_pat_o);
     pthread_once(&g_fc_once, fc_table_init);
-    mklpf(g_pat_lpf, MFSK_LPF_FC);
-    g_pat_ready = true;
+    for (int i = 0; i < PAT_NGEOM; i++)
+    {
+        pat_geom_t *g = &g_pat_geoms[i];
+        int mode = g_pat_modes[i];
+        int nfft = mode == MERCURY_MODE_MFSK_N32 ? 2 * MFSK_NFFT : MFSK_NFFT;
+        mfsk_init(&g->m, mode == MERCURY_MODE_MFSK_N16 ? 16 : MFSK_M, MFSK_NCAR, 1);
+        ofdm_frame_init(&g->o, nfft, MFSK_NCAR, MFSK_GI, 0);
+        g->nofdm = ofdm_frame_nofdm(&g->o);
+        g->fcg = nfft == MFSK_NFFT ? 0 : 1;
+        mklpf(g->lpf, MFSK_LPF_FC);
+    }
 }
 
-static void pat_lists(int *ack, int *brk)
+static const pat_geom_t *pat_geom(void)
+{
+    pthread_once(&g_pat_once, pat_geoms_init);
+    return &g_pat_geoms[atomic_load(&g_pat_sel)];
+}
+
+void mfsk_pattern_set_geometry(int mode)
+{
+    pthread_once(&g_pat_once, pat_geoms_init);
+    int i = 0;
+    while (i < PAT_NGEOM && g_pat_modes[i] != mode) i++;
+    if (i == PAT_NGEOM || i == atomic_load(&g_pat_sel))
+        return;
+    pthread_mutex_lock(&g_pat_lists_mtx);
+    atomic_store(&g_pat_sel, i);
+    g_pat_lists_set = false;            /* back to this geometry's global lists */
+    pthread_mutex_unlock(&g_pat_lists_mtx);
+    atomic_fetch_add(&g_pat_gen, 1);
+}
+
+int mfsk_pattern_geometry(void) { pat_geom(); return g_pat_modes[atomic_load(&g_pat_sel)]; }
+
+static void pat_lists(const pat_geom_t *G, int *ack, int *brk)
 {
     pthread_mutex_lock(&g_pat_lists_mtx);
     if (!g_pat_lists_set) {
-        memcpy(g_pat_ack, g_pat_m.ack_tones, sizeof(g_pat_ack));
-        memcpy(g_pat_brk, g_pat_m.break_tones, sizeof(g_pat_brk));
+        memcpy(g_pat_ack, G->m.ack_tones, sizeof(g_pat_ack));
+        memcpy(g_pat_brk, G->m.break_tones, sizeof(g_pat_brk));
         g_pat_lists_set = true;
     }
     memcpy(ack, g_pat_ack, sizeof(g_pat_ack));
@@ -1062,10 +1610,10 @@ static void pat_lists(int *ack, int *brk)
 
 void mfsk_pattern_set_lists(const int *ack, const int *brk)
 {
-    mfsk_pattern_lazy_init();
+    const pat_geom_t *G = pat_geom();
     pthread_mutex_lock(&g_pat_lists_mtx);
-    memcpy(g_pat_ack, ack ? ack : g_pat_m.ack_tones, sizeof(g_pat_ack));
-    memcpy(g_pat_brk, brk ? brk : g_pat_m.break_tones, sizeof(g_pat_brk));
+    memcpy(g_pat_ack, ack ? ack : G->m.ack_tones, sizeof(g_pat_ack));
+    memcpy(g_pat_brk, brk ? brk : G->m.break_tones, sizeof(g_pat_brk));
     g_pat_lists_set = true;
     pthread_mutex_unlock(&g_pat_lists_mtx);
     atomic_fetch_add(&g_pat_gen, 1);
@@ -1073,9 +1621,9 @@ void mfsk_pattern_set_lists(const int *ack, const int *brk)
 
 bool mfsk_pattern_set_session(uint32_t key)
 {
-    mfsk_pattern_lazy_init();
+    const pat_geom_t *G = pat_geom();
     int ack[MFSK_MAX_ACK_TONES] = {0}, brk[MFSK_MAX_ACK_TONES] = {0};
-    bool bound = mfsk_session_patterns(&g_pat_m, key, NULL, 0, ack, brk);
+    bool bound = mfsk_session_patterns(&G->m, key, NULL, 0, ack, brk);
     pthread_mutex_lock(&g_pat_lists_mtx);
     memcpy(g_pat_ack, ack, sizeof(g_pat_ack));
     memcpy(g_pat_brk, brk, sizeof(g_pat_brk));
@@ -1087,26 +1635,26 @@ bool mfsk_pattern_set_session(uint32_t key)
 
 int mfsk_pattern_nsymb(void)
 {
-    mfsk_pattern_lazy_init();
-    return g_pat_m.ack_pattern_nsymb;
+    const pat_geom_t *G = pat_geom();
+    return G->m.ack_pattern_nsymb;
 }
 
 int mfsk_pattern_max_tx_samples(void)
 {
-    mfsk_pattern_lazy_init();
-    return g_pat_m.ack_pattern_nsymb * g_pat_nofdm;
+    const pat_geom_t *G = pat_geom();
+    return G->m.ack_pattern_nsymb * G->nofdm;
 }
 
 /* Generate the ack/break pattern as int16 passband.  Returns sample count. */
 int mfsk_pattern_tx(int16_t *out, int pattern_kind)
 {
-    mfsk_pattern_lazy_init();
-    int ns = g_pat_m.ack_pattern_nsymb;
+    const pat_geom_t *G = pat_geom();
+    int ns = G->m.ack_pattern_nsymb;
 
     mfsk_cplx *bins = (mfsk_cplx *)calloc((size_t)ns * MFSK_NCAR, sizeof(mfsk_cplx));
     if (!bins) return 0;
-    mfsk_t m = g_pat_m;      /* with the lists in use */
-    pat_lists(m.ack_tones, m.break_tones);
+    mfsk_t m = G->m;      /* with the lists in use */
+    pat_lists(G, m.ack_tones, m.break_tones);
     if (pattern_kind == 1)   /* ARQ_PATTERN_BREAK */
         mfsk_generate_break_pattern(&m, bins);
     else
@@ -1115,26 +1663,26 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind)
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
     int have_tail = 0;
-    int written = mfsk_synth(&g_pat_o, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    int written = mfsk_synth(&G->o, G->fcg, G->nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
     free(bins);
     return written;
 }
 
 int mfsk_nav_tx(int16_t *out, int cls)
 {
-    mfsk_pattern_lazy_init();
+    const pat_geom_t *G = pat_geom();
     if (cls < 0) cls = 0;
     if (cls >= MFSK_NAV_CLASSES) cls = MFSK_NAV_CLASSES - 1;
-    int ns = g_pat_m.ack_pattern_nsymb;
+    int ns = G->m.ack_pattern_nsymb;
     mfsk_cplx *bins = (mfsk_cplx *)calloc((size_t)ns * MFSK_NCAR, sizeof(mfsk_cplx));
     if (!bins) return 0;
-    mfsk_t m = g_pat_m;
+    mfsk_t m = G->m;
     memcpy(m.ack_tones, mfsk_nav_tones[cls], sizeof(mfsk_nav_tones[cls]));
     mfsk_generate_ack_pattern(&m, bins);
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
     int have_tail = 0;
-    int written = mfsk_synth(&g_pat_o, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    int written = mfsk_synth(&G->o, G->fcg, G->nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
     free(bins);
     return written;
 }
@@ -1143,8 +1691,8 @@ int mfsk_nav_tx(int16_t *out, int cls)
  * sets *is_break (1 = ACK+TURN break, 0 = plain ACK); 0 if none. */
 int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
 {
-    mfsk_pattern_lazy_init();
-    if (!pb || n < g_pat_m.ack_pattern_nsymb * g_pat_nofdm)
+    const pat_geom_t *G = pat_geom();
+    if (!pb || n < G->m.ack_pattern_nsymb * G->nofdm)
         return 0;
 
     /* Downmix passband -> complex baseband + LPF (same as mfsk_downmix). */
@@ -1154,7 +1702,7 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
     for (int i = 0; i < n; i++)
     {
         double x = (double)pb[i];
-        bb[i] = 2.0 * x * fc_phasor(i);
+        bb[i] = 2.0 * x * fc_phasor_g(G->fcg, i);
     }
     for (int i = 0; i < n; i++)
     {
@@ -1162,7 +1710,7 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
         for (int k = 0; k < MFSK_LPF_TAPS; k++)
         {
             int j = i - k + MFSK_LPF_TAPS / 2;
-            if (j >= 0 && j < n) a += g_pat_lpf[k] * bb[j];
+            if (j >= 0 && j < n) a += G->lpf[k] * bb[j];
         }
         bf[i] = a;
     }
@@ -1172,19 +1720,19 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
      * doubled the cost of the most expensive thing in the RX loop (measured
      * 3.5k samp/s against 8k arriving — the reason arq.c only runs this inside
      * bounded windows). */
-    int ns  = g_pat_m.ack_pattern_nsymb;
+    int ns  = G->m.ack_pattern_nsymb;
     int ack[MFSK_MAX_ACK_TONES], brk[MFSK_MAX_ACK_TONES];
-    pat_lists(ack, brk);
+    pat_lists(G, ack, brk);
     const int *lists[2] = { ack, brk };
     int scores[2] = {0, 0};
-    mfsk_detect_patterns(&g_pat_m, &g_pat_o, bf, n, lists, 2,
-                         g_pat_m.ack_pattern_len, ns, scores, NULL);
+    mfsk_detect_patterns(&G->m, &G->o, bf, n, lists, 2,
+                         G->m.ack_pattern_len, ns, scores, NULL);
     int ack_score = scores[0];
     int brk_score = scores[1];
     free(bb); free(bf);
 
-    bool ack_hit = ack_score >= g_pat_m.ack_match_threshold;
-    bool brk_hit = brk_score >= g_pat_m.break_match_threshold;
+    bool ack_hit = ack_score >= G->m.ack_match_threshold;
+    bool brk_hit = brk_score >= G->m.break_match_threshold;
     if (!ack_hit && !brk_hit)
         return 0;
     /* Prefer the higher-scoring symbol so the two are told apart cleanly. */
@@ -1250,6 +1798,7 @@ const modem_backend_t modem_backend_mfsk = {
     .set_harq         = mfsk_be_set_harq,
     .set_crc_seed     = mfsk_be_set_crc_seed,
     .rx_crc_seeded    = mfsk_be_rx_crc_seeded,
+    .get_freq_offset  = mfsk_be_get_freq_offset,
 };
 
 
@@ -1257,18 +1806,24 @@ const modem_backend_t modem_backend_mfsk = {
  * Sliding detection window -- see modem_mfsk.h for why it paces.
  * ---------------------------------------------------------------------- */
 /* How long an event waits for a stronger overlapping one: two symbols. */
-#define PAT_HOLD 640
+#define PAT_HOLD(G) (2 * (G)->nofdm)
 
 int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
                                mfsk_pattern_ev_t *out, int maxev)
 {
     if (!w || !pcm || n <= 0)
         return 0;
-    mfsk_pattern_lazy_init();
+    const pat_geom_t *G = pat_geom();
+    if (w->det && w->geom != G)
+    {
+        /* the session's floor changed the geometry: start over at the new one */
+        mfsk_pattern_window_free(w);
+    }
     if (!w->det)
     {
-        w->det = mfsk_stream_det_new(&g_pat_m, &g_pat_o, g_pat_m.ack_pattern_len,
-                                     g_pat_m.ack_pattern_nsymb);
+        w->geom = G;
+        w->det = mfsk_stream_det_new(&G->m, &G->o, G->m.ack_pattern_len,
+                                     G->m.ack_pattern_nsymb);
         if (!w->det)
             return 0;             /* no memory, no detection; never a crash */
         /* A NAV threshold a symbol above the ACK's: a session ACK or BREAK
@@ -1279,7 +1834,7 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
          * (pattern_probe): 0 cross-reads in 2048 clean session ACK/BREAK
          * bursts (3 at 8), 0 false headers in 10 h of noise (4 at 8), for
          * about 0.7 dB at -14 dB; 98 % detection at -12 dB still. */
-        int nav_thr = g_pat_m.ack_match_threshold + 1;
+        int nav_thr = G->m.ack_match_threshold + 1;
         for (int k = 0; k < MFSK_NAV_CLASSES; k++)
             mfsk_stream_det_set_list(w->det, MFSK_PAT_NAV(k), mfsk_nav_tones[k], nav_thr);
         w->gen = 0;
@@ -1290,9 +1845,9 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
         /* the session's lists changed (a session began or ended): what is in
          * the ring was scored against the old ones */
         int ack[MFSK_MAX_ACK_TONES], brk[MFSK_MAX_ACK_TONES];
-        pat_lists(ack, brk);
-        mfsk_stream_det_set_list(w->det, MFSK_PAT_ACK, ack, g_pat_m.ack_match_threshold);
-        mfsk_stream_det_set_list(w->det, MFSK_PAT_BREAK, brk, g_pat_m.break_match_threshold);
+        pat_lists(G, ack, brk);
+        mfsk_stream_det_set_list(w->det, MFSK_PAT_ACK, ack, G->m.ack_match_threshold);
+        mfsk_stream_det_set_list(w->det, MFSK_PAT_BREAK, brk, G->m.break_match_threshold);
         mfsk_stream_det_reset(w->det);
         w->gen = gen;
     }
@@ -1303,15 +1858,15 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
     int nout = 0;
     for (int i = 0; i < n; i++)
     {
-        double complex x = 2.0 * (double)pcm[i] * fc_phasor(w->n++);
+        double complex x = 2.0 * (double)pcm[i] * fc_phasor_g(G->fcg, w->n++);
         w->hist_re[w->hist_pos] = creal(x);
         w->hist_im[w->hist_pos] = cimag(x);
         double ar = 0.0, ai = 0.0;
         int h = w->hist_pos;
         for (int k = 0; k < MFSK_LPF_TAPS; k++)
         {
-            ar += g_pat_lpf[k] * w->hist_re[h];
-            ai += g_pat_lpf[k] * w->hist_im[h];
+            ar += G->lpf[k] * w->hist_re[h];
+            ai += G->lpf[k] * w->hist_im[h];
             h = h ? h - 1 : MFSK_LPF_TAPS - 1;
         }
         w->hist_pos = (w->hist_pos + 1) % MFSK_LPF_TAPS;
@@ -1322,7 +1877,7 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
         {
             /* Overlapping events: one burst read as more than one list.  The
              * strongest stands; a weaker one never reaches the caller. */
-            long long st = ev[e].pos - MFSK_LPF_TAPS / 2, span = (long long)mfsk_pattern_max_tx_samples();
+            long long st = ev[e].pos - MFSK_LPF_TAPS / 2, span = (long long)G->m.ack_pattern_nsymb * G->nofdm;
             if (w->last_score && llabs(st - w->last_start) < span && ev[e].score <= w->last_score)
                 continue;
             bool drop = false;
@@ -1338,7 +1893,7 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
             w->pend[w->npend].kind  = ev[e].list;
             w->pend[w->npend].start = st;
             w->pend[w->npend].score = ev[e].score;
-            w->pend_due[w->npend]   = w->n + PAT_HOLD;
+            w->pend_due[w->npend]   = w->n + PAT_HOLD(G);
             w->npend++;
         }
         for (int q = 0; q < w->npend && nout < maxev; q++)

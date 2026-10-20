@@ -33,6 +33,24 @@ typedef enum
     ARQ_CONN__COUNT
 } arq_conn_state_t;
 
+/* The step a teardown has reached.  Each value belongs to one connection
+ * state, and every state change resets it (sess_enter): nothing of one
+ * teardown is left for the next session to trip on. */
+typedef enum
+{
+    ARQ_TD_NONE = 0,
+    ARQ_TD_LISTEN_OFF,   /* ACCEPTING: a LISTEN OFF inside the grace period,
+                          * honoured when it expires or once connected     */
+    ARQ_TD_DRAINING,     /* CONNECTED: the application's DISCONNECT waits
+                          * for delivery, until teardown_deadline_ms       */
+    ARQ_TD_SENT,         /* DISCONNECTING: our DISCONNECT is on the air    */
+    ARQ_TD_REPLYING,     /* DISCONNECTED: the reply to the peer's
+                          * DISCONNECT is due when the reply guard expires */
+    ARQ_TD_NOTIFYING,    /* DISCONNECTED: the reply is out; the host hears
+                          * DISCONNECTED when it has finished (TX_COMPLETE),
+                          * so data_rx_buffer_arq drains to it first       */
+} arq_teardown_t;
+
 /* ======================================================================
  * Events
  * ====================================================================== */
@@ -87,10 +105,14 @@ typedef struct
 
     /* RX_CAROUSEL: the control decoder (DATAC16) produced it; otherwise the
      * payload decoder, in `mode`.  RX_ACCEPT: the rung the callee starts our
-     * rounds on (0..6, or ARQ_ACCEPT_LEVEL_CTL_DEAF), its session nonce, and
-     * the CRC16 of the callsign we called, which the FSM checks. */
+     * rounds on (0..6), whether it hears us below the control mode, the SNR
+     * it read our CALL at (0: unknown), its session nonce, and the CRC16 of
+     * the callsign we called, which the FSM checks. */
     bool     from_control;
+    int      bw_hz;               /* RX_CALL / RX_ACCEPT: the bandwidth it advertises */
     int      car_level;
+    bool     car_ctl_deaf;
+    float    car_call_snr;
     uint16_t car_nonce;
     uint16_t car_called_crc;
 
@@ -210,20 +232,16 @@ typedef struct
                                         * former may key the transmitter -- see
                                         * fsm_accepting's TIMER_RETRY.        */
 
-    /* --- Teardown flags --- */
-    bool     deferred_listen_off;      /* LISTEN OFF received during grace period;
-                                        * will be honoured once the grace expires    */
-    bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
-    bool     disconnect_sent;       /* our DISCONNECT is on the air this teardown */
-    bool     pending_disconnect_reply; /* our reply to the peer's DISCONNECT is
-                                        * due when the reply guard expires  */
-    bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
-    bool     pending_connect;          /* CONNECT arrived while DISCONNECTING: place
-                                        * the call once the teardown completes     */
+    /* --- Teardown --- */
+    arq_teardown_t teardown;           /* the step reached (arq_teardown_t)   */
+    uint64_t teardown_deadline_ms;     /* when that step gives up: a held
+                                        * DISCONNECT tears down regardless
+                                        * (CONNECTED), the callee ending stops
+                                        * waiting for an answer (DISCONNECTING) */
     char     pending_connect_call[CALLSIGN_MAX_SIZE];
-    uint64_t disconnect_deadline_ms;   /* absolute time by which a deferred
-                                        * APP_DISCONNECT must resolve into a
-                                        * clean teardown. 0 = none armed. */
+                                       /* a CONNECT that came during the
+                                        * teardown, placed once it completes;
+                                        * empty = none                       */
 
     uint64_t last_rx_ms;              /* last frame decoded from the peer      */
 
@@ -233,8 +251,6 @@ typedef struct
     car_t   *car;                     /* allocated by arq_fsm_init             */
     bool     car_active;
     bool     car_session;           /* this session ran the carousel (until idle) */
-    bool     car_ending;            /* the callee ends it: DISCONNECT in its next slot */
-    uint64_t car_end_deadline_ms;   /* ...or gives up then, silently */
     uint16_t crc_seed;
     uint16_t car_nonce;             /* the callee's, in the ACCEPT: part of crc_seed */
     int      car_rx_level;            /* start rung for the peer's direction:
@@ -242,8 +258,15 @@ typedef struct
     int      car_tx_level;            /* ...for ours, from the peer (-1: none) */
     bool     car_ctl_deaf;            /* connect: I heard the peer below the control mode */
     bool     car_peer_ctl_deaf;       /* connect: ...and it, me (the CALL came on MFSK) */
+    float    car_call_snr;            /* connect: the SNR the callee read the CALL at
+                                       * (the callee: its own; the caller: from the
+                                       * ACCEPT), 0 unknown */
+    float    car_my_snr;              /* connect: the SNR I read the peer's connect
+                                       * frame at (the CALL, the ACCEPT), 0 unknown */
     bool     ctl_floor_at_stop;       /* the carousel's peer_ctl_deaf when it stopped,
                                        * for the DISCONNECT exchange after it */
+    int      floor_mode;              /* the session's MFSK floor (arq_floor_mode
+                                       * of its bandwidth), from its seed on */
     uint64_t car_last_rx_ms;          /* last carousel frame from the peer     */
 
     /* --- Timer mechanism --- */
@@ -310,6 +333,9 @@ typedef struct
     /** Key a pattern (arq_pattern_kind_t) on the air.  Optional. */
     void (*send_pattern)(int pattern_kind);
     void (*set_crc_seed)(uint16_t seed);
+    /** The session's MFSK floor (arq_floor_mode), set with its seed: the
+     *  geometry patterns are keyed and detected at.  Optional. */
+    void (*set_floor_mode)(int mode);
 } arq_fsm_callbacks_t;
 
 /**

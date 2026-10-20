@@ -201,6 +201,14 @@ ab_bench: sim/ab_bench.c $(ARQ_STUBS) $(SIM_SRC) \
           ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
+# Connect/disconnect times over the two-FSM sim (not part of `make test`):
+#   ./conn_bench <seed> <channel> [callee]
+conn_bench: sim/conn_bench.c $(ARQ_STUBS) $(SIM_SRC) \
+          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+          ../datalink_arq/arq_protocol.c \
+          ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 # arq_conn accessor correctness tests (single-threaded; locking verified by TSan)
 test_arq_conn: datalink_arq/test_arq_conn.c $(UNITY_SRC) \
                datalink_arq/arq_conn_accessors.c

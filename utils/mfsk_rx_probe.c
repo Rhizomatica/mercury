@@ -7,7 +7,7 @@
  *
  * Any change that makes the receiver cheaper must leave `sens` where it was.
  *
- * usage: mfsk_rx_probe [sens N | cpu SECONDS | all]
+ * usage: mfsk_rx_probe [sens N | cpu SECONDS | all]   (MFSK_PROBE_MODE=<mode>, default 100)
  */
 #include <complex.h>
 #include <math.h>
@@ -20,6 +20,9 @@
 #include "modem_mfsk.h"
 #include "modem_backend.h"
 #include "freedv_api.h"
+
+/* The MFSK mode probed: MFSK_PROBE_MODE, else the floor (100). */
+static int g_mode = MERCURY_MODE_MFSK;
 
 static uint64_t rs = 0x2545F4914F6CDD1DULL;
 static double urand(void) { rs = rs * 6364136223846793005ULL + 1442695040888963407ULL; return ((rs >> 11) + 0.5) / 9007199254740992.0; }
@@ -83,7 +86,7 @@ static int feed(void *ctx, const int16_t *x, long n, uint8_t *out)
 static int g_snr_hi = -8, g_snr_lo = -14, g_off_lo = 0;
 static void sens(int frames)
 {
-    void *tx = be->open(MERCURY_MODE_MFSK);
+    void *tx = be->open(g_mode);
     int ntx = be->n_tx_samples(tx), nb = be->bits_per_frame(tx) / 8;
     int16_t *f = calloc((size_t)ntx + 8000, sizeof *f);
     double *fs = calloc((size_t)ntx + 8000, sizeof *fs);
@@ -104,7 +107,7 @@ static void sens(int frames)
         int got[2];
         for (int oi = 0; oi < 2; oi++) {
             if (oi < g_off_lo) { got[oi] = -1; continue; }
-            void *rx = be->open(MERCURY_MODE_MFSK);
+            void *rx = be->open(g_mode);
             shift(f, n, oi ? 25.0 : 0.0, fs);
             double sigma = sqrt(ps / pow(10.0, snr / 10.0) * 4000.0 / 3000.0);
             got[oi] = 0;
@@ -130,7 +133,7 @@ static void sens(int frames)
 
 static void cpu(double seconds)
 {
-    void *rx = be->open(MERCURY_MODE_MFSK);
+    void *rx = be->open(g_mode);
     long n = (long)(8000 * seconds);
     int16_t *x = malloc((size_t)n * sizeof *x);
     uint8_t *out = calloc(256, 1);
@@ -154,7 +157,7 @@ static void cpu_file(const char *path)
     if (fread(x, sizeof *x, (size_t)n, f) != (size_t)n) { fclose(f); free(x); return; }
     fclose(f);
     double rms = 0; for (long t = 0; t < n; t++) rms += (double)x[t] * x[t]; rms = sqrt(rms / n);
-    void *rx = be->open(MERCURY_MODE_MFSK);
+    void *rx = be->open(g_mode);
     uint8_t *out = calloc(256, 1);
     clock_t c0 = clock();
     int got = feed(rx, x, n, out);
@@ -167,6 +170,7 @@ static void cpu_file(const char *path)
 
 int main(int argc, char **argv)
 {
+    if (getenv("MFSK_PROBE_MODE")) g_mode = atoi(getenv("MFSK_PROBE_MODE"));
     const char *what = argc > 1 ? argv[1] : "all";
     if (!strcmp(what, "file") && argc > 2) { cpu_file(argv[2]); return 0; }
     if (!strcmp(what, "cpu") || !strcmp(what, "all")) cpu(argc > 2 && strcmp(what, "all") ? atof(argv[2]) : 120.0);

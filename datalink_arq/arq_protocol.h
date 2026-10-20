@@ -329,6 +329,14 @@ float arq_protocol_call_interval_s(void);
  * DATAC16-shaped interval would key the next CALL over the answer. */
 float arq_protocol_call_interval_for_mode_s(int mode);
 
+/* The MFSK floor of a session at this bandwidth (Hz): the 500 Hz geometry
+ * (MERCURY_MODE_MFSK_N32, 32 tones 15.6 Hz apart) for BW500, whose stations
+ * may sit behind a 500 Hz filter that no 1 kHz MFSK passes; the 1 kHz floor
+ * (MERCURY_MODE_MFSK) otherwise.  Per bit the two reach equally far on AWGN
+ * (the narrow one's 3 dB is twice the airtime), the 1 kHz one further on
+ * flutter, in half the keydown. */
+int arq_floor_mode(int bw_hz);
+
 /**
  * @brief Compute CRC16-CCITT of an uppercase-normalised callsign.
  * Used to encode/validate the DST field in CALL/ACCEPT frames.
@@ -348,36 +356,43 @@ uint16_t arq_protocol_callsign_crc16(const char *callsign);
 int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                                    uint8_t session_id, uint8_t snr_raw);
 
-/* --- CALL/ACCEPT, protocol version 2 (PACKET_TYPE_ARQ_CALL) ---
+/* --- CALL/ACCEPT of Mercury 2.0 (PACKET_TYPE_ARQ_CALL2) ---
  *
  * 14 bytes (a DATAC16 frame), padded to the frame on MFSK.  Byte 0 is the
- * framer: type CALL, and in its extension the bandwidth token (2 bits), the
- * protocol version (2 bits) and the carousel bit.  A station takes a frame
- * only with this version and the carousel bit; a 1.9.x station reads that
- * extension as an unknown bandwidth token and drops it, so the versions do
- * not connect (docs/CAROUSEL-ARQ.md, "Wire formats").
+ * framer: type CALL2, and in its extension the bandwidth token (2 bits) and
+ * the 2.x minor revision (3 bits, 0).  Every 1.9.x release drops the type,
+ * and a CALL of theirs (PACKET_TYPE_ARQ_CALL) addressed to this station is
+ * logged, not answered: the versions do not connect (docs/CAROUSEL-ARQ.md,
+ * "Wire formats").
  *
+ * The 1.9.x frames, type CALL, carried in their extension the bandwidth
+ * token, a 2-bit protocol version and a carousel bit:
  * Version 1 was 1.9.18.  Version 2 moved MFSK's tones from 1531..2500 Hz to
  * 1015.6..1984.4 Hz, centred on 1500 Hz like the codec2 modes; the frames are
  * the same, but a pair of versions 1 and 2 would connect on DATAC16 and then
  * never hear each other at the floor, so the version keeps them apart.
+ * Version 3 (after 1.9.19) gave a BW500 session its own floor, the 500 Hz
+ * MFSK (arq_floor_mode), and was the last value the two bits held.
  *
  *   CALL    1: 0 | session id   2-3: CRC16 of the called callsign
  *           4-13: the caller's callsign, arithmetic-coded
  *   ACCEPT  1: 1 | session id   2-3: CRC16 of the caller's callsign
  *           4-5: CRC16 of the called callsign   6-7: the callee's nonce
- *           8: the caller's start rung (3 bits; 7 = ARQ_ACCEPT_LEVEL_CTL_DEAF),
- *              5 bits zero      9-13: zero */
-#define ARQ_CONNECT_VERSION           2
+ *           8: the caller's start rung (3 bits), the callee hears the caller
+ *              below the control mode (bit 3), 4 bits zero
+ *           9: the SNR the callee read the CALL at, dB + 128 (0: unknown)
+ *           10-13: zero */
+#define ARQ_CONNECT_MINOR             0
 #define ARQ_CONNECT_EXT_BW_MASK       0x03
-#define ARQ_CONNECT_EXT_VERSION_SHIFT 2
-#define ARQ_CONNECT_EXT_VERSION_MASK  0x0C
-#define ARQ_CONNECT_EXT_CAROUSEL      0x10
+#define ARQ_CONNECT_EXT_MINOR_SHIFT   2
+#define ARQ_CONNECT_EXT_MINOR_MASK    0x1C
 #define ARQ_ACCEPT_CALLED_CRC_IDX     4
 #define ARQ_ACCEPT_NONCE_IDX          6
 #define ARQ_ACCEPT_LEVEL_IDX          8
-#define ARQ_ACCEPT_LEVEL_CTL_DEAF     7   /* the callee hears the caller below
-                                             the control mode: start at the floor */
+#define ARQ_ACCEPT_LEVEL_MASK         0x07
+#define ARQ_ACCEPT_CTL_DEAF_BIT       0x08  /* the callee hears the caller below
+                                               the control mode */
+#define ARQ_ACCEPT_SNR_IDX            9
 
 /** Build a CALL.  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
@@ -386,14 +401,16 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
                             int bw_hz);
 
 /** Build an ACCEPT.  called: the callsign the CALL was addressed to (the
- *  callee's primary or a secondary); start_level 0..6, or
- *  ARQ_ACCEPT_LEVEL_CTL_DEAF.  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
+ *  callee's primary or a secondary); start_level 0..6; ctl_deaf: the callee
+ *  hears the caller below the control mode; call_snr_db: what it read the
+ *  CALL at (NAN: unknown).  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                               uint8_t session_id,
                               const char *called, const char *caller,
-                              int bw_hz, int start_level, uint16_t nonce);
+                              int bw_hz, int start_level, bool ctl_deaf,
+                              float call_snr_db, uint16_t nonce);
 
-/** Is buf a CALL or ACCEPT of this protocol version? */
+/** Is buf a CALL or ACCEPT of this protocol (2.0, any minor revision)? */
 bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len);
 
 /** Is a CALL or ACCEPT addressed to callsign (bytes 2-3, all 16 bits)? */
@@ -410,7 +427,9 @@ typedef struct {
     int      bw_hz;
     uint16_t called_crc;     /* CRC16 of the callsign the caller called */
     uint16_t nonce;          /* the callee's session nonce */
-    int      start_level;    /* 0..6, or ARQ_ACCEPT_LEVEL_CTL_DEAF */
+    int      start_level;    /* 0..6 */
+    bool     ctl_deaf;       /* the callee hears the caller below the control mode */
+    float    call_snr_db;    /* what the callee read the CALL at; NAN: unknown */
 } arq_accept_t;
 
 /** Parse an ACCEPT.  @return 0, or -1 (wrong version, bad bandwidth token,

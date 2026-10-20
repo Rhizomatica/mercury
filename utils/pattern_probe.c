@@ -21,8 +21,13 @@
  *              and the curve (N trials) of three classes, with confusions.
  *
  * PATTERN_KEY=<seed> measures a session's lists (mfsk_pattern_set_session).
+ * PATTERN_FOFF=<Hz> sets the second offset (default +25 Hz).
+ * PATTERN_GEOM=<mode> measures the patterns at another MFSK mode's geometry
+ * (102: 16 tones at 31.25 Hz, 103: 32 tones at 15.625 Hz).
  *
- * usage: pattern_probe [curve|wcurve N|fading|noise HOURS|signals|cpu|all]
+ *   wscore N   the scores ACK detections reach through the window, per SNR.
+ *
+ * usage: pattern_probe [curve|wcurve N|wscore N|fading|noise HOURS|signals|cpu|all]
  */
 #include <complex.h>
 #include <math.h>
@@ -59,6 +64,9 @@ static void shift(const int16_t *in, int n, double df, int16_t *out)
     free(X);
 }
 
+/* The second offset the curves measure (PATTERN_FOFF, Hz). */
+static double g_foff = 25.0;
+
 static double power(const int16_t *x, int n) { double p = 0; for (int i = 0; i < n; i++) p += (double)x[i] * x[i]; return p / n; }
 
 /* Noise power for a given SNR in 3 kHz: the noise spans fs/2 = 4 kHz. */
@@ -83,7 +91,7 @@ static void curve(int trials)
     for (int snr = SNR_LO; snr <= SNR_HI; snr++) {
         double pd[2]; int conf = 0;
         for (int oi = 0; oi < 2; oi++) {
-            shift(pat, n, oi ? 25.0 : 0.0, sh);
+            shift(pat, n, oi ? g_foff : 0.0, sh);
             double sigma = sigma_for(ps, snr);
             int hit = 0;
             for (int i = 0; i < trials; i++) {
@@ -119,7 +127,7 @@ static void wcurve(int trials)
     for (int snr = SNR_LO; snr <= SNR_HI; snr++) {
         double pd[2]; int conf = 0;
         for (int oi = 0; oi < 2; oi++) {
-            shift(pat, n, oi ? 25.0 : 0.0, sh);
+            shift(pat, n, oi ? g_foff : 0.0, sh);
             double sigma = sigma_for(ps, snr);
             int hit = 0;
             for (int i = 0; i < trials; i++) {
@@ -142,6 +150,47 @@ static void wcurve(int trials)
         fflush(stdout);
     }
     free(pat); free(sh); free(rx);
+}
+
+/* The scores ACK detections reach through the window, per SNR3k: how strong
+ * a pattern must score before it says the channel is better than a given
+ * SNR (the carousel takes a strong pattern as fresh evidence of the link).
+ * Score: matched symbols of 16; 0 is "not detected". */
+static void wscore(int trials)
+{
+    int n_pat = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)n_pat, sizeof *pat);
+    int n = mfsk_pattern_tx(pat, 0);
+    double ps = power(pat, n);
+    int lead = 2400, total = lead + n + 2 * n_pat;
+    int16_t *rx = calloc((size_t)total, sizeof *rx);
+    printf("# wscore: best ACK score through the window, %d trials per point (0 = missed)\n", trials);
+    printf("# snr3k  hist[score 0..16]\n");
+    for (int snr = -18; snr <= 6; snr++) {
+        int hist[17] = {0};
+        double sigma = sigma_for(ps, snr);
+        for (int i = 0; i < trials; i++) {
+            for (int t = 0; t < total; t++) {
+                double v = sigma * gauss() + ((t >= lead && t < lead + n) ? pat[t - lead] : 0);
+                rx[t] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+            }
+            mfsk_pattern_window_t w = {0};
+            int best = 0;
+            for (int t = 0; t + 160 <= total; t += 160) {
+                mfsk_pattern_ev_t ev[16];
+                int nev = mfsk_pattern_window_events(&w, rx + t, 160, ev, 16);
+                for (int e = 0; e < nev; e++)
+                    if (ev[e].kind == MFSK_PAT_ACK && ev[e].score > best) best = ev[e].score;
+            }
+            mfsk_pattern_window_free(&w);
+            hist[best > 16 ? 16 : best]++;
+        }
+        printf("%6d ", snr);
+        for (int k = 0; k <= 16; k++) printf(" %d", hist[k]);
+        printf("\n");
+        fflush(stdout);
+    }
+    free(pat); free(rx);
 }
 
 static double p_detect_awgn(int oi, double snr)
@@ -240,7 +289,7 @@ static void nav(double hours, int trials)
             int n = mfsk_nav_tx(pat, cls[ci]);
             double ps = power(pat, n);
             for (int oi = 0; oi < 2; oi++) {
-                shift(pat, n, oi ? 25.0 : 0.0, sh);
+                shift(pat, n, oi ? g_foff : 0.0, sh);
                 double sigma = sigma_for(ps, snr);
                 int hit = 0;
                 for (int i = 0; i < trials; i++) {
@@ -290,7 +339,7 @@ static void xread(int nkeys)
         for (int kind = 0; kind < 2; kind++) {
             int n = mfsk_pattern_tx(pat, kind);
             for (int oi = 0; oi < 2; oi++) {
-                shift(pat, n, oi ? 25.0 : 0.0, sh);
+                shift(pat, n, oi ? g_foff : 0.0, sh);
                 for (int t = 0; t < total; t++) x[t] = (int16_t)(30.0 * gauss() + ((t >= n_pat && t < n_pat + n) ? sh[t - n_pat] : 0));
                 mfsk_pattern_window_t w = {0};
                 mfsk_pattern_ev_t ev[16];
@@ -396,6 +445,12 @@ static void cpu(void)
 int main(int argc, char **argv)
 {
     const char *what = argc > 1 ? argv[1] : "all";
+    if (getenv("PATTERN_FOFF")) g_foff = atof(getenv("PATTERN_FOFF"));
+    if (getenv("PATTERN_GEOM")) {
+        mfsk_pattern_set_geometry(atoi(getenv("PATTERN_GEOM")));
+        printf("# geometry of mode %s: %d symbols, %d samples\n", getenv("PATTERN_GEOM"),
+               mfsk_pattern_nsymb(), mfsk_pattern_max_tx_samples());
+    }
     /* PATTERN_KEY: measure a session's patterns instead of the global ones */
     /* PATTERN_LIST="t0,t1,...,t7": an explicit ACK list (experiments) */
     if (getenv("PATTERN_LIST")) {
@@ -413,6 +468,7 @@ int main(int argc, char **argv)
         fading();
     }
     if (!strcmp(what, "wcurve")) wcurve(argc > 2 ? atoi(argv[2]) : 200);
+    if (!strcmp(what, "wscore")) wscore(argc > 2 ? atoi(argv[2]) : 200);
     if (!strcmp(what, "xread")) xread(argc > 2 ? atoi(argv[2]) : 256);
     if (!strcmp(what, "nav")) nav(argc > 2 ? atof(argv[2]) : 1.0, argc > 3 ? atoi(argv[3]) : 200);
     if (all || !strcmp(what, "signals")) signals();

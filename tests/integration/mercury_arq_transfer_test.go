@@ -241,7 +241,18 @@ func TestMercuryARQTransfer(t *testing.T) {
 	if bw := os.Getenv("MERCURY_TEST_BW"); bw != "" {
 		setup = append(setup, setupCmd{connA, rwA, "BW" + bw, ""}, setupCmd{connB, rwB, "BW" + bw, ""})
 	}
-	setup = append(setup, setupCmd{connB, rwB, "LISTEN ON", ""})
+	// MERCURY_TEST_LISTEN_DELAY_S=<s>: B starts listening that long after A's
+	// CONNECT, so A's fast CALLs go unheard and the connect goes on MFSK on a
+	// channel where the control mode works (a busy or late callee).
+	listenDelay := 0.0
+	if v := os.Getenv("MERCURY_TEST_LISTEN_DELAY_S"); v != "" {
+		if listenDelay, err = strconv.ParseFloat(v, 64); err != nil {
+			t.Fatalf("bad MERCURY_TEST_LISTEN_DELAY_S %q", v)
+		}
+	}
+	if listenDelay <= 0 {
+		setup = append(setup, setupCmd{connB, rwB, "LISTEN ON", ""})
+	}
 	for _, c := range setup {
 		if got := sendControlCommand(t, c.conn, c.rw, c.cmd); !strings.HasPrefix(got, "OK") {
 			failWithLogs("%q -> %q, want OK", c.cmd, got)
@@ -270,8 +281,38 @@ func TestMercuryARQTransfer(t *testing.T) {
 	}
 	defer dataB.Close()
 
+	tConnect := time.Now()
 	if got := sendControlCommand(t, connA, rwA, "CONNECT TESTA TESTB"); !strings.HasPrefix(got, "OK") {
 		failWithLogs("CONNECT -> %q, want OK", got)
+	}
+	listenErr := make(chan error, 1)
+	if listenDelay > 0 {
+		go func() {
+			time.Sleep(time.Duration(listenDelay * float64(time.Second)))
+			_ = connB.SetDeadline(time.Now().Add(commandTimeout))
+			_, err := rwB.WriteString("LISTEN ON\r")
+			if err == nil {
+				err = rwB.Flush()
+			}
+			// The reply, past B's unsolicited status lines (BUFFER 0): B
+			// cannot be CONNECTED before it listens, so nothing else is lost.
+			for err == nil {
+				var line string
+				if line, err = rwB.ReadString('\r'); err != nil {
+					break
+				}
+				if strings.HasPrefix(line, "OK") {
+					break
+				}
+				if strings.HasPrefix(line, "WRONG") {
+					err = fmt.Errorf("LISTEN ON -> %q", line)
+				}
+			}
+			_ = connB.SetDeadline(time.Time{})
+			listenErr <- err
+		}()
+	} else {
+		listenErr <- nil
 	}
 
 	// Wait for the CONNECTED notification on A's control port.  Control
@@ -300,7 +341,11 @@ func TestMercuryARQTransfer(t *testing.T) {
 	if !connected {
 		failWithLogs("no CONNECTED notification within deadline")
 	}
+	t.Logf("CONNECTED after %.1f s", time.Since(tConnect).Seconds())
 	_ = connA.SetReadDeadline(time.Time{})
+	if err := <-listenErr; err != nil {
+		failWithLogs("B's delayed LISTEN ON: %v", err)
+	}
 
 	// Default 102 bytes (3 datac15 frames).  MERCURY_TEST_PAYLOAD_KB sets a
 	// larger transfer to exercise the speed-ladder climb and the >511-byte

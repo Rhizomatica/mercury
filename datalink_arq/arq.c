@@ -20,6 +20,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -868,10 +869,10 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     if (rc == -2)
     {
         /* Bytes 2-3 are the called CRC in every version, so this is a call
-         * for us from an older release, 1.9.18 or 1.9.x: the
+         * for us from an older release, 1.9.19, 1.9.18 or 1.9.x: the
          * versions do not connect (docs/CAROUSEL-ARQ.md, "Wire formats"). */
         if (!is_accept)
-            HLOGW(LOG_COMP, "CALL for %s from another protocol version (Mercury 1.9.18 or older?): not answered",
+            HLOGW(LOG_COMP, "CALL for %s from another protocol version (Mercury 1.9.x?): not answered",
                   dialed_call);
         return false;
     }
@@ -886,6 +887,8 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         /* The callee's callsign is not on the air, only its CRC: the FSM
          * checks it against the station it called. */
         ev.car_level      = acc.start_level;
+        ev.car_ctl_deaf   = acc.ctl_deaf;
+        ev.car_call_snr   = isnan(acc.call_snr_db) ? 0.0f : acc.call_snr_db;
         ev.car_nonce      = acc.nonce;
         ev.car_called_crc = acc.called_crc;
     }
@@ -893,15 +896,23 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", caller);
     /* local = the one of our callsigns the caller dialed (primary or secondary) */
     snprintf(ev.local_call, CALLSIGN_MAX_SIZE, "%s", dialed_call);
-    pthread_mutex_lock(&g_conn_lock);
-    int local_bw = normalize_bandwidth_hz(arq_conn.bw);
-    if (is_accept)
-        arq_conn.session_bw = normalize_bandwidth_hz(bw_hz);
-    else
-        arq_conn.session_bw = normalize_bandwidth_hz(bw_hz < local_bw ? bw_hz : local_bw);
-    pthread_mutex_unlock(&g_conn_lock);
+    /* The bandwidth the frame advertises: the FSM makes it the session's when
+     * it takes the frame (arq_set_session_bw), not here -- another station's
+     * CALL, or a stray ACCEPT, would change the bandwidth of the session being
+     * answered, and its ends then capped their rungs and chose their floor
+     * apart. */
+    ev.bw_hz = bw_hz;
     evq_push(&ev);
     return true;
+}
+
+void arq_set_session_bw(int bw_hz, bool from_call)
+{
+    pthread_mutex_lock(&g_conn_lock);
+    int local_bw = normalize_bandwidth_hz(arq_conn.bw);
+    /* the callee answers with min(its own, the CALL's); the caller takes it */
+    arq_conn.session_bw = normalize_bandwidth_hz(from_call && local_bw < bw_hz ? local_bw : bw_hz);
+    pthread_mutex_unlock(&g_conn_lock);
 }
 
 bool arq_handle_incoming_cq_frame(uint8_t *data, size_t frame_size)
@@ -1015,6 +1026,7 @@ int arq_init(size_t frame_size, int mode)
         .send_keydown        = cb_send_keydown,
         .send_pattern        = cb_send_pattern,
         .set_crc_seed        = arq_modem_crc_seed,
+        .set_floor_mode      = arq_modem_floor_mode,
     };
     arq_fsm_set_callbacks(&cbs);
     arq_fsm_set_timing(&g_timing);
@@ -1256,6 +1268,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     if (!snapshot || !g_initialized) return false;
     int backlog = cb_tx_backlog();   /* takes g_app_tx_mtx; compute before g_sess_lock */
     int trx     = arq_get_trx();     /* takes g_conn_lock (leaf); before g_sess_lock */
+    int own_bw  = arq_get_bw();      /* likewise */
     pthread_mutex_lock(&g_sess_lock);
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
@@ -1269,6 +1282,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
      * MFSK CALLs arrived mid-ACCEPTING, and the call never connected. */
     snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING ||
                                      g_sess.conn_state == ARQ_CONN_ACCEPTING);
+    snapshot->listen_floor_mode = arq_floor_mode(normalize_bandwidth_hz(own_bw));
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
     snapshot->payload_mode      = g_sess.payload_mode;

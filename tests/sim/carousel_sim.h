@@ -51,7 +51,9 @@ void carousel_sim_force_spurious_break(const int *keydown_idx, int n);
 void carousel_sim_force_corrupt(const int *frame_idx, int n);
 
 /* A connected session, A sending first, B too when bidir; chan as in
- * ab_bench (clean | awgn:<per> | cliff:<snr> | nvis | fade:<snr>:<hz>). */
+ * ab_bench (clean | awgn:<per> | cliff:<snr> | nvis | fade:<snr>:<hz>), or
+ * asym:<a2b>:<b2a>, step:<from>:<to>:<at_s>, stepa:<from>:<to>:<at_s>:<d> (a
+ * step from A to B, the way back d dB better throughout). */
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res);
 
 /* The channel such a run uses (fresh, seeded): for bounds. */

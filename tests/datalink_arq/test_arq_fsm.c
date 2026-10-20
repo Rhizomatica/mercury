@@ -23,6 +23,7 @@ DEFINE_FFF_GLOBALS;
 #include "arq_protocol.h"
 #include "virtual_clock.h"   /* time_now_ms(), to stage a busy channel */
 #include "freedv/freedv_api.h"
+#include "modem_mfsk.h"        /* MERCURY_MODE_MFSK */
 
 /* Provided by arq_test_stubs.c */
 extern void mock_set_uptime_ms(uint64_t ms);
@@ -297,14 +298,15 @@ void test_ended_session_is_not_resurrected_by_a_late_frame(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 
-    /* The session ends; we are back to listening. */
+    /* The session ends (the reply out, then its TX_COMPLETE); we are back to
+     * listening. */
     ev = make_event(ARQ_EV_RX_DISCONNECT);
     ev.session_id = 0x42;
     arq_fsm_dispatch(&sess, &ev);
-    for (int i = 0; i < 4 && sess.conn_state != ARQ_CONN_LISTENING; i++) {
-        ev = make_event(ARQ_EV_TX_COMPLETE);
-        arq_fsm_dispatch(&sess, &ev);
-    }
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
 
     /* A late frame from that session's peer. */
@@ -377,6 +379,47 @@ void test_accept_transitions_to_connected(void)
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
+}
+
+/* A connect that got through only on MFSK starts the session deaf to the
+ * control mode, on the floor, whatever its SNR says: under a Doppler spread
+ * no OFDM mode decodes, and a session the SNR started on DATAC1 sent its
+ * first round into a callee that never heard it (Go harness, ccir-flutter,
+ * itur-ld/-hm/-hd: 0 bytes).  The same CALL on the control mode does not. */
+void test_mfsk_only_connect_starts_deaf_on_the_floor(void)
+{
+    for (int mfsk = 0; mfsk <= 1; mfsk++) {
+        arq_fsm_init(&sess);
+        arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_RX_CALL);
+        ev.session_id = 0x42;
+        ev.rx_snr = 10.0f;
+        ev.mode = mfsk ? MERCURY_MODE_MFSK : FREEDV_MODE_DATAC16;
+        strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+        TEST_ASSERT_EQUAL(mfsk, sess.car_ctl_deaf);
+        if (mfsk) TEST_ASSERT_EQUAL_INT(0, sess.car_rx_level);
+        else      TEST_ASSERT_GREATER_THAN(0, sess.car_rx_level);
+
+        arq_fsm_init(&sess);
+        ev = make_event(ARQ_EV_APP_LISTEN);
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_APP_CONNECT);
+        strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_RX_ACCEPT);
+        ev.session_id = sess.session_id;
+        ev.rx_snr = 10.0f;
+        ev.mode = mfsk ? MERCURY_MODE_MFSK : FREEDV_MODE_DATAC16;
+        strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+        TEST_ASSERT_EQUAL(mfsk, sess.car_ctl_deaf);
+        if (mfsk) TEST_ASSERT_EQUAL_INT(0, sess.car_rx_level);
+        else      TEST_ASSERT_GREATER_THAN(0, sess.car_rx_level);
+    }
 }
 
 /* The listen mode (initial_payload_mode) is an operator setting for the IDLE
@@ -457,13 +500,13 @@ static void send_our_disconnect(void)
     arq_fsm_dispatch(&sess, &ev);
     /* The caller's DISCONNECT waits out a reply slot it opened for the
      * callee (the turn rules): follow the FSM's own deadline to it. */
-    for (int i = 0; i < 8 && !sess.disconnect_sent && sess.deadline_ms != UINT64_MAX; i++)
+    for (int i = 0; i < 8 && sess.teardown != ARQ_TD_SENT && sess.deadline_ms != UINT64_MAX; i++)
     {
         mock_set_uptime_ms(sess.deadline_ms);
         ev = make_event(sess.deadline_event);
         arq_fsm_dispatch(&sess, &ev);
     }
-    TEST_ASSERT_TRUE_MESSAGE(sess.disconnect_sent, "our DISCONNECT did not go out");
+    TEST_ASSERT_TRUE_MESSAGE(sess.teardown == ARQ_TD_SENT, "our DISCONNECT did not go out");
 }
 
 /* Caller with a live session, then DISCONNECT with nothing queued: the
@@ -509,7 +552,7 @@ static void goto_disconnecting_caller(void)
 void test_crossed_disconnect_is_answered(void)
 {
     goto_disconnecting_caller_held();
-    TEST_ASSERT_FALSE(sess.disconnect_sent);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_SENT, sess.teardown);
 
     arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
     ev.session_id = sess.session_id;
@@ -562,6 +605,74 @@ void test_peer_calling_again_ends_teardown(void)
     TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);   /* the old session's end */
 }
 
+/* A connected callee hearing its caller CALL again: the caller has left the
+ * session (its lost-peer watchdog fired first), and its redial waited out
+ * ours.  The session ends and the CALL is answered.  A CALL from anyone else
+ * does not end it. */
+void test_connected_callee_takes_its_callers_redial(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "PU2UIT", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = 0x21;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    RESET_FAKE(fake_notify_disconnected);
+
+    arq_event_t call = make_event(ARQ_EV_RX_CALL);
+    call.session_id = 0x22;
+    strncpy(call.remote_call, "DST9", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_CONNECTED, sess.conn_state,
+        "a stranger's CALL ended our session");
+
+    strncpy(call.remote_call, "pu2uit", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x22, sess.session_id);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);   /* the old session's end */
+}
+
+/* A callee ending the session: its DISCONNECT went in its slot, and it waits
+ * only for the answer.  On air that answer was lost, and the caller station's
+ * next application called with another MYCALL (UUCP as PU2UIT, then NNCP as
+ * PU2UIT-3): those CALLs were ignored for the 180 s end wait.  Before its
+ * DISCONNECT is out, a CALL from another callsign still does not end it. */
+void test_ending_callee_takes_a_call_from_any_callsign(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "PU2UIT", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = 0x21;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    ev = make_event(ARQ_EV_APP_DISCONNECT);
+    ev.abort = true;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.car_active);      /* it ends in the carousel's slots */
+
+    arq_event_t call = make_event(ARQ_EV_RX_CALL);
+    call.session_id = 0x35;
+    strncpy(call.remote_call, "PU2UIT-3", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_DISCONNECTING, sess.conn_state,
+        "another callsign's CALL ended a teardown whose DISCONNECT had not gone out");
+
+    sess.teardown = ARQ_TD_SENT;            /* car_io_end: the DISCONNECT in my slot */
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x35, sess.session_id);
+}
+
 static void connect_to(const char *call)
 {
     arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
@@ -577,7 +688,7 @@ void test_connect_during_teardown_is_deferred_not_dropped(void)
     connect_to("DST2");
     /* Not placed over the teardown, but not lost either. */
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
-    TEST_ASSERT_TRUE_MESSAGE(sess.pending_connect,
+    TEST_ASSERT_TRUE_MESSAGE(sess.pending_connect_call[0] != 0,
         "CONNECT during DISCONNECTING was dropped: the client never gets an answer");
 
     /* Peer acks the DISCONNECT: teardown done, the deferred call goes out. */
@@ -588,7 +699,7 @@ void test_connect_during_teardown_is_deferred_not_dropped(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
     TEST_ASSERT_EQUAL_STRING("DST2", sess.remote_call);
     TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);   /* the CALL */
-    TEST_ASSERT_FALSE(sess.pending_connect);
+    TEST_ASSERT_EQUAL_CHAR(0, sess.pending_connect_call[0]);
     /* The old session's end is not reported after the new CONNECT: it would
      * read as "your call failed". */
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_notify_disconnected_fake.call_count,
@@ -620,7 +731,7 @@ void test_disconnect_cancels_deferred_connect(void)
 
     arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_FALSE(sess.pending_connect);
+    TEST_ASSERT_EQUAL_CHAR(0, sess.pending_connect_call[0]);
 
     ev = make_event(ARQ_EV_RX_DISCONNECT);
     ev.session_id = old_session;
@@ -641,7 +752,7 @@ void test_listen_off_cancels_deferred_connect(void)
     arq_fsm_dispatch(&sess, &ev);
 
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CALLING, sess.conn_state);
-    TEST_ASSERT_FALSE(sess.pending_connect);
+    TEST_ASSERT_EQUAL_CHAR(0, sess.pending_connect_call[0]);
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, fake_notify_disconnected_fake.call_count,
         "LISTEN OFF dropped the deferred call without telling the client");
 }
@@ -664,7 +775,7 @@ void test_connect_on_live_session_without_disconnect_is_not_queued(void)
 {
     goto_connected();
     connect_to("DST2");
-    TEST_ASSERT_FALSE(sess.pending_connect);
+    TEST_ASSERT_EQUAL_CHAR(0, sess.pending_connect_call[0]);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 }
 
@@ -692,15 +803,15 @@ void test_disconnect_from_connected(void)
     ev = make_event(ARQ_EV_APP_DISCONNECT);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-    TEST_ASSERT_TRUE(sess.pending_disconnect);
-    TEST_ASSERT_NOT_EQUAL_UINT64(0, sess.disconnect_deadline_ms);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
+    TEST_ASSERT_NOT_EQUAL_UINT64(0, sess.teardown_deadline_ms);
 
     /* A CONNECT while it is held is queued, not dropped: it is placed once
      * the session has ended (arq_fsm_dispatch). */
     ev = make_event(ARQ_EV_APP_CONNECT);
     strncpy(ev.remote_call, "DST2", CALLSIGN_MAX_SIZE);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_TRUE(sess.pending_connect);
+    TEST_ASSERT_TRUE(sess.pending_connect_call[0] != 0);
     TEST_ASSERT_EQUAL_STRING("DST2", sess.pending_connect_call);
 }
 
@@ -771,8 +882,8 @@ void test_app_disconnect_defers_with_backlog(void)
     arq_fsm_dispatch(&sess, &ev);
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-    TEST_ASSERT_TRUE(sess.pending_disconnect);
-    TEST_ASSERT_NOT_EQUAL_UINT64(0, sess.disconnect_deadline_ms);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
+    TEST_ASSERT_NOT_EQUAL_UINT64(0, sess.teardown_deadline_ms);
 }
 
 
@@ -791,14 +902,14 @@ void test_disconnect_drain_timeout_forces_teardown(void)
 
     /* Advance past the drain budget (the configured one, or the carousel's
      * for its rung where an exchange is slower) and feed any event. */
-    TEST_ASSERT_TRUE(sess.pending_disconnect);
-    TEST_ASSERT_TRUE(sess.disconnect_deadline_ms >= 1000 + (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000);
-    mock_set_uptime_ms(sess.disconnect_deadline_ms + 1000);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
+    TEST_ASSERT_TRUE(sess.teardown_deadline_ms >= 1000 + (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000);
+    mock_set_uptime_ms(sess.teardown_deadline_ms + 1000);
     ev = make_event(ARQ_EV_TIMER_CAROUSEL);
     arq_fsm_dispatch(&sess, &ev);
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
-    TEST_ASSERT_FALSE(sess.pending_disconnect);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
 }
 
 
@@ -892,7 +1003,7 @@ void test_rx_disconnect_with_backlog_ends_at_once(void)
     arq_fsm_dispatch(&sess, &ev);
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
-    TEST_ASSERT_TRUE(sess.pending_disconnect_reply);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_REPLYING, sess.teardown);
     TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
 }
 
@@ -1043,7 +1154,7 @@ void test_listen_off_deferred_within_grace_accepting(void)
 
     /* Must still be in ACCEPTING: grace deferred the teardown. */
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
-    TEST_ASSERT_TRUE(sess.deferred_listen_off);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LISTEN_OFF, sess.teardown);
 
     /* Advance past the grace period and fire TIMER_RETRY. */
     mock_set_uptime_ms(4000);
@@ -1052,7 +1163,7 @@ void test_listen_off_deferred_within_grace_accepting(void)
 
     /* Now the deferred LISTEN OFF should have been processed. */
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
-    TEST_ASSERT_FALSE(sess.deferred_listen_off);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_LISTEN_OFF, sess.teardown);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_cancelpending_fake.call_count);
 }
 
@@ -1075,7 +1186,7 @@ void test_listen_off_in_calling_is_immediate(void)
 
     /* Released straight away — not deferred. */
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
-    TEST_ASSERT_FALSE(sess.deferred_listen_off);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_LISTEN_OFF, sess.teardown);
 }
 
 /* The case the grace period is FOR, and the one that decides whether the
@@ -1100,7 +1211,7 @@ void test_deferred_listen_off_survives_connect(void)
     ev = make_event(ARQ_EV_APP_STOP_LISTEN);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
-    TEST_ASSERT_TRUE(sess.deferred_listen_off);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LISTEN_OFF, sess.teardown);
 
     RESET_FAKE(fake_notify_disconnected);
 
@@ -1111,7 +1222,7 @@ void test_deferred_listen_off_survives_connect(void)
 
     /* We must NOT settle into a session on a channel we were told to release. */
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-    TEST_ASSERT_FALSE(sess.deferred_listen_off);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_LISTEN_OFF, sess.teardown);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_disconnected_fake.call_count);
 }
 
@@ -1136,7 +1247,7 @@ void test_listen_off_drops_live_link_without_draining(void)
     /* Unlike APP_DISCONNECT this must NOT linger in a draining teardown:
      * the radio was requested back, so queued bytes buy no more airtime. */
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
-    TEST_ASSERT_FALSE(sess.pending_disconnect);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
     /* No air-side DISCONNECT frame — that is one more keydown on a channel we
      * were just told to give up; the peer times out instead. */
     TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
@@ -1267,6 +1378,92 @@ void test_accepting_silent_wait_gives_up_after_budget(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
 }
 
+/* A teardown's state belongs to that teardown.  The host hangs up with data
+ * queued (the DISCONNECT waits to deliver it), and the peer, gone already,
+ * calls again: that ends the session, and the CALL is answered.  The new
+ * session must not inherit the old one's held DISCONNECT, whose drain deadline
+ * has long passed: it would end at once. */
+void test_held_disconnect_does_not_outlive_its_session(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 256;
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x31;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    fake_tx_backlog_fake.return_val = 0;
+    /* Past the old drain deadline (at most ~150 s, car_drain_budget_ms), and
+     * the new session just heard from its peer. */
+    mock_set_uptime_ms(1000 + 200000);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = 0x31;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_CONNECTED, sess.conn_state,
+        "the new session was ended by the previous one's held DISCONNECT");
+}
+
+/* The peer hangs up, and within the reply guard the host dials again: the
+ * reply goes, then the CALL.  That call failing, the station is idle, and a
+ * LISTEN ON then must listen: the old teardown's notice is not still owed. */
+void test_redial_inside_reply_guard_leaves_nothing_owed(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+
+    connect_to("DST2");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    sess.tx_retries_left = 0;
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+
+    ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_LISTENING, sess.conn_state,
+        "LISTEN ON ignored: the previous session's DISCONNECTED was still owed");
+}
+
+/* The reply to the peer's DISCONNECT is owed until it has gone out: the end of
+ * some other transmission inside the reply guard does not end the teardown. */
+void test_disconnect_reply_survives_another_tx_complete(void)
+{
+    goto_connected();
+    RESET_FAKE(fake_send_tx_frame);
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);     /* not the reply: it has not gone */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_disconnected_fake.call_count);
+
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, fake_send_tx_frame_fake.call_count,
+        "the reply to the peer's DISCONNECT was dropped");
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, sess.crc_seed);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1279,6 +1476,7 @@ int main(void)
     RUN_TEST(test_incoming_call_transitions_to_accepting);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
+    RUN_TEST(test_mfsk_only_connect_starts_deaf_on_the_floor);
     RUN_TEST(test_listen_mode_does_not_leak_into_inbound_session);
     RUN_TEST(test_listen_mode_restored_after_session_ends);
     RUN_TEST(test_disconnect_from_connected);
@@ -1286,6 +1484,8 @@ int main(void)
     RUN_TEST(test_crossed_disconnect_is_answered);
     RUN_TEST(test_disconnect_after_ours_is_the_answer);
     RUN_TEST(test_peer_calling_again_ends_teardown);
+    RUN_TEST(test_ending_callee_takes_a_call_from_any_callsign);
+    RUN_TEST(test_connected_callee_takes_its_callers_redial);
     RUN_TEST(test_deferred_connect_is_placed_after_teardown_timeout);
     RUN_TEST(test_disconnect_cancels_deferred_connect);
     RUN_TEST(test_listen_off_cancels_deferred_connect);
@@ -1295,6 +1495,9 @@ int main(void)
     RUN_TEST(test_listen_off_deferred_within_grace_accepting);
     RUN_TEST(test_listen_off_in_calling_is_immediate);
     RUN_TEST(test_deferred_listen_off_survives_connect);
+    RUN_TEST(test_held_disconnect_does_not_outlive_its_session);
+    RUN_TEST(test_redial_inside_reply_guard_leaves_nothing_owed);
+    RUN_TEST(test_disconnect_reply_survives_another_tx_complete);
     RUN_TEST(test_listen_off_drops_live_link_without_draining);
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_rejects_zero_session_id);

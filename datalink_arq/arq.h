@@ -134,6 +134,9 @@ typedef struct
     /* Listening or accepting: a CALL can arrive on MFSK, and only the
      * modem's MFSK call listener would decode it. */
     bool listening_for_calls;
+    /* The MFSK floor of my own bandwidth (arq_floor_mode), which callers at
+     * it escalate to: the one the MFSK call listener decodes. */
+    int listen_floor_mode;
     int trx;
     int tx_backlog_bytes;
     int speed_level;
@@ -220,6 +223,9 @@ void arq_discard_stale_rx(void);
  * @return 500, 2300, or 2750 when configured; otherwise 2300.
  */
 int arq_reported_bandwidth_hz(void);
+/* The FSM took a CALL (from_call: the session gets min(ours, its)) or an
+ * ACCEPT (the session gets its) advertising bw_hz. */
+void arq_set_session_bw(int bw_hz, bool from_call);
 
 /**
  * @brief Queue outbound payload bytes for ARQ transmission.
@@ -259,7 +265,7 @@ int arq_set_listen_mode(int mode);
 void arq_set_active_modem_mode(int mode, size_t frame_size);
 
 /**
- * @brief Handle an incoming CALL/ACCEPT frame (protocol version 2).
+ * @brief Handle an incoming CALL/ACCEPT frame (protocol version 3).
  * @param data Frame bytes.
  * @param frame_size Frame length in bytes.
  * @param rx_snr SNR the frame was decoded at (dB); sets the start rung.

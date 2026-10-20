@@ -69,6 +69,9 @@ const arq_mode_timing_t arq_mode_table[] = {
      * longest burst, which sizes the modem's RX backlog: shorter, and the
      * backlog cap chopped MFSK bursts in half (mfsk-margin, 7feaadb). */
     {  MERCURY_MODE_MFSK,     13.50f,    18.0f,          98   },
+    /* The BW500 floor: the same frame on 32 tones 15.6 Hz apart, twice the
+     * symbol length, 26.2 s on the air (arq_floor_mode). */
+    {  MERCURY_MODE_MFSK_N32, 27.00f,    32.0f,          98   },
 };
 
 const int arq_mode_table_count =
@@ -122,11 +125,16 @@ float arq_protocol_call_interval_for_mode_s(int mode)
     float override = atomic_load(&arq_callint_override_s);
     if (override > 0.0f)
         return override;
-    if (mode == MERCURY_MODE_MFSK) {
+    if (mercury_mode_is_mfsk(mode)) {
         const arq_mode_timing_t *tm = arq_protocol_mode_timing(mode);
         return (tm ? tm->frame_duration_s : 13.5f) + 10.5f;
     }
     return arq_protocol_call_interval_s();
+}
+
+int arq_floor_mode(int bw_hz)
+{
+    return bw_hz == ARQ_BANDWIDTH_NARROW_HZ ? MERCURY_MODE_MFSK_N32 : MERCURY_MODE_MFSK;
 }
 
 int arq_protocol_retry_rank(const char *local_call, const char *remote_call)
@@ -404,8 +412,7 @@ static int decode_callsign_only_payload(const uint8_t *in, size_t in_len, char *
 
 static uint8_t connect_ext(uint8_t bw_token)
 {
-    return (uint8_t)(bw_token | (ARQ_CONNECT_VERSION << ARQ_CONNECT_EXT_VERSION_SHIFT) |
-                     ARQ_CONNECT_EXT_CAROUSEL);
+    return (uint8_t)(bw_token | (ARQ_CONNECT_MINOR << ARQ_CONNECT_EXT_MINOR_SHIFT));
 }
 
 static void put_crc16(uint8_t *p, uint16_t crc) { p[0] = (uint8_t)crc; p[1] = (uint8_t)(crc >> 8); }
@@ -413,12 +420,10 @@ static uint16_t get_crc16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8
 
 bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len)
 {
-    if (!buf || buf_len < ARQ_CONTROL_FRAME_SIZE ||
-        frame_header_packet_type(buf[0]) != PACKET_TYPE_ARQ_CALL)
-        return false;
-    uint8_t ext = frame_header_extension(buf[0]);
-    return (ext & ARQ_CONNECT_EXT_CAROUSEL) &&
-           ((ext & ARQ_CONNECT_EXT_VERSION_MASK) >> ARQ_CONNECT_EXT_VERSION_SHIFT) == ARQ_CONNECT_VERSION;
+    /* Any 2.x minor revision: a later one keeps the layout a 2.0 station
+     * reads, or takes another packet type. */
+    return buf && buf_len >= ARQ_CONTROL_FRAME_SIZE &&
+           frame_header_packet_type(buf[0]) == PACKET_TYPE_ARQ_CALL2;
 }
 
 static int connect_bw_hz(const uint8_t *buf)
@@ -444,17 +449,26 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
     memset(buf, 0, ARQ_CONTROL_FRAME_SIZE);
     buf[ARQ_CONNECT_SESSION_IDX] = (uint8_t)(session_id & ARQ_CONNECT_SESSION_MASK);
     memcpy(buf + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)enc_len);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CALL, connect_ext(bw_token));
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token));
     return ARQ_CONTROL_FRAME_SIZE;
+}
+
+/* An SNR in a byte: dB + 128, rounded, 1..255; 0 is "unknown". */
+static uint8_t snr_byte(float db)
+{
+    if (isnan(db)) return 0;
+    long v = lrintf(db) + 128;
+    return (uint8_t)(v < 1 ? 1 : v > 255 ? 255 : v);
 }
 
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                               uint8_t session_id,
                               const char *called, const char *caller,
-                              int bw_hz, int start_level, uint16_t nonce)
+                              int bw_hz, int start_level, bool ctl_deaf,
+                              float call_snr_db, uint16_t nonce)
 {
     if (!buf || !called || !caller || buf_len < ARQ_CONTROL_FRAME_SIZE ||
-        start_level < 0 || start_level > ARQ_ACCEPT_LEVEL_CTL_DEAF)
+        start_level < 0 || start_level > ARQ_ACCEPT_LEVEL_MASK)
         return -1;
     uint8_t bw_token = arq_protocol_bw_token_from_hz(bw_hz);
     if (bw_token == ARQ_BW_TOKEN_NONE)
@@ -465,8 +479,9 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
     put_crc16(buf + ARQ_CONNECT_PAYLOAD_IDX, arq_protocol_callsign_crc16(caller));
     put_crc16(buf + ARQ_ACCEPT_CALLED_CRC_IDX, arq_protocol_callsign_crc16(called));
     put_crc16(buf + ARQ_ACCEPT_NONCE_IDX, nonce);
-    buf[ARQ_ACCEPT_LEVEL_IDX] = (uint8_t)start_level;
-    write_frame_header(buf, PACKET_TYPE_ARQ_CALL, connect_ext(bw_token));
+    buf[ARQ_ACCEPT_LEVEL_IDX] = (uint8_t)(start_level | (ctl_deaf ? ARQ_ACCEPT_CTL_DEAF_BIT : 0));
+    buf[ARQ_ACCEPT_SNR_IDX] = snr_byte(call_snr_db);
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token));
     return ARQ_CONTROL_FRAME_SIZE;
 }
 
@@ -497,11 +512,13 @@ int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len, arq_accept_t *
     if (!out || !arq_protocol_connect_version_ok(buf, buf_len) ||
         !(buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG))
         return -1;
-    /* The rung is 3 bits, the rest of byte 8 and bytes 9-13 are zero: a
-     * frame that passed its CRC with any of them set is not an ACCEPT. */
-    if (buf[ARQ_ACCEPT_LEVEL_IDX] > ARQ_ACCEPT_LEVEL_CTL_DEAF)
+    /* The rung (3 bits) and the deaf bit, the rest of byte 8 and bytes
+     * 10-13 zero: a frame that passed its CRC with any of them set is not
+     * an ACCEPT.  Rung 7 is off the ladder. */
+    uint8_t lv = buf[ARQ_ACCEPT_LEVEL_IDX];
+    if (lv & ~(ARQ_ACCEPT_LEVEL_MASK | ARQ_ACCEPT_CTL_DEAF_BIT) || (lv & ARQ_ACCEPT_LEVEL_MASK) == 7)
         return -1;
-    for (int i = ARQ_ACCEPT_LEVEL_IDX + 1; i < ARQ_CONTROL_FRAME_SIZE; i++)
+    for (int i = ARQ_ACCEPT_SNR_IDX + 1; i < ARQ_CONTROL_FRAME_SIZE; i++)
         if (buf[i])
             return -1;
     memset(out, 0, sizeof(*out));
@@ -511,7 +528,9 @@ int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len, arq_accept_t *
     out->session_id  = buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_SESSION_MASK;
     out->called_crc  = get_crc16(buf + ARQ_ACCEPT_CALLED_CRC_IDX);
     out->nonce       = get_crc16(buf + ARQ_ACCEPT_NONCE_IDX);
-    out->start_level = buf[ARQ_ACCEPT_LEVEL_IDX];
+    out->start_level = lv & ARQ_ACCEPT_LEVEL_MASK;
+    out->ctl_deaf    = (lv & ARQ_ACCEPT_CTL_DEAF_BIT) != 0;
+    out->call_snr_db = buf[ARQ_ACCEPT_SNR_IDX] ? (float)buf[ARQ_ACCEPT_SNR_IDX] - 128.0f : NAN;
     return 0;
 }
 

@@ -369,8 +369,8 @@ Two limits are worth knowing:
   answers `BUSY\r` rather than silently accepting a setting that is about to
   be discarded.
 * **Only the pooled payload modes are runtime-switchable:** indexes 0
-  (DATAC1), 1 (DATAC3), 3 (DATAC4), 7 (DATAC15), 9 (DATAC17), 10 (QAM16C2)
-  and 11 (MFSK).  DATAC16 is the ARQ control mode, and DATAC0 / DATAC13 /
+  (DATAC1), 1 (DATAC3), 3 (DATAC4), 7 (DATAC15), 9 (DATAC17), 10 (QAM16C2),
+  11 (MFSK) and 12 (MFSK500).  DATAC16 is the ARQ control mode, and DATAC0 / DATAC13 /
   DATAC14 / FSK_LDPC are not payload modes at runtime — `-m` can still
   *start* on some of those, but they cannot be selected later, and `MODE`
   answers `WRONG\r`.

@@ -23,6 +23,8 @@
 (*   another station's pattern -- patterns carry no session).              *)
 (* STALE: a frame of an earlier session with the same CRC seed (the        *)
 (*   session id has 64 values), carrying any block id.                     *)
+(* STALEPOLL: the same for a poll: any base, any need -- it retires what   *)
+(*   it says is done (apply_need), whatever the receiver holds.            *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -34,6 +36,7 @@ CONSTANTS NB,        \* blocks to send
           FLOOR,     \* the sender streams the floor: one block per round, BREAK accepted
           SPURIOUS,  \* allow a BREAK nobody sent
           STALE,     \* allow a stale same-seed frame with an arbitrary id
+          STALEPOLL, \* allow a stale same-seed poll with an arbitrary base and need
           CHECK,     \* blocks carry a check (TRUE: the code since step 2)
           INJMAX,    \* spurious/stale frames per behaviour (0: unbounded) -- no
                      \* protocol progresses against forgeries without end, so
@@ -221,6 +224,11 @@ InjectBreak ==
     /\ up' = Append(up, [t |-> "break"])
     /\ UNCHANGED <<down, turn>> /\ UNCHANGED rxv /\ UNCHANGED txv
 
+InjectStalePoll(b, nd) ==
+    /\ STALEPOLL /\ CanInject /\ Len(up) < CHAN /\ Injected
+    /\ up' = Append(up, [t |-> "poll", base |-> b, need |-> nd])
+    /\ UNCHANGED <<down, turn>> /\ UNCHANGED rxv /\ UNCHANGED txv
+
 InjectStale(w) ==
     /\ STALE /\ CanInject /\ Len(down) < CHAN /\ Injected
     /\ down' = Append(down, [t |-> "data", wire |-> w, true |-> STALEID, piece |-> 0])
@@ -235,6 +243,7 @@ Next0 ==
        /\ UNCHANGED inj
     \/ InjectBreak
     \/ \E w \in 0 .. MOD - 1 : InjectStale(w)
+    \/ \E b \in 0 .. MOD - 1, nd \in [0 .. WIN - 1 -> {0, K}] : InjectStalePoll(b, nd)
 
 \* A failed session ends: nothing more happens.
 Next == ~failed /\ Next0

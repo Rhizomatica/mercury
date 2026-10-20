@@ -1353,6 +1353,11 @@ void freedv_set_crc_seed(struct freedv *f, uint16_t seed, int accept_plain) {
   f->crc_accept_plain = accept_plain ? 1 : 0;
 }
 int freedv_get_rx_crc_seeded(struct freedv *f) { return f->rx_crc_seeded; }
+int freedv_get_freq_offset(struct freedv *f, float *hz) {
+  if (!is_ofdm_mode(f) || !f->ofdm) return 0;
+  *hz = f->ofdm->foff_est_hz;
+  return 1;
+}
 
 /* Which CRC a frame of unpacked bits carries under f's seed: 1 plain, 2
  * seeded, 0 neither (or a class f does not accept). */

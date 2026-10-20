@@ -174,6 +174,7 @@ static double snr_bias(int mode)
     return snr_offset + (mode == FREEDV_MODE_DATAC15 || mode == FREEDV_MODE_DATAC4 || mode == ARQ_CONTROL_MODE ? -3.5 : 0.0);
 }
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
+static double step_back = NAN;                         /* stepa: the way back, this much better */
 
 /* The detector reports a pattern this long after it ends (0.23-0.24 s on air,
  * Pi 4); a poll, by contrast, is decoded as it ends. */
@@ -347,11 +348,11 @@ static bool io_peer_keyed(void *ctx)
             bool bound = l->bound_at <= p->kd[i].start;
             if (!p->kd[i].sync) continue;
             if (m == SIM_MODE_PATTERN) {
-                if (l->rx_mode == MERCURY_MODE_MFSK && bound) from = p->kd[i].start;
+                if (mercury_mode_is_mfsk(l->rx_mode) && bound) from = p->kd[i].start;
             } else if (m == ARQ_CONTROL_MODE || (m == l->rx_mode && bound)) {
                 /* The MFSK preamble search takes longer to be sure: under a
                  * second at -7 dB (test_mfsk_modem), more near its floor. */
-                from = p->kd[i].start + (m == MERCURY_MODE_MFSK ? MFSK_CS_EXTRA_MS : 0);
+                from = p->kd[i].start + (mercury_mode_is_mfsk(m) ? MFSK_CS_EXTRA_MS : 0);
             }
         }
         if (from == UINT64_MAX) return false;
@@ -541,6 +542,13 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
         sscanf(chan + 5, "%lf:%lf:%lf", &step_from, &step_to, &step_at_s);
         sim_channel_set_snr(ch, step_from); snr_db = step_from;
     }
+    else if (!strncmp(chan, "stepa:", 6)) {  /* stepa:A:B:T:D  step:A:B:T from A to B, D dB better back */
+        sscanf(chan + 6, "%lf:%lf:%lf:%lf", &step_from, &step_to, &step_at_s, &step_back);
+        snr_dir[0] = step_from; snr_dir[1] = step_from + step_back;
+        sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
+        asym = true;
+        snr_db = step_from;
+    }
     else if (!strncmp(chan, "asym:", 5)) {   /* asym:A:B  A dB from A to B, B dB back */
         sscanf(chan + 5, "%lf:%lf", &snr_dir[0], &snr_dir[1]);
         sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
@@ -551,6 +559,14 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
         sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
         snr_db = 10.0;
     }
+    else if (!strncmp(chan, "nvisa:", 6)) {  /* nvisa:B  nvis, and only B dB back (#397) */
+        sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
+        snr_dir[0] = 10.0; snr_dir[1] = atof(chan + 6);
+        sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
+        sim_channel_set_return_snr(ch, snr_dir[1]);
+        asym = true;
+        snr_db = snr_dir[1] < snr_dir[0] ? snr_dir[1] : snr_dir[0];
+    }
     if (snr_out) *snr_out = snr_db;
     return ch;
 }
@@ -558,7 +574,7 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res)
 {
     trace = getenv("CAR_TRACE") != NULL;
-    asym = false;
+    asym = false; step_back = NAN;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
     nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
     nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
@@ -596,6 +612,14 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         if (getenv("CAR_NOHINT")) hears = heard = -99.0;
         car_init(&s->car, &io, car_start_level((float)hears), car_start_level((float)heard));
         car_seed_ctl_deaf(&s->car, hears < ARQ_SNR_MIN_DATAC15_DB, heard < ARQ_SNR_MIN_DATAC15_DB);
+        if (!getenv("CAR_NOHINT")) car_seed_snr(&s->car, (float)hears, (float)heard);   /* as arq_fsm.c's car_start */
+        /* CAR_BW=500: a BW500 session, capped at DATAC3 on the 500 Hz floor */
+        if (getenv("CAR_BW")) {
+            int bw = atoi(getenv("CAR_BW"));
+            car_set_max_level(&s->car, car_max_level_for_bw(bw));
+            car_set_floor_mode(&s->car, arq_floor_mode(bw));
+        }
+        if (getenv("CAR_FLOOR")) car_set_floor_mode(&s->car, atoi(getenv("CAR_FLOOR")));   /* A/B */
         s->rx_mode = -1;
     }
     for (int i = 0; i < CAR_SIM_BYTES; i++) {
@@ -627,7 +651,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         if (t == UINT64_MAX || t > limit_ms) break;
         now_ms = t;
         if (step_at_s >= 0 && now_ms >= (uint64_t)(step_at_s * 1000.0)) {
-            sim_channel_set_snr(ch, step_to); snr_now = step_to;
+            if (!isnan(step_back)) {
+                snr_dir[0] = step_to; snr_dir[1] = step_to + step_back;
+                sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
+            } else {
+                sim_channel_set_snr(ch, step_to); snr_now = step_to;
+            }
             step_at_s = -1.0;
         }
         event_t e;
@@ -694,7 +723,11 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;
     res->overruns = car_overruns(&S[0].car) + car_overruns(&S[1].car) + slot_breaches;
+    /* No timer either side, and nobody on the air: a station keyed when the
+     * run ends arms its timers only as the keydown ends (a 27 s BW500 floor
+     * frame often straddles the limit). */
     res->stalled = !done_ms && car_next_deadline(&S[0].car) == UINT64_MAX &&
-                   car_next_deadline(&S[1].car) == UINT64_MAX;
+                   car_next_deadline(&S[1].car) == UINT64_MAX &&
+                   S[0].tx_end <= now_ms && S[1].tx_end <= now_ms;
     sim_channel_destroy(ch);
 }

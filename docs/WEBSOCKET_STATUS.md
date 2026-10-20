@@ -23,6 +23,14 @@ are appended after the audio-health fields:
   at most `DATAC3` in a BW500 session), from
   its ACCEPT or its polls; empty otherwise, and empty while it has not
   reported (a station that only receives gets no polls from its sender).
+- `freq_offset_hz`: the carrier offset the last frame decoded arrived at, in
+  Hz, positive when above nominal; `null` until a frame has been decoded.
+  Every decoder reports it (MFSK to an eighth of a subcarrier, 3.9 Hz; the
+  OFDM modes their tracked estimate) except the monitor decoders, which hear
+  other stations' traffic.  It is the far radio's dial error as we hear it,
+  plus whatever a sample-clock error moves 1500 Hz by: a sound card 1.5 %
+  slow shows as +23 Hz.
+- `freq_offset_age_ms`: how long ago that frame was decoded, or `null`.
 
 Frequency telemetry is read-only. It never opens another CAT session, changes
 the VFO, or waits for the shared radio mutex. A busy radio causes the optional

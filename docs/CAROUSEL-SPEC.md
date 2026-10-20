@@ -142,7 +142,7 @@ listed).
 
 | Field | Meaning | Init |
 |---|---|---|
-| `ctl_deaf` | I hear the peer below the control mode (hysteresis: on if `snr_ema < -7.5`, off if `snr_ema >= -6.0`, C:1610-1614); reported in every frame I send | seeded at connect (C:1594-1600) |
+| `ctl_deaf` | I hear the peer below the control mode (hysteresis: on if `snr_ema < -7.5`, off if `snr_ema >= -6.0`, C:1610-1614); reported in every frame I send. `CAR_DEAF_HARD`: deaf at connect though the SNR says the control mode works (the CALL or ACCEPT came only on MFSK); no MFSK reading clears it, only a decoded OFDM frame or the peer reporting it hears me; while HARD a poll may name the ladder's rung for one frame (`deaf_rung`), else the floor | seeded at connect (C:1594-1600; HARD in `car_seed_snr`) |
 | `peer_ctl_deaf` | the peer reports it hears me below the control mode; overwritten by the bit in every decoded frame (C:1583-1590, 1617, 1621, 1625) | seeded at connect |
 
 ### 2.3 Sender side
@@ -198,9 +198,9 @@ listed).
 
 ### 2.5 Link adaptation (receiver measures the peer's direction)
 
-Per rung `lv`: `lv_sent`, `lv_lost` (decayed frame counts), `lv_rounds`,
-`lv_dead_run`, `lv_probe_fails`, `lv_round_at` (value of `polls` when last
-measured), `lv_probe_at` (ms), `lv_backoff_ms` (H:145-149). All 0 at init.
+Per rung `lv`: `rung[lv].sent`, `rung[lv].lost` (decayed frame counts), `rung[lv].rounds`,
+`rung[lv].dead_run`, `rung[lv].probe_fails`, `rung[lv].round_at` (value of `polls` when last
+measured), `rung[lv].probe_at` (ms), `rung[lv].backoff_ms` (H:145-149). All 0 at init.
 
 ---
 
@@ -244,7 +244,7 @@ Encoder `encode_ctl` (C:225-241); decoder `decode_ctl` (C:262-291).
 
 | Byte | Bits | Field |
 |---|---|---|
-| b0 | [7:6] type (0 POLL, 1 HANDOVER, 2 STATUS; 3 → reject), [5] has_data, [4:1] poll_id, [0] ctl_deaf |
+| b0 | [7:6] type (0 POLL, 1 HANDOVER, 2 STATUS, 3 M_END: a POLL whose sender's application has hung up -- the callee's, holding all of the caller's data, while its DISCONNECT waits for its own to drain; see E10), [5] has_data, [4:1] poll_id, [0] ctl_deaf |
 | b1 | [7:5] level, [4:1] n (frames asked for), [0] 0 |
 | b2 | [7:4] loss16 = round(loss_est*15), [3:0] base = rbase mod 16 |
 | b3..b9 | 8 × 7-bit `need[o]` for blocks base+o, first block in the high bits; 127 = not seen (FB_UNSEEN) |
@@ -303,21 +303,22 @@ RX demux (`car_on_frame`, C:1602-1626):
 
 ### 3.4 Connect frames (generic FSM, carousel-relevant fields only)
 
-**[carousel-only]** Protocol version 2 (1 was 1.9.18; see §16); the byte layout is in
+**[2.0]** Their own packet type, CALL2 (see §18; 1.9.x carried a 2-bit
+version, 3 its last value: §16, §17); the byte layout is in
 docs/CAROUSEL-ARQ.md, "Wire formats".
 
-- Both frames: framer extension = bandwidth token (2 bits), version (2 bits,
-  = 2), carousel bit. A frame with another version or without the bit is
-  dropped (`arq_protocol_connect_version_ok`); a CALL from another version
-  addressed to this station is logged, not answered. 1.9.x and earlier
-  carousel builds therefore do not connect to this one.
+- Both frames: packet type CALL2, framer extension = bandwidth token (2
+  bits), 2.x minor revision (3 bits). A frame of another type is dropped
+  (`arq_protocol_connect_version_ok`); a 1.9.x CALL addressed to this
+  station is logged, not answered. 1.9.x therefore does not connect to
+  this one.
 - CALL: session id, CRC16 of the called callsign, the caller's callsign
   (arithmetic-coded). No marker.
 - ACCEPT (callee → caller) **is the first POLL**: session id, CRC16 of the
   caller, CRC16 of the called callsign, the callee's 16-bit session nonce,
-  and the caller's start rung (3 bits; **7 = "level 0, and I hear you below
-  the control mode"**, `ARQ_ACCEPT_LEVEL_CTL_DEAF`). Reserved bits must be
-  zero. The caller takes it only if session id, its own CRC and the called
+  the caller's start rung (3 bits), **whether the callee hears the caller
+  below the control mode** (1 bit; the rung is then the floor) and the SNR
+  it read the CALL at (dB). Reserved bits must be zero. The caller takes it only if session id, its own CRC and the called
   CRC all match. Plain CRC.
 - DISCONNECT: plain CRC, session-id bound (7 bits, F:3929-3937); on MFSK to a peer the carousel last saw as control-deaf (`session_ctl_mode`, F:963-969).
 
@@ -445,9 +446,9 @@ If `retired > 0` → `io.tx_confirmed(retired)` (F:1450-1456 updates BUFFER).
 
 | # | Rule | Cite |
 |---|---|---|
-| S1 | Callee on CALL (LISTENING): new nonce; `car_rx_level = min(car_start_level(CALL SNR), max_level)`; `car_ctl_deaf = CALL SNR < -7`; `car_peer_ctl_deaf = false`; ACCEPT after `G`. **[carousel-only]** A repeat of the same session's CALL (same id and caller, in ACCEPTING, or in LISTENING after the ACCEPT-retry fallback) keeps the nonce, rung and deafness and gets the same ACCEPT, on the CALL's carrier; another station's CALL is ignored while ACCEPTING. | `fsm_listening`, `fsm_accepting` |
+| S1 | Callee on CALL (LISTENING): new nonce; `car_rx_level = min(car_start_level(CALL SNR), max_level)`; `car_ctl_deaf = CALL SNR < -7 or the CALL came on MFSK` (then `car_rx_level = 0`); `car_peer_ctl_deaf = false`; ACCEPT after `G`. **[carousel-only]** A repeat of the same session's CALL (same id and caller, in ACCEPTING, or in LISTENING after the ACCEPT-retry fallback) keeps the nonce, rung and deafness and gets the same ACCEPT, on the CALL's carrier; another station's CALL is ignored while ACCEPTING. | `fsm_listening`, `fsm_accepting` |
 | S2 | Callee sending the ACCEPT: ACCEPT level = `car_ctl_deaf ? 7 : car_rx_level`; **seed set now**; payload decoder bound to `LADDER[car_rx_level]`. | F:904-918 |
-| S3 | Caller on ACCEPT (CALLING, matching session id and called CRC): `car_peer_ctl_deaf = (level == 7)`; `car_tx_level = min(peer_ctl_deaf ? 0 : level, max_level)`; `car_rx_level = min(car_start_level(ACCEPT SNR), max_level)`; `car_ctl_deaf = ACCEPT SNR < -7`; → CONNECTED; seed set; `car_start(is_caller)`. | F:1745-1760 |
+| S3 | Caller on ACCEPT (CALLING, matching session id and called CRC): `car_peer_ctl_deaf = (level == 7)`; `car_tx_level = min(peer_ctl_deaf ? 0 : level, max_level)`; `car_rx_level = min(car_start_level(ACCEPT SNR), max_level)`; `car_ctl_deaf = ACCEPT SNR < -7 or the ACCEPT came on MFSK` (then `car_rx_level = 0`); → CONNECTED; seed set; `car_start(is_caller)`. | F:1745-1760 |
 | S4 | `car_start`: `car_init(rx_level, tx_level)` (snr_level = rx_level; peer_snr_level = tx_level ≥ 0 ? tx_level : rx_level; tx_level = -1; loss_est = tx_loss = 0.1); seed ctl_deaf/peer_ctl_deaf; `car_last_rx_ms = now`; caller → S5, callee → S6. | F:1495-1513, C:1553-1561 |
 | S5 | `car_start_sender`: `sending = true; send_start_ms = now; tx_level = peer_snr_level; tx_n = 1; tx_poll_id = 1; handover_unconfirmed = true; T_SEND := now`. | C:1568-1575 |
 | S6 | Callee: the **first seeded frame of any kind** (ACCEPTING, or LISTENING after the ACCEPT-retry fallback with seed still set) → `car_connect_callee`: `car_tx_level = -1`, → CONNECTED, `car_start(callee)` = `start_driving(1, snr_level, 1, now, now)` (C:1578-1581), then the frame is processed by `car_on_frame`. | F:1869-1893, F:1899-1902, F:1661-1664 |
@@ -518,7 +519,7 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 | T4 | **floor fallback**: `probe_off_floor && !floor_fallback && !round_seen && !status_seen && !round_heard` | `floor_fallback = true; poll_level = 0; poll_n = 2`; Bind(0); `round_seen = 0; round_frames = 2; round_heard = false; done_in_round = 0`; disarm SENSE; `T_POLL := max(now + 13700, probe_after_ms + peer_floor_wait_max + H) + 3000`; return. |
 | T5 | **floor hold**: `poll_level == 0 && io.pattern && !floor_hold && !floor_fallback && !peer_ctl_deaf && !round_seen && !status_seen && !round_heard` and `until = floor_round_end + peer_floor_wait_max + 3000 > now` | `floor_hold = true; T_POLL := until`; return. |
 | T6 | always | `floor_hold = false`. |
-| T7 | **unscored re-poll**: `!floor_fallback && poll_level > 0 && !round_seen && !status_seen && !round_heard && round_frames > 0 && silent_polls == 0 && lv_sent[poll_level] ≥ 2 && level_delivery(poll_level) ≥ 0.5` | `silent_polls = 1`; `send_poll_as(poll_level, poll_n, repeat = true)` (same poll id); return. |
+| T7 | **unscored re-poll**: `!floor_fallback && poll_level > 0 && !round_seen && !status_seen && !round_heard && round_frames > 0 && silent_polls == 0 && rung[lv].sent[poll_level] ≥ 2 && level_delivery(poll_level) ≥ 0.5` | `silent_polls = 1`; `send_poll_as(poll_level, poll_n, repeat = true)` (same poll id); return. |
 | T8 | measure | `probe_failed = floor_fallback && !round_seen && !status_seen && !round_heard`; `probe_off_floor = floor_fallback = false`. If probe_failed: `loss_est = 0.5*loss_est + 0.5`; `measure_level(probe_lv, probe_n, 1.0)`. Else if `!status_seen`: `frames = max(round_frames,1)`; `loss = max(0, 1 - round_seen/frames)`; `loss_est = 0.5*loss_est + 0.5*loss`; `measure_level(poll_level, frames, loss)`. |
 | T9 | always | `deliver_in_order()`. |
 | T10 | **handover**: `has_data && (done || quantum)` where `done = peer_direction_done`, `held = now - drive_start`, `quantum = (done_in_round > 0 && held ≥ 30000) || held ≥ 45000` | `send_start_ms = now; send_handover()`; return. |
@@ -573,10 +574,10 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 
 ### 5.10 Link adaptation (receiver side, summarized precisely)
 
-`measure_level(lv, frames, loss, now)` (C:751-768): `lv_sent = 0.8*lv_sent + frames`;
-`lv_lost = 0.8*lv_lost + frames*loss`; `lv_dead_run = (loss ≥ 1) ? lv_dead_run + frames : 0`;
-`lv_probe_fails = (loss ≥ 0.5) ? +1 : 0`; `lv_rounds++`; `lv_round_at = ++polls`;
-`lv_probe_at = now`; `lv_backoff_ms = loss ≥ 0.9 ? (0 → 60000, else ×2 capped 480000) : 0`.
+`measure_level(lv, frames, loss, now)` (C:751-768): `rung[lv].sent = 0.8*rung[lv].sent + frames`;
+`rung[lv].lost = 0.8*rung[lv].lost + frames*loss`; `rung[lv].dead_run = (loss ≥ 1) ? rung[lv].dead_run + frames : 0`;
+`rung[lv].probe_fails = (loss ≥ 0.5) ? +1 : 0`; `rung[lv].rounds++`; `rung[lv].round_at = ++polls`;
+`rung[lv].probe_at = now`; `rung[lv].backoff_ms = loss ≥ 0.9 ? (0 → 60000, else ×2 capped 480000) : 0`.
 
 Predicates (`marginal = snr_valid && snr_ema < min_db + 3`, C:797-800):
 - `delivery(lv)` = marginal ? `(sent - lost)/(sent + 1)` : `1 - (lost + 0.5)/(sent + 2)` (C:737-742).
@@ -610,13 +611,15 @@ Predicates (`marginal = snr_valid && snr_ema < min_db + 3`, C:797-800):
 |---|---|---|
 | E1 | `idle` is set only by: T11 (receiver: peer direction done and no own data), PL2 (sender: ack-only poll and no own data), PA2/PA5 (sender: pattern and no own data). Cleared by on_data, take_turn, start_driving, send_handover, PL3. | C:1320, 1505, 1702, 1726 |
 | E2 | Lost peer: on TIMER_CAROUSEL, if `now - car_last_rx_ms ≥ 240000` → session ends locally (no DISCONNECT on air), idle or not (an idle session hears the peer once per idle poll; exempting it polled a vanished peer for ever, #384). `car_last_rx_ms` is refreshed only by seeded frames and patterns, not carrier. | F:2323-2332, F:2308, F:2316 |
-| E3 | APP_DISCONNECT (not abort): if `!car_drained || tx_active` → `pending_disconnect`, deadline `now + max(45 s, car_drain_budget_ms)`; `car_drained` = delivered both ways (no open block of mine, `peer_direction_done`) `&& tx backlog == 0` -- not the caller's `idle`, which waits for an ack and an idle poll (#384: 41 s after a Winlink FQ, past the B2 client's 30 s). After every carousel event, if pending && drained && !tx_active → DISCONNECTING. Abort → DISCONNECTING immediately.  Peer quiet (nothing heard in 120 s): no drain; the caller sends one DISCONNECT (no retries), the callee ends at once (#384). | F:2335-2365, F:2373-2379, F:1524-1527 |
+| E3 | APP_DISCONNECT (not abort): if `!car_drained || tx_active` → `teardown = ARQ_TD_DRAINING`, deadline `now + max(45 s, car_drain_budget_ms)`; `car_drained` = delivered both ways (no open block of mine, `peer_direction_done`) `&& tx backlog == 0` -- not the caller's `idle`, which waits for an ack and an idle poll (#384: 41 s after a Winlink FQ, past the B2 client's 30 s). After every carousel event, if pending && drained && !tx_active → DISCONNECTING. Abort → DISCONNECTING immediately.  Peer quiet (nothing heard in 120 s): no drain; the caller sends one DISCONNECT (no retries), the callee ends at once (#384). | F:2335-2365, F:2373-2379, F:1524-1527 |
 | E4 | `car_drain_budget_ms` = `3 × (G + H + ctl + CG + round_air(lv, keydown_cap(lv)) + T + 4000)`, `lv = min(tx_level (or 0), poll_level if drove_peer)`, `ctl = 13500` if either end is control-deaf (and MFSK longer) else 3740. | C:1801-1810 |
 | E5 | Drain deadline elapsed → forced DISCONNECTING (data may be undelivered). | F:2391-2405 |
 | E6 | Leaving CONNECTED: `car_active = false`, `ctl_floor_at_stop` remembered for the DISCONNECT carrier; seed cleared only on DISCONNECTED/LISTENING. Carousel frames in DISCONNECTING are ignored. | F:191-203, F:3953 |
-| E7 | RX DISCONNECT (session id matches) in CONNECTED → DISCONNECTED immediately (reply after G); whatever the carousel held is dropped, and the count is logged. Draining it would deliver nothing: the peer sends DISCONNECT when its application has hung up (its end then delivers nothing, `host_released`) or when its carousel has stopped trusting the session (`car_fail_closed`). | F:2508-2522 |
+| E7 | RX DISCONNECT (session id matches) in CONNECTED → DISCONNECTED immediately (reply after G: an ACK pattern, keyed by the session seed, which the replying end keeps until it is out; only an end whose own DISCONNECT is out takes one, as the answer); whatever the carousel held is dropped, and the count is logged. Draining it would deliver nothing: the peer sends DISCONNECT when its application has hung up (its end then delivers nothing, `host_released`) or when its carousel has stopped trusting the session (`car_fail_closed`). | F:2508-2522 |
 | E8 | LISTEN OFF in CONNECTED → idle immediately, no DISCONNECT on air. | F:2413-2428 |
 | E9 | KEEPALIVE and late ACCEPT are swallowed while the carousel runs. | F:2366-2368 |
+| E10 | The callee's E3 deferral sets `end_req = CAR_END_WISH` (`car_wish_end`): its polls go as type 3 (M_END) once it has all of the caller's data. The caller, hearing one and holding all of the callee's data as that poll says it (its latest block, no bytes unopened: `peer_ended`, then `car_on_frame` returns true), with `car_drained && !tx_active`, begins its own DISCONNECT (as on APP_DISCONNECT); not drained then, it ignores it, and the callee's own DISCONNECT ends the session later. Below the inline poll this saves the exchange that acknowledged the callee's last data and the poll that gave its DISCONNECT a slot (sim, the callee hanging up: -5 dB 16 → 11 s, the floor 45 → 30 s). Judged on `status_seen` instead, the caller ended without the callee's last word, written just before its hang-up (on air, 2026-10-18). specs/teardown, `NoUnasked`, `NoLostWord`. | F:fsm_connected_carousel, C:send_poll_ex, C:peer_ended |
+| E11 | The teardown's step is one field, `arq_session_t.teardown` (`ARQ_TD_LISTEN_OFF` in ACCEPTING, `DRAINING` in CONNECTED, `SENT` in DISCONNECTING, `REPLYING`/`NOTIFYING` in DISCONNECTED); every state change resets it (`sess_enter_td`), so no step reaches the next session. The reply owed to the peer's DISCONNECT ends only with the reply's own TX_COMPLETE (REPLYING → NOTIFYING when it is keyed). specs/teardown `NoInherited`, `Mut_staleteardown`, `Mut_skipreply`. | F:sess_enter_td, send_disconnect_reply |
 
 ---
 
@@ -882,3 +885,23 @@ calibration needs points above 12 dB.
 | Change | Where | Risks |
 |---|---|---|
 | MFSK's carrier moves from 2000 Hz to 1484.375 Hz, so its tones sit at 1015.6-1984.4 Hz, centred on 1500 Hz like the codec2 modes (they were at 1531-2500 Hz).  Connect frames carry protocol version 2: a 1.9.18 station (version 1) and a later one would connect on DATAC16 and then never hear each other at the floor. | 3.4, `modem_mfsk.c`, `arq_protocol.h` | none to the rules or the TLA+ models: the floor's timing and frames are unchanged |
+
+---
+
+## 17. The BW500 floor (branch mfsk-narrow)
+
+| Change | Where | Risks |
+|---|---|---|
+| A BW500 session's rung 0 is the 500 Hz MFSK (mode 103, 26.2 s frames, one a keydown); BW2300 and BW2750 keep the 1 kHz floor.  Each end takes the floor from the negotiated bandwidth when the session's seed is set (`arq_floor_mode`), and everything at the floor follows it: data rounds, control frames to a control-deaf peer and their `CTL_FLOOR_MARK` frame, the session's DISCONNECT, ACK/BREAK patterns and NAV headers.  A caller's MFSK CALLs go on the floor of its own bandwidth; the idle MFSK listener decodes the floor of the station's own.  Connect frames carry protocol version 3: a 1.9.19 station (version 2) at BW500 would sit on the 1 kHz floor. | 1.3, 3.4, S1, I-BW, `carousel.c` (`lmode`), `arq_fsm.c`, `modem.c` | timing: the floor's keydown and the callee's ACCEPT window grow by 13.5 s, and a decode on a Pi 4 ends ~0.25 s later, inside `D_MFSK_MS`; the turn model is re-checked at the longer frame (`specs/turns/CarouselTurns_mfsk500.cfg`).  `CarouselBlocks` abstracts rungs away |
+
+---
+
+## 18. Mercury 2.0: the wire, silence, direct probes (branch arch-2.0)
+
+| Change | Where | Risks |
+|---|---|---|
+| Connect frames take their own packet type, CALL2 (0x06), with a 3-bit minor revision; the ACCEPT says apart whether the callee hears the caller below the control mode (1.9.x: "rung 7") and carries the SNR it read the CALL at.  Control frames carry the SNR their sender hears the peer at now (6 bits, dB) where 1.9.x carried the connect's start rung; the peer starts its own direction on the rung that SNR would start a session on. | 3.4, `arq_protocol.[ch]`, `encode_ctl`/`decode_ctl` | none measured: the sim set was byte-identical |
+| Silence: a keydown that ends with nothing of the peer's decoded for 150 s (`SILENT_MS`) takes both directions below the control mode, so control goes on the floor, where the peer listens after `S_FALLBACK_MS`; a receiver so fallen back stays at the floor through its round timer (CAR_T_W). | `car_on_tx_done`, `car_on_time`; TLA+ `specs/rungs/FloorSilence.tla` (Delivered with the channel down for good; mutants without the silence rule or the stay fail) | at 30 s NVIS went to a floor it did not need; at 90 s NVIS 50 KB +1.9 %, BW500 fade:-5 +1.3 %, and nvis both ways +10.5 % against trunk (3813 s, 3451); at 150 s nvis both ways 3347 s, and after step:10:-12 the floor is reached in 155 s (917) |
+| A receiver answers with a pattern only a round that came on the rung it asked for: a sender that missed the poll kept on at the floor, answered "for" the faster rung. | `rx_next` | none |
+| Above the best rung, the receiver probes where the SNR would start a session (`car_start_level`), not the next rung: the floor to DATAC17 took four probes. | `choose_level`; TLA+ `RungAgreement` (a sized poll names any rung) | 90th percentile to DATAC1 after step:-12:10 86 s (219); every other run identical but NVIS (-3.6 % .. +1.0 %) |
+| A poll carries what its sender holds, as a STATUS does (highest block opened, data not yet cut), and the caller takes it: an ack of its last round from a callee with nothing lets the DISCONNECT go at once, where an idle poll for a status cost an exchange more. | `fill_poll`, `m_on_ctl` | the drain decision is in no model, before or after: it is the same check on the same fields, from the callee's last frame either way.  Go harness, the peer hears the DISCONNECT after 18.3 s at +10 dB (29.7), 19.4 s at 0 dB (27.1), 43.8 s at -10 dB (74.6) |
