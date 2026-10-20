@@ -41,7 +41,7 @@ static int parse_rx_channel_layout(const char *value)
 void mercury_cli_print_usage(const char *prog)
 {
     printf("Usage modes: \n");
-    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-P ptt_method] [-A ptt_device] [-G] [-T] [-U ui_port] [-W]\n", prog);
+    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-P ptt_method] [-A ptt_device] [-G] [-T] [-U ui_port] [-W] [-d]\n", prog);
     printf("%s [-h -l -z -K -Q -V]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
@@ -64,6 +64,7 @@ void mercury_cli_print_usage(const char *prog)
     printf(" -l                         Lists all modulator/coding modes.\n");
     printf(" -z                         Lists all available sound cards.\n");
     printf(" -v                         Verbose mode. Prints more information during execution.\n");
+    printf(" -d                         Trace mode. Logs the raw bytes of every decoded connect frame (implies -v).\n");
     printf(" -L <path>                  Write log to file (TIMING level and above).\n");
     printf(" -J                         Use JSONL format for log file (requires -L).\n");
     printf(" -P [ptt_method]            PTT method: none, hamlib, serial, cm108, or hermes_shm.\n");
@@ -124,7 +125,7 @@ int mercury_cli_parse(int argc, char **argv,
         return -1;
 
     const int mode_count = mercury_cli_mode_count();
-    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGQTV";
+    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGQTVd";
 
     memset(out, 0, sizeof(*out));
     cfg_set_defaults(&out->cfg);
@@ -361,6 +362,9 @@ int mercury_cli_parse(int argc, char **argv,
         case 'v':
             out->cfg.verbose = true;
             break;
+        case 'd':
+            out->cfg.trace = true;
+            break;
         case 'L':
             out->log_file_path = optarg;
             break;
@@ -509,8 +513,9 @@ int mercury_cli_run_ptt_test(const mercury_cli_t *cli)
 
     bool log_ready = (hermes_log_init(256) == 0);
     if (log_ready)
-        hermes_log_set_level(cli->cfg.verbose ? HERMES_LOG_LEVEL_DEBUG
-                                              : HERMES_LOG_LEVEL_INFO);
+        hermes_log_set_level(cli->cfg.trace ? HERMES_LOG_LEVEL_TRACE
+                            : cli->cfg.verbose ? HERMES_LOG_LEVEL_DEBUG
+                                               : HERMES_LOG_LEVEL_INFO);
 
     printf("Opening configured PTT backend...\n");
     fflush(stdout);

@@ -202,12 +202,18 @@ int mercury_engine_init(const mercury_config *cfg,
     /* ---- logging ---- */
     if (hermes_log_init(1024) == 0)
     {
-        hermes_log_set_level(verbose ? HERMES_LOG_LEVEL_DEBUG : HERMES_LOG_LEVEL_INFO);
+        hermes_log_level_t min_level = cfg->trace ? HERMES_LOG_LEVEL_TRACE
+                                      : verbose ? HERMES_LOG_LEVEL_DEBUG
+                                                : HERMES_LOG_LEVEL_INFO;
+        hermes_log_set_level(min_level);
         if (log_path && log_path[0])
             hermes_log_set_file(log_path,
-                                verbose ? HERMES_LOG_LEVEL_DEBUG : HERMES_LOG_LEVEL_TIMING,
+                                cfg->trace ? HERMES_LOG_LEVEL_TRACE
+                                : verbose ? HERMES_LOG_LEVEL_DEBUG
+                                          : HERMES_LOG_LEVEL_TIMING,
                                 log_jsonl);
-        HLOGI("engine", "Logger initialised (min_level=%s)", verbose ? "DEBUG" : "INFO");
+        HLOGI("engine", "Logger initialised (min_level=%s)",
+              cfg->trace ? "TRACE" : verbose ? "DEBUG" : "INFO");
 
         /* Report any port substitution now that there is somewhere to report
          * it.  Warned, not silent: a host told to use the configured port will

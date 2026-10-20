@@ -258,12 +258,18 @@ int main(int argc, char *argv[])
      * the engine's own startup logs share one destination. */
     if (hermes_log_init(1024) == 0)
     {
-        hermes_log_set_level(cli.cfg.verbose ? HERMES_LOG_LEVEL_DEBUG : HERMES_LOG_LEVEL_INFO);
+        hermes_log_level_t min_level = cli.cfg.trace ? HERMES_LOG_LEVEL_TRACE
+                                      : cli.cfg.verbose ? HERMES_LOG_LEVEL_DEBUG
+                                                        : HERMES_LOG_LEVEL_INFO;
+        hermes_log_set_level(min_level);
         if (cli.log_file_path)
             hermes_log_set_file(cli.log_file_path,
-                                cli.cfg.verbose ? HERMES_LOG_LEVEL_DEBUG : HERMES_LOG_LEVEL_TIMING,
+                                cli.cfg.trace ? HERMES_LOG_LEVEL_TRACE
+                                : cli.cfg.verbose ? HERMES_LOG_LEVEL_DEBUG
+                                                  : HERMES_LOG_LEVEL_TIMING,
                                 cli.log_file_jsonl);
-        HLOGI("main", "Async logger initialized (min_level=%s)", cli.cfg.verbose ? "DEBUG" : "INFO");
+        HLOGI("main", "Async logger initialized (min_level=%s)",
+              cli.cfg.trace ? "TRACE" : cli.cfg.verbose ? "DEBUG" : "INFO");
     }
     else
     {

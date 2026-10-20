@@ -49,6 +49,7 @@
 #define CFG_KEY_BROADCAST_TCP_PORT  "main:broadcast_tcp_port"
 #define CFG_KEY_CALLSIGN            "main:callsign"
 #define CFG_KEY_VERBOSE             "main:verbose"
+#define CFG_KEY_TRACE               "main:trace"
 #define CFG_KEY_FREEDV_VERBOSITY    "main:freedv_verbosity"
 #define CFG_KEY_HAMLIB_LOG_LEVEL    "main:hamlib_log_level"
 #define CFG_KEY_RADIO_SERIAL_SPEED  "main:radio_serial_speed"
@@ -97,6 +98,7 @@ typedef struct {
     char     callsign[CFG_CALLSIGN_MAX_SIZE]; /* default station callsign, used
                                                * when no client has set one  */
     bool     verbose;
+    bool     trace;                 /* TRACE log level: raw decoded frame bytes */
     int      freedv_verbosity;      /* 0..3 */
     int      disconnect_drain_timeout_s;/* ARQ: absolute cap (s) on how long an
                                     * app DISCONNECT stays deferred while

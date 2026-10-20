@@ -58,6 +58,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->broadcast_tcp_port = DEFAULT_BROADCAST_PORT; /* 8100  */
     cfg->callsign[0]        = '\0';                   /* unset: no default callsign */
     cfg->verbose            = false;
+    cfg->trace              = false;
     cfg->freedv_verbosity   = 0;
     cfg->disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
     cfg->tnc_keepalive_s = 60;
@@ -380,6 +381,9 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     b = iniparser_getboolean(ini, CFG_KEY_VERBOSE, cfg->verbose ? 1 : 0);
     cfg->verbose = (bool) b;
 
+    b = iniparser_getboolean(ini, CFG_KEY_TRACE, cfg->trace ? 1 : 0);
+    cfg->trace = (bool) b;
+
     i = iniparser_getint(ini, CFG_KEY_FREEDV_VERBOSITY, cfg->freedv_verbosity);
     if (i >= 0 && i <= 3)
         cfg->freedv_verbosity = i;
@@ -513,6 +517,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     cfg_escape_str(escaped, sizeof(escaped), cfg->callsign);
     fprintf(f, "callsign = \"%s\"\n", escaped);
     fprintf(f, "verbose = %s\n",           cfg->verbose ? "true" : "false");
+    fprintf(f, "trace = %s\n",             cfg->trace ? "true" : "false");
     fprintf(f, "freedv_verbosity = %d\n",  cfg->freedv_verbosity);
     fprintf(f, "\n[ptt]\n");
     fprintf(f, "method = %s\n", cfg_ptt_method_name(cfg->ptt.method));

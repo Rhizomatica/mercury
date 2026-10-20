@@ -15,6 +15,7 @@
 
 typedef enum
 {
+    HERMES_LOG_LEVEL_TRACE  = -1, /* raw decoded bytes & most verbose internals  */
     HERMES_LOG_LEVEL_DEBUG  = 0, /* verbose internals, verbose mode only        */
     HERMES_LOG_LEVEL_TIMING = 1, /* protocol timing events (TMG tag)            */
     HERMES_LOG_LEVEL_INFO   = 2, /* general status                              */
@@ -67,6 +68,7 @@ void hermes_logf(hermes_log_level_t level, const char *component, const char *fm
  */
 uint64_t hermes_uptime_ms(void);
 
+#define HLOGTR(component, fmt, ...) hermes_logf(HERMES_LOG_LEVEL_TRACE,  component, fmt, ##__VA_ARGS__)
 #define HLOGD(component, fmt, ...) hermes_logf(HERMES_LOG_LEVEL_DEBUG,  component, fmt, ##__VA_ARGS__)
 #define HLOGT(component, fmt, ...) hermes_logf(HERMES_LOG_LEVEL_TIMING, component, fmt, ##__VA_ARGS__)
 #define HLOGI(component, fmt, ...) hermes_logf(HERMES_LOG_LEVEL_INFO,   component, fmt, ##__VA_ARGS__)

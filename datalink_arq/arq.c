@@ -800,6 +800,22 @@ void arq_handle_carousel_frame(const uint8_t *data, size_t frame_size, int mode,
     evq_push(&ev);
 }
 
+/* Dump a connect frame's raw bytes at TRACE level.  A CALL/ACCEPT control
+ * frame is ARQ_CONTROL_FRAME_SIZE bytes (the two CRC bytes have already been
+ * stripped by the caller), so a fixed 3-chars-per-byte buffer is plenty. */
+static void log_connect_frame_hex(const char *kind, const uint8_t *data, size_t len)
+{
+    char buf[3 * ARQ_CONTROL_FRAME_SIZE + 1];
+    size_t off = 0;
+
+    if (len > ARQ_CONTROL_FRAME_SIZE)
+        len = ARQ_CONTROL_FRAME_SIZE;
+    for (size_t i = 0; i < len; i++)
+        off += (size_t)snprintf(buf + off, sizeof(buf) - off,
+                                "%s%02x", i ? " " : "", data[i]);
+    HLOGTR(LOG_COMP, "%s frame bytes: %s", kind, buf);
+}
+
 bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode)
 {
     if (!data || frame_size < 2) return false;
@@ -862,7 +878,22 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         }
         if (!match)
         {
-            HLOGD(LOG_COMP, "CALL/ACCEPT not for us (DST CRC16 mismatch)");
+            /* Bytes 2-3 are the called CRC in every version, so the intended
+             * recipient is always identifiable.  The sender is only ever a
+             * full callsign on a CALL; an ACCEPT carries both ends as CRCs. */
+            uint16_t dst_crc = (uint16_t)(data[ARQ_CONNECT_PAYLOAD_IDX] |
+                                          (data[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8));
+            const char *kind = is_accept ? "ACCEPT" : "CALL";
+            if (rc == 0 && is_accept)
+                HLOGD(LOG_COMP, "ACCEPT not for us: from=crc16:0x%04X to=crc16:0x%04X",
+                      acc.called_crc, dst_crc);
+            else if (rc == 0)
+                HLOGD(LOG_COMP, "CALL not for us: from=%s to=crc16:0x%04X",
+                      caller[0] ? caller : "?", dst_crc);
+            else
+                HLOGD(LOG_COMP, "%s not for us: from=? to=crc16:0x%04X (not our protocol version)",
+                      kind, dst_crc);
+            log_connect_frame_hex(kind, data, frame_size);
             return false;
         }
     }
