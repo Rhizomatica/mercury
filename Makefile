@@ -222,7 +222,7 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS) $(WS_TLS_LDFLAGS)
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS) $(WS_TLS_LDFLAGS) $(CRYPTO_LDFLAGS)
 
 # The modules a host program can replace, one implementation per build
 # (MERCURY_HOST, config.mk).  Each has one interface: audioio/audioio.h,
@@ -256,7 +256,7 @@ endif
 MERCURY_LINK_INPUTS = \
 	main.o common/cfg_utils.o $(HOST_INI_OBJS) \
 	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
-	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
+	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o datalink_arq/arq_crypto.o common/noise_kk.o \
 	datalink_arq/carousel.o datalink_arq/rs_erasure.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o \
 	modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
@@ -352,8 +352,8 @@ RAPTORQ_CFLAGS = -Idatalink_broadcast/raptorq/include -Idatalink_broadcast/rapto
 # the two builds simply independent.
 RAPTORQ_OBJS     = $(patsubst %.c,%.o,$(RAPTORQ_SRCS))
 RAPTORQ_OBJS_W64 = $(patsubst %.c,%.w64.o,$(RAPTORQ_SRCS))
-BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o $(RAPTORQ_OBJS)
-BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o $(RAPTORQ_OBJS_W64)
+BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o datalink_broadcast/bcast_aead.o $(RAPTORQ_OBJS)
+BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o datalink_broadcast/bcast_aead.w64.o $(RAPTORQ_OBJS_W64)
 
 $(RAPTORQ_OBJS): %.o: %.c
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
@@ -374,11 +374,16 @@ datalink_broadcast/bcast_file.w64.o: datalink_broadcast/bcast_file.c
 MODEM_TOP_OBJS = modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
 	modem/mfsk/mfsk_ldpc.o modem/mfsk/mfsk_ldpc_1_16.o modem/mfsk/mfsk_ldpc_2_16.o modem/mfsk/mfsk_ldpc_3_16.o \
 	modem/mfsk/mfsk_ldpc_5_16.o modem/mfsk/mfsk_ldpc_8_16.o
+datalink_broadcast/bcast_aead.o: datalink_broadcast/bcast_aead.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_aead.w64.o: datalink_broadcast/bcast_aead.c
+	$(MINGW_CC) $(CFLAGS) -c $< -o $@
 
 MERCURY_CORE_OBJS = \
 	common/cfg_utils.o $(HOST_INI_OBJS) \
 	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
-	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
+	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o datalink_arq/arq_crypto.o common/noise_kk.o \
 	datalink_arq/carousel.o datalink_arq/rs_erasure.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o \
 	modem/modem.o modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
@@ -473,7 +478,7 @@ fyne-ui: libmercury_core.a
 	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 \
 		CGO_CPPFLAGS="$(EXTRA_CPPFLAGS)" \
 		CGO_CFLAGS="$(or $(strip $(EXTRA_CFLAGS)),-g -O2)" \
-		CGO_LDFLAGS="$(COMMON_LDFLAGS) $(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS)" \
+		CGO_LDFLAGS="$(COMMON_LDFLAGS) $(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS) $(CRYPTO_LDFLAGS)" \
 		go build -buildmode=pie -tags mercury_embedded \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
 		-o $(abspath mercury-ui) .

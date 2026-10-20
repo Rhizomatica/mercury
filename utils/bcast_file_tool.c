@@ -6,8 +6,12 @@
  * Speaks to Mercury's broadcast TCP port with KISS framing, exactly as the UI
  * does and as hermes-broadcast does -- one transport, one set of framing rules.
  *
- *   bcast_file_tool send <file> [-m mode] [-c cycles] [-i ip] [-p port]
- *   bcast_file_tool recv <dir>  [-m mode] [-i ip] [-p port]
+ *   bcast_file_tool send <file> [-m mode] [-c cycles] [-i ip] [-p port] [-k key]
+ *   bcast_file_tool recv <dir>  [-m mode] [-i ip] [-p port] [-k key]
+ *
+ * -k names the 32-byte broadcast key (as [crypto] broadcast_key_file): the
+ * file is sealed before RaptorQ on send, and opened on receive if it was
+ * sealed with that key.  The format is shared with hermes-broadcast.
  *
  * cycles 0 (the default) repeats until interrupted.
  */
@@ -24,6 +28,7 @@
 
 #include "bcast_file.h"
 #include "bcast_modes.h"
+#include "bcast_aead.h"
 
 #define KISS_FEND  0xC0
 #define KISS_FESC  0xDB
@@ -106,8 +111,9 @@ static void on_frame(const uint8_t *f, size_t n, void *vp)
     switch (bcast_file_rx_frame(c->rx, f, n))
     {
     case BCAST_RX_COMPLETE:
-        printf("\nreceived \"%s\" -> %s\n",
-               bcast_file_rx_last_name(c->rx), bcast_file_rx_last_path(c->rx));
+        printf("\nreceived \"%s\" -> %s (%s)\n",
+               bcast_file_rx_last_name(c->rx), bcast_file_rx_last_path(c->rx),
+               bcast_file_rx_last_encrypted(c->rx) ? "encrypted" : "clear");
         c->done = 1;
         break;
     case BCAST_RX_ERROR:
@@ -127,12 +133,13 @@ static void on_frame(const uint8_t *f, size_t n, void *vp)
 static void usage(const char *p)
 {
     fprintf(stderr,
-        "usage: %s send <file> [-m mode] [-c cycles] [-i ip] [-p port]\n"
-        "       %s recv <dir>  [-m mode] [-i ip] [-p port]\n\n"
+        "usage: %s send <file> [-m mode] [-c cycles] [-i ip] [-p port] [-k key]\n"
+        "       %s recv <dir>  [-m mode] [-i ip] [-p port] [-k key]\n\n"
         "  -m  Mercury mode index (default 1); BOTH ends must use the same one\n"
         "  -c  carousel cycles, 0 = until interrupted (default 0)\n"
         "  -i  Mercury address (default 127.0.0.1)\n"
-        "  -p  broadcast port (default 8100)\n", p, p);
+        "  -p  broadcast port (default 8100)\n"
+        "  -k  32-byte broadcast key file: encrypt on send, decrypt on receive\n", p, p);
 }
 
 int main(int argc, char **argv)
@@ -141,6 +148,7 @@ int main(int argc, char **argv)
     const char *cmd = argv[1], *arg = argv[2];
     int mode = 1, cycles = 0, port = 8100;
     const char *ip = "127.0.0.1";
+    const char *keyfile = NULL;
 
     for (int i = 3; i < argc - 1; i++)
     {
@@ -148,6 +156,19 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-c")) cycles = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-p")) port   = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-i")) ip     = argv[++i];
+        else if (!strcmp(argv[i], "-k")) keyfile = argv[++i];
+    }
+
+    if (keyfile)
+    {
+        uint8_t key[BCAST_AEAD_KEYLEN];
+
+        if (!bcast_aead_available())
+        { fprintf(stderr, "-k needs a build with libsodium\n"); return 1; }
+        if (bcast_aead_key_load(keyfile, key) != 0)
+        { fprintf(stderr, "cannot read a 32-byte key from %s\n", keyfile); return 1; }
+        bcast_file_set_key(key, false);
+        memset(key, 0, sizeof(key));
     }
 
     signal(SIGINT, on_signal);

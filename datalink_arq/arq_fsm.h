@@ -136,7 +136,18 @@ typedef struct
      * when not applicable; the callee reports this as the connection's local
      * address so a station listening on multiple SSIDs shows the dialed one. */
     char     local_call[CALLSIGN_MAX_SIZE];
+
+    /* RX_CALL / RX_ACCEPT: the frame's encryption bit (arq_crypto.h). */
+    bool     crypto;
 } arq_event_t;
+
+/* The steps of a connect's encryption negotiation (crypto_negotiate). */
+typedef enum {
+    ARQ_NEG_CALL_OUT,     /* a CALL of ours is built: offer?               */
+    ARQ_NEG_CALL_IN,      /* we take a CALL: what it offered               */
+    ARQ_NEG_ACCEPT_OUT,   /* our ACCEPT is built: take the offer?          */
+    ARQ_NEG_ACCEPT_IN,    /* the ACCEPT of our CALL: what it took          */
+} arq_neg_step_t;
 
 /* ======================================================================
  * Session structure — replaces arq_ctx_t
@@ -336,6 +347,13 @@ typedef struct
     /** The session's MFSK floor (arq_floor_mode), set with its seed: the
      *  geometry patterns are keyed and detected at.  Optional. */
     void (*set_floor_mode)(int mode);
+    /** The connect's encryption bit (arq_crypto.h), at each step of it: the
+     *  bit to send as a CALL or an ACCEPT is built, and what the peer's said
+     *  (peer_bit) as we take its CALL or hear its ACCEPT.  The bits are kept
+     *  there, by session id, not in the session.  Optional: NULL never
+     *  encrypts. */
+    bool (*crypto_negotiate)(arq_neg_step_t step, const char *remote_call,
+                             uint8_t session_id, bool peer_bit);
 } arq_fsm_callbacks_t;
 
 /**

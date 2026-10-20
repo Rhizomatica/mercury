@@ -410,9 +410,15 @@ static int decode_callsign_only_payload(const uint8_t *in, size_t in_len, char *
     return 0;
 }
 
-static uint8_t connect_ext(uint8_t bw_token)
+static uint8_t connect_ext(uint8_t bw_token, bool crypto)
 {
-    return (uint8_t)(bw_token | (ARQ_CONNECT_MINOR << ARQ_CONNECT_EXT_MINOR_SHIFT));
+    return (uint8_t)(bw_token | (ARQ_CONNECT_MINOR << ARQ_CONNECT_EXT_MINOR_SHIFT) |
+                     (crypto ? ARQ_CONNECT_EXT_CRYPTO : 0));
+}
+
+bool arq_protocol_connect_crypto(const uint8_t *buf)
+{
+    return buf && (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_CRYPTO) != 0;
 }
 
 static void put_crc16(uint8_t *p, uint16_t crc) { p[0] = (uint8_t)crc; p[1] = (uint8_t)(crc >> 8); }
@@ -434,7 +440,7 @@ static int connect_bw_hz(const uint8_t *buf)
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
                             uint8_t session_id,
                             const char *caller, const char *called,
-                            int bw_hz)
+                            int bw_hz, bool crypto)
 {
     uint8_t encoded[ARQ_CONNECT_MAX_ENCODED];
     if (!buf || !caller || !called || buf_len < ARQ_CONTROL_FRAME_SIZE)
@@ -449,7 +455,7 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
     memset(buf, 0, ARQ_CONTROL_FRAME_SIZE);
     buf[ARQ_CONNECT_SESSION_IDX] = (uint8_t)(session_id & ARQ_CONNECT_SESSION_MASK);
     memcpy(buf + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)enc_len);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token));
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token, crypto));
     return ARQ_CONTROL_FRAME_SIZE;
 }
 
@@ -465,7 +471,7 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                               uint8_t session_id,
                               const char *called, const char *caller,
                               int bw_hz, int start_level, bool ctl_deaf,
-                              float call_snr_db, uint16_t nonce)
+                              float call_snr_db, uint16_t nonce, bool crypto)
 {
     if (!buf || !called || !caller || buf_len < ARQ_CONTROL_FRAME_SIZE ||
         start_level < 0 || start_level > ARQ_ACCEPT_LEVEL_MASK)
@@ -481,7 +487,7 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
     put_crc16(buf + ARQ_ACCEPT_NONCE_IDX, nonce);
     buf[ARQ_ACCEPT_LEVEL_IDX] = (uint8_t)(start_level | (ctl_deaf ? ARQ_ACCEPT_CTL_DEAF_BIT : 0));
     buf[ARQ_ACCEPT_SNR_IDX] = snr_byte(call_snr_db);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token));
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token, crypto));
     return ARQ_CONTROL_FRAME_SIZE;
 }
 

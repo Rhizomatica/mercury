@@ -35,7 +35,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates build-essential git openssh-client \
-            libpulse-dev libasound2-dev libhamlib-dev
+            libpulse-dev libasound2-dev libhamlib-dev libsodium-dev pkg-config
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -67,7 +67,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates build-essential git openssh-client \
-            libpulse-dev libasound2-dev libhamlib-dev pkg-config golang-go
+            libpulse-dev libasound2-dev libhamlib-dev libsodium-dev pkg-config golang-go
       - name: Checkout
         uses: actions/checkout@v4
         with:
