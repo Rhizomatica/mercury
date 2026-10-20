@@ -843,6 +843,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
      * the exchange whose reliability decides whether a link comes up. */
     ARQ_TRACE(ARQ_TR_RX_FRAME, is_accept ? 2 : 1, (uint8_t)(rc < 0 ? 0xff : 0),
               (uint16_t)frame_size);
+    log_connect_frame_hex(is_accept ? "ACCEPT" : "CALL", data, frame_size);
 
     if (rc == -1)
     {
@@ -878,7 +879,8 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         }
         if (!match)
         {
-            /* Bytes 2-3 are the called CRC in every version, so the intended
+            /* Bytes 2-3 are the recipient's CRC in every version (the called
+             * station's on a CALL, the caller's on an ACCEPT), so the intended
              * recipient is always identifiable (unless the frame is too short
              * to hold them).  The sender is only ever a full callsign on a
              * CALL; an ACCEPT carries both ends as CRCs. */
@@ -899,7 +901,6 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
             else
                 HLOGD(LOG_COMP, "%s not for us: from=? to=%s (not our protocol version)",
                       kind, dst);
-            log_connect_frame_hex(kind, data, frame_size);
             return false;
         }
     }
