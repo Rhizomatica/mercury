@@ -363,7 +363,8 @@ int mercury_cli_parse(int argc, char **argv,
             out->cfg.verbose = true;
             break;
         case 'd':
-            out->cfg.trace = true;
+            out->cfg.trace   = true;
+            out->cfg.verbose = true;   /* trace implies verbose */
             break;
         case 'L':
             out->log_file_path = optarg;

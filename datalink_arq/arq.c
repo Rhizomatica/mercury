@@ -867,10 +867,10 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     const char *dialed_call = my_call;
     if (my_call[0] != 0)
     {
-        bool match = arq_protocol_connect_dst_matches(data, my_call);
+        bool match = arq_protocol_connect_dst_matches(data, frame_size, my_call);
         for (int i = 0; !match && i < sec_count; i++)
         {
-            if (arq_protocol_connect_dst_matches(data, sec[i]))
+            if (arq_protocol_connect_dst_matches(data, frame_size, sec[i]))
             {
                 match       = true;
                 dialed_call = sec[i];
@@ -879,20 +879,26 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         if (!match)
         {
             /* Bytes 2-3 are the called CRC in every version, so the intended
-             * recipient is always identifiable.  The sender is only ever a
-             * full callsign on a CALL; an ACCEPT carries both ends as CRCs. */
-            uint16_t dst_crc = (uint16_t)(data[ARQ_CONNECT_PAYLOAD_IDX] |
-                                          (data[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8));
+             * recipient is always identifiable (unless the frame is too short
+             * to hold them).  The sender is only ever a full callsign on a
+             * CALL; an ACCEPT carries both ends as CRCs. */
+            char dst[16];
+            if (frame_size >= ARQ_CONNECT_PAYLOAD_IDX + 2)
+                snprintf(dst, sizeof(dst), "crc16:0x%04X",
+                         (unsigned)(data[ARQ_CONNECT_PAYLOAD_IDX] |
+                                    (data[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8)));
+            else
+                snprintf(dst, sizeof(dst), "?");
             const char *kind = is_accept ? "ACCEPT" : "CALL";
             if (rc == 0 && is_accept)
-                HLOGD(LOG_COMP, "ACCEPT not for us: from=crc16:0x%04X to=crc16:0x%04X",
-                      acc.called_crc, dst_crc);
+                HLOGD(LOG_COMP, "ACCEPT not for us: from=crc16:0x%04X to=%s",
+                      acc.called_crc, dst);
             else if (rc == 0)
-                HLOGD(LOG_COMP, "CALL not for us: from=%s to=crc16:0x%04X",
-                      caller[0] ? caller : "?", dst_crc);
+                HLOGD(LOG_COMP, "CALL not for us: from=%s to=%s",
+                      caller[0] ? caller : "?", dst);
             else
-                HLOGD(LOG_COMP, "%s not for us: from=? to=crc16:0x%04X (not our protocol version)",
-                      kind, dst_crc);
+                HLOGD(LOG_COMP, "%s not for us: from=? to=%s (not our protocol version)",
+                      kind, dst);
             log_connect_frame_hex(kind, data, frame_size);
             return false;
         }

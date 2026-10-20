@@ -366,9 +366,9 @@ void test_connect_call(void)
         TEST_ASSERT_EQUAL_UINT8(0x21, sid);
         TEST_ASSERT_EQUAL_STRING(calls[i], src);
         TEST_ASSERT_EQUAL_INT(2300, bw);
-        TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, "PU2UIT-3"));
-        TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, "pu2uit-3"));
-        TEST_ASSERT_FALSE(arq_protocol_connect_dst_matches(frame, "PU2UIT-2"));
+        TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, sizeof(frame), "PU2UIT-3"));
+        TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, sizeof(frame), "pu2uit-3"));
+        TEST_ASSERT_FALSE(arq_protocol_connect_dst_matches(frame, sizeof(frame), "PU2UIT-2"));
         arq_accept_t acc;
         TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_parse_accept(frame, sizeof(frame), &acc));
     }
@@ -398,7 +398,7 @@ void test_connect_accept(void)
                 else                   TEST_ASSERT_EQUAL_FLOAT(snr_out[k], acc.call_snr_db);
                 TEST_ASSERT_EQUAL_HEX16(nonce, acc.nonce);
                 TEST_ASSERT_EQUAL_HEX16(arq_protocol_callsign_crc16("PU2UIT-3"), acc.called_crc);
-                TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, "PU2UIT"));   /* all 16 bits */
+                TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, sizeof(frame), "PU2UIT"));   /* all 16 bits */
                 uint8_t sid; char src[CALLSIGN_MAX_SIZE]; int bw;
                 TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_parse_call(frame, sizeof(frame), &sid, src, &bw));
                 if (k) continue;
@@ -455,6 +455,19 @@ void test_connect_other_version_refused(void)
                            (uint8_t)(ARQ_BW_TOKEN_2300 | minor << ARQ_CONNECT_EXT_MINOR_SHIFT));
         TEST_ASSERT_TRUE(arq_protocol_connect_version_ok(later, ARQ_CONTROL_FRAME_SIZE));
     }
+}
+
+/* A truncated CALL whose header reads as ARQ_CALL must not be read past its
+ * end: dst_matches returns false rather than indexing bytes 2-3. */
+void test_connect_dst_matches_short_buf_refused(void)
+{
+    uint8_t frame[INT_BUFFER_SIZE];
+    TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame), 0x21,
+                                                            "PU2UIT", "PU2UIT-3", 2300));
+    for (size_t n = 0; n < ARQ_CONNECT_PAYLOAD_IDX + 2; n++)
+        TEST_ASSERT_FALSE(arq_protocol_connect_dst_matches(frame, n, "PU2UIT-3"));
+    TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, ARQ_CONNECT_PAYLOAD_IDX + 2,
+                                                      "PU2UIT-3"));
 }
 
 /* Realistic callsigns must still round-trip exactly -- the refusal above must
@@ -563,5 +576,6 @@ int main(void)
     RUN_TEST(test_connect_call);
     RUN_TEST(test_connect_accept);
     RUN_TEST(test_connect_other_version_refused);
+    RUN_TEST(test_connect_dst_matches_short_buf_refused);
     return UNITY_END();
 }

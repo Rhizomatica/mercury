@@ -413,8 +413,10 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
 /** Is buf a CALL or ACCEPT of this protocol (2.0, any minor revision)? */
 bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len);
 
-/** Is a CALL or ACCEPT addressed to callsign (bytes 2-3, all 16 bits)? */
-bool arq_protocol_connect_dst_matches(const uint8_t *buf, const char *callsign);
+/** Is a CALL or ACCEPT addressed to callsign (bytes 2-3, all 16 bits)?
+ *  Requires at least ARQ_CONNECT_PAYLOAD_IDX + 2 bytes in @p buf. */
+bool arq_protocol_connect_dst_matches(const uint8_t *buf, size_t buf_len,
+                                      const char *callsign);
 
 /** Parse a CALL: session id, the caller's callsign, the bandwidth.
  *  @return 0, or -1 (wrong version, bad bandwidth token, undecodable call). */

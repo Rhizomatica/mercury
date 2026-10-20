@@ -485,8 +485,11 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
     return ARQ_CONTROL_FRAME_SIZE;
 }
 
-bool arq_protocol_connect_dst_matches(const uint8_t *buf, const char *callsign)
+bool arq_protocol_connect_dst_matches(const uint8_t *buf, size_t buf_len,
+                                      const char *callsign)
 {
+    if (!buf || !callsign || buf_len < ARQ_CONNECT_PAYLOAD_IDX + 2)
+        return false;
     return get_crc16(buf + ARQ_CONNECT_PAYLOAD_IDX) == arq_protocol_callsign_crc16(callsign);
 }
 

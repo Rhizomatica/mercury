@@ -383,6 +383,8 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
 
     b = iniparser_getboolean(ini, CFG_KEY_TRACE, cfg->trace ? 1 : 0);
     cfg->trace = (bool) b;
+    if (cfg->trace)
+        cfg->verbose = true;   /* trace implies verbose */
 
     i = iniparser_getint(ini, CFG_KEY_FREEDV_VERBOSITY, cfg->freedv_verbosity);
     if (i >= 0 && i <= 3)

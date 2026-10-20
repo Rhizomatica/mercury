@@ -428,7 +428,8 @@ void test_callsign_truncates_to_slot_size(void)
     TEST_ASSERT_EQUAL_STRING("ABCDEFGHIJKLMNO", r.callsign);
 }
 
-/* The TRACE log level is opt-in and round-trips through the INI like verbose. */
+/* The TRACE log level is opt-in and round-trips through the INI like verbose;
+ * trace implies verbose, so a trace-only INI yields verbose=true too. */
 void test_trace_roundtrips(void)
 {
     mercury_config w, r;
@@ -439,6 +440,7 @@ void test_trace_roundtrips(void)
     cfg_set_defaults(&r);
     TEST_ASSERT_TRUE(cfg_read(&r, TMP));
     TEST_ASSERT_TRUE(r.trace);
+    TEST_ASSERT_TRUE(r.verbose);
 }
 
 int main(void)
