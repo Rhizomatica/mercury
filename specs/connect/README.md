@@ -23,6 +23,14 @@ What it models:
   ACCEPT sends a DISCONNECT; a connected caller whose callee never answers
   gives up when the callee's kept seed lapses (`PeerLost`, one step).
 
+- Encryption (`arq_crypto.h`, `crypto_negotiate`): a CONNECT's CALLs offer
+  it or not; the callee answers the offer of the CALL it takes, once for
+  the session -- every ACCEPT of it carries that answer, as it carries the
+  nonce; the caller takes an ACCEPT's bit only with an offer of its own.  A
+  required caller (`CReq`) calls only to offer and hangs up on an ACCEPT
+  that did not take it; a required callee (`EReq`) answers only a CALL it
+  takes.
+
 Not modelled: the carrier (DATAC16 or MFSK: a frame is lost or not), the
 session once up (its turns, rungs and blocks are the other specs'), its
 teardown.
@@ -38,12 +46,27 @@ Properties:
   unanswered.  The caller stops calling before its first frame, the one that
   connects the callee, so a CALL heard there means the caller has left.
 - `Settles`: every attempt ends with both connected, or both idle.
+- `Agree`: a connected callee and its caller both took the session to be
+  encrypted, or both clear.  Otherwise one end waits for a handshake the
+  other never sends, and the session fails closed.
+- `ReqGate`: a required end that is connected is encrypted.
 
 Results:
 
-- `ConnectHandshake.cfg`: the code's rules.  No error, 1857 distinct
-  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 6421.
-  (1425 and 4813 before the caller's watchdog could fire first.)
+- `ConnectHandshake.cfg`: the code's rules.  No error, 9473 distinct
+  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 34177.
+  (1857 and 6421 before encryption; 1425 and 4813 before the caller's
+  watchdog could fire first.)
+- `ConnectHandshake_creq.cfg`, `ConnectHandshake_ereq.cfg`: the caller, or
+  the callee, required.  No error: 3009 and 2913 distinct states.
+- `Mut_reanswer.cfg`: a repeated CALL gets a fresh answer to its offer (the
+  first port of #306 to 2.0 did this: the callee in its ACCEPT fallback
+  answered a repeat anew).  Violates `Agree`: the caller re-CONNECTs with
+  the same id, now offering, and decodes an ACCEPT of the old answer
+  (clear) still in the air, while the callee takes the session encrypted.
+- `Mut_anyaccept.cfg`: the caller takes an ACCEPT that took an offer its
+  CONNECT did not make (one of an earlier CONNECT of the same id).
+  Violates `Agree`: the callee encrypts, the caller goes clear.
 - `Mut_ignorecall.cfg`: a connected callee ignores every CALL, as the code
   did before 2026-10-18.  Violates `NoDeafRedial`: the caller, its watchdog
   first, redials, and the callee answers only once its own watchdog fires
