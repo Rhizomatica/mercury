@@ -71,7 +71,7 @@ Options:
  -z                         Lists all available sound cards.
  -v                         Verbose mode. Prints more information during execution.
  -d                         Trace mode. Logs the raw bytes of every decoded connect frame (implies -v).
- -L <path>                  Write log to file (TIMING level and above).
+ -L <path>                  Write log to file (TIMING level and above). Windows default: logs\mercury_engine.log beside mercury.exe.
  -J                         Use JSONL format for log file (requires -L).
  -P [ptt_method]            PTT method: none, hamlib, serial, cm108, or hermes_shm.
  -R [radio_model]           Sets HAMLIB radio model and selects Hamlib PTT.

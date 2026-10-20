@@ -238,6 +238,13 @@ and the serial settings in
 .BI \-L " path"
 Write log to file (TIMING level and above).
 In verbose mode, log level is DEBUG.
+On Windows, without
+.BR \-L ,
+the log goes to
+.I logs\emercury_engine.log
+beside
+.IR mercury.exe ,
+as the GUI\(aqs does.
 .TP
 .B \-J
 Use JSONL format for the log file (requires

@@ -32,6 +32,7 @@
 
 #ifdef _WIN32
 #include <winsock2.h>
+#include <windows.h>
 #endif
 
 
@@ -210,6 +211,30 @@ static void install_termination_handlers(void)
 #endif
 }
 
+#ifdef _WIN32
+/* Without -L, Windows has the log the GUI writes: <exe dir>\logs\mercury_engine.log,
+ * appended to.  Run directly, mercury.exe logged only to its console, and
+ * operators had no log to send: field reports came as screen videos (#392,
+ * #393), the log they looked for was the GUI's.  NULL when the directory
+ * cannot be found. */
+static const char *win_default_log_path(void)
+{
+    static char path[MAX_PATH + 32];
+    char dir[MAX_PATH];
+    DWORD n = GetModuleFileNameA(NULL, dir, sizeof dir);
+    if (n == 0 || n >= sizeof dir)
+        return NULL;
+    char *slash = strrchr(dir, '\\');
+    if (!slash)
+        return NULL;
+    *slash = '\0';
+    snprintf(path, sizeof path, "%s\\logs", dir);
+    CreateDirectoryA(path, NULL);          /* there already: fine */
+    snprintf(path, sizeof path, "%s\\logs\\mercury_engine.log", dir);
+    return path;
+}
+#endif
+
 int main(int argc, char *argv[])
 {
 #ifdef _WIN32
@@ -253,6 +278,11 @@ int main(int argc, char *argv[])
         printf("RUNNING ON CPU Nr %d\n", sched_getcpu());
 #endif
     }
+
+#ifdef _WIN32
+    if (!cli.log_file_path && (cli.log_file_path = win_default_log_path()) != NULL)
+        printf("Logging to %s (-L chooses another file)\n", cli.log_file_path);
+#endif
 
     /* Bring up the logger before engine init so the banner/printf context and
      * the engine's own startup logs share one destination. */
