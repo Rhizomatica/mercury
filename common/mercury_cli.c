@@ -65,7 +65,7 @@ void mercury_cli_print_usage(const char *prog)
     printf(" -z                         Lists all available sound cards.\n");
     printf(" -v                         Verbose mode. Prints more information during execution.\n");
     printf(" -d                         Trace mode. Logs the raw bytes of every decoded connect frame (implies -v).\n");
-    printf(" -L <path>                  Write log to file (TIMING level and above).\n");
+    printf(" -L <path>                  Write log to file (TIMING level and above). Windows default: logs\\mercury_engine.log beside mercury.exe.\n");
     printf(" -J                         Use JSONL format for log file (requires -L).\n");
     printf(" -P [ptt_method]            PTT method: none, hamlib, serial, cm108, or hermes_shm.\n");
     printf(" -R [radio_model]           Sets HAMLIB radio model and selects Hamlib PTT.\n");
