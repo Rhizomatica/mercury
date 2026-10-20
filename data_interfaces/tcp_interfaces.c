@@ -44,7 +44,6 @@
 #include "ring_buffer_posix.h"
 #include "net.h"
 #include "arq.h"
-#include "chan.h"
 #include "defines_modem.h"
 #include "kiss.h"
 #include "modem.h"
@@ -69,21 +68,25 @@ static _Atomic size_t broadcast_frame_size_cfg = 0;
 static _Atomic uint32_t last_sn_bits = 0;        /* float bits, relaxed */
 static _Atomic uint32_t last_bitrate_sl = 0;
 static _Atomic uint32_t last_bitrate_bps = 0;
-/* Read by the modem/ARQ threads on every host state notification and written
- * by the init/teardown thread.  Atomic for the same reason as its neighbours:
- * a plain pointer here is a data race, and on a weakly-ordered target (armhf,
- * the Pi 3 in issue #200) a notifying thread can observe a stale NULL long
- * after init.  tnc_queue_line() then fails instantly, and the critical path
- * above it burns its whole 50 ms retry budget and logs a DROPPED host state
- * notification -- for every PTT edge, and for DISCONNECTED, which is what
- * leaves a host waiting forever for a session that already ended. */
-static chan_t *_Atomic tnc_tx_chan = NULL;
-#define TNC_TX_CHAN_CAP 256
-/* MONITOR lines may fill only half the channel: a busy band brings them by
- * the dozen, and they must never take the room the host's state lines need
- * (tnc_queue_line_critical: PTT, CONNECTED, BUSY ...). */
-#define TNC_MONITOR_MAX_QUEUED (TNC_TX_CHAN_CAP / 2)
-static atomic_ulong tnc_tx_drop_count = 0;
+/* The control port's outgoing lines, a byte ring (ring_buffer_posix) the
+ * reactor thread empties on every pass.  A line is never dropped: a full ring
+ * makes the writer wait (write_buffer), and each line goes in whole, under the
+ * ring's lock, so lines never interleave.  It used to be a 256-line channel
+ * that dropped what did not fit -- BUFFER, SN, MONITOR at once, host state
+ * lines after 50 ms -- and a host that missed a BUFFER, a PTT edge or a
+ * DISCONNECTED went out of step.  64 KB is some 3000 lines: full only when
+ * the client stops reading.  Open from init to dispose:
+ * before init a line is refused (the race of issue #200: a notifying thread
+ * that saw the queue not yet there; tnc_queue_line_critical retries it). */
+#define TNC_TXQ_SIZE (64 * 1024)
+static uint8_t tnc_txq_storage[TNC_TXQ_SIZE];
+static cbuf_handle_t tnc_txq = NULL;
+static _Atomic bool tnc_txq_open = false;
+/* A line into the ring; the unit test, which stubs the ring for the
+ * broadcast plane, captures lines here instead. */
+#ifndef TNC_TXQ_PUT
+#define TNC_TXQ_PUT(q, data, len) write_buffer((q), (data), (len))
+#endif
 static atomic_int tnc_last_buffer_sent = -1;
 static atomic_bool bcast_client_done = false;
 static _Atomic uint8_t bcast_reply_cmd = CMD_DATA;
@@ -112,6 +115,27 @@ extern arq_info arq_conn;
 /* TNC control-port pacing — runtime-configurable via [tnc] INI keys. */
 static _Atomic uint64_t tnc_keepalive_interval_ms = 60000;
 static _Atomic uint64_t tnc_buffer_report_interval_ms = 1000;
+/* When the last BUFFER line was queued (monotonic_ms), for the repeat below. */
+static _Atomic uint64_t tnc_last_buffer_ms = 0;
+
+/* In a session, with bytes still to confirm and no BUFFER line for this long,
+ * the count is said again.  A VARA client waits for BUFFER to fall before it
+ * writes more, and gives up when none comes for a minute (Pat: "write:
+ * buffer timeout").  Mercury said
+ * BUFFER only when the count changed, and the carousel confirms a block's
+ * bytes only once the whole block is through -- about 60 s of airtime, longer
+ * on a lossy link: a 53 KB Winlink upload died at 1463 bytes after 93 s with
+ * no BUFFER (#397, K7EK-10 at about 0 dB).  Counted from the last BUFFER of
+ * any kind (tnc_send_buffer), so where they come more often nothing changes. */
+#define TNC_BUFFER_REPEAT_MS 50000
+
+bool tnc_buffer_report_due(int buffered, int last_reported, bool connected,
+                           uint64_t now_ms, uint64_t last_sent_ms)
+{
+    if (buffered != last_reported)
+        return true;
+    return connected && buffered > 0 && now_ms - last_sent_ms >= TNC_BUFFER_REPEAT_MS;
+}
 
 void tnc_set_intervals(int keepalive_s, int buffer_report_ms)
 {
@@ -152,61 +176,24 @@ static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
     return total_sent == len ? (ssize_t)total_sent : -1;
 }
 
-typedef struct
-{
-    size_t len;
-    uint8_t data[128];
-} tnc_tx_msg_t;
-
 static int tnc_queue_line(const char *line)
 {
-    chan_t *send_chans[1];
-    void *send_msgs[1];
-    tnc_tx_msg_t *msg;
-    size_t len;
-    int rc;
-
-    if (!line || !tnc_tx_chan)
+    if (!line || !atomic_load_explicit(&tnc_txq_open, memory_order_acquire))
         return -1;
-
-    len = strlen(line);
-    if (len == 0 || len >= sizeof(((tnc_tx_msg_t *)0)->data))
+    size_t len = strlen(line);
+    if (len == 0 || len > TNC_TXQ_SIZE)
         return -1;
-
-    msg = (tnc_tx_msg_t *)calloc(1, sizeof(*msg));
-    if (!msg)
-        return -1;
-
-    msg->len = len;
-    memcpy(msg->data, line, len);
-    send_chans[0] = tnc_tx_chan;
-    send_msgs[0] = msg;
-    rc = chan_select(NULL, 0, NULL, send_chans, 1, send_msgs);
-    if (rc != 0)
-    {
-        free(msg);
-        atomic_fetch_add_explicit(&tnc_tx_drop_count, 1, memory_order_relaxed);
-        return -1;
-    }
-
-    return 0;
+    return TNC_TXQ_PUT(tnc_txq, (uint8_t *)line, len) == 0 ? 0 : -1;   /* waits while the ring is full */
 }
 
 /* Queue a line that the HOST NEEDS FOR CORRECTNESS, not just for display.
  *
- * tnc_queue_line() is deliberately lossy: it drops rather than block a modem
- * thread when the channel backs up.  That is right for telemetry (BUFFER, SN,
- * BITRATE arrive continuously — a lost one is replaced a moment later), and
- * wrong for state changes.  A host driving a transmitter interlock or a
- * frequency scanner (BPQ32 INTERLOCK, VARA-style scanning) decides whether the
- * radio is busy from PENDING / PTT ON / PTT OFF; a dropped PTT ON leaves it
- * believing we are receiving while we are keyed, and it will hand the antenna
- * to another port on top of us.
- *
- * So retry briefly before giving up, and if it still fails say so loudly
- * instead of incrementing a counter nobody reads.  The bound is small: a full
- * channel means the consumer is already stalled, and delaying a modem thread
- * further helps nobody. */
+ * tnc_queue_line() refuses a line only before the queue opens.  A host driving a transmitter interlock or a frequency scanner
+ * (BPQ32 INTERLOCK, VARA-style scanning) decides whether the radio is busy
+ * from PENDING / PTT ON / PTT OFF; a lost PTT ON leaves it believing we are
+ * receiving while we are keyed, and it will hand the antenna to another port
+ * on top of us.  So a state line retries briefly across that start-up race
+ * (issue #200), and if it still fails says so loudly. */
 #define TNC_CRITICAL_RETRIES   10
 #define TNC_CRITICAL_SLEEP_US  5000   /* 10 x 5 ms = 50 ms worst case */
 
@@ -232,8 +219,8 @@ static int tnc_queue_line_critical(const char *line)
         while (len > 0 && (clean[len - 1] == '\r' || clean[len - 1] == '\n'))
             clean[--len] = '\0';
     }
-    HLOGE("tcp-ctl", "DROPPED host state notification '%s' — the TNC channel "
-          "stayed full for %d ms; a host relying on this for interlock or "
+    HLOGE("tcp-ctl", "DROPPED host state notification '%s' — the TNC queue "
+          "was not open for %d ms; a host relying on this for interlock or "
           "scanning is now out of sync",
           clean, (TNC_CRITICAL_RETRIES * TNC_CRITICAL_SLEEP_US) / 1000);
     return -1;
@@ -773,47 +760,43 @@ static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notif
     close_data_client(data_client_fd);
 }
 
+/* The queued lines to the control client, never dropping a byte: what the
+ * socket does not take now (it is full) is kept, and goes first on the next
+ * pass; the reactor never waits on it.  With no client connected there is no
+ * one to tell, and the lines go, as they always did. */
+static uint8_t tnc_out[TNC_TXQ_SIZE];
+static size_t tnc_out_off = 0, tnc_out_len = 0;
+
 static void drain_tnc_queue_to_ctl(void)
 {
-    chan_t *recv_chans[1];
-    void *raw = NULL;
-
-    if (!tnc_tx_chan)
+    if (!tnc_txq)
         return;
-
-    recv_chans[0] = tnc_tx_chan;
-    while (chan_select(recv_chans, 1, &raw, NULL, 0, NULL) == 0)
+    for (;;)
     {
-        tnc_tx_msg_t *msg = (tnc_tx_msg_t *)raw;
-        if (msg)
+        if (tnc_out_off == tnc_out_len)
         {
-            ssize_t sent = tcp_write(CTL_TCP_PORT, msg->data, msg->len);
-            if (sent < (ssize_t)msg->len)
-                atomic_fetch_add_explicit(&tnc_tx_drop_count, 1, memory_order_relaxed);
-            free(msg);
+            size_t n = size_buffer(tnc_txq);
+            tnc_out_off = tnc_out_len = 0;
+            if (n == 0 || read_buffer(tnc_txq, tnc_out, n) != 0)
+                return;
+            tnc_out_len = n;
         }
-        raw = NULL;
+        ssize_t sent = tcp_send_some(CTL_TCP_PORT, tnc_out + tnc_out_off, tnc_out_len - tnc_out_off);
+        if (sent == 0)
+            return;                                   /* full: the rest next pass */
+        if (sent < 0)
+            tnc_out_off = tnc_out_len;                /* no client, or it is gone */
+        else
+            tnc_out_off += (size_t)sent;
     }
 }
 
 static void dispose_tnc_tx_queue(void)
 {
-    chan_t *recv_chans[1];
-    void *raw = NULL;
-
-    if (!tnc_tx_chan)
-        return;
-
-    chan_close(tnc_tx_chan);
-    recv_chans[0] = tnc_tx_chan;
-    while (chan_select(recv_chans, 1, &raw, NULL, 0, NULL) == 0)
-    {
-        free(raw);
-        raw = NULL;
-    }
-    chan_dispose(tnc_tx_chan);
-    tnc_tx_chan = NULL;
-    atomic_store_explicit(&tnc_tx_drop_count, 0, memory_order_relaxed);
+    atomic_store_explicit(&tnc_txq_open, false, memory_order_release);
+    if (tnc_txq)
+        clear_buffer(tnc_txq);
+    tnc_out_off = tnc_out_len = 0;
     atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
 }
 
@@ -1004,10 +987,6 @@ void *arq_reactor_thread(void *port)
                 close_ctl_client(&ctl_client, &data_client, true);
             else
             {
-                unsigned long dropped =
-                    atomic_exchange_explicit(&tnc_tx_drop_count, 0, memory_order_relaxed);
-                if (dropped > 0)
-                    HLOGW("tcp-ctl", "Dropped %lu queued control messages", dropped);
                 if (now_ms >= next_keepalive_ms)
                 {
                     char imalive[] = "IAMALIVE\r";
@@ -1017,8 +996,14 @@ void *arq_reactor_thread(void *port)
                 if (now_ms >= next_buffer_report_ms)
                 {
                     int buffered = arq_buffered_bytes_snapshot();
-                    if (buffered != last_buffer_report)
+                    uint64_t said = atomic_load_explicit(&tnc_last_buffer_ms, memory_order_relaxed);
+                    if (tnc_buffer_report_due(buffered, last_buffer_report, arq_is_link_connected(),
+                                              now_ms, said))
                     {
+                        /* the same count again: past tnc_send_buffer's
+                         * "unchanged" filter */
+                        if (buffered == last_buffer_report)
+                            atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
                         tnc_send_buffer((uint32_t)buffered);
                         last_buffer_report = buffered;
                     }
@@ -1731,7 +1716,10 @@ void tnc_send_buffer(uint32_t bytes)
 
     snprintf(buffer, sizeof(buffer), "BUFFER %u\r", bytes);
     if (tnc_queue_line(buffer) == 0)
+    {
         atomic_store_explicit(&tnc_last_buffer_sent, (int)bytes, memory_order_relaxed);
+        atomic_store_explicit(&tnc_last_buffer_ms, monotonic_ms(), memory_order_relaxed);
+    }
 }
 
 /* TNC notification callbacks registered into the ARQ layer.  Decouples ARQ
@@ -1786,17 +1774,6 @@ void tnc_send_monitor(const char *mode_name, const char *kind,
     if (!kind)      kind = "FRAME";
     if (!detail)    detail = "";
 
-    /* Display-only telemetry: lossy is fine, a dropped line is replaced by the
-     * next frame -- and dropped first, before it can crowd out a host state
-     * line (TNC_MONITOR_MAX_QUEUED).  Keep the whole line under
-     * tnc_tx_msg_t.data so tnc_queue_line does not reject it; snprintf
-     * truncates if a long detail would overflow. */
-    chan_t *chan = tnc_tx_chan;
-    if (!chan || chan_size(chan) >= TNC_MONITOR_MAX_QUEUED)
-    {
-        atomic_fetch_add_explicit(&tnc_tx_drop_count, 1, memory_order_relaxed);
-        return;
-    }
     snprintf(buffer, sizeof(buffer), "MONITOR %s %s %s SNR=%.1f\r",
              mode_name, kind, detail, (double)snr_db);
     (void)tnc_queue_line(buffer);
@@ -1855,15 +1832,9 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
     /*************** ARQ TCP ports *******************/
     net_set_status(CTL_TCP_PORT, NET_NONE);
     net_set_status(DATA_TCP_PORT, NET_NONE);
-    if (!tnc_tx_chan)
-    {
-        tnc_tx_chan = chan_init(TNC_TX_CHAN_CAP);
-        if (!tnc_tx_chan)
-        {
-            HLOGE("tcp-ctl", "Failed to init control TX queue");
-            return EXIT_FAILURE;
-        }
-    }
+    if (!tnc_txq)
+        tnc_txq = circular_buf_init(tnc_txq_storage, TNC_TXQ_SIZE);
+    atomic_store_explicit(&tnc_txq_open, true, memory_order_release);
     atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
 
     if (pthread_create(&tid[0], NULL, arq_reactor_thread, (void *)&arq_tcp_base_port_cfg) != 0)

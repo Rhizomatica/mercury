@@ -66,6 +66,8 @@ ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size);
 
 ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size);
 ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size);
+/* What the socket takes now; the caller keeps the rest (net.c). */
+ssize_t tcp_send_some(int port_type, const uint8_t *buffer, size_t len);
 
 int tcp_close(int port_type);
 
