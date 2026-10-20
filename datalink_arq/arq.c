@@ -1125,6 +1125,19 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
      * session to disconnect yet, so silence is the refusal.  Checked only
      * once the DST CRC has matched, so it applies only to calls for us. */
     bool crypto = arq_protocol_connect_crypto(data);
+    /* An ACCEPT that takes an offer we did not make answers an earlier
+     * CONNECT of the same session id: not ours (specs/connect, Agree). */
+    if (is_accept && crypto)
+    {
+        pthread_mutex_lock(&g_app_tx_mtx);
+        bool offered = g_neg.valid && g_neg.caller && g_neg.session_id == session_id && g_neg.offer;
+        pthread_mutex_unlock(&g_app_tx_mtx);
+        if (!offered)
+        {
+            HLOGI(LOG_COMP, "ACCEPT taking an encryption offer we did not make: ignored");
+            return false;
+        }
+    }
     if (!is_accept &&
         arq_crypto_answer_call(caller, crypto) == ARQ_CRYPTO_ANSWER_REFUSE)
     {
