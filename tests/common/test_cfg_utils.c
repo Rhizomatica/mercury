@@ -47,6 +47,8 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_EQUAL_INT(3,    c.busy_hysteresis_db);
     TEST_ASSERT_EQUAL_INT(300,  c.busy_on_debounce_ms);
     TEST_ASSERT_EQUAL_INT(1500, c.busy_hang_ms);
+    TEST_ASSERT_FALSE(c.verbose);
+    TEST_ASSERT_FALSE(c.trace);
 }
 
 /* Set non-default values, write, read back, assert preserved. */
@@ -426,6 +428,21 @@ void test_callsign_truncates_to_slot_size(void)
     TEST_ASSERT_EQUAL_STRING("ABCDEFGHIJKLMNO", r.callsign);
 }
 
+/* The TRACE log level is opt-in and round-trips through the INI like verbose;
+ * trace implies verbose, so a trace-only INI yields verbose=true too. */
+void test_trace_roundtrips(void)
+{
+    mercury_config w, r;
+    cfg_set_defaults(&w);
+    w.trace = true;
+    TEST_ASSERT_TRUE(cfg_write(&w, TMP));
+
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_TRUE(r.trace);
+    TEST_ASSERT_TRUE(r.verbose);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -435,6 +452,7 @@ int main(void)
     RUN_TEST(test_config_without_tls_keys_keeps_the_defaults);
     RUN_TEST(test_callsign_defaults_empty_and_roundtrips);
     RUN_TEST(test_callsign_truncates_to_slot_size);
+    RUN_TEST(test_trace_roundtrips);
     RUN_TEST(test_arq_tunables_roundtrip);
     RUN_TEST(test_arq_tunables_clamp_rejects_garbage);
     RUN_TEST(test_removed_arq_keys_are_flagged_not_fatal);

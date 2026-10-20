@@ -101,6 +101,7 @@ static const char *level_name(hermes_log_level_t level)
 {
     switch (level)
     {
+    case HERMES_LOG_LEVEL_TRACE:  return "TRC";
     case HERMES_LOG_LEVEL_DEBUG:  return "DBG";
     case HERMES_LOG_LEVEL_TIMING: return "TMG";
     case HERMES_LOG_LEVEL_INFO:   return "INF";

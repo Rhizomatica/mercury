@@ -49,7 +49,7 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
 
         /* Validate DST CRC against the receiver's callsign (all 16 bits). */
         if (receiver_call && receiver_call[0] != 0 &&
-            !arq_protocol_connect_dst_matches(frame, receiver_call))
+            !arq_protocol_connect_dst_matches(frame, frame_size, receiver_call))
             return false;
 
         out_ev->id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;

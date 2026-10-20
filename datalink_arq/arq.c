@@ -800,6 +800,22 @@ void arq_handle_carousel_frame(const uint8_t *data, size_t frame_size, int mode,
     evq_push(&ev);
 }
 
+/* Dump a connect frame's raw bytes at TRACE level.  A CALL/ACCEPT control
+ * frame is ARQ_CONTROL_FRAME_SIZE bytes (the two CRC bytes have already been
+ * stripped by the caller), so a fixed 3-chars-per-byte buffer is plenty. */
+static void log_connect_frame_hex(const char *kind, const uint8_t *data, size_t len)
+{
+    char buf[3 * ARQ_CONTROL_FRAME_SIZE + 1];
+    size_t off = 0;
+
+    if (len > ARQ_CONTROL_FRAME_SIZE)
+        len = ARQ_CONTROL_FRAME_SIZE;
+    for (size_t i = 0; i < len; i++)
+        off += (size_t)snprintf(buf + off, sizeof(buf) - off,
+                                "%s%02x", i ? " " : "", data[i]);
+    HLOGTR(LOG_COMP, "%s frame bytes: %s", kind, buf);
+}
+
 bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode)
 {
     if (!data || frame_size < 2) return false;
@@ -827,6 +843,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
      * the exchange whose reliability decides whether a link comes up. */
     ARQ_TRACE(ARQ_TR_RX_FRAME, is_accept ? 2 : 1, (uint8_t)(rc < 0 ? 0xff : 0),
               (uint16_t)frame_size);
+    log_connect_frame_hex(is_accept ? "ACCEPT" : "CALL", data, frame_size);
 
     if (rc == -1)
     {
@@ -851,10 +868,10 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     const char *dialed_call = my_call;
     if (my_call[0] != 0)
     {
-        bool match = arq_protocol_connect_dst_matches(data, my_call);
+        bool match = arq_protocol_connect_dst_matches(data, frame_size, my_call);
         for (int i = 0; !match && i < sec_count; i++)
         {
-            if (arq_protocol_connect_dst_matches(data, sec[i]))
+            if (arq_protocol_connect_dst_matches(data, frame_size, sec[i]))
             {
                 match       = true;
                 dialed_call = sec[i];
@@ -862,7 +879,28 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         }
         if (!match)
         {
-            HLOGD(LOG_COMP, "CALL/ACCEPT not for us (DST CRC16 mismatch)");
+            /* Bytes 2-3 are the recipient's CRC in every version (the called
+             * station's on a CALL, the caller's on an ACCEPT), so the intended
+             * recipient is always identifiable (unless the frame is too short
+             * to hold them).  The sender is only ever a full callsign on a
+             * CALL; an ACCEPT carries both ends as CRCs. */
+            char dst[16];
+            if (frame_size >= ARQ_CONNECT_PAYLOAD_IDX + 2)
+                snprintf(dst, sizeof(dst), "crc16:0x%04X",
+                         (unsigned)(data[ARQ_CONNECT_PAYLOAD_IDX] |
+                                    (data[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8)));
+            else
+                snprintf(dst, sizeof(dst), "?");
+            const char *kind = is_accept ? "ACCEPT" : "CALL";
+            if (rc == 0 && is_accept)
+                HLOGD(LOG_COMP, "ACCEPT not for us: from=crc16:0x%04X to=%s",
+                      acc.called_crc, dst);
+            else if (rc == 0)
+                HLOGD(LOG_COMP, "CALL not for us: from=%s to=%s",
+                      caller[0] ? caller : "?", dst);
+            else
+                HLOGD(LOG_COMP, "%s not for us: from=? to=%s (not our protocol version)",
+                      kind, dst);
             return false;
         }
     }

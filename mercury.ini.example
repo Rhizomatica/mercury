@@ -70,6 +70,11 @@ broadcast_tcp_port = 8100
 ; Verbose mode (default: false)
 verbose = false
 
+; Trace mode (default: false). Implies verbose; also logs the raw bytes of
+; every decoded connect frame (TRACE log level), so you can watch who is
+; calling whom on the channel.
+trace = false
+
 ; FreeDV modem verbosity level, 0 to 3 (default: 0)
 freedv_verbosity = 0
 
