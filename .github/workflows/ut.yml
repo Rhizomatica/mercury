@@ -40,7 +40,9 @@ jobs:
             openssh-client \
             libpulse-dev \
             libasound2-dev \
-            libhamlib-dev
+            libhamlib-dev \
+            libsodium-dev \
+            pkg-config
 
       - name: Checkout
         uses: actions/checkout@v4

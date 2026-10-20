@@ -160,7 +160,7 @@ frame on MFSK.
 
 | byte | CALL | ACCEPT |
 |---|---|---|
-| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 1), the sender transmits only MFSK (1) | the same |
+| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 1; = 2 when encryption is offered (on a CALL, `[crypto]`) or taken (on an ACCEPT) -- the extension's five bits are otherwise full), the sender transmits only MFSK (1) | the same, the minor revision: encryption taken |
 | 1 | 0, session id (7) | 1, session id (7) |
 | 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
 | 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |

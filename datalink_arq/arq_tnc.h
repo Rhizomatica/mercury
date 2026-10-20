@@ -11,6 +11,7 @@
 #ifndef ARQ_TNC_H
 #define ARQ_TNC_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 typedef struct
@@ -22,6 +23,9 @@ typedef struct
     void (*send_disconnected)(void);
     void (*send_buffer)(uint32_t bytes);
     void (*send_registered)(const char *callsign);
+    /* After CONNECTED, on stations with [crypto] mode != off: VARA's
+     * "ENCRYPTED LINK" or "UNENCRYPTED LINK". */
+    void (*send_encryption)(bool encrypted);
 } arq_tnc_callbacks_t;
 
 /* Register the TNC notification callbacks (call once, after arq_init()).
@@ -38,5 +42,6 @@ void arq_tnc_send_cqframe(const char *source_call, int bw_hz);
 void arq_tnc_send_disconnected(void);
 void arq_tnc_send_buffer(uint32_t bytes);
 void arq_tnc_send_registered(const char *callsign);
+void arq_tnc_send_encryption(bool encrypted);
 
 #endif /* ARQ_TNC_H */
