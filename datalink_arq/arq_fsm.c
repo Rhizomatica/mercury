@@ -984,10 +984,14 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = ev->session_id;
         /* a repeat after our ACCEPTs ran out: answered as in ACCEPTING */
         sess->call_rx_mode    = same_session ? accept_carrier(sess, ev) : ev->mode;
-        if (g_cbs.crypto_negotiate)
-            g_cbs.crypto_negotiate(ARQ_NEG_CALL_IN, ev->remote_call, ev->session_id, ev->crypto);
         if (!same_session)
         {
+            /* The answer to its encryption offer, once for the session: a
+             * repeat gets the same, like the nonce (specs/connect, Agree:
+             * answered anew, a re-CONNECT now offering decoded the old
+             * answer's ACCEPT still in the air). */
+            if (g_cbs.crypto_negotiate)
+                g_cbs.crypto_negotiate(ARQ_NEG_CALL_IN, ev->remote_call, ev->session_id, ev->crypto);
             /* A new session takes the CALL's bandwidth; a repeat keeps the
              * session's, like its nonce and rung: the caller adopts whatever
              * an ACCEPT of it says (specs/connect/ConnectHandshake.tla). */
