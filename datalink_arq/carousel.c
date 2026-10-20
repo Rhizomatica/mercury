@@ -1543,6 +1543,15 @@ static void take_pieces(car_t *c, const msg_t *m)
 #define LEAD_MAX_MS  (110 + 300)      /* tx delay and head silence, with a margin */
 #define K_FLOOR      2                /* continuations of a floor stream */
 #define K_ABOVE      0                /* ...above the floor none: M re-polls */
+/* A poll's continuation slots, the same at both ends (each reads the poll):
+ * only for a poll at the floor that asks for more than one frame.  A poll for
+ * one frame -- the idle ask, a probe -- has the response slot only.  With
+ * K_FLOOR there, an idle ask that went unanswered held my next ask off the air
+ * until its slots had passed, and the asks of a few lost ones stacked: 9-35 s
+ * a try, so a lossy link's idle session went 240 s unheard and the watchdog
+ * ended it (#407; sim, a fifth of frames lost: 30 of 100 in 30 min with the
+ * quick re-ask alone).  specs/turns: ONE, Mut_onecont. */
+static int poll_k(const car_t *c, int lv, int n) { return n > 1 && lv == 0 && c->io.pattern ? K_FLOOR : 0; }
 /* S hears M only on the mode its payload decoder is bound to (the control
  * decoder aside), and binds it where its own last poll asked M to send.
  * That poll may be lost: M then keys on, on the rung or control mode it last
@@ -2096,7 +2105,7 @@ static void m_key_plan(car_t *c)
     case KD_POLL: {
         int lv = c->plan_lv, n = c->plan_n;
         uint32_t rr = n ? s_round_ms(c, lv, n) : 0;
-        int k = n && lv == 0 && c->io.pattern ? K_FLOOR : 0;
+        int k = poll_k(c, lv, n);
         m_note(c, KD_POLL, rr > ctl ? rr : ctl, my_ctl_d(c), k, rr);
         send_poll(c, lv, n, id);
         break;
@@ -2112,7 +2121,7 @@ static void m_key_plan(car_t *c)
         if (peer_ctl_on_floor(c) && lv > 0) bind_rx(c, 0);
         if (!send_poll_ex(c, lv, n, id, true))            /* nothing of mine after all */
             m_note(c, KD_POLL, s_round_ms(c, lv, n) > ctl ? s_round_ms(c, lv, n) : ctl, my_ctl_d(c),
-                   n && lv == 0 && c->io.pattern ? K_FLOOR : 0, s_round_ms(c, lv, n));
+                   poll_k(c, lv, n), s_round_ms(c, lv, n));
         break;
     }
     case KD_DONE:
@@ -2385,7 +2394,18 @@ static void m_decide_recv(car_t *c, uint64_t now)
             c->loss_est = 0.5 * c->loss_est + 0.5;
             measure_level(c, c->poll_level, 1, 1.0, now);
         }
-        if (!c->m_heard || (c->round_seen == 0 && !c->peer_has_data)) { m_decide_idle(c, now); return; }
+        if (!c->m_heard || (c->round_seen == 0 && !c->peer_has_data)) {
+            m_decide_idle(c, now);
+            /* Unanswered: the poll or its answer was lost.  Both ends' lost-
+             * peer watchdogs count 240 s from the last frame heard, and asked
+             * again only at the backoff (60 s), two or three losses in a row
+             * ended a live session (sim, a fifth of frames lost: 11 of 20 in
+             * 30 min, test_car_idle_lossy_link_stays_connected).  Ask again
+             * soon, in the first gap clear of the slots the poll opened
+             * (m_free_from): at the floor, before its continuation slots. */
+            if (!c->m_heard && c->m_state == MS_IDLE) arm(c, CAR_T_M, now + IDLE_POLL_MIN_MS);
+            return;
+        }
         c->idle = false; c->idle_backoff_ms = 0;
     }
     if (c->m_kind == KD_DONE) { m_decide_idle(c, now); return; }
@@ -2746,8 +2766,8 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
         } else if (m->n) {
             c->tx_level = cap_level(c, m->level); c->tx_n = m->n;
             car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
-            bool fl = m->level == 0 && c->io.pattern;
-            s_anchor(c, ANC_POLL, (uint8_t)m->poll_id, eh, d, fl ? K_FLOOR : 0, s_round_ms(c, m->level, m->n));
+            s_anchor(c, ANC_POLL, (uint8_t)m->poll_id, eh, d, poll_k(c, m->level, m->n),
+                     s_round_ms(c, m->level, m->n));
         } else {
             s_anchor(c, ANC_DONE, (uint8_t)m->poll_id, eh, d, 0, 0);
         }

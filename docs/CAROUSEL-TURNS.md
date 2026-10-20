@@ -45,7 +45,10 @@ data flows.
 an M keydown it decoded:
 - the *response slot* starts Tg after that end;
 - *continuation slots* follow, the i-th starting i·P(r) after the response
-  slot, for i = 1..K, with P(r) = r + A.
+  slot, for i = 1..K, with P(r) = r + A.  Only a poll at the floor that asks
+  for more than one frame has them; a poll for one frame (an idle ask, a
+  probe) has the response slot alone, and both ends read which from the
+  poll (`poll_k`; specs/turns, `ONE`).
 
 Within this rule:
 - S learns an M keydown's end only by decoding one of its frames.  It anchors
@@ -210,7 +213,14 @@ What the rules became in `carousel.c`, beyond §2-§4:
   the round's rung, so S can score a loss); a round on a rung S had not had
   yet is first resent on the last one S answered on, where S, hearing
   nothing, went back to listening.  S falls back to listening at the floor
-  after 90 s of nothing from M.
+  after 90 s of nothing from M.  An idle poll unanswered is asked again 3 s
+  after M decides so, in the first gap clear of the slots it opened (at the
+  floor, an idle ask has none: it asks for one frame), not at the idle
+  backoff (up to 60 s): three of those fill the 240 s lost-peer watchdog,
+  and a lossy link lost three in a row often enough to end idle sessions.
+  With continuation slots after each idle ask, those of a few lost asks
+  stacked, and a try took 9-35 s (sim, a fifth of frames lost: 30 of 100
+  idle sessions ended in 30 min; with none, 5).
 - **Both ways in one exchange** above the floor on a clean link: M's poll
   carries M's round after it, S answers with its poll and its round.  At
   the floor, or lossy, M takes turns of at least two rounds.

@@ -203,6 +203,23 @@ void test_car_idle_peer_loss_disconnects(void)
     sim_destroy(s);
 }
 
+/* A lossy link, nothing to send either way: the session stays up.  An
+ * unanswered idle poll was asked again only at the backoff (60 s), and the
+ * lost-peer watchdog's 240 s holds three of those: two or three lost in a row
+ * ended the session. */
+void test_car_idle_lossy_link_stays_connected(void)
+{
+    int up = 0;
+    for (uint64_t seed = 1; seed <= 20; seed++) {
+        sim_t *s = idle_session(seed, 10.0);
+        sim_set_per(s, 0.2);
+        sim_run_until_idle(s, 1800000);
+        up += state(sim_a(s)) == ARQ_CONN_CONNECTED && state(sim_b(s)) == ARQ_CONN_CONNECTED;
+        sim_destroy(s);
+    }
+    TEST_ASSERT_EQUAL_INT(20, up);
+}
+
 /* #384: DISCONNECT after the peer has gone quiet: one try, not three. */
 void test_car_disconnect_quiet_peer_one_try(void)
 {
@@ -593,6 +610,7 @@ int main(void)
     RUN_TEST(test_car_peer_loss_disconnects);
     RUN_TEST(test_car_accept_fallback_seed_expires);
     RUN_TEST(test_car_idle_peer_loss_disconnects);
+    RUN_TEST(test_car_idle_lossy_link_stays_connected);
     RUN_TEST(test_car_disconnect_quiet_peer_one_try);
     RUN_TEST(test_car_disconnect_after_reply_is_prompt);
     RUN_TEST(test_car_winlink_tail_ends_cleanly);

@@ -120,6 +120,28 @@ undelivered.  That is the turn-handover bench.  `SIM_CS=<acq_ms>` turns the sim'
 it every listen-before-talk check in the FSM is inert), and `SIM_STATS=1` (both
 benches) prints the frames and airtime each mode used.
 
+## Idle sessions and the lost-peer watchdog (`idle_drop.c`, `floor_idle.c`)
+
+An idle session must stay up on a lossy link: the lost-peer watchdog
+(`ARQ_CAR_PEER_LOST_MS`, 240 s) ends a session when a station hears nothing
+from its peer for that long.  Two benches measure it; neither is run by
+`make test`.
+
+- `idle_drop <snr_db> <per> <seeds> <idle_s> [fade_hz]` (`make -C tests
+  idle_drop`) connects two real FSMs on the two-FSM sim, sets the frame loss
+  once both ends are CONNECTED, and counts the runs that either end leaves.
+  This sim has no pattern callback, so it does not model the floor's
+  continuation slots.
+- `floor_idle <from_seed> <to_seed> <channel>` (`make -C tests floor_idle`)
+  runs the carousel alone, with patterns, and counts the runs in which a
+  station went 240 s without hearing its peer (`silent_ms`): the runs the
+  watchdog would end.  For an idle session use
+  `CAR_CS_DECODABLE=1 CAR_SCRIPT='A30,B30+1800000'` and a lossy channel such
+  as `cliff:-9:0.2`.
+
+`test_car_idle_lossy_link_stays_connected` and
+`test_carousel_idle_keeps_hearing_the_peer` are the tests for the same thing.
+
 ## The fade-cliff regression
 
 `test_sim_fade_cliff_completes` connects on a good band, then drops the
