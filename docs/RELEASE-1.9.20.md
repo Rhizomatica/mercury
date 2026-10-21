@@ -101,8 +101,10 @@ relying on.
     many cables; Hamlib/Hamlib#2272).
   - The .apk is signed with Mercury's release key: a test build installed
     before has to be uninstalled first.
-- **iOS** (iPhone and iPad): through AltStore PAL (EU, Brazil, Japan) once
-  Apple has notarized it; not available yet.
+- **iOS** (iPhone and iPad): `Mercury-1.9.20-ios-sideload.ipa`, for
+  SideStore or AltStore Classic, which sign it with your own Apple ID (with
+  a free one it has to be refreshed every 7 days).  Through AltStore PAL
+  (EU, Brazil, Japan) once Apple has notarized it.
 - **The same USB path on Linux** without the chip's kernel driver, or
   without access to `/dev/ttyUSB*` (the Jolla Phone): give Hamlib's device
   as `usb:VVVV:PPPP[:SERIAL][@INTERFACE]` (#421), with a Hamlib that has
