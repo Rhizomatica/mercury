@@ -1326,6 +1326,9 @@ void *radio_playback_thread(void *device_ptr)
     period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_AAUDIO)
         audio = (ffaudio_interface *) &ffaaudio;
+    /* AAudio has no devices to choose (Android routes the audio); its
+     * device_id is a capture preset, which playback does not take. */
+    conf.buf.device_id = NULL;
 #endif
 
 
@@ -1767,6 +1770,11 @@ void *radio_capture_thread(void *device_ptr)
     conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_AAUDIO)
         audio = (ffaudio_interface *) &ffaaudio;
+    /* AAudio's device_id is a capture preset.  The modem wants the signal
+     * as it is, without the gain control and noise suppression the voice
+     * presets apply: "unprocessed", unless another preset was asked for. */
+    if (conf.buf.device_id == NULL || strcmp(conf.buf.device_id, "default") == 0)
+        conf.buf.device_id = "unprocessed";
 #endif
 
 #if defined(_WIN32)
@@ -2325,6 +2333,20 @@ static int get_soundcard_list_int(int audio_system, int mode,
         did_init = true;
     }
 
+    /* A backend that cannot list devices (AAudio: Android routes the audio
+     * itself, to a USB interface when one is plugged in) has one, the
+     * default. */
+    if (audio->dev_alloc == NULL)
+    {
+        if (did_init)
+            audio->uninit();
+        if (max_count < 1)
+            return 0;
+        snprintf(ids[0], AUDIO_DEV_STR_MAX, "default");
+        snprintf(dev_names[0], AUDIO_DEV_STR_MAX, "Default (system route)");
+        return 1;
+    }
+
     ffaudio_dev *d = audio->dev_alloc(mode);
     if (d == NULL)
     {
@@ -2632,6 +2654,11 @@ void list_soundcards(int audio_system)
     for (ffuint i = 0;  i != 2;  i++)
     {
         printf("%s devices:\n", mode[i]);
+        if (audio->dev_alloc == NULL)
+        {
+            printf("device #1: Default (system route) id=default\n");
+            continue;
+        }
         d = audio->dev_alloc(i);
         if (d == NULL)
         {
