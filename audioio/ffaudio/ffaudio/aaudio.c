@@ -377,7 +377,7 @@ static aaudio_data_callback_result_t on_play(AAudioStream *stream, void *userDat
 	ffmem_copy(audioData, d1.ptr, d1.len);
 	ffmem_copy((char*)audioData + d1.len, d2.ptr, d2.len);
 	ffring_read_finish(b->ring, h);
-	if (n < d1.len + d2.len) {
+	if (n > d1.len + d2.len) {
 		ffmem_fill((char*)audioData + d1.len + d2.len, 0, n - (d1.len + d2.len));
 		b->overrun = 1;
 	}

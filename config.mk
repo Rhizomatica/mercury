@@ -151,6 +151,15 @@ ifneq ($(findstring apple,$(TARGET_MACHINE)),)
   TARGET_GOARCH := $(if $(findstring __x86_64__,$(APPLE_MACROS)),amd64,arm64)
 endif
 
+# Android: the NDK's clang names its target (aarch64-unknown-linux-android26).
+# Its sysroot has no pulse, ALSA, hamlib or hidapi, and the build host's
+# pkg-config would answer for the host.
+TARGET_ANDROID :=
+ifneq ($(findstring android,$(TARGET_MACHINE)),)
+  TARGET_ANDROID := 1
+  TARGET_GOARCH := $(if $(findstring x86_64,$(TARGET_MACHINE)),amd64,arm64)
+endif
+
 # --- Platform-specific flags for aarch64 targets ---
 ifneq ($(filter aarch64%,$(TARGET_MACHINE)),)
   # Runtime-dispatched atomics: uses LSE on ARMv8.1+ cores, falls back to
@@ -229,8 +238,8 @@ ifneq ($(origin WS_TLS),command line)
   WS_TLS_CROSS_SAFE := 0
 endif
 endif
-# iOS is a cross-compile too: pkg-config answers with the Mac's OpenSSL.
-ifeq ($(TARGET_IOS),1)
+# iOS and Android are cross-compiles too: pkg-config answers for the build host.
+ifneq ($(TARGET_IOS)$(TARGET_ANDROID),)
 ifneq ($(origin WS_TLS),command line)
   WS_TLS_CROSS_SAFE := 0
 endif

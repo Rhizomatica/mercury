@@ -327,6 +327,63 @@ end:
 	return rh;
 }
 
+/* Lock between 'min' and 'max' bytes of data (all there is, up to 'max'), or
+none if fewer than 'min' are there.  The region may wrap: d1, then d2. */
+static inline ffring_head _ffring_read_range_begin(ffring *b, ffsize min, ffsize max, ffstr *d1, ffstr *d2, ffsize *used)
+{
+	ffring_head rh;
+	ffsize i, n, _used;
+
+	for (;;) {
+		rh.old = FFINT_READONCE(b->rhead);
+		ffcpu_fence_acquire(); // read 'rhead' before 'wtail'
+		_used = FFINT_READONCE(b->wtail) - rh.old;
+		n = (_used < max) ? _used : max;
+		if (n == 0 || n < min) {
+			d1->len = d2->len = 0;
+			n = 0;
+			rh.nu = rh.old; // allow ffring_read_finish()
+			goto end;
+		}
+
+		rh.nu = rh.old + n;
+		if (b->flags & FFRING_1_READER) {
+			b->rhead = rh.nu;
+			ffcpu_fence_acquire(); // read 'wtail' before data
+			break;
+		}
+		if (ff_likely(rh.old == ffint_cmpxchg(&b->rhead, rh.old, rh.nu)))
+			break;
+	}
+
+	i = rh.old & b->mask;
+	d1->ptr = b->data + i;
+	d2->ptr = b->data;
+	d1->len = n;
+	d2->len = 0;
+	if (i + n > b->cap) {
+		d1->len = b->cap - i;
+		d2->len = i + n - b->cap;
+	}
+
+end:
+	if (used != NULL)
+		*used = _used - n;
+	return rh;
+}
+
+/** Lock all the data, if there are at least 'n' bytes. */
+static inline ffring_head ffring_read_min_begin(ffring *b, ffsize n, ffstr *d1, ffstr *d2, ffsize *used)
+{
+	return _ffring_read_range_begin(b, n, (ffsize)-1, d1, d2, used);
+}
+
+/** Lock up to 'n' bytes of data. */
+static inline ffring_head ffring_read_max_begin(ffring *b, ffsize n, ffstr *d1, ffstr *d2, ffsize *used)
+{
+	return _ffring_read_range_begin(b, 0, n, d1, d2, used);
+}
+
 /** Discard the locked data region.
 used_previously: (Optional) N of bytes used before the operation
 rh: return value from ffring_read*_begin() */

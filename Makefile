@@ -95,6 +95,19 @@ HAMLIB_LDFLAGS :=
 HAVE_HERMES_SHM := 0
 endif
 
+# Android (TARGET_ANDROID, from the NDK compiler's target in config.mk).  Audio
+# goes through AAudio.  No hamlib, CM108 or serial PTT (an app reaches USB
+# devices only through Java's UsbManager) and no POSIX shared memory (bionic
+# has no shm_open): PTT is the radio's VOX.  config.mk, which also tells,
+# comes later than the hamlib probe below, so ask the compiler here.
+ifneq ($(findstring android,$(shell $(CC) -dumpmachine 2>/dev/null)),)
+FFAUDIO_LINKFLAGS := -laaudio -llog -lm
+HAVE_HAMLIB := 0
+HAMLIB_CFLAGS :=
+HAMLIB_LDFLAGS :=
+HAVE_HERMES_SHM := 0
+endif
+
 # pkg-config can report a hamlib that is not actually usable: the .pc file is
 # installed but the headers it points at are missing or broken.  The build then
 # gets all the way into radio_io before dying on
@@ -210,6 +223,12 @@ HIDAPI_OBJS :=
 WS_TLS_CFLAGS :=
 WS_TLS_LDFLAGS :=
 endif
+ifeq ($(TARGET_ANDROID),1)
+HAVE_HIDAPI :=
+HIDAPI_CFLAGS :=
+HIDAPI_LDFLAGS :=
+HIDAPI_OBJS :=
+endif
 
 MINGW_CC  = x86_64-w64-mingw32-gcc
 MINGW_AR  = x86_64-w64-mingw32-ar
@@ -218,7 +237,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: ios-app fyne-ui-ios fyne-ui-ios-ipa
+.PHONY: ios-app fyne-ui-ios fyne-ui-ios-ipa fyne-ui-android
 .PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg sign-macos-bin macos-notarize-dmg fyne-ui-windows windows-installer test integration-test integration-test-random FORCE
 
 prefix ?= /usr
@@ -647,6 +666,44 @@ endif
 		ios/Info.plist.in > $(IOS_UI_APP)/Info.plist
 	codesign --force --sign - $(IOS_UI_APP)
 	@echo "  -> $(IOS_UI_APP)  ($(IOS_PLATFORM), $(TARGET_GOARCH))"
+
+# Mercury for Android with its GUI: the Fyne UI with the engine embedded, as
+# an .apk to sideload (Sailfish OS runs it too, through Android App Support).
+# CC is the NDK's clang for the target ABI and API level 26 (AAudio):
+#   NDK=~/Android/android-ndk-r27d
+#   make fyne-ui-android ANDROID_NDK_HOME=$NDK ANDROID_HOME=~/Android/sdk \
+#        CC=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang \
+#        AR=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+# fyne links the Go side at API 21, where there is no libaaudio, so the link
+# is pointed at the API 26 stubs; the app needs Android 8 or newer.  The
+# versionCode is MAJOR*10000 + MINOR*100 + PATCH (1.9.20 -> 10920).  Without
+# ANDROID_RELEASE=1 the .apk is debuggable and signed with fyne's debug key.
+ANDROID_APK ?= Mercury-$(MERCURY_VERSION).apk
+ANDROID_API = 26
+ANDROID_BUILD ?= $(shell echo $(MERCURY_VERSION) | awk -F. '{ print $$1 * 10000 + $$2 * 100 + $$3 }')
+ANDROID_TRIPLE = $(if $(filter amd64,$(TARGET_GOARCH)),x86_64,aarch64)-linux-android
+ANDROID_SYSROOT_LIB = $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$(ANDROID_TRIPLE)/$(ANDROID_API)
+
+fyne-ui-android:
+ifneq ($(TARGET_ANDROID),1)
+	$(error fyne-ui-android needs the NDK's compiler: CC=.../aarch64-linux-android26-clang)
+endif
+ifeq ($(ANDROID_NDK_HOME),)
+	$(error fyne-ui-android needs ANDROID_NDK_HOME (and ANDROID_HOME, the SDK))
+endif
+	$(MAKE) internal_deps
+	$(MAKE) libmercury_core.a
+	sed -e 's/@VERSION@/$(MERCURY_VERSION)/' -e 's/@BUILD@/$(ANDROID_BUILD)/' \
+		-e 's/@DEBUG@/$(if $(filter 1,$(ANDROID_RELEASE)),false,true)/' \
+		android/AndroidManifest.xml.in > $(FYNE_UI_DIR)/AndroidManifest.xml
+	cd $(FYNE_UI_DIR) && CGO_LDFLAGS="-L$(ANDROID_SYSROOT_LIB)" \
+		fyne package -os android/$(TARGET_GOARCH) -tags mercury_embedded \
+		--app-id org.rhizomatica.mercury --name Mercury --icon mercury-ui.png \
+		--app-version $(MERCURY_VERSION) --app-build $(ANDROID_BUILD) \
+		$(if $(filter 1,$(ANDROID_RELEASE)),--release)
+	rm -f $(FYNE_UI_DIR)/AndroidManifest.xml
+	mv $(FYNE_UI_DIR)/Mercury.apk $(ANDROID_APK)
+	@echo "  -> $(ANDROID_APK)  (android/$(TARGET_GOARCH), versionCode $(ANDROID_BUILD))"
 
 # The device build as an .ipa for App Store Connect (and from there Apple's
 # notarization for alternative distribution, e.g. AltStore PAL): fyne-ui-ios
@@ -1089,7 +1146,7 @@ windows-installer: windows fyne-ui-windows windows-installer-stage
 clean:
 	rm -f mercury mercury.exe *.o *.d .git_hash_stamp .mercury_host mercury-*.zip libmercury_core.a libmercury_core_w64.a libmercury_host.a
 	rm -f host/*.o host/*.d
-	rm -rf ios/*.o ios/*.d ios/Mercury.app ios/MercuryUI.app ios/build-assets Mercury-*.ipa
+	rm -rf ios/*.o ios/*.d ios/Mercury.app ios/MercuryUI.app ios/build-assets Mercury-*.ipa Mercury-*.apk
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o

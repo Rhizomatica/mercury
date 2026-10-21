@@ -111,3 +111,7 @@ ios/Mercury.app/
 ios/MercuryUI.app/
 ios/build-assets/
 Mercury-*.ipa
+
+# Android build
+gui_interface/fyne-ui/AndroidManifest.xml
+Mercury-*.apk
