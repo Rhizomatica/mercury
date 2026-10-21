@@ -229,6 +229,12 @@ ifneq ($(origin WS_TLS),command line)
   WS_TLS_CROSS_SAFE := 0
 endif
 endif
+# iOS is a cross-compile too: pkg-config answers with the Mac's OpenSSL.
+ifeq ($(TARGET_IOS),1)
+ifneq ($(origin WS_TLS),command line)
+  WS_TLS_CROSS_SAFE := 0
+endif
+endif
 
 ifeq ($(WS_TLS),1)
 ifeq ($(WS_TLS_CROSS_SAFE),1)

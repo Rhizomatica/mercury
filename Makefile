@@ -617,7 +617,7 @@ ifneq ($(TARGET_IOS),1)
 	$(error ios-app needs an iOS compiler: CC="xcrun -sdk iphonesimulator clang ...")
 endif
 	$(MAKE) internal_deps
-	$(MAKE) ios/mercury_main.o ios/MercuryHost.o
+	$(MAKE) ios/mercury_main.o ios/MercuryHost.o $(MODEM_TOP_OBJS)
 	mkdir -p $(IOS_APP)
 	$(CC) $(COMMON_LDFLAGS) -o $(IOS_APP)/Mercury ios/MercuryHost.o ios/mercury_main.o \
 		$(IOS_CORE_INPUTS) $(LDFLAGS) -framework UIKit $(SAN_LDFLAGS)
