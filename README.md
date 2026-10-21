@@ -190,6 +190,33 @@ make fyne-ui
 ./mercury-ui
 ```
 
+### Build the Android .apk (technology preview)
+
+```sh
+# Android NDK r27d, the Android SDK (platform 34, build-tools 34) and the
+# fyne CLI (see "GUI build prerequisites" below)
+T=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+make fyne-ui-android ANDROID_NDK_HOME=$ANDROID_NDK_HOME ANDROID_HOME=$ANDROID_HOME \
+     CC=$T/aarch64-linux-android26-clang AR=$T/llvm-ar
+# -> Mercury-<version>.apk (arm64, debug-signed; ANDROID_RELEASE=1 with
+#    ANDROID_KEYSTORE signs it with a release key)
+```
+
+The GUI with the modem inside, on AAudio, with a vendored Hamlib
+(`radio_io/hamlib-android`) that drives the radio's USB-serial chip itself
+(Radio, method Hamlib, "Direct USB, no driver (experimental)").
+
+### Build for iOS (technology preview)
+
+On a Mac with Xcode:
+
+```sh
+make fyne-ui-ios-ipa CC="xcrun -sdk iphoneos clang -arch arm64 -miphoneos-version-min=17.0"
+# -> Mercury-<version>-ios-sideload.ipa, signed ad hoc (SideStore, AltStore Classic)
+# With IOS_SIGN_IDENTITY and IOS_PROFILE it is the App Store Connect build
+# (AltStore PAL): see ios/ALTSTORE.md.
+```
+
 ### Cross-compile the Windows installer (from Linux)
 
 ```bash
@@ -294,6 +321,23 @@ drag **Mercury** into **Applications**. The build is universal (runs natively
 on Intel and Apple Silicon) and self-contained (no Homebrew needed). It is
 signed with a Developer ID certificate and notarized by Apple, so it opens
 like any other app.
+
+### Install on Android (technology preview)
+
+Each release has `Mercury-<version>-android-arm64.apk`: sideload it (allow
+installs from your file manager or browser).  It is signed with Mercury's
+release key, so later releases install over it; a build signed otherwise has
+to be uninstalled first.  Choose the radio's USB sound card in Soundcards,
+and for CAT/PTT over its USB cable, Radio > Hamlib > "Direct USB, no driver
+(experimental)" (CP210x chips: Icom IC-7100/IC-7300, Yaesu FT-710, many
+cables).  The app must stay in the foreground.
+
+### Install on iOS (technology preview)
+
+Each release has `Mercury-<version>-ios-sideload.ipa` for SideStore or
+AltStore Classic, which sign it with your own Apple ID (a free one needs a
+refresh every 7 days).  AltStore PAL (EU, Brazil, Japan) will carry the
+Apple-notarized build: see ios/ALTSTORE.md.
 
 ## Configuration File
 
@@ -474,7 +518,7 @@ taken separately:
 - `modem/freedv` — a subset of FreeDV / codec2, **LGPL-2.1** (see LICENSE-freedv)
 - `common/iniparser` — **MIT** (see common/iniparser/LICENSE)
 - `audioio/ffaudio` and `ffbase` — **Unlicense** / public domain (see audioio/ffaudio/UNLICENSE)
-- Windows binary releases link against Hamlib — **LGPL-2.1** (see radio_io/hamlib-w64/COPYING.LIB.txt)
+- Windows, macOS and Android binary releases link against Hamlib — **LGPL-2.1** (see radio_io/hamlib-w64/COPYING.LIB.txt, radio_io/hamlib-macos/COPYING.LIB.txt and radio_io/hamlib-android/COPYING.LIB.txt; the Android build and its source are described in radio_io/hamlib-android/README.md)
 
 The combined work (the Mercury binary) is distributed under the terms of the
 GPL-3.0-or-later. The LGPL/MIT/Unlicense terms apply to those components only

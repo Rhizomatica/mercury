@@ -217,6 +217,13 @@ Set the selected PTT method's serial device or Hamlib ip:port endpoint (e.g.,
 .IR COM3 ,
 or
 .IR localhost:4532 ).
+Where there is no serial device for the radio (no kernel driver for its
+USB-serial chip, or no access to it), a Hamlib built with usb_serial drives
+the chip itself:
+.IR usb:VVVV:PPPP[:SERIAL][@INTERFACE] ,
+e.g.
+.I "usb:10c4:ea60:IC-7100 02010347 A"
+(the user needs read and write access to the chip's /dev/bus/usb node).
 .TP
 .B \-S
 Select the HERMES shared-memory PTT method.

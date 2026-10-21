@@ -7,5 +7,13 @@ var searchData=
   ['have_4',['have',['../structcar__rblock__t.html#af7ddc511eeb7d1c2ca887dc7b5f52add',1,'car_rblock_t']]],
   ['head_5fms_5',['HEAD_MS',['../carousel_8c.html#a507bbfe414afcf87329124e7ed3252e2',1,'carousel.c']]],
   ['header_5fsize_6',['HEADER_SIZE',['../arq_8h.html#a49999be01380f41cc0d0f1f1406fb277',1,'arq.h']]],
-  ['host_5freleased_7',['host_released',['../structarq__session__t.html#a48217838e6b14a0e51fd312591c3ae82',1,'arq_session_t']]]
+  ['heard_5fms_7',['heard_ms',['../structcar__t.html#a94efc565c96d10cd6db561f872434295',1,'car_t']]],
+  ['held_8',['held',['../structcar__t.html#a217cda3319b050cb726c26f31a2c4ed5',1,'car_t']]],
+  ['held_5fcarrier_9',['HELD_CARRIER',['../carousel_8c.html#a61dadd085c1777f559549e05962b2c9ea2c8a33b6f294ac1ba6cb150eb6d36f4d',1,'carousel.c']]],
+  ['held_5fcarrier_5fsaid_10',['HELD_CARRIER_SAID',['../carousel_8c.html#a61dadd085c1777f559549e05962b2c9ea91627450d39ca9b8ae7b33506d48f0dc',1,'carousel.c']]],
+  ['held_5fnone_11',['HELD_NONE',['../carousel_8c.html#a61dadd085c1777f559549e05962b2c9eac2528ab6b7e3b9eaf00d71f5842fb78a',1,'carousel.c']]],
+  ['held_5fsay_5fms_12',['HELD_SAY_MS',['../carousel_8c.html#abeeff7a79e242fd4ff46fdc3da8a1914',1,'carousel.c']]],
+  ['held_5fsince_13',['held_since',['../structcar__t.html#ad1cd98fc8758060afa69cc0627770fef',1,'car_t']]],
+  ['held_5fslots_14',['HELD_SLOTS',['../carousel_8c.html#a61dadd085c1777f559549e05962b2c9eabb0c31556a8ebd5014ffc868332ce6e6',1,'carousel.c']]],
+  ['host_5freleased_15',['host_released',['../structarq__session__t.html#a48217838e6b14a0e51fd312591c3ae82',1,'arq_session_t']]]
 ];
