@@ -49,6 +49,8 @@
 #include "../modem/freedv/freedv_api.h"
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 #include "../modem/modem.h"
+#include "../datalink_broadcast/bcast_status.h"
+#include "../common/mercury_cli.h"
 #include "../radio_io/radio_io.h"  /* RADIO_TYPE_NONE */
 #include "../radio_io/rigctl_parse.h"  /* preload_radio_list */
 
@@ -630,6 +632,29 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
                                                       &out->freq_offset_age_ms);
 
     out->waterfall_enabled = ctx->waterfall_enabled ? true : false;
+
+    /* The broadcast plane: listen mode, what holds the modem, the carousel. */
+    {
+        int mode = modem_get_listen_mode();
+        out->listen_mode = -1;
+        out->listen_mode_name[0] = '\0';
+        for (int i = 0; i < mercury_cli_mode_count(); i++)
+            if (freedv_modes[i] == mode)
+            {
+                out->listen_mode = i;
+                snprintf(out->listen_mode_name, sizeof(out->listen_mode_name), "%s",
+                         freedv_mode_names[i]);
+                break;
+            }
+        bcast_car_status_t car;
+        bcast_carousel_get(&car);
+        snprintf(out->busy, sizeof(out->busy), "%s",
+                 arq_session_active() ? "arq" : car.state == BCAST_CAR_SENDING ? "broadcast" : "");
+        snprintf(out->bcast_state, sizeof(out->bcast_state), "%s", bcast_car_state_name(car.state));
+        out->bcast_cycle = car.cycle;
+        out->bcast_cycles_total = car.cycles_total;
+        out->bcast_frames_sent = car.frames_sent;
+    }
 
     /* Audio health.  A card that cannot be opened, or that negotiates a rate
      * the modem cannot use, kills only its own thread -- mercury stays up so

@@ -26,6 +26,7 @@
 #include "modem_stats.h"   /* MODEM_STATS_NSPEC */
 #include "message_store.h"
 #include "bcast_file.h"
+#include "bcast_carousel.h"
 
 /* Print the startup version banner (same text the daemon prints), so the UI
  * announces its version on the terminal too.  Resolved here, in a unit the
@@ -124,6 +125,7 @@ void mercury_request_shutdown(void)
 /* ------------------------------------------------------------------ */
 void mercury_shutdown(void)
 {
+    bcast_carousel_stop();        /* its thread writes the TX ring the engine frees */
     mercury_engine_shutdown();
 }
 

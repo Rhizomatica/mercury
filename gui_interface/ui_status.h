@@ -72,6 +72,16 @@ typedef struct {
     bool   freq_offset_valid;
     float  freq_offset_hz;
     uint64_t freq_offset_age_ms;
+    /* The broadcast plane: the listen mode (the MODE index and its name), what
+     * holds the modem ("arq", "broadcast" or "" when free) so a client can see
+     * it before it asks, and the host's carousel (broadcast.h). */
+    int    listen_mode;
+    char   listen_mode_name[16];
+    char   busy[12];
+    char   bcast_state[16];
+    int    bcast_cycle;
+    int    bcast_cycles_total;
+    uint64_t bcast_frames_sent;
 } ui_status_t;
 
 /* Render the snapshot as the status JSON remote clients already expect.

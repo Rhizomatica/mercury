@@ -178,6 +178,45 @@ bool        mercury_host_mode_carries_files(int index);
 int         mercury_host_listen_mode(void);            /* -1 unknown */
 int         mercury_host_set_listen_mode(int index);
 
+/* What holds the modem now, so a client can see it before it asks: "arq" (a
+ * session up or starting), "broadcast" (a carousel sending), NULL (free).
+ * Setting the listen mode answers MERCURY_HOST_BUSY in both. */
+const char *mercury_host_busy_reason(void);
+
+/* ---- the broadcast carousel ------------------------------------------------
+ *
+ * A message sent by Mercury itself as a RaptorQ carousel, wire-compatible with
+ * hermes-broadcast: data, filed under name (a plain name), at the listen mode
+ * (which must carry files: mercury_host_mode_carries_files), for cycles
+ * cycles, 0 until stopped.  A cycle is one frame for every RaptorQ block (one
+ * block for anything up to a few tens of KB), and a frame carries
+ * frame_bytes / 41 symbols of 41 bytes: a receiver needs about
+ * bundle_bytes / 41 distinct symbols, so cycles = 2 x that / symbols per
+ * frame is a sensible floor on a clean channel, more on a fading one
+ * (docs/BROADCAST-FILE.md, "How many cycles to send").  Returns at once: MERCURY_HOST_BUSY while one sends or an
+ * ARQ session is up, MERCURY_HOST_BAD (err says why) for the mode, the name or
+ * the size.  The bytes are copied.  One at a time.
+ *
+ * ARQ comes first: a session starting, either way, stops the carousel --
+ * state "stopped_by_arq", and it is not resumed; send it again after, if
+ * wanted (receivers keep the symbols they have).  While it sends, the listen
+ * mode cannot change.  mercury_host_bcast_stop stops it at the next frame.
+ * mercury_shutdown stops it too. */
+typedef struct {
+    const char *state;        /* "idle" "sending" "stopped_by_arq" "stopped" "done" "error" */
+    int      mode;            /* listen-mode index it sends at */
+    int      cycle;           /* the cycle now on, 1-based */
+    int      cycles_total;    /* 0: until stopped */
+    uint64_t frames_sent;
+    size_t   bytes;
+    char     name[64];
+} mercury_host_bcast_stats_t;
+
+int  mercury_host_bcast_send(const char *name, const uint8_t *data, size_t len, int cycles,
+                             char *err, size_t errlen);
+void mercury_host_bcast_stop(void);
+void mercury_host_bcast_stats(mercury_host_bcast_stats_t *out);
+
 #ifdef __cplusplus
 }
 #endif

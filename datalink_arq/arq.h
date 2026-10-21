@@ -209,6 +209,9 @@ void arq_post_pattern_ack(bool is_break);
  * @return true when connected; otherwise false.
  */
 bool arq_is_link_connected(void);
+/** A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED,
+ *  DISCONNECTING): what stops a broadcast carousel. */
+bool arq_session_active(void);
 
 /**
  * @brief Drop received bytes an ended session left in the RX buffer.

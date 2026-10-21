@@ -31,6 +31,16 @@ are appended after the audio-health fields:
   plus whatever a sample-clock error moves 1500 Hz by: a sound card 1.5 %
   slow shows as +23 Hz.
 - `freq_offset_age_ms`: how long ago that frame was decoded, or `null`.
+- `listen_mode`, `listen_mode_name`: the broadcast plane's listen mode, the
+  payload mode the station sits on while no ARQ session is up (the `MODE`
+  index and its name; `-1` and empty while unknown).
+- `busy`: what holds the modem now, so a client can see it before it asks:
+  `"arq"` (a session up or starting), `"broadcast"` (the host's carousel
+  sending), `""` when free.  `MODE` answers `BUSY` in both.
+- `broadcast`: the host's broadcast carousel (`mercury_host_bcast_send`):
+  `state` (`idle`, `sending`, `stopped_by_arq`, `stopped`, `done`, `error`),
+  `cycle` (the pass now on), `cycles_total` (`0`: until stopped) and
+  `frames_sent`.  An ARQ session starting stops it (`stopped_by_arq`).
 
 Frequency telemetry is read-only. It never opens another CAT session, changes
 the VFO, or waits for the shared radio mutex. A busy radio causes the optional

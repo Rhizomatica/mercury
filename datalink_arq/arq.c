@@ -1147,6 +1147,15 @@ void arq_post_pattern_ack(bool is_break)
     evq_push(&ev);
 }
 
+bool arq_session_active(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    int st = g_sess.conn_state;
+    pthread_mutex_unlock(&g_sess_lock);
+    return st == ARQ_CONN_CALLING || st == ARQ_CONN_ACCEPTING ||
+           st == ARQ_CONN_CONNECTED || st == ARQ_CONN_DISCONNECTING;
+}
+
 bool arq_is_link_connected(void)
 {
     pthread_mutex_lock(&g_sess_lock);

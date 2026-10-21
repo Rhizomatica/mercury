@@ -12,6 +12,8 @@
 #include "unity.h"
 #include "mercury_host.h"
 #include "modem.h"
+#include "bcast_carousel.h"
+#include "bcast_status.h"
 
 /* ---- stubs ---- */
 static bool   s_connected;
@@ -45,10 +47,25 @@ int  modem_set_listen_mode(int m) { if (s_set_rc == 0) s_listen = m; return s_se
 bool modem_listen_mode_switchable(int m) { return m != 0x12; }      /* "DATAC16" is not */
 int  bcast_file_mode_usable(int index) { return index == 0; }      /* only "DATAC1" */
 
+static bool s_session;
+static int  s_car_rc;
+static bool s_car_stopped;
+static bcast_car_status_t s_car;
+bool arq_session_active(void) { return s_session; }
+int  bcast_carousel_send(const char *n, const uint8_t *d, size_t l, int c, char *e, size_t el)
+{
+    (void)n; (void)d; (void)l; (void)c; (void)e; (void)el; return s_car_rc;
+}
+void bcast_carousel_stop(void) { s_car_stopped = true; }
+void bcast_carousel_get(bcast_car_status_t *out) { *out = s_car; }
+bool bcast_carousel_sending(void) { return s_car.state == BCAST_CAR_SENDING; }
+const char *bcast_car_state_name(bcast_car_state_t st) { return st == BCAST_CAR_SENDING ? "sending" : "idle"; }
+
 void setUp(void)
 {
     s_connected = true; s_arq_rc = 0; s_arq_len = 0; s_bcast_rc = 0; s_bcast_len = 0;
     s_listen = 0x10; s_set_rc = 0;
+    s_session = false; s_car_rc = 0; s_car_stopped = false; memset(&s_car, 0, sizeof(s_car));
 }
 void tearDown(void) { }
 
@@ -116,6 +133,33 @@ void test_listen_mode(void)
     TEST_ASSERT_EQUAL_INT(1, mercury_host_listen_mode());
 }
 
+/* The carousel: the result codes, its stats, and what holds the modem. */
+void test_bcast_carousel_calls(void)
+{
+    char err[64];
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_OK, mercury_host_bcast_send("m.txt", (const uint8_t *)"x", 1, 2, err, sizeof(err)));
+    s_car_rc = BCAST_CAROUSEL_BUSY;
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_BUSY, mercury_host_bcast_send("m.txt", (const uint8_t *)"x", 1, 2, err, sizeof(err)));
+    s_car_rc = BCAST_CAROUSEL_BAD;
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_BAD, mercury_host_bcast_send("m.txt", (const uint8_t *)"x", 1, 2, err, sizeof(err)));
+    mercury_host_bcast_stop();
+    TEST_ASSERT_TRUE(s_car_stopped);
+
+    TEST_ASSERT_NULL(mercury_host_busy_reason());
+    s_car.state = BCAST_CAR_SENDING; s_car.cycle = 2; s_car.cycles_total = 5; s_car.frames_sent = 77;
+    snprintf(s_car.name, sizeof(s_car.name), "m.txt");
+    TEST_ASSERT_EQUAL_STRING("broadcast", mercury_host_busy_reason());
+    mercury_host_bcast_stats_t st;
+    mercury_host_bcast_stats(&st);
+    TEST_ASSERT_EQUAL_STRING("sending", st.state);
+    TEST_ASSERT_EQUAL_INT(2, st.cycle);
+    TEST_ASSERT_EQUAL_INT(5, st.cycles_total);
+    TEST_ASSERT_EQUAL_UINT64(77, st.frames_sent);
+    TEST_ASSERT_EQUAL_STRING("m.txt", st.name);
+    s_session = true;                                     /* ARQ comes first */
+    TEST_ASSERT_EQUAL_STRING("arq", mercury_host_busy_reason());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -124,5 +168,6 @@ int main(void)
     RUN_TEST(test_chat_send_refuses_bad_input);
     RUN_TEST(test_chat_since_passes_the_cursor);
     RUN_TEST(test_listen_mode);
+    RUN_TEST(test_bcast_carousel_calls);
     return UNITY_END();
 }

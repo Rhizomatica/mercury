@@ -19,6 +19,8 @@
 #include "mercury_cli.h"
 #include "tcp_interfaces.h"
 #include "bcast_file.h"
+#include "bcast_carousel.h"
+#include "broadcast.h"
 
 /* ---- chat ---- */
 
@@ -107,4 +109,43 @@ int mercury_host_set_listen_mode(int index)
         return MERCURY_HOST_BAD;
     int rc = modem_set_listen_mode(freedv_modes[index]);
     return rc == 0 ? MERCURY_HOST_OK : rc == MODEM_LISTEN_MODE_BUSY ? MERCURY_HOST_BUSY : MERCURY_HOST_BAD;
+}
+
+/* ---- the broadcast carousel ---- */
+
+int mercury_host_bcast_send(const char *name, const uint8_t *data, size_t len, int cycles,
+                            char *err, size_t errlen)
+{
+    int rc = bcast_carousel_send(name, data, len, cycles, err, errlen);
+    return rc == 0 ? MERCURY_HOST_OK : rc == BCAST_CAROUSEL_BUSY ? MERCURY_HOST_BUSY : MERCURY_HOST_BAD;
+}
+
+void mercury_host_bcast_stop(void)
+{
+    bcast_carousel_stop();
+}
+
+void mercury_host_bcast_stats(mercury_host_bcast_stats_t *out)
+{
+    bcast_car_status_t st;
+    if (!out)
+        return;
+    bcast_carousel_get(&st);
+    memset(out, 0, sizeof(*out));
+    out->state = bcast_car_state_name(st.state);
+    out->mode = st.mode;
+    out->cycle = st.cycle;
+    out->cycles_total = st.cycles_total;
+    out->frames_sent = st.frames_sent;
+    out->bytes = st.bytes;
+    memcpy(out->name, st.name, sizeof(out->name));
+}
+
+const char *mercury_host_busy_reason(void)
+{
+    if (arq_session_active())
+        return "arq";
+    if (bcast_carousel_sending())
+        return "broadcast";
+    return NULL;
 }

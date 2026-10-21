@@ -39,6 +39,7 @@
 #include "../datalink_arq/arq_modem.h"
 #include "../datalink_arq/arq_protocol.h"
 #include "tcp_interfaces.h"
+#include "../datalink_broadcast/bcast_status.h"
 #include "channel_busy.h"
 #include "tx_pacing.h"
 #include "freedv_api.h"
@@ -828,6 +829,10 @@ int modem_set_listen_mode(int mode)
     pthread_mutex_unlock(&modem_pool_lock);
     if (!codec.be || frame_size == 0)
         return MODEM_LISTEN_MODE_BAD;   /* pool not initialised yet */
+
+    /* A host carousel sends at the listen mode's frame size: not under it. */
+    if (bcast_carousel_sending())
+        return MODEM_LISTEN_MODE_BUSY;
 
     /* Ask ARQ first: it is the one party that can refuse, and it owns the
      * idle-state test.  Doing this before touching the frame size keeps the

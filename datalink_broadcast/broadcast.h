@@ -35,4 +35,6 @@
 void broadcast_run(generic_modem_t *g_modem);
 
 
+#include "bcast_status.h"
+
 #endif // BROADCAST_H_

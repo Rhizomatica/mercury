@@ -353,8 +353,8 @@ RAPTORQ_CFLAGS = -Idatalink_broadcast/raptorq/include -Idatalink_broadcast/rapto
 # the two builds simply independent.
 RAPTORQ_OBJS     = $(patsubst %.c,%.o,$(RAPTORQ_SRCS))
 RAPTORQ_OBJS_W64 = $(patsubst %.c,%.w64.o,$(RAPTORQ_SRCS))
-BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o $(RAPTORQ_OBJS)
-BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o $(RAPTORQ_OBJS_W64)
+BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o datalink_broadcast/bcast_carousel.o $(RAPTORQ_OBJS)
+BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o datalink_broadcast/bcast_carousel.w64.o $(RAPTORQ_OBJS_W64)
 
 $(RAPTORQ_OBJS): %.o: %.c
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
@@ -367,6 +367,12 @@ datalink_broadcast/bcast_file.o: datalink_broadcast/bcast_file.c
 
 datalink_broadcast/bcast_file.w64.o: datalink_broadcast/bcast_file.c
 	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_carousel.o: datalink_broadcast/bcast_carousel.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_carousel.w64.o: datalink_broadcast/bcast_carousel.c
+	$(MINGW_CC) $(CFLAGS) -c $< -o $@
 
 # Modem objects that no sub-make builds.  The top-level implicit rule compiles
 # them, but only as prerequisites of something that names them: the CLI binary
