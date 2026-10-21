@@ -77,6 +77,9 @@ uint8_t *bcast_bundle_build(const char *path, size_t *out_len,
  * Parse a bundle.  @p payload points INTO @p buf; nothing is copied.
  * @return 0 on success, -1 if the bundle is malformed.
  */
+/** A bundle from memory: the name (plain, no path) and the file's bytes. */
+uint8_t *bcast_bundle_build_mem(const char *name, const uint8_t *data, size_t len,
+                                size_t *out_len, char *err, size_t errlen);
 int bcast_bundle_parse(const uint8_t *buf, size_t len,
                        char *name, size_t namelen,
                        const uint8_t **payload, size_t *payload_len);
@@ -98,6 +101,12 @@ typedef struct bcast_file_tx bcast_file_tx_t;
  */
 bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
                                     int session_id, char *err, size_t errlen);
+
+/** As bcast_file_tx_open, from memory: the file's bytes and the name the
+ *  receiver files it under (a plain name, no path).  The bytes are copied. */
+bcast_file_tx_t *bcast_file_tx_open_mem(const char *name, const uint8_t *data, size_t len,
+                                        int mode, int cycles, int session_id,
+                                        char *err, size_t errlen);
 
 /**
  * Produce the next frame to transmit.
