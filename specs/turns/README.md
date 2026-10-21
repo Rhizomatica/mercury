@@ -18,6 +18,26 @@ that the two stations never transmit together, under any loss.
 Give each TLC run its own `-metadir`: runs sharing a `states/` directory
 delete each other's state.
 
+## One-frame polls (`ONE`)
+
+With `ONE = TRUE`, M may key a poll for one frame: the idle ask, or a probe.
+Such a poll has the response slot only, no continuation slots, at both ends,
+and each end reads that from the poll itself (`poll_k` in
+`datalink_arq/carousel.c`, from the poll's frame count).  With `ONE = FALSE`
+the behaviour is exactly the base model's.
+
+Why: with `K` continuation slots after every idle ask at the floor, an ask
+that went unanswered held M's next ask off the air until its slots had
+passed, and the slots of a few lost asks stacked.  In the sim a try took
+9-35 s, so on a lossy link an idle session went 240 s without hearing its
+peer, and the watchdog ended it (#407).
+
+- `CarouselTurns_one.cfg`: one-frame polls, otherwise the base timing.  No
+  error, 70.6 M distinct states (1 h 25 min, 3 workers).
+- `Mut_onecont.cfg`: S continues after a one-frame poll, for which M keeps
+  no continuation slots.  Violates `NoOverlap`: S keys in slot 1 while M is
+  on the air.
+
 ## The slot-closing rules (`CLOSE`, `DISC`)
 
 With `CLOSE = TRUE`, M may take a slot as over before its time is up, as

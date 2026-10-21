@@ -37,7 +37,9 @@
 (*     that keydown, no later than DP past its response slot.             *)
 (* With DISC, M also keys the FSM's DISCONNECT, which S answers TgD after *)
 (* it decodes it (one slot), and logs it (car_log_ctl).  With FALSEPAT,   *)
-(* M's pattern detector may false-alarm.                                  *)
+(* M's pattern detector may false-alarm.  With ONE, an M keydown may be a *)
+(* poll for one frame (an idle ask): it has the response slot only, no    *)
+(* continuations, at both ends -- each reads it from the keydown itself. *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -55,6 +57,7 @@ CONSTANTS Tg,    \* turnaround: S's slot opens this long after the end it anchor
           DISC,  \* M also keys DISCONNECTs
           TgD,   \* ...which S answers this long after it decodes one
           FALSEPAT, \* M's pattern detector may false-alarm
+          ONE,   \* M keys one-frame polls, which have no continuation slots
           Mutant \* "none", or one rule broken (to show the model can fail):
                  \*   "nogrid": M minds only the response slot, not continuations
                  \*   "late":   S answers a decode up to D+1 late
@@ -66,10 +69,13 @@ CONSTANTS Tg,    \* turnaround: S's slot opens this long after the end it anchor
                  \*   "anytime":   M takes a pattern whenever it hears one
                  \*   "closenewer": M closes newer keydowns' slots too, not only older
                  \*   "nologdisc": M does not log its DISCONNECT
+                 \*   with ONE:
+                 \*   "onecont":  S continues after a one-frame poll (M keeps
+                 \*               no continuation slots for it)
 
 ASSUME Tg \in Nat /\ D \in Nat /\ G \in Nat /\ K \in Nat /\ A \in Nat
 ASSUME ML \subseteq Nat \ {0} /\ RL \subseteq Nat \ {0}
-ASSUME CLOSE \in BOOLEAN /\ DISC \in BOOLEAN /\ FALSEPAT \in BOOLEAN
+ASSUME CLOSE \in BOOLEAN /\ DISC \in BOOLEAN /\ FALSEPAT \in BOOLEAN /\ ONE \in BOOLEAN
 ASSUME DP \in Nat /\ PMIN \in Nat /\ TgD \in Nat
 
 VARIABLES
@@ -78,14 +84,16 @@ VARIABLES
     mEnd,      \* ...until then
     mR,        \* ...allowing S keydowns this long
     mDc,       \* ...a DISCONNECT
-    mLog,      \* M's recent keydowns: [e: end, r: allowed length, dc: a DISCONNECT]
-    inflight,  \* M keydowns S may still decode: [e, r, dc]
+    mOne,      \* ...a one-frame poll
+    mLog,      \* M's recent keydowns: [e: end, r: allowed length, dc: a DISCONNECT,
+               \*   one: a one-frame poll]
+    inflight,  \* M keydowns S may still decode: [e, r, dc, one]
     sOn,       \* S on the air
     sEnd,      \* ...until then
     sSlot,     \* ...in this slot: [e: the M keydown it answers, i, dc]
     sKind,     \* ...as "round", "status" (nothing to send) or "pattern"
     anchor,    \* S's slots: [e: which M keydown, eh: its end as S learned it,
-               \*   r, i: next slot, dc, sr: S sent a round on it] or NoAnchor
+               \*   r, i: next slot, dc, one, sr: S sent a round on it] or NoAnchor
     pPend,     \* the end of S's pattern M may still detect, or -1
     mDone      \* slots M heard S's keydown in, end to end: S keys once per
                \* slot, so they are over (S's frames name keydown and slot)
@@ -93,12 +101,15 @@ VARIABLES
 SetMax(S) == CHOOSE x \in S : \A y \in S : y <= x
 SetMin(S) == CHOOSE x \in S : \A y \in S : x <= y
 
-vars == <<t, mOn, mEnd, mR, mDc, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor, pPend, mDone>>
-NoAnchor == [e |-> 0, eh |-> 0, r |-> 0, i |-> -1, dc |-> FALSE, sr |-> FALSE]
+vars == <<t, mOn, mEnd, mR, mDc, mOne, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor, pPend, mDone>>
+NoAnchor == [e |-> 0, eh |-> 0, r |-> 0, i |-> -1, dc |-> FALSE, one |-> FALSE, sr |-> FALSE]
 
 P(r) == r + A                                   \* slot period
 Gt(dc) == IF dc THEN TgD ELSE Tg                \* turnaround
-Kof(dc) == IF dc THEN 0 ELSE K                  \* a DISCONNECT has one slot
+\* A DISCONNECT has one slot, and so has a one-frame poll: M's count...
+Kof(k) == IF k.dc \/ k.one THEN 0 ELSE K
+\* ...and S's
+KofS(a) == IF a.dc \/ (a.one /\ Mutant # "onecont") THEN 0 ELSE K
 \* Slot i of an M keydown that ended at e, allowing r: S starts in
 \* [e + Tg + i*P(r), e + Tg + D + i*P(r)] and is done r later at most.
 SLo(k, i) == k.e + Gt(k.dc) + i * P(k.r)
@@ -109,13 +120,13 @@ Meet(a, b, c, d) == a < d /\ c < b
 \* M's only rule: [s - G, s + L + G) misses every slot of every keydown in
 \* its log that it has not heard S finish.
 FreeFor(s, L) ==
-    \A k \in mLog : \A i \in 0 .. Kof(k.dc) :
+    \A k \in mLog : \A i \in 0 .. Kof(k) :
         \/ (Mutant = "nogrid" /\ i > 0)
         \/ [e |-> k.e, i |-> i] \in mDone
         \/ ~Meet(s - G, s + L + G, SLo(k, i), SHi(k, i))
 
 \* A keydown's slots are all over: M forgets it.
-Expired(k) == t >= SHi(k, Kof(k.dc)) + G
+Expired(k) == t >= SHi(k, Kof(k)) + G
 
 \* M closes: every slot of every keydown older than the one S answered
 \* (m_close_from), and every slot of a keydown S said it has nothing for.
@@ -129,44 +140,44 @@ InTime == mLog # {} /\ (Mutant = "anytime" \/
 TakePattern == mDone' = mDone \cup {[e |-> Latest.e, i |-> 0]} \cup Older(Latest.e)
 
 Init ==
-    /\ t = 0 /\ mOn = FALSE /\ mEnd = 0 /\ mR = 0 /\ mDc = FALSE /\ mLog = {}
+    /\ t = 0 /\ mOn = FALSE /\ mEnd = 0 /\ mR = 0 /\ mDc = FALSE /\ mOne = FALSE /\ mLog = {}
     /\ inflight = {} /\ sOn = FALSE /\ sEnd = 0 /\ anchor = NoAnchor
     /\ sSlot = [e |-> 0, i |-> -1, dc |-> FALSE] /\ sKind = "round" /\ pPend = -1 /\ mDone = {}
 
 \* ---- M ----
 \* (a DISCONNECT as any other: car_disconnect_must_wait keys it free)
-MStart(L, R, dc) ==
+MStart(L, R, dc, one) ==
     /\ ~mOn
     /\ FreeFor(t, L)
     /\ t + L <= H
-    /\ mOn' = TRUE /\ mEnd' = t + L /\ mR' = R /\ mDc' = dc
+    /\ mOn' = TRUE /\ mEnd' = t + L /\ mR' = R /\ mDc' = dc /\ mOne' = one
     /\ UNCHANGED <<t, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor, pPend, mDone>>
 
 MStop ==
     /\ mOn /\ t = mEnd
     /\ mOn' = FALSE
     /\ mLog' = {k \in mLog : ~Expired(k)} \cup
-              (IF mDc /\ Mutant = "nologdisc" THEN {} ELSE {[e |-> t, r |-> mR, dc |-> mDc]})
+              (IF mDc /\ Mutant = "nologdisc" THEN {} ELSE {[e |-> t, r |-> mR, dc |-> mDc, one |-> mOne]})
     /\ mDone' = {d \in mDone : \E k \in mLog' : k.e = d.e}
-    /\ inflight' = inflight \cup {[e |-> t, r |-> mR, dc |-> mDc]}
-    /\ UNCHANGED <<t, mEnd, mR, mDc, sOn, sEnd, sSlot, sKind, anchor, pPend>>
+    /\ inflight' = inflight \cup {[e |-> t, r |-> mR, dc |-> mDc, one |-> mOne]}
+    /\ UNCHANGED <<t, mEnd, mR, mDc, mOne, sOn, sEnd, sSlot, sKind, anchor, pPend>>
 
 \* ---- S ----
 \* Decoding an M keydown, no later than D after it ended (a frame decoded later
 \* is still data, but not answered).
 SDecode(k) ==
     /\ k \in inflight /\ t >= k.e /\ t <= k.e + D + (IF Mutant = "late" THEN 1 ELSE 0)
-    /\ anchor' = [e |-> k.e, eh |-> t, r |-> k.r, i |-> 0, dc |-> k.dc, sr |-> FALSE]
+    /\ anchor' = [e |-> k.e, eh |-> t, r |-> k.r, i |-> 0, dc |-> k.dc, one |-> k.one, sr |-> FALSE]
     /\ inflight' = inflight \ {k}
-    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mLog, sOn, sEnd, sSlot, sKind, pPend, mDone>>
+    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mOne, mLog, sOn, sEnd, sSlot, sKind, pPend, mDone>>
 
 SLose(k) ==
     /\ k \in inflight
     /\ inflight' = inflight \ {k}
-    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mLog, sOn, sEnd, sSlot, sKind, anchor, pPend, mDone>>
+    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mOne, mLog, sOn, sEnd, sSlot, sKind, anchor, pPend, mDone>>
 
 SlotNow == anchor.i >= 0 /\ t = anchor.eh + Gt(anchor.dc) + anchor.i * P(anchor.r)
-NextOf(a) == IF a.i + 1 > Kof(a.dc) THEN NoAnchor ELSE [a EXCEPT !.i = @ + 1]
+NextOf(a) == IF a.i + 1 > KofS(a) THEN NoAnchor ELSE [a EXCEPT !.i = @ + 1]
 NextSlot == NextOf(anchor)
 \* What S may key in this slot: anything in a response slot; in a later one,
 \* with CLOSE, only more of a round it sent on this anchor (s_slot: sent_round).
@@ -184,7 +195,7 @@ SStart(r, kind) ==
     /\ sOn' = TRUE /\ sEnd' = t + r /\ sKind' = kind
     /\ sSlot' = [e |-> anchor.e, i |-> anchor.i, dc |-> anchor.dc]
     /\ anchor' = NextOf([anchor EXCEPT !.sr = @ \/ (CLOSE /\ kind = "round")])
-    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mLog, inflight, pPend, mDone>>
+    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mOne, mLog, inflight, pPend, mDone>>
 
 \* "blind": S keys after Tg + D + A of silence since its last keydown, as
 \* today's callee repeats a handover or nudges a silent peer.
@@ -193,19 +204,19 @@ SBlind ==
     /\ t = sEnd + Tg + D + A /\ t + 1 <= H
     /\ sOn' = TRUE /\ sEnd' = t + 1
     /\ sSlot' = [e |-> 0, i |-> -1, dc |-> FALSE]
-    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mLog, inflight, sKind, anchor, pPend, mDone>>
+    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mOne, mLog, inflight, sKind, anchor, pPend, mDone>>
 
 \* "reuse": S keys again in the slot it just finished.
 SReuse ==
     /\ Mutant = "reuse" /\ ~sOn /\ sSlot.i >= 0 /\ t = sEnd /\ t + 1 <= H
     /\ ~(mOn /\ t = mEnd)
     /\ sOn' = TRUE /\ sEnd' = t + 1
-    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mLog, inflight, sSlot, sKind, anchor, pPend, mDone>>
+    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mOne, mLog, inflight, sSlot, sKind, anchor, pPend, mDone>>
 
 SSkip ==
     /\ SlotNow
     /\ anchor' = NextSlot
-    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mLog, inflight, sOn, sEnd, sSlot, sKind, pPend, mDone>>
+    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mOne, mLog, inflight, sOn, sEnd, sSlot, sKind, pPend, mDone>>
 
 \* S's keydown ends; M may hear it (at the earliest: as it ends) and so
 \* learn that slot is over.  The answer to a DISCONNECT is the FSM's: the
@@ -220,21 +231,21 @@ SStop ==
        \/ /\ sSlot.i >= 0 /\ ~sSlot.dc /\ sKind = "status"
           /\ mDone' = mDone \cup AllOf(sSlot.e) \cup Older(sSlot.e) /\ UNCHANGED pPend
        \/ sKind = "pattern" /\ pPend' = t /\ UNCHANGED mDone
-    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mLog, inflight, sEnd, sSlot, sKind, anchor>>
+    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mOne, mLog, inflight, sEnd, sSlot, sKind, anchor>>
 
 \* M's detector fires on S's pattern (car_on_pattern): ignored on the air or
 \* out of time.
 PatHear ==
     /\ pPend >= 0 /\ t >= pPend /\ pPend' = -1
     /\ IF ~mOn /\ InTime THEN TakePattern ELSE UNCHANGED mDone
-    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor>>
+    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mOne, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor>>
 PatMiss ==
     /\ pPend >= 0 /\ pPend' = -1
-    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor, mDone>>
+    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mOne, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor, mDone>>
 \* ...or on nothing at all
 PatFalse ==
     /\ FALSEPAT /\ ~mOn /\ InTime /\ TakePattern
-    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor, pPend>>
+    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mOne, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor, pPend>>
 
 \* ---- time ----
 \* Time moves on once everything due now has happened.
@@ -245,14 +256,15 @@ Tick ==
     /\ ~(Mutant = "blind" /\ ~sOn /\ anchor.i < 0 /\ t = sEnd + Tg + D + A)
     /\ ~(pPend >= 0 /\ t >= pPend + DP)
     /\ t' = t + 1
-    /\ UNCHANGED <<mOn, mEnd, mR, mDc, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor, pPend, mDone>>
+    /\ UNCHANGED <<mOn, mEnd, mR, mDc, mOne, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor, pPend, mDone>>
 
 \* The horizon: TLC stops here (a deadlock before it is a real one).
 Done == t = H /\ UNCHANGED vars
 
 Next ==
     \/ Done
-    \/ \E L \in ML, R \in RL, dc \in (IF DISC THEN BOOLEAN ELSE {FALSE}) : MStart(L, R, dc)
+    \/ \E L \in ML, R \in RL, dc \in (IF DISC THEN BOOLEAN ELSE {FALSE}),
+          one \in (IF ONE THEN BOOLEAN ELSE {FALSE}) : MStart(L, R, dc, one)
     \/ MStop \/ SStop \/ SSkip \/ Tick
     \/ \E r \in RL \cup {SetMax(RL) + 1}, kind \in {"round", "status", "pattern"} : SStart(r, kind)
     \/ SBlind \/ SReuse
