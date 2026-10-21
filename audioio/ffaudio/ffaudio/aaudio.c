@@ -6,6 +6,8 @@
 #include <ffaudio/util.h>
 #include <ffbase/ring.h>
 #include <aaudio/AAudio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <dlfcn.h>
 
 static int ffaaudio_init(ffaudio_init_conf *conf)
@@ -146,9 +148,21 @@ static int ffaaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	if (b->capture)
 		AAudioStreamBuilder_setDirection(asb, AAUDIO_DIRECTION_INPUT);
 
-	if (conf->device_id) {
-		typedef AAUDIO_API void (*AAudioStreamBuilder_setInputPreset_t)(AAudioStreamBuilder* builder, aaudio_input_preset_t inputPreset);
-		static AAudioStreamBuilder_setInputPreset_t _AAudioStreamBuilder_setInputPreset;
+	/* device_id: an input preset ("unprocessed"), or "dev:<id>[,preset]",
+	 * an AudioDeviceInfo id (the radio's USB codec) and, for capture, a
+	 * preset (default "unprocessed"). */
+	const char *preset = conf->device_id;
+	if (conf->device_id != NULL && !strncmp(conf->device_id, "dev:", 4)) {
+		int id = atoi(conf->device_id + 4);
+		const char *comma = strchr(conf->device_id, ',');
+		if (id > 0)
+			AAudioStreamBuilder_setDeviceId(asb, id);
+		preset = (comma != NULL) ? comma + 1 : (b->capture ? "unprocessed" : NULL);
+	}
+	typedef AAUDIO_API void (*AAudioStreamBuilder_setInputPreset_t)(AAudioStreamBuilder* builder, aaudio_input_preset_t inputPreset);
+	static AAudioStreamBuilder_setInputPreset_t _AAudioStreamBuilder_setInputPreset;
+	unsigned ip = 0;
+	if (b->capture && preset != NULL) {
 		if (!_AAudioStreamBuilder_setInputPreset) {
 			void *dl = dlopen("libaaudio.so", 0);
 			if (dl) {
@@ -157,8 +171,7 @@ static int ffaaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 			}
 		}
 		if (_AAudioStreamBuilder_setInputPreset) {
-			unsigned ip;
-			if (!(ip = _ffaa_input_preset(conf->device_id))) {
+			if (!(ip = _ffaa_input_preset(preset))) {
 				b->err = "AAudioStreamBuilder_setInputPreset()";
 				b->errcode = 0;
 				goto end;
@@ -193,7 +206,14 @@ static int ffaaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	AAudioStreamBuilder_setDataCallback(asb, (!b->capture) ? on_play : on_capture, b);
 	AAudioStreamBuilder_setErrorCallback(asb, on_error, b);
 
-	if (0 != (r = AAudioStreamBuilder_openStream(asb, &b->as))) {
+	r = AAudioStreamBuilder_openStream(asb, &b->as);
+	if (r != 0 && r != AAUDIO_ERROR_INVALID_FORMAT && ip == AAUDIO_INPUT_PRESET_UNPROCESSED) {
+		/* some devices (USB codecs among them) refuse the unprocessed
+		 * input: take the generic one, which still has no voice processing */
+		_AAudioStreamBuilder_setInputPreset(asb, AAUDIO_INPUT_PRESET_GENERIC);
+		r = AAudioStreamBuilder_openStream(asb, &b->as);
+	}
+	if (0 != r) {
 		if (r == AAUDIO_ERROR_INVALID_FORMAT) {
 			_ffaa_format_best(&conf->format);
 			rc = FFAUDIO_EFORMAT;

@@ -19,6 +19,7 @@
 #include "mercury_cli.h"
 #include "mercury_bridge.h"
 #include "radio_io.h"         /* radio_io_set_usb_fd */
+#include "audioio.h"          /* audioio_set_android_devices */
 #include "host/mercury_host.h"   /* the same lifecycle calls, for a host */
 #include "mercury_version.h"
 #include "hermes_log.h"
@@ -217,6 +218,11 @@ int mercury_ui_get_input_channel(void)
 void mercury_ui_set_usb_fd(const char *device, int fd)
 {
     radio_io_set_usb_fd(device, fd);
+}
+
+void mercury_ui_set_android_audio_devices(const char *list)
+{
+    audioio_set_android_devices(list);
 }
 
 void mercury_ui_get_audio_system(char *name, int name_len)

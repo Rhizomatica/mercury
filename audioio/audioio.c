@@ -1326,9 +1326,10 @@ void *radio_playback_thread(void *device_ptr)
     period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_AAUDIO)
         audio = (ffaudio_interface *) &ffaaudio;
-    /* AAudio has no devices to choose (Android routes the audio); its
-     * device_id is a capture preset, which playback does not take. */
-    conf.buf.device_id = NULL;
+    /* An Android device the UI registered ("dev:<id>": the radio's USB
+     * codec), or Android's own route. */
+    if (conf.buf.device_id && strncmp(conf.buf.device_id, "dev:", 4) != 0)
+        conf.buf.device_id = NULL;
 #endif
 
 
@@ -1770,9 +1771,11 @@ void *radio_capture_thread(void *device_ptr)
     conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_AAUDIO)
         audio = (ffaudio_interface *) &ffaaudio;
-    /* AAudio's device_id is a capture preset.  The modem wants the signal
-     * as it is, without the gain control and noise suppression the voice
-     * presets apply: "unprocessed", unless another preset was asked for. */
+    /* AAudio's device_id is a capture preset, or "dev:<id>[,preset]" for a
+     * device the UI registered (the radio's USB codec).  The modem wants the
+     * signal as it is, without the gain control and noise suppression the
+     * voice presets apply: "unprocessed", unless another preset was asked
+     * for (aaudio.c falls back to "generic" where it is refused). */
     if (conf.buf.device_id == NULL || strcmp(conf.buf.device_id, "default") == 0)
         conf.buf.device_id = "unprocessed";
 #endif
@@ -2270,6 +2273,52 @@ finish_cap:
 /* Enumerate devices.  `pulse_lock_held` is for the one caller that already
  * owns s_pulse_lock (audioio_restart): that mutex is NOT recursive, so
  * re-taking it here self-deadlocks the process with audio already stopped. */
+#if defined(__ANDROID__)
+/* audioio_set_android_devices(): Java's audio devices, as the UI saw them. */
+static char s_android_devs[8192];
+static pthread_mutex_t s_android_devs_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void audioio_set_android_devices(const char *list)
+{
+    pthread_mutex_lock(&s_android_devs_lock);
+    snprintf(s_android_devs, sizeof(s_android_devs), "%s", list ? list : "");
+    pthread_mutex_unlock(&s_android_devs_lock);
+}
+
+/* The registered devices of this direction, after `count` entries. */
+static int android_device_list(int mode, char ids[][AUDIO_DEV_STR_MAX],
+                               char dev_names[][AUDIO_DEV_STR_MAX], int count, int max_count)
+{
+    const char *want = mode == FFAUDIO_DEV_CAPTURE ? "in" : "out";
+    pthread_mutex_lock(&s_android_devs_lock);
+    for (char *line = s_android_devs; *line && count < max_count; )
+    {
+        char *end = strchr(line, '\n');
+        size_t len = end ? (size_t)(end - line) : strlen(line);
+        char buf[512];
+        snprintf(buf, sizeof(buf), "%.*s", (int)(len < sizeof(buf) - 1 ? len : sizeof(buf) - 1), line);
+        char *dir = strchr(buf, '\t');
+        char *name = dir ? strchr(dir + 1, '\t') : NULL;
+        if (dir && name)
+        {
+            *dir++ = '\0';
+            *name++ = '\0';
+            if (!strcmp(dir, want))
+            {
+                snprintf(ids[count], AUDIO_DEV_STR_MAX, "dev:%s", buf);
+                snprintf(dev_names[count], AUDIO_DEV_STR_MAX, "%s", name);
+                count++;
+            }
+        }
+        line += len + (end ? 1 : 0);
+    }
+    pthread_mutex_unlock(&s_android_devs_lock);
+    return count;
+}
+#else
+void audioio_set_android_devices(const char *list) { (void) list; }
+#endif
+
 static int get_soundcard_list_int(int audio_system, int mode,
                                   char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX], int max_count,
                                   bool pulse_lock_held)
@@ -2344,7 +2393,11 @@ static int get_soundcard_list_int(int audio_system, int mode,
             return 0;
         snprintf(ids[0], AUDIO_DEV_STR_MAX, "default");
         snprintf(dev_names[0], AUDIO_DEV_STR_MAX, "Default (system route)");
+#if defined(__ANDROID__)
+        return android_device_list(mode, ids, dev_names, 1, max_count);
+#else
         return 1;
+#endif
     }
 
     ffaudio_dev *d = audio->dev_alloc(mode);

@@ -15,3 +15,7 @@ func ensureUSBRadio(config string, logf func(string)) {}
 func directUSBRow(w fyne.Window, deviceEntry *widget.Entry, logf func(string)) fyne.CanvasObject {
 	return nil
 }
+
+// Only Android needs the UI to list audio devices for the engine
+// (audio_android.go).
+func refreshAndroidAudioDevices() {}

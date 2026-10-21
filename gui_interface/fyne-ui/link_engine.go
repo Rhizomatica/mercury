@@ -239,6 +239,7 @@ func readAudioDevices(kind C.ui_device_kind_t) ([]optionItem, string, bool) {
 	// name and left the modem bound to the default card.
 	sel := make([]C.char, C.UI_DEV_ID_MAX)
 
+	refreshAndroidAudioDevices()
 	n := C.mercury_ui_get_audio_devices(C.int(kind), &devs[0], C.int(len(devs)),
 		&sel[0], C.int(len(sel)))
 	if n <= 0 {

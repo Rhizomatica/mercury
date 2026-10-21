@@ -1770,6 +1770,7 @@ func main() {
 		logPath := filepath.Join(getLogDir(), "mercury_engine.log")
 		ensureMicPermission(appendLog)
 		ensureUSBRadio(defaultConfig, appendLog)
+		refreshAndroidAudioDevices()
 		appendLog("Starting Mercury engine...\n")
 		// Forward the process args so the engine's own CLI parser applies them.
 		if err := mercuryStart(defaultConfig, logPath, os.Args); err != nil {
