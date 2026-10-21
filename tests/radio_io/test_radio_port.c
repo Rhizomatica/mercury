@@ -68,6 +68,8 @@ void test_serial_rig_with_a_port_name_is_accepted(void)
     const char *good[] = {
         "COM4", "COM12", "com4",        /* Windows, incl. lower case   */
         "\\\\.\\COM12",                 /* \\.\COM12 for ports > 9     */
+        "usb:10c4:ea60:IC-7100 02010347 A",   /* Hamlib's own USB-serial */
+        "usbfd:42",                     /* ...on Android's descriptor   */
         "/dev/ttyUSB0",
         "/dev/cu.usbserial-A600eHIS",   /* macOS                       */
         "/dev/serial/by-id/usb-FTDI",   /* stable udev path            */
