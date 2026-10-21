@@ -708,14 +708,16 @@ endif
 		--app-version $(MERCURY_VERSION) --app-build $(ANDROID_BUILD) \
 		$(if $(filter 1,$(ANDROID_RELEASE)),--release)
 	rm -f $(FYNE_UI_DIR)/AndroidManifest.xml
-ifneq ($(ANDROID_KEYSTORE),)
+	# Aligned, or Android cannot map the dex from the .apk and unpacks it at
+	# every start ("please zipalign to 4 bytes").  apksigner signs after the
+	# alignment; the debug .apk keeps fyne's signature, which zipalign leaves
+	# valid (v1 only).
 	$(ANDROID_BUILD_TOOLS)/zipalign -f -p 4 $(FYNE_UI_DIR)/Mercury.apk $(ANDROID_APK)
+	rm -f $(FYNE_UI_DIR)/Mercury.apk
+ifneq ($(ANDROID_KEYSTORE),)
 	$(ANDROID_BUILD_TOOLS)/apksigner sign --ks $(ANDROID_KEYSTORE) --ks-key-alias $(ANDROID_KEY_ALIAS) \
 		--ks-pass env:ANDROID_KEYSTORE_PASS $(ANDROID_APK)
 	$(ANDROID_BUILD_TOOLS)/apksigner verify $(ANDROID_APK)
-	rm -f $(FYNE_UI_DIR)/Mercury.apk
-else
-	mv $(FYNE_UI_DIR)/Mercury.apk $(ANDROID_APK)
 endif
 	@echo "  -> $(ANDROID_APK)  (android/$(TARGET_GOARCH), versionCode $(ANDROID_BUILD))"
 
