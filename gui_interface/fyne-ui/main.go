@@ -454,6 +454,14 @@ func main() {
 	// Use a stable application ID (matches the .desktop / Mercury.app appID) so
 	// Fyne's preferences/storage have a unique identity instead of warning.
 	myApp := app.NewWithID("org.rhizomatica.mercury")
+	// On iOS and Android the working directory is read-only ("/" on a
+	// device), and the engine keeps mercury.ini and its log there: work in
+	// the app's own storage instead.
+	if runtime.GOOS == "ios" || runtime.GOOS == "android" {
+		if err := os.Chdir(myApp.Storage().RootURI().Path()); err != nil {
+			fmt.Fprintf(os.Stderr, "cannot use the app's storage directory: %v\n", err)
+		}
+	}
 	myWindow := myApp.NewWindow("Mercury Modem")
 	restoreWindowGeometry(myWindow, myApp.Preferences())
 
