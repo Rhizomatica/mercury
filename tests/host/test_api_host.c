@@ -91,16 +91,21 @@ void test_chat_send_arq(void)
     TEST_ASSERT_EQUAL_INT(MERCURY_HOST_NO_LINK, mercury_host_chat_send("arq", "x"));
 }
 
-/* A bcast line goes as one message, without its newline; too long is said. */
+/* A bcast line goes as one message ending in one "\n", as the chat client's
+ * (message_store keeps a line at its newline, sender and receivers alike);
+ * too long is said, and the longest leaves room for the newline. */
 void test_chat_send_bcast(void)
 {
     TEST_ASSERT_EQUAL_INT(MERCURY_HOST_OK, mercury_host_chat_send("bcast", "cq\r\n"));
-    TEST_ASSERT_EQUAL_size_t(2, s_bcast_len);
+    TEST_ASSERT_EQUAL_size_t(3, s_bcast_len);
+    TEST_ASSERT_EQUAL_MEMORY("cq\n", s_bcast_sent, 3);
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_OK, mercury_host_chat_send("bcast", "de PY2XYZ"));
+    TEST_ASSERT_EQUAL_MEMORY("de PY2XYZ\n", s_bcast_sent, 10);
     s_bcast_rc = -2;
     TEST_ASSERT_EQUAL_INT(MERCURY_HOST_TOO_LONG, mercury_host_chat_send("bcast", "long"));
     s_bcast_rc = -1;
     TEST_ASSERT_EQUAL_INT(MERCURY_HOST_BAD, mercury_host_chat_send("bcast", "x"));
-    TEST_ASSERT_EQUAL_size_t(123, mercury_host_bcast_chat_max());
+    TEST_ASSERT_EQUAL_size_t(122, mercury_host_bcast_chat_max());
 }
 
 void test_chat_send_refuses_bad_input(void)

@@ -61,7 +61,13 @@ int mercury_host_chat_send(const char *plane, const char *text)
     }
     if (strcmp(plane, MSG_PLANE_BCAST) == 0)
     {
-        int rc = broadcast_send_message((const uint8_t *)text, len);
+        /* With its "\n", as the chat client sends one: message_store keeps a
+         * line when its newline comes, here (the TX copy) and at every
+         * receiver.  Without it the line waited for the next one's. */
+        uint8_t line[HOST_CHAT_MAX + 1];
+        memcpy(line, text, len);
+        line[len] = '\n';
+        int rc = broadcast_send_message(line, len + 1);
         return rc == 0 ? MERCURY_HOST_OK : rc == -2 ? MERCURY_HOST_TOO_LONG : MERCURY_HOST_BAD;
     }
     return MERCURY_HOST_BAD;
@@ -90,9 +96,11 @@ bool mercury_host_mode_carries_files(int index)
     return mercury_host_mode_switchable(index) && bcast_file_mode_usable(index);
 }
 
+/* A frame's message less the line's "\n". */
 size_t mercury_host_bcast_chat_max(void)
 {
-    return broadcast_message_max();
+    size_t max = broadcast_message_max();
+    return max > 0 ? max - 1 : 0;
 }
 
 int mercury_host_listen_mode(void)

@@ -158,7 +158,9 @@ void mercury_host_ui_client_connected(void);
  * session's stream: MERCURY_HOST_NO_LINK with none up, MERCURY_HOST_FULL when
  * its queue is) or "bcast" (one broadcast frame at the listen mode:
  * MERCURY_HOST_TOO_LONG past mercury_host_bcast_chat_max(), never truncated;
- * held while an ARQ session is up, sent after).  Stored as sent, like a
+ * held while an ARQ session is up, sent after).  Either way the line goes
+ * with one "\n", as a chat client's, so that receivers store it as a line;
+ * mercury_host_bcast_chat_max() leaves room for it.  Stored as sent, like a
  * TCP client's. */
 size_t   mercury_host_chat_since(uint64_t after_seq, char *out, size_t out_len, uint64_t *last_seq);
 uint64_t mercury_host_chat_last_seq(void);
