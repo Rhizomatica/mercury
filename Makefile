@@ -249,6 +249,7 @@ else
 HOST_AUDIO_OBJS = host/audio_host.o
 HOST_RADIO_OBJS = host/radio_host.o
 HOST_UI_OBJS = host/ui_host.o
+HOST_API_OBJS = host/api_host.o
 HOST_INI_OBJS =
 HOST_SHM_OBJS =
 endif
@@ -352,8 +353,8 @@ RAPTORQ_CFLAGS = -Idatalink_broadcast/raptorq/include -Idatalink_broadcast/rapto
 # the two builds simply independent.
 RAPTORQ_OBJS     = $(patsubst %.c,%.o,$(RAPTORQ_SRCS))
 RAPTORQ_OBJS_W64 = $(patsubst %.c,%.w64.o,$(RAPTORQ_SRCS))
-BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o $(RAPTORQ_OBJS)
-BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o $(RAPTORQ_OBJS_W64)
+BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o datalink_broadcast/bcast_carousel.o datalink_broadcast/bcast_rx_host.o $(RAPTORQ_OBJS)
+BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o datalink_broadcast/bcast_carousel.w64.o $(RAPTORQ_OBJS_W64)
 
 $(RAPTORQ_OBJS): %.o: %.c
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
@@ -366,6 +367,15 @@ datalink_broadcast/bcast_file.o: datalink_broadcast/bcast_file.c
 
 datalink_broadcast/bcast_file.w64.o: datalink_broadcast/bcast_file.c
 	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_carousel.o: datalink_broadcast/bcast_carousel.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_rx_host.o: datalink_broadcast/bcast_rx_host.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_carousel.w64.o: datalink_broadcast/bcast_carousel.c
+	$(MINGW_CC) $(CFLAGS) -c $< -o $@
 
 # Modem objects that no sub-make builds.  The top-level implicit rule compiles
 # them, but only as prerequisites of something that names them: the CLI binary
@@ -430,13 +440,13 @@ HOST_CFLAGS = $(CFLAGS) -Ihost $(INIPARSER_CFLAGS)
 host/%.o: host/%.c host/mercury_host.h
 	$(CC) $(HOST_CFLAGS) -c $< -o $@
 
-libmercury_host.a: internal_deps $(BCAST_FILE_OBJS) $(MODEM_TOP_OBJS) $(HOST_AUDIO_OBJS) $(HOST_RADIO_OBJS) $(HOST_UI_OBJS)
+libmercury_host.a: internal_deps $(BCAST_FILE_OBJS) $(MODEM_TOP_OBJS) $(HOST_AUDIO_OBJS) $(HOST_RADIO_OBJS) $(HOST_UI_OBJS) $(HOST_API_OBJS)
 ifneq ($(MERCURY_HOST),daemon)
 	$(error libmercury_host.a is the daemon build: make libmercury_host.a MERCURY_HOST=daemon)
 endif
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	rm -f $@
-	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(HOST_AUDIO_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(HOST_AUDIO_OBJS) $(HOST_API_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
 
 # The OS=Windows_NT internal_deps sub-make compiles cm108_ptt.o with
 # -DHAVE_HIDAPI, so the archive must carry the matching vendored hidapi object.

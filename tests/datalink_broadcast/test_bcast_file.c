@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "bcast_file.h"
 #include "bcast_modes.h"
@@ -627,6 +628,54 @@ void test_tx_and_rx_complete_a_transfer(void)
     remove(TMP);
 }
 
+/* From memory (the host's carousel): the bytes and the name it is filed
+ * under arrive as a file would; a name with a path is refused at the sender,
+ * as the receiver would refuse it. */
+void test_tx_from_memory_completes_a_transfer(void)
+{
+    char err[192] = {0};
+    const size_t N = 3000;
+    uint8_t *data = malloc(N);
+    for (size_t i = 0; i < N; i++) data[i] = (uint8_t)(i * 7 + 3);
+
+    TEST_ASSERT_NULL(bcast_file_tx_open_mem("../etc/passwd", data, N, 0, 1, 0, err, sizeof(err)));
+    TEST_ASSERT_NULL(bcast_file_tx_open_mem("..", data, N, 0, 1, 0, err, sizeof(err)));
+    TEST_ASSERT_NULL(bcast_file_tx_open_mem("msg.txt", data, 0, 0, 1, 0, err, sizeof(err)));
+
+    char dir[] = "/tmp/.mercury_bcast_rxdirXXXXXX";
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    bcast_file_tx_t *tx = bcast_file_tx_open_mem("msg.txt", data, N, 0, 0, 0, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(tx, err);
+    data[0] ^= 0xFF;                                   /* the sender copied it */
+    bcast_file_rx_t *rx = bcast_file_rx_open(0, dir, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(rx, err);
+
+    int fs = bcast_file_tx_frame_size(tx);
+    uint8_t *frame = malloc((size_t)fs);
+    int done = 0;
+    for (int i = 0; i < 5000 && !done; i++)
+    {
+        TEST_ASSERT_EQUAL_INT(fs, bcast_file_tx_next(tx, frame, (size_t)fs));
+        done = bcast_file_rx_frame(rx, frame, (size_t)fs) == BCAST_RX_COMPLETE;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(done, "receiver never completed the file");
+    TEST_ASSERT_EQUAL_STRING("msg.txt", bcast_file_rx_last_name(rx));
+
+    uint8_t *b = malloc(N);
+    FILE *f = fopen(bcast_file_rx_last_path(rx), "rb");
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_EQUAL_size_t(N, fread(b, 1, N, f));
+    fclose(f);
+    data[0] ^= 0xFF;
+    TEST_ASSERT_EQUAL_MEMORY(data, b, N);
+    remove(bcast_file_rx_last_path(rx));
+    rmdir(dir);
+
+    free(b); free(frame); free(data);
+    bcast_file_tx_close(tx);
+    bcast_file_rx_close(rx);
+}
+
 /* A broadcast chat line exactly one frame long must NOT be mistaken for a file
  * frame.
  *
@@ -791,6 +840,7 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_rx_saves_a_payload_that_is_not_a_bundle);
     RUN_TEST(test_tx_and_rx_complete_a_transfer);
+    RUN_TEST(test_tx_from_memory_completes_a_transfer);
     RUN_TEST(test_rx_ignores_frames_that_are_not_ours);
     RUN_TEST(test_rx_ignores_a_chat_line_that_fills_a_frame);
     RUN_TEST(test_periodic_loss_does_not_starve_a_block);

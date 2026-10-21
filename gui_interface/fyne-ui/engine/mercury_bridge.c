@@ -26,6 +26,10 @@
 #include "modem_stats.h"   /* MODEM_STATS_NSPEC */
 #include "message_store.h"
 #include "bcast_file.h"
+#include "bcast_carousel.h"
+#ifndef _WIN32
+#include "bcast_rx_host.h"      /* the host build's receiver; not in the Windows archive */
+#endif
 
 /* Print the startup version banner (same text the daemon prints), so the UI
  * announces its version on the terminal too.  Resolved here, in a unit the
@@ -124,6 +128,10 @@ void mercury_request_shutdown(void)
 /* ------------------------------------------------------------------ */
 void mercury_shutdown(void)
 {
+    bcast_carousel_stop();        /* its thread writes the TX ring the engine frees */
+#ifndef _WIN32
+    bcast_rx_host_set(NULL, NULL, NULL);   /* and the RX tap's runs on the engine's frames */
+#endif
     mercury_engine_shutdown();
 }
 

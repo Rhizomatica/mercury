@@ -31,6 +31,7 @@
 #endif
 
 #include "modem.h"
+#include "broadcast.h"
 #include "arq.h"
 #include "defines_modem.h"
 #include "ring_buffer_posix.h"
@@ -101,5 +102,45 @@ void broadcast_run(generic_modem_t *g_modem)
     {
         HLOGW("bcast", "FreeDV mode %d is not supported by hermes-broadcast mode mapping.",
                g_modem->mode);
+    }
+}
+
+/* ---- the host's carousel, as it reports itself (broadcast.h) ---- */
+
+static pthread_mutex_t s_car_lock = PTHREAD_MUTEX_INITIALIZER;
+static bcast_car_status_t s_car;
+
+void bcast_carousel_publish(const bcast_car_status_t *st)
+{
+    pthread_mutex_lock(&s_car_lock);
+    s_car = *st;
+    pthread_mutex_unlock(&s_car_lock);
+}
+
+void bcast_carousel_get(bcast_car_status_t *out)
+{
+    pthread_mutex_lock(&s_car_lock);
+    *out = s_car;
+    pthread_mutex_unlock(&s_car_lock);
+}
+
+bool bcast_carousel_sending(void)
+{
+    pthread_mutex_lock(&s_car_lock);
+    bool sending = s_car.state == BCAST_CAR_SENDING;
+    pthread_mutex_unlock(&s_car_lock);
+    return sending;
+}
+
+const char *bcast_car_state_name(bcast_car_state_t st)
+{
+    switch (st)
+    {
+    case BCAST_CAR_SENDING:        return "sending";
+    case BCAST_CAR_STOPPED_BY_ARQ: return "stopped_by_arq";
+    case BCAST_CAR_STOPPED:        return "stopped";
+    case BCAST_CAR_DONE:           return "done";
+    case BCAST_CAR_ERROR:          return "error";
+    default:                       return "idle";
     }
 }

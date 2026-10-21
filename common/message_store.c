@@ -60,6 +60,8 @@ static struct
     char         path[1024];
 
     char (*lines)[MSG_MAX_LINE];     /* in-memory ring of raw JSONL lines */
+    uint64_t    *seqs;               /* ...and each one's "seq" */
+    uint64_t     last_seq;           /* the newest seq given (never reused) */
     int          cap;
     int          start;              /* index of oldest entry */
     int          count;
@@ -261,7 +263,7 @@ static bool msg_store_is_text(const uint8_t *data, size_t len)
 /*  Ring                                                               */
 /* ------------------------------------------------------------------ */
 
-static void ring_push(const char *line, size_t len)
+static void ring_push(const char *line, size_t len, uint64_t seq)
 {
     if (g_store.cap <= 0)
         return;
@@ -283,6 +285,14 @@ static void ring_push(const char *line, size_t len)
     }
     memcpy(g_store.lines[idx], line, n);
     g_store.lines[idx][n] = '\0';
+    g_store.seqs[idx] = seq;
+}
+
+/* A loaded line's "seq", or 0 when it has none (a file from before seq). */
+static uint64_t line_seq(const char *line)
+{
+    const char *p = strstr(line, "\"seq\":");
+    return p ? strtoull(p + 6, NULL, 10) : 0;
 }
 
 /* Flush a stdio stream's buffered data through to the storage device.  POSIX
@@ -408,10 +418,11 @@ static void msg_store_emit(const char *plane, const char *dir, const char *peer,
 
     msg_store_now(&sec, &ms);
 
+    uint64_t seq = ++g_store.last_seq;
     int n = snprintf(buf, sizeof(buf),
-                     "{\"ts\":%lld,\"ms\":%d,\"plane\":\"%s\",\"dir\":\"%s\","
+                     "{\"seq\":%llu,\"ts\":%lld,\"ms\":%d,\"plane\":\"%s\",\"dir\":\"%s\","
                      "\"peer\":\"%s\",\"text\":\"%s\"}",
-                     (long long)sec, ms, plane, dir, peer_esc, text_esc);
+                     (unsigned long long)seq, (long long)sec, ms, plane, dir, peer_esc, text_esc);
     if (n < 0)
         return;
     /* Reserve room for the trailing "\n\0": n indexes the newline, n+1 the NUL,
@@ -422,7 +433,7 @@ static void msg_store_emit(const char *plane, const char *dir, const char *peer,
     buf[n] = '\n';
     buf[n + 1] = '\0';
 
-    ring_push(buf, (size_t)(n + 1));
+    ring_push(buf, (size_t)(n + 1), seq);
 
     if (g_store.fp)
     {
@@ -633,6 +644,47 @@ char *msg_store_snapshot(size_t *count_out, size_t *len_out)
     return buf;
 }
 
+size_t msg_store_since(uint64_t after_seq, char *out, size_t out_cap, uint64_t *last_seq)
+{
+    size_t off = 0;
+    uint64_t last = after_seq;
+
+    if (!out || out_cap == 0)
+        return 0;
+    out[0] = '\0';
+
+    msg_store_lock();
+    for (int i = 0; g_store.enabled && i < g_store.count; i++)
+    {
+        int idx = (g_store.start + i) % g_store.cap;
+        if (g_store.seqs[idx] <= after_seq)
+            continue;
+        size_t len = strlen(g_store.lines[idx]);
+        if (len > 0 && g_store.lines[idx][len - 1] == '\n')
+            len--;
+        if (off + len + 2 > out_cap)        /* line, '\n', NUL: the rest next call */
+            break;
+        memcpy(out + off, g_store.lines[idx], len);
+        out[off + len] = '\n';
+        off += len + 1;
+        last = g_store.seqs[idx];
+    }
+    out[off] = '\0';
+    msg_store_unlock();
+
+    if (last_seq)
+        *last_seq = last;
+    return off;
+}
+
+uint64_t msg_store_last_seq(void)
+{
+    msg_store_lock();
+    uint64_t s = g_store.enabled ? g_store.last_seq : 0;
+    msg_store_unlock();
+    return s;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Init / shutdown                                                    */
 /* ------------------------------------------------------------------ */
@@ -658,9 +710,12 @@ int msg_store_init(const char *path, int max_lines)
 
     g_store.cap = max_lines;
     g_store.lines = calloc((size_t)max_lines, sizeof(*g_store.lines));
-    if (!g_store.lines)
+    g_store.seqs = calloc((size_t)max_lines, sizeof(*g_store.seqs));
+    if (!g_store.lines || !g_store.seqs)
     {
         HLOGE(MSG_STORE_LOG_TAG, "out of memory allocating %d-entry ring", max_lines);
+        free(g_store.lines);
+        free(g_store.seqs);
         memset(&g_store, 0, sizeof(g_store));
         return -1;
     }
@@ -679,6 +734,7 @@ int msg_store_init(const char *path, int max_lines)
     if (g_store.fp)
     {
         char line[MSG_MAX_LINE];
+        bool renumbered = false;
         rewind(g_store.fp);
         while (fgets(line, sizeof(line), g_store.fp))
         {
@@ -688,7 +744,29 @@ int msg_store_init(const char *path, int max_lines)
             if (len == 0)
                 continue;
             g_store.file_lines++;
-            ring_push(line, len);
+            line[len] = '\0';
+            /* The seq goes on from the file's: a line without one (written
+             * before seq) or out of order gets the next, in load order, and
+             * the in-memory line says so -- rewritten files then keep it. */
+            uint64_t seq = line_seq(line);
+            if (seq <= g_store.last_seq)
+            {
+                char numbered[MSG_MAX_LINE];
+                seq = g_store.last_seq + 1;
+                int m = line[0] == '{' && !strstr(line, "\"seq\":")
+                        ? snprintf(numbered, sizeof(numbered), "{\"seq\":%llu,%s",
+                                   (unsigned long long)seq, line + 1)
+                        : -1;
+                if (m > 0 && (size_t)m < sizeof(numbered))
+                {
+                    ring_push(numbered, (size_t)m, seq);
+                    g_store.last_seq = seq;
+                    renumbered = true;
+                    continue;
+                }
+            }
+            g_store.last_seq = seq;
+            ring_push(line, len, seq);
         }
         /* Reposition for appends (fgets may have hit EOF). */
         fseek(g_store.fp, 0, SEEK_END);
@@ -696,7 +774,9 @@ int msg_store_init(const char *path, int max_lines)
         /* A file larger than the ring (e.g. written before trimming existed)
          * is rewritten down to the last `cap` lines so the on-disk size obeys
          * max_messages from here on. */
-        if (g_store.file_lines > g_store.count)
+        /* ...and so is a file whose lines were given their seq here, so the
+         * numbers stay the same when older lines are trimmed off the front. */
+        if (g_store.file_lines > g_store.count || renumbered)
         {
             msg_store_rewrite_file_locked();
             g_store.file_lines = g_store.count;
@@ -733,6 +813,8 @@ void msg_store_shutdown(void)
 
     free(g_store.lines);
     g_store.lines = NULL;
+    free(g_store.seqs);
+    g_store.seqs = NULL;
     g_store.cap = 0;
     g_store.start = 0;
     g_store.count = 0;

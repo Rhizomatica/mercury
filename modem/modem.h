@@ -129,6 +129,8 @@ bool modem_get_rx_freq_offset(float *hz, uint64_t *age_ms);
 #define MODEM_LISTEN_MODE_BUSY  (-2)  /* an ARQ session is up; ladder owns mode */
 int    modem_set_listen_mode(int mode);
 int    modem_get_listen_mode(void);
+/* Can the listen mode be set to this mode at runtime (MODE)? */
+bool   modem_listen_mode_switchable(int mode);
 size_t modem_get_broadcast_frame_size(void);
 
 int   modem_tune_start(float dbfs);

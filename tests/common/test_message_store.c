@@ -311,10 +311,68 @@ void test_file_trimmed_at_init(void)
     TEST_ASSERT_EQUAL_INT(3, lines);
 }
 
+/* A client reads new messages by seq: every line has one, in order, never
+ * reused -- across a restart and past the ring rolling over. */
+void test_since_follows_seq_across_restart_and_rollover(void)
+{
+    char out[4096];
+    uint64_t last = 99;
+
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 3));
+    msg_store_append(MSG_PLANE_ARQ, MSG_DIR_RX, "PU2UIT", "one");
+    msg_store_append(MSG_PLANE_BCAST, MSG_DIR_TX, "PU2UIT", "two");
+    TEST_ASSERT_EQUAL_UINT64(2, msg_store_last_seq());
+    TEST_ASSERT_GREATER_THAN(0, msg_store_since(0, out, sizeof(out), &last));
+    TEST_ASSERT_EQUAL_UINT64(2, last);
+    TEST_ASSERT_NOT_NULL(strstr(out, "\"seq\":1,"));
+    TEST_ASSERT_NOT_NULL(strstr(out, "\"seq\":2,"));
+    TEST_ASSERT_EQUAL_UINT(0, msg_store_since(2, out, sizeof(out), &last));   /* nothing new */
+    TEST_ASSERT_EQUAL_UINT64(2, last);
+    msg_store_shutdown();
+
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 3));                   /* restart */
+    msg_store_append(MSG_PLANE_ARQ, MSG_DIR_RX, "PU2UIT", "three");
+    msg_store_append(MSG_PLANE_ARQ, MSG_DIR_RX, "PU2UIT", "four");           /* "one" rolls off */
+    TEST_ASSERT_EQUAL_UINT64(4, msg_store_last_seq());
+    msg_store_since(1, out, sizeof(out), &last);
+    TEST_ASSERT_EQUAL_UINT64(4, last);
+    TEST_ASSERT_NULL(strstr(out, "\"text\":\"one\""));
+    TEST_ASSERT_NOT_NULL(strstr(out, "\"seq\":2,"));
+    TEST_ASSERT_NOT_NULL(strstr(out, "\"seq\":4,"));
+    msg_store_since(0, out, 40, &last);           /* too small for one line */
+    TEST_ASSERT_EQUAL_UINT64(0, last);
+    msg_store_shutdown();
+}
+
+/* A file from before seq gets one per line in load order, written back, so
+ * the numbers stay put when old lines are trimmed off later. */
+void test_legacy_file_is_numbered_and_kept(void)
+{
+    FILE *f = fopen(TEST_PATH, "w");
+    TEST_ASSERT_NOT_NULL(f);
+    fputs("{\"ts\":1,\"ms\":0,\"plane\":\"arq\",\"dir\":\"rx\",\"peer\":\"A\",\"text\":\"old1\"}\n", f);
+    fputs("{\"ts\":2,\"ms\":0,\"plane\":\"arq\",\"dir\":\"rx\",\"peer\":\"A\",\"text\":\"old2\"}\n", f);
+    fclose(f);
+
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 10));
+    TEST_ASSERT_EQUAL_UINT64(2, msg_store_last_seq());
+    msg_store_shutdown();
+
+    char buf[512] = {0};
+    f = fopen(TEST_PATH, "r");
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_NOT_NULL(fgets(buf, sizeof(buf), f));
+    fclose(f);
+    const char *want = "{\"seq\":1,\"ts\":1,";
+    TEST_ASSERT_EQUAL_INT(0, strncmp(buf, want, strlen(want)));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_append_and_get_roundtrip);
+    RUN_TEST(test_since_follows_seq_across_restart_and_rollover);
+    RUN_TEST(test_legacy_file_is_numbered_and_kept);
     RUN_TEST(test_feed_splits_on_newlines);
     RUN_TEST(test_feed_filters_binary);
     RUN_TEST(test_feed_drops_binary_frame_whose_pieces_look_like_text);

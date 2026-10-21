@@ -54,7 +54,9 @@ extern "C" {
  * mercury_init: argv as on the command line, e.g. {"mercury", "-C",
  * "/etc/mercury/mercury.ini"}; default_config is used when there is no -C,
  * log_path when there is no -L (NULL: no log file; the log always goes to
- * stderr).  Returns once the engine is up: 0, MERCURY_INIT_CONFIG_ERROR when
+ * stderr).  A host that started hermes_log itself keeps it: Mercury then
+ * leaves the level and the file (log_path, -L, -v) to the host and does not
+ * stop the logger in mercury_shutdown.  Returns once the engine is up: 0, MERCURY_INIT_CONFIG_ERROR when
  * the configuration file cannot be read in full, or -1.  In a TX/RX test (-t,
  * -r) it returns only after mercury_request_shutdown(), so call it on a
  * thread of its own there.
@@ -129,6 +131,112 @@ int mercury_host_ui_command_json(const char *json, size_t len);
 /* A UI client connected: Mercury sends it, through broadcast_json, the state
  * a client gets once (device lists, radio list, history). */
 void mercury_host_ui_client_connected(void);
+
+/* ---- results of the calls below ---------------------------------------- */
+#define MERCURY_HOST_OK        0
+#define MERCURY_HOST_BAD     (-1)   /* bad argument, or not possible at all     */
+#define MERCURY_HOST_BUSY    (-2)   /* not now: an ARQ session (or a carousel)  */
+#define MERCURY_HOST_NO_LINK (-3)   /* plane arq with no session up             */
+#define MERCURY_HOST_TOO_LONG (-4)  /* does not fit one broadcast frame         */
+#define MERCURY_HOST_FULL    (-5)   /* the session's queue is full: try again   */
+
+/* ---- chat ------------------------------------------------------------------
+ *
+ * The chat lines Mercury keeps (message_store: what went and came on either
+ * plane, across restarts), each a JSONL object:
+ *   {"seq":N,"ts":..,"ms":..,"plane":"arq"|"bcast","dir":"rx"|"tx",
+ *    "peer":"CALL","text":"..."}
+ * seq is 1, 2, 3, ... in the order stored, never reused, kept across
+ * restarts.  Keep the last one taken and ask for what came after.
+ *
+ * mercury_host_chat_since: the lines after after_seq (0: all held), oldest
+ * first, newline-terminated, whole lines only (the rest next call); a cursor
+ * older than the ring starts at the oldest held.  *last_seq gets the seq of
+ * the last line copied, after_seq if none.  Returns the bytes written.
+ *
+ * mercury_host_chat_send: one line, at most 1024 bytes, on plane "arq" (the
+ * session's stream: MERCURY_HOST_NO_LINK with none up, MERCURY_HOST_FULL when
+ * its queue is) or "bcast" (one broadcast frame at the listen mode:
+ * MERCURY_HOST_TOO_LONG past mercury_host_bcast_chat_max(), never truncated;
+ * held while an ARQ session is up, sent after).  Stored as sent, like a
+ * TCP client's. */
+size_t   mercury_host_chat_since(uint64_t after_seq, char *out, size_t out_len, uint64_t *last_seq);
+uint64_t mercury_host_chat_last_seq(void);
+int      mercury_host_chat_send(const char *plane, const char *text);
+size_t   mercury_host_bcast_chat_max(void);
+
+/* ---- the listen mode -------------------------------------------------------
+ *
+ * The payload mode Mercury sits on while no ARQ session is up: what the
+ * broadcast plane hears and sends at.  Indexes are those of -m, `mercury -l`
+ * and the MODE command.  Setting it: MERCURY_HOST_BUSY while an ARQ session
+ * is up, MERCURY_HOST_BAD for a mode not switchable at runtime. */
+int         mercury_host_mode_count(void);
+const char *mercury_host_mode_name(int index);       /* NULL out of range */
+bool        mercury_host_mode_switchable(int index);  /* MODE accepts it */
+bool        mercury_host_mode_carries_files(int index);
+int         mercury_host_listen_mode(void);            /* -1 unknown */
+int         mercury_host_set_listen_mode(int index);
+
+/* What holds the modem now, so a client can see it before it asks: "arq" (a
+ * session up or starting), "broadcast" (a carousel sending), NULL (free).
+ * Setting the listen mode answers MERCURY_HOST_BUSY in both. */
+const char *mercury_host_busy_reason(void);
+
+/* ---- the broadcast carousel ------------------------------------------------
+ *
+ * A message sent by Mercury itself as a RaptorQ carousel, wire-compatible with
+ * hermes-broadcast: data, filed under name (a plain name), at the listen mode
+ * (which must carry files: mercury_host_mode_carries_files), for cycles
+ * cycles, 0 until stopped.  A cycle is one frame for every RaptorQ block (one
+ * block for anything up to a few tens of KB), and a frame carries
+ * frame_bytes / 41 symbols of 41 bytes: a receiver needs about
+ * bundle_bytes / 41 distinct symbols, so cycles = 2 x that / symbols per
+ * frame is a sensible floor on a clean channel, more on a fading one
+ * (docs/BROADCAST-FILE.md, "How many cycles to send").  Returns at once: MERCURY_HOST_BUSY while one sends or an
+ * ARQ session is up, MERCURY_HOST_BAD (err says why) for the mode, the name or
+ * the size.  The bytes are copied.  One at a time.
+ *
+ * ARQ comes first: a session starting, either way, stops the carousel --
+ * state "stopped_by_arq", and it is not resumed; send it again after, if
+ * wanted (receivers keep the symbols they have).  While it sends, the listen
+ * mode cannot change.  mercury_host_bcast_stop stops it at the next frame.
+ * mercury_shutdown stops it too. */
+typedef struct {
+    const char *state;        /* "idle" "sending" "stopped_by_arq" "stopped" "done" "error" */
+    int      mode;            /* listen-mode index it sends at */
+    int      cycle;           /* the cycle now on, 1-based */
+    int      cycles_total;    /* 0: until stopped */
+    uint64_t frames_sent;
+    size_t   bytes;
+    char     name[64];
+} mercury_host_bcast_stats_t;
+
+int  mercury_host_bcast_send(const char *name, const uint8_t *data, size_t len, int cycles,
+                             char *err, size_t errlen);
+void mercury_host_bcast_stop(void);
+void mercury_host_bcast_stats(mercury_host_bcast_stats_t *out);
+
+/* ---- what the broadcast plane hears -----------------------------------------
+ *
+ * on_frame: every broadcast frame decoded, at the listen mode (chat and file
+ * frames alike; received chat lines also go to the chat store, see above);
+ * mode is the FreeDV mode number, snr the modem's estimate in dB.
+ * on_object: each file the frames complete, its bytes and the name it was
+ * sent under, at a listen mode that carries files; Mercury files nothing.
+ * sealed_ok: the file was sealed and opened with the station's broadcast key
+ * -- always false until encryption (PR #410) is in.  Both run on a thread of
+ * Mercury's: copy and return.  Nothing is dropped: a 256 KB queue takes the
+ * frames, and a callback that keeps it full holds up the modem's RX.  Either may be NULL; NULL ops (or both NULL)
+ * stops it.  MERCURY_HOST_BAD when the receiver could not start.  Beside a
+ * broadcast TCP client, if one is attached: it gets every frame too. */
+typedef struct {
+    void (*on_object)(const uint8_t *data, size_t len, const char *name, bool sealed_ok, void *user);
+    void (*on_frame)(const uint8_t *frame, size_t len, int mode, float snr, void *user);
+    void *user;
+} mercury_host_bcast_rx_ops;
+
+int mercury_host_set_bcast_rx(const mercury_host_bcast_rx_ops *ops);
 
 #ifdef __cplusplus
 }

@@ -115,4 +115,22 @@ size_t msg_store_get(size_t index, char *buf, size_t buf_cap);
  */
 char *msg_store_snapshot(size_t *count_out, size_t *len_out);
 
+/**
+ * @brief The messages after a cursor, oldest first, as newline-terminated JSONL.
+ *
+ * Every stored message has a "seq": 1, 2, 3, ... in the order stored, never
+ * reused, and kept across restarts (it goes on from the file's).  A client
+ * keeps the last one it took and asks for what came after.  A cursor older
+ * than the ring starts at the oldest message still held.
+ *
+ * @param after_seq  0 for everything held.
+ * @param out        receives whole lines only; what does not fit comes next call.
+ * @param last_seq   receives the seq of the last line copied (after_seq if none).
+ * @return bytes written (excluding the NUL).
+ */
+size_t msg_store_since(uint64_t after_seq, char *out, size_t out_cap, uint64_t *last_seq);
+
+/** @brief The newest seq given, 0 if none. */
+uint64_t msg_store_last_seq(void);
+
 #endif /* MESSAGE_STORE_H_ */

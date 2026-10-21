@@ -92,6 +92,13 @@ static ui_status_t sample(void)
     st.freq_offset_valid   = true;
     st.freq_offset_hz      = -23.4f;
     st.freq_offset_age_ms  = 1500;
+    st.listen_mode         = 1;
+    snprintf(st.listen_mode_name, sizeof(st.listen_mode_name), "DATAC3");
+    snprintf(st.busy, sizeof(st.busy), "broadcast");
+    snprintf(st.bcast_state, sizeof(st.bcast_state), "sending");
+    st.bcast_cycle         = 2;
+    st.bcast_cycles_total  = 5;
+    st.bcast_frames_sent   = 77;
     return st;
 }
 
@@ -166,7 +173,11 @@ void test_status_json_is_byte_exact(void)
         "\"peer_snr_valid\":true,"
         "\"peer_hears_mode\":\"\","
         "\"freq_offset_hz\":-23.4,"
-        "\"freq_offset_age_ms\":1500}";
+        "\"freq_offset_age_ms\":1500,"
+        "\"listen_mode\":1,"
+        "\"listen_mode_name\":\"DATAC3\","
+        "\"busy\":\"broadcast\","
+        "\"broadcast\":{\"state\":\"sending\",\"cycle\":2,\"cycles_total\":5,\"frames_sent\":77}}";
 
     TEST_ASSERT_EQUAL_STRING(expect, buf);
     TEST_ASSERT_EQUAL_INT((int)strlen(expect), n);
@@ -260,7 +271,7 @@ void test_unmeasured_freq_offset_is_explicit_null(void)
 
     st.freq_offset_valid = false;
     TEST_ASSERT_TRUE(ui_status_to_json(&st, buf, sizeof(buf)) > 0);
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"freq_offset_hz\":null,\"freq_offset_age_ms\":null}"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"freq_offset_hz\":null,\"freq_offset_age_ms\":null,"));
 }
 
 void test_arq_payload_modes_are_independent(void)

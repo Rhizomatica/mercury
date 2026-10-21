@@ -27,6 +27,7 @@
 #include <unistd.h>
 
 #include "unity.h"
+#include "../../datalink_broadcast/bcast_status.h"
 #include "ui_communication.h"
 #include "ui_transport.h"
 #include "ui_history.h"
@@ -88,6 +89,14 @@ int   modem_get_rx_spectrum_seq(float *out_dB, int max_bins, uint64_t *seq_out)
 { (void)out_dB; (void)max_bins; (void)seq_out; return 0; }
 float modem_get_tx_gain(void) { return 1.0f; }
 float modem_get_tx_peak_dbfs(void) { return -100.0f; }
+/* The broadcast plane in the status (listen mode, busy, carousel). */
+bool arq_session_active(void) { return false; }
+int   mercury_cli_mode_count(void) { return 0; }
+char *freedv_mode_names[] = { "" };
+int   freedv_modes[] = { 0 };
+int   modem_get_listen_mode(void) { return -1; }
+void bcast_carousel_get(bcast_car_status_t *out) { memset(out, 0, sizeof(*out)); }
+const char *bcast_car_state_name(bcast_car_state_t st) { (void)st; return "idle"; }
 bool  modem_get_rx_freq_offset(float *hz, uint64_t *age_ms) { (void)hz; (void)age_ms; return false; }
 void  modem_set_spectrum_enabled(bool enabled) { (void)enabled; }
 void  modem_set_tx_gain(float linear) { (void)linear; }

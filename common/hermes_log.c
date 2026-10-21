@@ -268,7 +268,7 @@ int hermes_log_init(size_t capacity)
     if (g_log.initialized)
     {
         pthread_mutex_unlock(&g_log.lock);
-        return 0;
+        return 1;           /* running already: its owner configures and stops it */
     }
 
     if (capacity == 0)

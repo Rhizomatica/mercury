@@ -39,6 +39,7 @@
 #include "../datalink_arq/arq_modem.h"
 #include "../datalink_arq/arq_protocol.h"
 #include "tcp_interfaces.h"
+#include "../datalink_broadcast/bcast_status.h"
 #include "channel_busy.h"
 #include "tx_pacing.h"
 #include "freedv_api.h"
@@ -600,6 +601,8 @@ static bool is_payload_split_mode(int mode)
            mode == MERCURY_MODE_MFSK_N32;
 }
 
+bool modem_listen_mode_switchable(int mode) { return is_payload_split_mode(mode); }
+
 /* Which backend owns a given mode. Every current mode is FreeDV; the MFSK
  * fringe mode registers its own backend here (Stage 2). */
 static const modem_backend_t *backend_for_mode(int mode)
@@ -826,6 +829,10 @@ int modem_set_listen_mode(int mode)
     pthread_mutex_unlock(&modem_pool_lock);
     if (!codec.be || frame_size == 0)
         return MODEM_LISTEN_MODE_BAD;   /* pool not initialised yet */
+
+    /* A host carousel sends at the listen mode's frame size: not under it. */
+    if (bcast_carousel_sending())
+        return MODEM_LISTEN_MODE_BUSY;
 
     /* Ask ARQ first: it is the one party that can refuse, and it owns the
      * idle-state test.  Doing this before touching the frame size keeps the
@@ -2122,7 +2129,7 @@ static void process_received_frame(const uint8_t *data,
                   payload_nbytes, expect_bcast);
             break;
         }
-        write_buffer(data_rx_buffer_broadcast, (uint8_t *)data, payload_nbytes);
+        broadcast_rx_frame((const uint8_t *)data, payload_nbytes, mode, snr_est);
         break;
     }
     default:

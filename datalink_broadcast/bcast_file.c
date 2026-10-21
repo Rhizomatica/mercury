@@ -125,6 +125,45 @@ uint8_t *bcast_bundle_build(const char *path, size_t *out_len,
     return bundle;
 }
 
+uint8_t *bcast_bundle_build_mem(const char *name, const uint8_t *data, size_t len,
+                                size_t *out_len, char *err, size_t errlen)
+{
+    if (!name || !*name)                 { set_err(err, errlen, "the file has no name"); return NULL; }
+    size_t namelen = strlen(name);
+    if (namelen > BCAST_BUNDLE_NAME_MAX) { set_err(err, errlen, "file name is too long"); return NULL; }
+    /* What the receiver refuses (bcast_bundle_parse), refused here first. */
+    if (strchr(name, '/') || strchr(name, '\\') || strchr(name, '\n') ||
+        !strcmp(name, ".") || !strcmp(name, ".."))
+    {
+        set_err(err, errlen, "file name must be a plain name, no path");
+        return NULL;
+    }
+    if (!data || len == 0)               { set_err(err, errlen, "file is empty"); return NULL; }
+
+    size_t body  = namelen + 1 + len;
+    size_t total = 4 + body;
+    if (total > BCAST_FILE_MAX_BYTES)
+    {
+        char m[160];
+        snprintf(m, sizeof(m), "file plus its name comes to %zu bytes; the limit is %u",
+                 total, BCAST_FILE_MAX_BYTES);
+        set_err(err, errlen, m);
+        return NULL;
+    }
+    uint8_t *bundle = malloc(total);
+    if (!bundle) { set_err(err, errlen, "out of memory"); return NULL; }
+    uint32_t sz = (uint32_t)body;
+    bundle[0] = (uint8_t)(sz & 0xff);
+    bundle[1] = (uint8_t)((sz >> 8) & 0xff);
+    bundle[2] = (uint8_t)((sz >> 16) & 0xff);
+    bundle[3] = (uint8_t)((sz >> 24) & 0xff);
+    memcpy(bundle + 4, name, namelen);
+    bundle[4 + namelen] = '\n';
+    memcpy(bundle + 4 + namelen + 1, data, len);
+    if (out_len) *out_len = total;
+    return bundle;
+}
+
 int bcast_bundle_parse(const uint8_t *buf, size_t len,
                        char *name, size_t namelen,
                        const uint8_t **payload, size_t *payload_len)
@@ -202,14 +241,43 @@ int bcast_file_mode_symbols(int mode)
     return (int)bcast_syms_per_frame((size_t)fs, BCAST_SYMBOL_SIZE_MIN);
 }
 
+static bcast_file_tx_t *tx_open_bundle(uint8_t *bundle, size_t bundle_len, int mode,
+                                       int cycles, int session_id, char *err, size_t errlen);
+static bool tx_mode_ok(int mode, char *err, size_t errlen);
+
 bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
                                     int session_id, char *err, size_t errlen)
 {
-    bcast_file_tx_t *tx = NULL;
-
     if (!path || !*path) { set_err(err, errlen, "no file given"); return NULL; }
     if (cycles < 0)      { set_err(err, errlen, "cycles cannot be negative"); return NULL; }
+    if (!tx_mode_ok(mode, err, errlen))
+        return NULL;
 
+    /* What goes over the air is the BUNDLE -- the file with its name -- not the
+     * bare file, so the receiver can write it back under the right name. */
+    size_t bundle_len = 0;
+    uint8_t *bundle = bcast_bundle_build(path, &bundle_len, err, errlen);
+    if (!bundle)
+        return NULL;
+    return tx_open_bundle(bundle, bundle_len, mode, cycles, session_id, err, errlen);
+}
+
+bcast_file_tx_t *bcast_file_tx_open_mem(const char *name, const uint8_t *data, size_t len,
+                                        int mode, int cycles, int session_id,
+                                        char *err, size_t errlen)
+{
+    if (cycles < 0) { set_err(err, errlen, "cycles cannot be negative"); return NULL; }
+    if (!tx_mode_ok(mode, err, errlen))
+        return NULL;
+    size_t bundle_len = 0;
+    uint8_t *bundle = bcast_bundle_build_mem(name, data, len, &bundle_len, err, errlen);
+    if (!bundle)
+        return NULL;
+    return tx_open_bundle(bundle, bundle_len, mode, cycles, session_id, err, errlen);
+}
+
+static bool tx_mode_ok(int mode, char *err, size_t errlen)
+{
     if (!bcast_file_mode_usable(mode))
     {
         char m[128];
@@ -225,17 +293,16 @@ bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
                      (int)(BCAST_FRAME_OVERHEAD + BCAST_SYMBOL_SIZE_MIN),
                      (int)BCAST_SYMBOL_SIZE_MIN, (int)BCAST_FRAME_OVERHEAD);
         set_err(err, errlen, m);
-        return NULL;
+        return false;
     }
+    return true;
+}
 
-    /* What goes over the air is the BUNDLE -- the file with its name -- not the
-     * bare file, so the receiver can write it back under the right name. */
-    size_t bundle_len = 0;
-    uint8_t *bundle = bcast_bundle_build(path, &bundle_len, err, errlen);
-    if (!bundle)
-        return NULL;
-
-    tx = calloc(1, sizeof(*tx));
+/* The carousel over a built bundle, which it takes and frees. */
+static bcast_file_tx_t *tx_open_bundle(uint8_t *bundle, size_t bundle_len, int mode,
+                                       int cycles, int session_id, char *err, size_t errlen)
+{
+    bcast_file_tx_t *tx = calloc(1, sizeof(*tx));
     if (!tx) { free(bundle); set_err(err, errlen, "out of memory"); return NULL; }
 
     tx->file       = bundle;

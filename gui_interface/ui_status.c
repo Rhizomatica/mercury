@@ -70,7 +70,11 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         "\"peer_snr_valid\":%s,"
         "\"peer_hears_mode\":\"%s\","
         "\"freq_offset_hz\":%s,"
-        "\"freq_offset_age_ms\":%s}",
+        "\"freq_offset_age_ms\":%s,"
+        "\"listen_mode\":%d,"
+        "\"listen_mode_name\":\"%s\","
+        "\"busy\":\"%s\","
+        "\"broadcast\":{\"state\":\"%s\",\"cycle\":%d,\"cycles_total\":%d,\"frames_sent\":%llu}}",
         st->bitrate_bps,
         st->snr_db,
         st->user_callsign,
@@ -93,7 +97,14 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         st->peer_snr_valid ? "true" : "false",
         st->peer_hears_mode,
         foff,
-        foff_age);
+        foff_age,
+        st->listen_mode,
+        st->listen_mode_name,
+        st->busy,
+        st->bcast_state[0] ? st->bcast_state : "idle",
+        st->bcast_cycle,
+        st->bcast_cycles_total,
+        (unsigned long long)st->bcast_frames_sent);
 
     if (n < 0 || (size_t)n >= buflen)
         return -1;
