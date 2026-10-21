@@ -269,6 +269,10 @@ static int session_tx_read(arq_session_t *sess, uint8_t *buf, size_t len)
 int arq_call_carrier(const arq_session_t *sess)
 {
     if (!sess) return ARQ_CONTROL_MODE;
+    /* A station that can only transmit MFSK calls on MFSK from the first
+     * CALL: its fast DATAC16 slots would never reach the peer. */
+    if (ARQ_TX_MFSK_ONLY)
+        return arq_floor_mode(arq_get_bw());
     if (sess->call_sends_done < ARQ_CALL_FAST_SLOTS)
         return sess->control_mode;
     /* The floor of my own bandwidth: the callee answers min(its own, mine),
@@ -351,7 +355,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
                                       called, sess->remote_call, bw_hz,
                                       accept_level(sess), sess->car_ctl_deaf,
                                       sess->car_call_snr != 0.0f ? sess->car_call_snr : NAN,
-                                      sess->car_nonce);
+                                      sess->car_nonce, ARQ_TX_MFSK_ONLY);
         /* The ACCEPT is the carousel's first poll: from here the caller's
          * frames carry the session seed, and its first round comes on the rung
          * the ACCEPT names. */
@@ -361,13 +365,19 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     }
     else
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
-                                    my_call, sess->remote_call, bw_hz);
+                                    my_call, sess->remote_call, bw_hz,
+                                    ARQ_TX_MFSK_ONLY);
     if (n > 0)
     {
         /* A CALL escalates to the MFSK floor once the fast slots are spent; an
          * ACCEPT answers on the carrier the CALL came on, so the two ends
-         * never disagree about it. */
-        int mode = is_accept ? (sess->call_rx_mode > 0 ? sess->call_rx_mode : sess->control_mode)
+         * never disagree about it.  A station that can only transmit MFSK
+         * sends both on MFSK. */
+        int mode;
+        if (ARQ_TX_MFSK_ONLY && is_accept)
+            mode = arq_floor_mode(arq_reported_bandwidth_hz());
+        else
+            mode = is_accept ? (sess->call_rx_mode > 0 ? sess->call_rx_mode : sess->control_mode)
                              : arq_call_carrier(sess);
         if (!is_accept) {
             sess->call_carrier = mode;
@@ -401,9 +411,9 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
 static int session_ctl_mode(const arq_session_t *sess)
 {
     if (!sess->car)
-        return sess->control_mode;
+        return ARQ_TX_MFSK_ONLY ? sess->floor_mode : sess->control_mode;
     bool deaf = sess->car_active ? car_peer_ctl_deaf(sess->car) : sess->ctl_floor_at_stop;
-    return deaf ? sess->floor_mode : sess->control_mode;
+    return (deaf || ARQ_TX_MFSK_ONLY) ? sess->floor_mode : sess->control_mode;
 }
 
 /* The session's DISCONNECT: the one control frame a session sends outside
@@ -744,6 +754,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     car_set_max_level(sess->car, session_max_level());
     car_set_floor_mode(sess->car, sess->floor_mode);
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf, sess->car_peer_ctl_deaf);
+    car_set_tx_mfsk(sess->car, ARQ_TX_MFSK_ONLY, sess->car_peer_tx_mfsk);
     car_seed_snr(sess->car, sess->car_my_snr, is_caller ? sess->car_call_snr : 0.0f);
     sess->ctl_floor_at_stop = false;
     sess->car_active = true;
@@ -873,7 +884,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_APP_CONNECT:
         send_disconnect_reply(sess);    /* owed first; the CALL queues behind it */
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
-        sess->session_id      = (uint8_t)(time_now_ms() & 0x7F) | 0x01;
+        sess->session_id      = (uint8_t)(time_now_ms() & ARQ_CONNECT_SESSION_MASK) | 0x01;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->call_sends_done = 0;
         sess->call_carrier    = 0;
@@ -909,6 +920,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = ev->session_id;
         /* a repeat after our ACCEPTs ran out: answered as in ACCEPTING */
         sess->call_rx_mode    = same_session ? accept_carrier(sess, ev) : ev->mode;
+        sess->car_peer_tx_mfsk = ev->tx_mfsk;
         if (!same_session)
         {
             /* A new session takes the CALL's bandwidth; a repeat keeps the
@@ -916,7 +928,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
              * an ACCEPT of it says (specs/connect/ConnectHandshake.tla). */
             arq_set_session_bw(ev->bw_hz, true);
             sess->car_nonce    = session_nonce();
-            sess->car_rx_level = session_start_level(ev->rx_snr);   /* the ACCEPT names it */
+            sess->car_rx_level = ev->tx_mfsk ? 0 : session_start_level(ev->rx_snr);   /* the ACCEPT names it */
             /* How the caller hears us it reports in its first frame, which
              * comes before we send any control.  (Not "an MFSK CALL means it
              * cannot hear us": the caller escalates just the same when it is
@@ -1033,11 +1045,19 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             break;
         arq_set_session_bw(ev->bw_hz, false);
         sess->car_peer_ctl_deaf = ev->car_ctl_deaf;
+        sess->car_peer_tx_mfsk = ev->tx_mfsk;
         sess->car_tx_level = sess->car_peer_ctl_deaf ? 0 : ev->car_level;
         sess->car_call_snr = ev->car_call_snr;
         if (sess->car_tx_level > session_max_level())
             sess->car_tx_level = session_max_level();
+        /* I can only transmit MFSK: whatever rung the peer named, my rounds
+         * go on the floor (the peer, if it read my CALL, named it there too).
+         * The peer can only transmit MFSK: I hear its rounds on the floor. */
+        if (ARQ_TX_MFSK_ONLY)
+            sess->car_tx_level = 0;
         sess->car_rx_level = session_start_level(ev->rx_snr);
+        if (sess->car_peer_tx_mfsk)
+            sess->car_rx_level = 0;
         /* An ACCEPT heard only on MFSK, to an MFSK CALL: as the callee's MFSK
          * CALL above.  One to a repeat on the control mode (accept_carrier)
          * says only that an ACCEPT there was lost -- the callee decoded our

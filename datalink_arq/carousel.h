@@ -149,6 +149,12 @@ typedef struct {
     int      max_level;             /* the highest rung the session's bandwidth
                                      * allows (car_set_max_level) */
     int      floor_mode;            /* rung 0's mode (car_set_floor_mode) */
+    int      tx_max;                /* ...for my transmit direction: 0 when I
+                                     * can only transmit MFSK */
+    int      rx_max;                /* ...for the peer's (I receive): 0 when it
+                                     * can only transmit MFSK */
+    bool     tx_mfsk;               /* I can only transmit MFSK */
+    bool     peer_tx_mfsk;          /* the peer can only transmit MFSK */
     uint8_t  ctl_deaf;              /* I hear the peer below the control mode (by
                                      * its SNR, or CAR_DEAF_HARD: see car_seed_snr): its
                                      * control must reach me on MFSK (reported) */
@@ -292,6 +298,10 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level);
  * modes (DATAC1, DATAC17, QAM16C2).  Both ends set the same cap, from the
  * bandwidth the connect negotiated, after car_init and before starting. */
 void car_set_max_level(car_t *c, int lv);
+/* Seed the TX-MFSK-only capability: mine (this station can only transmit MFSK)
+ * and the peer's.  Recomputes the per-direction caps (tx_max/rx_max).  Call
+ * after car_set_max_level and car_seed_ctl_deaf. */
+void car_set_tx_mfsk(car_t *c, bool mine, bool peers);
 /* The highest rung a session bandwidth (Hz, VARA's BW500/BW2300/BW2750)
  * allows. */
 int  car_max_level_for_bw(int bw_hz);

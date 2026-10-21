@@ -391,6 +391,11 @@ void arq_set_retry_slots(int slots);
 
 void arq_set_retry_stagger_ms(int ms);
 
+/* Station capability: transmit MFSK only (FSK-only radios).  When on, this
+ * station's CALL/ACCEPT/control/payload all transmit on the MFSK floor rung
+ * and its peers keep its transmit direction there. */
+void arq_set_tx_mfsk_only(bool on);
+
 /**
  * @brief Trigger outgoing call attempt using current ARQ addresses.
  */

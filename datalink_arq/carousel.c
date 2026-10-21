@@ -337,10 +337,13 @@ static float peer_hears_me_db(const car_t *c)
  * control mode, but hears my floor control only where it listens on the
  * floor, which follows its own reading.  In the sim, step:-12:10, the
  * receiver's first poll after the step went on MFSK (13.8 s) where the
- * control mode (4 s) reached the sender. */
+ * control mode (4 s) reached the sender.  Or while I can only transmit
+ * MFSK: then the floor is all my radio keys, whatever the reading says. */
 static bool ctl_on_floor(const car_t *c)
 {
-    if (!c->io.pattern || !c->peer_ctl_deaf) return false;
+    if (!c->io.pattern) return false;
+    if (c->tx_mfsk) return true;
+    if (!c->peer_ctl_deaf) return false;
     /* A deaf peer whose own reading does not say so went deaf on silence
      * (nothing decoded for SILENT_MS: car_on_tx_done), and that reading is
      * as old as the silence.  Trust the flag: with the reading, a receiver
@@ -350,7 +353,7 @@ static bool ctl_on_floor(const car_t *c)
     float db = peer_hears_me_db(c);
     return !(db >= CTL_DEAF_OFF_DB);
 }
-static bool peer_ctl_on_floor(const car_t *c) { return c->io.pattern && c->ctl_deaf; }
+static bool peer_ctl_on_floor(const car_t *c) { return c->io.pattern && (c->ctl_deaf || c->peer_tx_mfsk); }
 /* The session's piece size (car_t.piece): CAR_PIECE, or CAR_PIECE_FLOOR
  * for a session that starts on the floor (car_start_sender / _receiver).
  * Arrays keep CAR_PIECE-byte rows; a piece uses the first piece_of(c). */
@@ -1163,7 +1166,8 @@ static int probe_every(const car_t *c, int lv)
     return PROBE_EVERY << f;
 }
 
-static int cap_level(const car_t *c, int lv) { return lv > c->max_level ? c->max_level : lv; }
+static int cap_tx(const car_t *c, int lv) { return lv > c->tx_max ? c->tx_max : lv; }
+static int cap_rx(const car_t *c, int lv) { return lv > c->rx_max ? c->rx_max : lv; }
 
 /* How I hear the peer, for its control frames: the smoothed reading, or none
  * before the first frame with one. */
@@ -1178,7 +1182,7 @@ static void take_peer_snr(car_t *c, uint64_t now, const msg_t *m)
     c->peer_snr_db = m->snr_db;
     c->peer_snr_ms = now;
     c->peer_snr_mine = c->snr_valid ? c->snr_ema : NAN;
-    c->peer_snr_level = cap_level(c, car_start_level(m->snr_db));
+    c->peer_snr_level = cap_tx(c, car_start_level(m->snr_db));
     c->peer_level_known = true;
 }
 
@@ -1193,7 +1197,7 @@ static int fall_level(const car_t *c, int top)
 {
     if (!c->snr_valid) return top;
     float db = c->snr_last < c->snr_ema ? c->snr_last : c->snr_ema;
-    int lv = cap_level(c, car_start_level(db));
+    int lv = cap_rx(c, car_start_level(db));
     return lv < top ? lv : top;
 }
 
@@ -1201,7 +1205,7 @@ static int choose_level(const car_t *c, uint64_t now)
 {
     int best = -1;
     double best_gp = -1.0;
-    for (int lv = 0; lv <= c->max_level; lv++) {
+    for (int lv = 0; lv <= c->rx_max; lv++) {
         if (!c->rung[lv].rounds || !level_allowed(c, lv)) continue;
         double gp = level_goodput(c, lv);
         if (gp > best_gp) { best_gp = gp; best = lv; }
@@ -1242,7 +1246,7 @@ static int choose_level(const car_t *c, uint64_t now)
      * dead.  Not in the lower half of the SNR's doubt: there a frame that
      * came is more likely luck than the rung working (sim, cliff:10: a
      * QAM16C2 frame at 10 dB, then two lost, +5 %). */
-    for (int up = best + 1; up <= c->max_level; up++)
+    for (int up = best + 1; up <= c->rx_max; up++)
         if (c->rung[up].rounds && c->rung[up].round_at == c->polls && c->rung[up].sent < 3.0 &&
             c->rung[up].lost < 0.05 && level_allowed(c, up) && level_potential(c, up) > best_gp &&
             !(c->snr_valid && c->snr_ema < level_min_db(up) - SNR_GATE_DB / 2)) {
@@ -1259,13 +1263,13 @@ static int choose_level(const car_t *c, uint64_t now)
      * time its re-probe came due (sim, nvisa:-10 50 KB: +4.1 % on trunk;
      * without, a tie, 15 seeds of 30 each way). */
     if (c->snr_valid && !ctl_on_floor(c)) {
-        int up = cap_level(c, car_start_level(c->snr_ema));
+        int up = cap_rx(c, car_start_level(c->snr_ema));
         if (up > best && level_potential(c, up) > best_gp &&
             (level_allowed(c, up) ? !c->rung[up].rounds || c->polls - c->rung[up].round_at >= probe_every(c, up)
                                   : reprobe_due(c, up, now)))
             return up;
     }
-    for (int up = best + 1; up <= c->max_level; up++) {
+    for (int up = best + 1; up <= c->rx_max; up++) {
         if (level_potential(c, up) <= best_gp)
             continue;                   /* cannot win even with no loss */
         /* Not a first try well below the rung's threshold: there the bench
@@ -2558,10 +2562,10 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
          * it only from answers to rounds bounds that at one, but cost more
          * than it saved in the sim (nvis: chat -5 %, a UUCP-like mix +9 %). */
         c->ok_lv = c->last_lv; c->fell_back = false;
-        if (m->n) { c->tx_level = cap_level(c, m->level); c->tx_n = m->n; }
+        if (m->n) { c->tx_level = cap_tx(c, m->level); c->tx_n = m->n; }
         else if (g_short_rung && m->short_rung && m->level > 0) {
             /* S's ack names where it listens for my next round */
-            int nl = cap_level(c, m->level);
+            int nl = cap_tx(c, m->level);
             if (nl != c->tx_level) c->tx_n = 1;   /* the size it asked for was another rung's */
             c->tx_level = nl;
             c->ok_lv = c->tx_level;
@@ -2767,7 +2771,7 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
         c->floor_silent = 0;
         if (m->h_n) {
             /* M's round follows in this keydown: both ways in one exchange. */
-            if (m->n) { c->tx_level = cap_level(c, m->level); c->tx_n = m->n; }
+            if (m->n) { c->tx_level = cap_tx(c, m->level); c->tx_n = m->n; }
             c->rx_mk = (uint8_t)m->poll_id;
             c->round_seen = 0; c->round_frames = m->h_n; c->round_lv = m->h_level;
             c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
@@ -2778,7 +2782,7 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
             else s_anchor(c, ANC_BOTH, (uint8_t)m->poll_id, eh + CHAIN_GAP_MS + round_air(c, m->h_level, m->h_n),
                           d > dr ? d : dr, 0, 0);
         } else if (m->n) {
-            c->tx_level = cap_level(c, m->level); c->tx_n = m->n;
+            c->tx_level = cap_tx(c, m->level); c->tx_n = m->n;
             car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
             s_anchor(c, ANC_POLL, (uint8_t)m->poll_id, eh, d, poll_k(c, m->level, m->n),
                      s_round_ms(c, m->level, m->n));
@@ -2839,6 +2843,7 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->s_prev_lv = c->ok_lv = -1;
     c->rx_data_lv = -1;
     c->max_level = CAR_NLEVELS - 1;
+    c->tx_max = c->rx_max = CAR_NLEVELS - 1;
     c->floor_mode = MERCURY_MODE_MFSK;
 }
 
@@ -2870,8 +2875,25 @@ int car_max_level_for_bw(int bw_hz)
 void car_set_max_level(car_t *c, int lv)
 {
     c->max_level = lv < 0 ? 0 : lv >= CAR_NLEVELS ? CAR_NLEVELS - 1 : lv;
-    c->snr_level = cap_level(c, c->snr_level);
-    c->peer_snr_level = cap_level(c, c->peer_snr_level);
+    c->tx_max = c->max_level;
+    c->rx_max = c->max_level;
+    c->snr_level = cap_rx(c, c->snr_level);
+    c->peer_snr_level = cap_tx(c, c->peer_snr_level);
+}
+
+void car_set_tx_mfsk(car_t *c, bool mine, bool peers)
+{
+    c->tx_mfsk = mine;
+    c->peer_tx_mfsk = peers;
+    c->tx_max = mine ? 0 : c->max_level;
+    c->rx_max = peers ? 0 : c->max_level;
+    c->snr_level = cap_rx(c, c->snr_level);
+    c->peer_snr_level = cap_tx(c, c->peer_snr_level);
+    c->tx_level = c->tx_level >= 0 ? cap_tx(c, c->tx_level) : c->tx_level;
+    if (mine || peers)
+        car_trace(c, "TX-MFSK-only: I %s, the peer %s (tx_max=%d rx_max=%d)",
+                  mine ? "am" : "am not", peers ? "is" : "is not",
+                  c->tx_max, c->rx_max);
 }
 
 /* The session's piece size, as both ends know it: from the rung the callee's

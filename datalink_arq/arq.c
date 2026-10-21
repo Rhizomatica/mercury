@@ -825,6 +825,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     char caller[CALLSIGN_MAX_SIZE] = {0};
     arq_accept_t acc;
     int bw_hz = 0;
+    bool tx_mfsk = false;
     int rc;
 
     if (!arq_protocol_connect_version_ok(data, frame_size))
@@ -834,9 +835,10 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         rc = arq_protocol_parse_accept(data, frame_size, &acc);
         session_id = acc.session_id;
         bw_hz = acc.bw_hz;
+        tx_mfsk = acc.tx_mfsk;
     }
     else
-        rc = arq_protocol_parse_call(data, frame_size, &session_id, caller, &bw_hz);
+        rc = arq_protocol_parse_call(data, frame_size, &session_id, caller, &bw_hz, &tx_mfsk);
 
     /* CALL/ACCEPT do not pass through arq_handle_incoming_frame, so without
      * this the connect exchange is invisible to the trace -- which is exactly
@@ -920,6 +922,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     ev.session_id = session_id;
     ev.rx_snr     = rx_snr;
     ev.mode       = mode;          /* the carrier: an answer goes back on it */
+    ev.tx_mfsk    = tx_mfsk;       /* the peer can only transmit MFSK */
     if (is_accept)
     {
         /* The callee's callsign is not on the air, only its CRC: the FSM
@@ -1326,9 +1329,13 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
      * are what we must answer (on MFSK, #235).  With the listener off while
      * ACCEPTING, the callee only ever heard the DATAC16 CALLs it could not
      * usefully answer: on air (car17, st2 calling the gateway at 2 %), both
-     * MFSK CALLs arrived mid-ACCEPTING, and the call never connected. */
+     * MFSK CALLs arrived mid-ACCEPTING, and the call never connected.
+     * CALLING too: the callee may be MFSK-only, so its ACCEPT comes back on
+     * MFSK while our payload decoder still sits on DATAC16 -- the listener is
+     * the only decoder that would hear it. */
     snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING ||
-                                     g_sess.conn_state == ARQ_CONN_ACCEPTING);
+                                     g_sess.conn_state == ARQ_CONN_ACCEPTING ||
+                                     g_sess.conn_state == ARQ_CONN_CALLING);
     snapshot->listen_floor_mode = arq_floor_mode(normalize_bandwidth_hz(own_bw));
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
@@ -1421,6 +1428,12 @@ void arq_set_retry_stagger_ms(int ms)
     if (ms > ARQ_RETRY_STAGGER_MS_MAX) ms = ARQ_RETRY_STAGGER_MS_MAX;
     atomic_store(&arq_retry_stagger_ms, ms);
     HLOGI(LOG_COMP, "retry_stagger_ms = %d", atomic_load(&arq_retry_stagger_ms));
+}
+
+void arq_set_tx_mfsk_only(bool on)
+{
+    atomic_store(&arq_tx_mfsk_only, on ? 1 : 0);
+    HLOGI(LOG_COMP, "MFSK-only transmit %s", on ? "enabled" : "disabled");
 }
 
 void reset_arq_info(arq_info *conn)

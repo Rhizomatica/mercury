@@ -116,6 +116,10 @@ typedef struct
     uint16_t car_nonce;
     uint16_t car_called_crc;
 
+    /* RX_CALL / RX_ACCEPT: the peer can only transmit MFSK (its CALL/ACCEPT
+     * carried the TX-MFSK-only capability bit). */
+    bool     tx_mfsk;
+
     /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown):
      * a CALL's sets the start rung the ACCEPT names. */
     float    rx_snr;
@@ -263,6 +267,7 @@ typedef struct
                                        * ACCEPT), 0 unknown */
     float    car_my_snr;              /* connect: the SNR I read the peer's connect
                                        * frame at (the CALL, the ACCEPT), 0 unknown */
+    bool     car_peer_tx_mfsk;        /* connect: the peer can only transmit MFSK */
     bool     ctl_floor_at_stop;       /* the carousel's peer_ctl_deaf when it stopped,
                                        * for the DISCONNECT exchange after it */
     int      floor_mode;              /* the session's MFSK floor (arq_floor_mode

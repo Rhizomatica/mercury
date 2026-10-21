@@ -284,6 +284,40 @@ static void test_carousel_bw500_floor(void)
     unsetenv("CAR_BW");
 }
 
+/* The TX-MFSK-only capability floors only the affected direction: mine caps
+ * my transmit rung, the peer's caps the rung I choose for what it sends me. */
+static void test_carousel_tx_mfsk_caps(void)
+{
+    car_t *c = calloc(1, sizeof(*c));
+    car_io_t io = {0};
+    car_init(c, &io, 4, 3);
+    car_set_max_level(c, CAR_NLEVELS - 1);
+
+    /* I can only transmit MFSK: my TX direction floored, my RX not. */
+    car_set_tx_mfsk(c, true, false);
+    TEST_ASSERT_EQUAL_INT(0, c->tx_max);
+    TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, c->rx_max);
+    TEST_ASSERT_EQUAL_INT(4, c->snr_level);       /* RX direction untouched */
+    TEST_ASSERT_EQUAL_INT(0, c->peer_snr_level);  /* TX direction floored */
+
+    /* The peer can only transmit MFSK: its TX direction (my RX) floored. */
+    c->snr_level = 4; c->peer_snr_level = 3;
+    car_set_tx_mfsk(c, false, true);
+    TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, c->tx_max);
+    TEST_ASSERT_EQUAL_INT(0, c->rx_max);
+    TEST_ASSERT_EQUAL_INT(0, c->snr_level);
+    TEST_ASSERT_EQUAL_INT(3, c->peer_snr_level);
+
+    /* Both: everything at the floor. */
+    c->snr_level = 4; c->peer_snr_level = 3;
+    car_set_tx_mfsk(c, true, true);
+    TEST_ASSERT_EQUAL_INT(0, c->tx_max);
+    TEST_ASSERT_EQUAL_INT(0, c->rx_max);
+    TEST_ASSERT_EQUAL_INT(0, c->snr_level);
+    TEST_ASSERT_EQUAL_INT(0, c->peer_snr_level);
+    free(c);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -298,6 +332,7 @@ int main(void)
     RUN_TEST(test_carousel_piece_size_agrees);
     RUN_TEST(test_carousel_bandwidth_max_level);
     RUN_TEST(test_carousel_bw500_floor);
+    RUN_TEST(test_carousel_tx_mfsk_caps);
     RUN_TEST(test_carousel_request_response_completes);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
