@@ -11,6 +11,7 @@
 #   - Linux armhf (cross-compile, Debian 13)
 #   - Windows x64 (cross-compile via MinGW, Debian 13)
 #   - macOS arm64 (native, Apple Silicon runner)
+#   - Android arm64 .apk (NDK cross-compile, debug-signed)
 
 name: Build
 
@@ -52,6 +53,10 @@ on:
         default: true
       build_fyne_ui_windows:
         description: 'Build Fyne UI Windows x64 (cross-compile)'
+        type: boolean
+        default: true
+      build_android:
+        description: 'Build Android arm64 .apk (NDK cross-compile)'
         type: boolean
         default: true
 
@@ -455,3 +460,62 @@ jobs:
           [ -f windows-installer/mercury-ui.exe ] || { echo "::error::no mercury-ui.exe produced"; exit 1; }
           file windows-installer/mercury-ui.exe
           echo "OK: Windows Fyne UI cross-build"
+
+  # Android: the Fyne GUI with the engine embedded, as an .apk (make
+  # fyne-ui-android).  The runner image carries the Android SDK; the NDK is
+  # pinned (the release workflow uses the same one), and so is the fyne CLI
+  # that packages it.  The .apk is debug-signed: for testing only.
+  build-android:
+    name: Build Android .apk (arm64)
+    runs-on: ubuntu-24.04
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      github.event.inputs.build_android == 'true'
+    timeout-minutes: 30
+    env:
+      NDK_VERSION: 27.3.13750724
+      FYNE_CLI_VERSION: v1.7.3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.9'
+          cache-dependency-path: gui_interface/fyne-ui/go.sum
+
+      - name: Install the NDK and the fyne CLI
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          go install fyne.io/tools/cmd/fyne@$FYNE_CLI_VERSION
+
+      - name: Build the .apk
+        run: |
+          NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
+          T="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          make fyne-ui-android ANDROID_NDK_HOME="$NDK" ANDROID_HOME="$ANDROID_HOME" \
+            CC="$T/aarch64-linux-android26-clang" AR="$T/llvm-ar"
+
+      - name: Verify the .apk
+        run: |
+          set -eu
+          APK=$(ls Mercury-*.apk)
+          B="$ANDROID_HOME/build-tools/34.0.0"
+          "$B/aapt" dump badging "$APK" > badging.txt
+          grep -E "^package:|native-code" badging.txt
+          grep -q "native-code: 'arm64-v8a'" badging.txt || { echo "::error::no arm64-v8a library in $APK"; exit 1; }
+          grep -q "android.permission.RECORD_AUDIO" badging.txt || { echo "::error::$APK does not ask for RECORD_AUDIO"; exit 1; }
+          "$B/apksigner" verify "$APK"
+          echo "OK: $APK"
+
+      - name: Upload the .apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: mercury-android-arm64-debug
+          path: Mercury-*.apk
+          retention-days: 14

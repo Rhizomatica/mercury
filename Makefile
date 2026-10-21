@@ -677,11 +677,17 @@ endif
 # fyne links the Go side at API 21, where there is no libaaudio, so the link
 # is pointed at the API 26 stubs; the app needs Android 8 or newer.  The
 # versionCode is MAJOR*10000 + MINOR*100 + PATCH (1.9.20 -> 10920).  Without
-# ANDROID_RELEASE=1 the .apk is debuggable and signed with fyne's debug key.
+# ANDROID_RELEASE=1 the .apk is debuggable and signed with fyne's debug key,
+# which is public.  A release is signed again (v1-v3) with our own key:
+#   ANDROID_KEYSTORE=release.jks [ANDROID_KEY_ALIAS=mercury], and the
+#   keystore password in the environment variable ANDROID_KEYSTORE_PASS.
+# Every update must carry the same key, or Android refuses to install it.
 ANDROID_APK ?= Mercury-$(MERCURY_VERSION).apk
 ANDROID_API = 26
 ANDROID_BUILD ?= $(shell echo $(MERCURY_VERSION) | awk -F. '{ print $$1 * 10000 + $$2 * 100 + $$3 }')
 ANDROID_TRIPLE = $(if $(filter amd64,$(TARGET_GOARCH)),x86_64,aarch64)-linux-android
+ANDROID_KEY_ALIAS ?= mercury
+ANDROID_BUILD_TOOLS ?= $(lastword $(sort $(wildcard $(ANDROID_HOME)/build-tools/*)))
 ANDROID_SYSROOT_LIB = $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$(ANDROID_TRIPLE)/$(ANDROID_API)
 
 fyne-ui-android:
@@ -702,7 +708,15 @@ endif
 		--app-version $(MERCURY_VERSION) --app-build $(ANDROID_BUILD) \
 		$(if $(filter 1,$(ANDROID_RELEASE)),--release)
 	rm -f $(FYNE_UI_DIR)/AndroidManifest.xml
+ifneq ($(ANDROID_KEYSTORE),)
+	$(ANDROID_BUILD_TOOLS)/zipalign -f -p 4 $(FYNE_UI_DIR)/Mercury.apk $(ANDROID_APK)
+	$(ANDROID_BUILD_TOOLS)/apksigner sign --ks $(ANDROID_KEYSTORE) --ks-key-alias $(ANDROID_KEY_ALIAS) \
+		--ks-pass env:ANDROID_KEYSTORE_PASS $(ANDROID_APK)
+	$(ANDROID_BUILD_TOOLS)/apksigner verify $(ANDROID_APK)
+	rm -f $(FYNE_UI_DIR)/Mercury.apk
+else
 	mv $(FYNE_UI_DIR)/Mercury.apk $(ANDROID_APK)
+endif
 	@echo "  -> $(ANDROID_APK)  (android/$(TARGET_GOARCH), versionCode $(ANDROID_BUILD))"
 
 # The device build as an .ipa for App Store Connect (and from there Apple's
