@@ -327,7 +327,7 @@ static void io_pattern(void *ctx, int kind)
     push(e);
 }
 
-static bool io_peer_keyed(void *ctx)
+static int io_peer_keyed(void *ctx)
 {
     const station_t *l = ctx, *p = &S[l->id ^ 1];
     /* CAR_CS_DECODABLE: carrier sense is a decoder in sync, so a keydown the
@@ -340,7 +340,7 @@ static bool io_peer_keyed(void *ctx)
      * floor mid-frame, on air, it missed that frame (car23 at 3 %). */
     if (p->tx_end && unsensed(p->kd_no)) return false;   /* an explorer's sensing failure */
     if (nav_mode && p->nav_ok && p->tx_end && now_ms >= p->nav_from && now_ms < p->tx_end - TAIL_MS + CS_ACQ_MS)
-        return true;                                     /* its NAV header was heard */
+        return CAR_KEYED_NAV;                            /* its NAV header was heard */
     uint64_t from = p->tx_start;
     if (cs_decodable) {
         from = UINT64_MAX;

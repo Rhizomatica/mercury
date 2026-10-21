@@ -62,6 +62,14 @@ typedef struct {
     uint32_t gap_ms;            /* silence before this frame (not the first) */
 } car_frame_t;
 
+/* What says the peer is on the air (car_io_t.peer_keyed); 0: nothing. */
+enum {
+    CAR_KEYED_SYNC = 1,     /* a decoder is in sync on a frame */
+    CAR_KEYED_PREAMBLE,     /* a frame's preamble was caught: its airtime */
+    CAR_KEYED_NAV,          /* the peer's NAV header: its keydown */
+    CAR_KEYED_BUSY,         /* the energy busy detector (off by default) */
+};
+
 typedef struct {
     /* Key the radio for these frames, back to back with their gaps.  The
      * frames are only valid during the call.  The runtime calls
@@ -69,9 +77,9 @@ typedef struct {
     void   (*keydown)(void *ctx, const car_frame_t *frames, int n);
     /* Bind the payload decoder to this mode (the control decoder always runs). */
     void   (*bind_rx)(void *ctx, int mode);
-    /* Is the peer on the air?  A decoder in sync, held for the sync-loss
-     * latency after it ends. */
-    bool   (*peer_keyed)(void *ctx);
+    /* Is the peer on the air, and by what sign (CAR_KEYED_*, 0: no)?  A
+     * decoder in sync, held for the sync-loss latency after it ends. */
+    int    (*peer_keyed)(void *ctx);
     /* The application's queue: take up to max bytes; how many are waiting. */
     size_t (*tx_read)(void *ctx, uint8_t *buf, size_t max);
     size_t (*tx_pending)(void *ctx);

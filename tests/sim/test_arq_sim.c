@@ -186,10 +186,13 @@ void test_prop_integrity_detects_mismatch(void)
  * ====================================================================== */
 
 /* Helper: establish a connection between A and B. */
-static sim_t *make_connected(const sim_channel_cfg_t *chan)
+static sim_t *make_connected_on(const sim_channel_cfg_t *chan, bool half_duplex)
 {
     sim_t *s = sim_create(chan, "A0AAA", "B0BBB");
     if (!s) return NULL;
+    sim_set_half_duplex(s, half_duplex);
+    if (half_duplex)
+        sim_set_carrier_sense(s, true, 1500);
 
     arq_event_t listen = { .id = ARQ_EV_APP_LISTEN };
     sim_inject(s, sim_b(s), &listen);
@@ -202,6 +205,8 @@ static sim_t *make_connected(const sim_channel_cfg_t *chan)
     sim_run_until_idle(s, 60000);
     return s;
 }
+static sim_t *make_connected(const sim_channel_cfg_t *chan)    { return make_connected_on(chan, false); }
+static sim_t *make_connected_hd(const sim_channel_cfg_t *chan) { return make_connected_on(chan, true); }
 
 void test_sim_transfer_clean(void)
 {
@@ -297,7 +302,11 @@ void test_sim_bidirectional_progress_under_collisions(void)
 void test_sim_transfer_lossy_per20(void)
 {
     sim_channel_cfg_t chan = { .seed = 7, .per = 0.20, .guard_ms = 150 };
-    sim_t *s = make_connected(&chan);
+    /* Half duplex, and the carrier sense a station's decoders give it, as on
+     * a radio: on a full-duplex channel a CALL keyed over the callee's floor
+     * ACCEPT to a repeat (accept_carrier) let the caller decode that ACCEPT
+     * anyway, and the callee, connected, took the CALL for a redial. */
+    sim_t *s = make_connected_hd(&chan);
     TEST_ASSERT_NOT_NULL(s);
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED,
