@@ -19,6 +19,26 @@
 
 #include <stdbool.h>
 
+#if defined(__ANDROID__)
+/* bionic has no POSIX shared memory.  Only the shm audio subsystem (-x shm)
+ * uses it, to meet another process, and an Android app has none: it fails
+ * there at start-up. */
+#include <errno.h>
+#include <sys/types.h>
+static inline int shm_open(const char *name, int oflag, mode_t mode)
+{
+    (void) name; (void) oflag; (void) mode;
+    errno = ENOSYS;
+    return -1;
+}
+static inline int shm_unlink(const char *name)
+{
+    (void) name;
+    errno = ENOSYS;
+    return -1;
+}
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

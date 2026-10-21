@@ -134,3 +134,8 @@ void list_soundcards(int audio_system);
 // Each entry in ids[] and dev_names[] will be a NUL-terminated string.
 int get_soundcard_list(int audio_system, int mode,
                        char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX], int max_count);
+
+// Android: AAudio lists no devices, so the UI registers Java's
+// (AudioManager.getDevices), one per line: "id\tin|out\tname".  They are
+// offered as "dev:<id>" next to "default"; elsewhere this does nothing.
+void audioio_set_android_devices(const char *list);

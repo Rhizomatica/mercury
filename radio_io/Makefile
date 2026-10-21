@@ -46,6 +46,8 @@ endif
 ifeq ($(HAVE_HAMLIB),1)
 ifeq ($(OS),Windows_NT)
 HAMLIB_CFLAGS_LOCAL = -Ihamlib-w64/include -DHAVE_HAMLIB
+else ifeq ($(TARGET_ANDROID),1)
+HAMLIB_CFLAGS_LOCAL = -Ihamlib-android/$(ANDROID_ABI)/include -DHAVE_HAMLIB
 else ifeq ($(UNAME_S),Darwin)
 ifneq ($(wildcard hamlib-macos/lib/libhamlib*.a),)
 HAMLIB_CFLAGS_LOCAL = -Ihamlib-macos/include -DHAVE_HAMLIB

@@ -1,4 +1,4 @@
-//go:build linux && mercury_embedded
+//go:build linux && !android && mercury_embedded
 
 package main
 

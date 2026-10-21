@@ -24,6 +24,8 @@ include ../config.mk
 ifeq ($(OS),Windows_NT)
        OBJS += ffaudio/ffaudio/wasapi.o
        OBJS += ffaudio/ffaudio/dsound.o
+else ifeq ($(TARGET_ANDROID),1)
+       OBJS = ffaudio/ffaudio/aaudio.o
 else
     UNAME_S := $(shell uname -s)
     ifeq ($(UNAME_S),Linux)

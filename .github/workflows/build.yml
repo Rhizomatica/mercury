@@ -11,6 +11,7 @@
 #   - Linux armhf (cross-compile, Debian 13)
 #   - Windows x64 (cross-compile via MinGW, Debian 13)
 #   - macOS arm64 (native, Apple Silicon runner)
+#   - Android arm64 .apk (NDK cross-compile, debug-signed)
 
 name: Build
 
@@ -52,6 +53,14 @@ on:
         default: true
       build_fyne_ui_windows:
         description: 'Build Fyne UI Windows x64 (cross-compile)'
+        type: boolean
+        default: true
+      build_android:
+        description: 'Build Android arm64 .apk (NDK cross-compile)'
+        type: boolean
+        default: true
+      build_ios:
+        description: 'Build the iOS sideload .ipa (arm64, signed ad hoc)'
         type: boolean
         default: true
 
@@ -455,3 +464,119 @@ jobs:
           [ -f windows-installer/mercury-ui.exe ] || { echo "::error::no mercury-ui.exe produced"; exit 1; }
           file windows-installer/mercury-ui.exe
           echo "OK: Windows Fyne UI cross-build"
+
+  # Android: the Fyne GUI with the engine embedded, as an .apk (make
+  # fyne-ui-android).  The runner image carries the Android SDK; the NDK is
+  # pinned (the release workflow uses the same one), and so is the fyne CLI
+  # that packages it.  The .apk is debug-signed: for testing only.
+  build-android:
+    name: Build Android .apk (arm64)
+    runs-on: ubuntu-24.04
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      github.event.inputs.build_android == 'true'
+    timeout-minutes: 30
+    env:
+      NDK_VERSION: 27.3.13750724
+      FYNE_CLI_VERSION: v1.7.3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.9'
+          cache-dependency-path: gui_interface/fyne-ui/go.sum
+
+      - name: Install the NDK and the fyne CLI
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          go install fyne.io/tools/cmd/fyne@$FYNE_CLI_VERSION
+
+      - name: Build the .apk
+        run: |
+          NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
+          T="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          make fyne-ui-android ANDROID_NDK_HOME="$NDK" ANDROID_HOME="$ANDROID_HOME" \
+            CC="$T/aarch64-linux-android26-clang" AR="$T/llvm-ar"
+
+      - name: Verify the .apk
+        run: |
+          set -eu
+          APK=$(ls Mercury-*.apk)
+          B="$ANDROID_HOME/build-tools/34.0.0"
+          "$B/aapt" dump badging "$APK" > badging.txt
+          grep -E "^package:|native-code" badging.txt
+          grep -q "native-code: 'arm64-v8a'" badging.txt || { echo "::error::no arm64-v8a library in $APK"; exit 1; }
+          grep -q "android.permission.RECORD_AUDIO" badging.txt || { echo "::error::$APK does not ask for RECORD_AUDIO"; exit 1; }
+          "$B/apksigner" verify "$APK"
+          echo "OK: $APK"
+
+      # Android loads the app's library only if every symbol it needs is in
+      # the system: a build with a C++ Hamlib backend linked but no C++
+      # runtime did not start (__gxx_personality_v0).  Checked against the
+      # oldest API the .apk is built for, 26.  memfd_create (API 30) is
+      # known and still to be traced.
+      - name: Check the library's symbols against API 26
+        run: |
+          set -eu
+          T="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64"
+          SR="$T/sysroot/usr/lib/aarch64-linux-android/26"
+          unzip -q -o Mercury-*.apk 'lib/arm64-v8a/*' -d apk-lib
+          "$T/bin/llvm-nm" -D --undefined-only apk-lib/lib/arm64-v8a/*.so | awk '{print $2}' | sed 's/@.*//' | sort -u > need.txt
+          for l in libc libm libdl liblog libaaudio libandroid libEGL libGLESv2; do
+            "$T/bin/llvm-nm" -D --defined-only "$SR/$l.so" | awk '{print $3}' | sed 's/@.*//'
+          done | sort -u > have.txt
+          MISSING=$(comm -23 need.txt have.txt | grep -v -x memfd_create || true)
+          if [ -n "$MISSING" ]; then echo "::error::not in Android API 26: $MISSING"; exit 1; fi
+          echo "OK: $(wc -l < need.txt) symbols, all in API 26 (memfd_create aside)"
+
+      - name: Upload the .apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: mercury-android-arm64-debug
+          path: Mercury-*.apk
+          retention-days: 14
+
+  # The iOS app as a sideload .ipa (SideStore, AltStore Classic), signed ad
+  # hoc: what the release attaches.  The AltStore PAL build is signed for
+  # distribution on the Mac with the Apple credentials instead.
+  build-ios:
+    name: Build iOS .ipa (arm64, sideload)
+    runs-on: macos-latest
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      github.event.inputs.build_ios == 'true'
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.9'
+          cache-dependency-path: gui_interface/fyne-ui/go.sum
+
+      - name: Build the .ipa
+        run: |
+          set -eu
+          make fyne-ui-ios-ipa CC="xcrun -sdk iphoneos clang -arch arm64 -miphoneos-version-min=17.0"
+          codesign -dv ios/MercuryUI.app 2>&1 | grep -q 'Signature=adhoc'
+          unzip -l Mercury-*-ios-sideload.ipa | grep -q 'Payload/MercuryUI.app/Mercury$'
+          ls -la Mercury-*-ios-sideload.ipa
+
+      - name: Upload the .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: mercury-ios-sideload
+          path: Mercury-*-ios-sideload.ipa
+          retention-days: 14

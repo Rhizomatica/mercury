@@ -1,0 +1,29 @@
+<manifest
+	xmlns:android="http://schemas.android.com/apk/res/android"
+	package="org.rhizomatica.mercury"
+	android:versionCode="@BUILD@"
+	android:versionName="@VERSION@">
+
+	<application android:label="Mercury" android:debuggable="@DEBUG@">
+	<activity android:name="org.golang.app.GoNativeActivity"
+		android:label="Mercury"
+		android:configChanges="orientation|keyboardHidden|uiMode|screenSize"
+		android:exported="true"
+		android:theme="@android:style/Theme">
+		<meta-data android:name="android.app.lib_name" android:value="mercury" />
+		<intent-filter>
+			<action android:name="android.intent.action.MAIN" />
+			<category android:name="android.intent.category.LAUNCHER" />
+		</intent-filter>
+	</activity>
+
+	<receiver android:name="org.golang.app.FyneNotificationReceiver"
+			  android:exported="false" />
+	</application>
+
+	<!-- The modem listens to the radio: AAudio capture. -->
+	<uses-permission android:name="android.permission.RECORD_AUDIO" />
+	<!-- The TNC and status ports, for the email, chat and file applications. -->
+	<uses-permission android:name="android.permission.INTERNET" />
+	<uses-feature android:name="android.hardware.microphone" android:required="false" />
+</manifest>

@@ -98,6 +98,12 @@ void radio_io_list_models(void);
  * is not compiled in. */
 int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count);
 
+/* The open usbfs descriptor behind a "usb:..." device (Hamlib's usb_serial):
+ * an Android app opens USB devices only through Java's UsbManager, so the UI
+ * opens it and registers the descriptor here, and Hamlib is handed
+ * "usbfd:N" for that device.  fd < 0 forgets it.  One device. */
+void radio_io_set_usb_fd(const char *device, int fd);
+
 /* Restart the PTT subsystem with a new configuration.
  * Thread-safe — blocks key_on / key_off during the restart cycle.
  * Returns 0 on success, -1 on failure. */

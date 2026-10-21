@@ -6,7 +6,9 @@
 #   1. Bump version strings + changelog, commit, push
 #   2. Build unsigned Windows zip (debian container, mingw cross-compile)
 #   3. Authenticode-sign the binaries (certum-signer container, jsign + SimplySign)
-#   4. Create GitHub release with signed zip
+#   4. Build the Android .apk, signed with the release key (secrets)
+#   5. Build the iOS sideload .ipa
+#   6. Create GitHub release with signed zip (+ installer, .dmg, .apk, .ipa)
 
 name: Release
 
@@ -24,6 +26,16 @@ on:
         type: boolean
       build_macos:
         description: 'Build+sign+notarize the macOS universal .dmg'
+        required: false
+        default: true
+        type: boolean
+      build_android:
+        description: 'Build the Android .apk, signed with the release key'
+        required: false
+        default: true
+        type: boolean
+      build_ios:
+        description: 'Build the iOS sideload .ipa (SideStore, AltStore Classic)'
         required: false
         default: true
         type: boolean
@@ -343,13 +355,99 @@ jobs:
       ref: mercuryv2
     secrets: inherit
 
+  # ---- Android .apk ----
+  # Signed with the release key: every update must carry the same one, or
+  # Android refuses to install it over the previous version.  The keystore
+  # (base64) and its password are repository secrets ANDROID_KEYSTORE_B64
+  # and ANDROID_KEYSTORE_PASS, the key alias "mercury".
+  android:
+    name: Build Android .apk
+    needs: bump
+    if: ${{ inputs.build_android }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      NDK_VERSION: 27.3.13750724
+      FYNE_CLI_VERSION: v1.7.3
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: mercuryv2, fetch-depth: 1 }
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.9'
+          cache-dependency-path: gui_interface/fyne-ui/go.sum
+
+      - name: Install the NDK and the fyne CLI
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          go install fyne.io/tools/cmd/fyne@$FYNE_CLI_VERSION
+
+      - name: Build and sign the .apk
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+        run: |
+          set -eu
+          if [ -z "$ANDROID_KEYSTORE_B64" ] || [ -z "$ANDROID_KEYSTORE_PASS" ]; then
+            echo "::error::the ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASS secrets are not set"; exit 1
+          fi
+          KS="$RUNNER_TEMP/release.jks"
+          echo "$ANDROID_KEYSTORE_B64" | base64 -d > "$KS"
+          NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
+          T="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          make fyne-ui-android ANDROID_RELEASE=1 ANDROID_KEYSTORE="$KS" \
+            ANDROID_APK=Mercury-${{ inputs.version }}-android-arm64.apk \
+            ANDROID_NDK_HOME="$NDK" ANDROID_HOME="$ANDROID_HOME" \
+            CC="$T/aarch64-linux-android26-clang" AR="$T/llvm-ar"
+          rm -f "$KS"
+
+      - name: Upload the .apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: Mercury-${{ inputs.version }}-android-arm64.apk
+
+  # ---- iOS sideload .ipa ----
+  # Signed ad hoc, with no provisioning profile: SideStore and AltStore
+  # Classic re-sign it with their user's Apple ID.  (The AltStore PAL build
+  # goes through App Store Connect and Apple's notarization instead.)
+  ios:
+    name: Build iOS sideload .ipa
+    needs: bump
+    if: ${{ inputs.build_ios }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: mercuryv2, fetch-depth: 1 }
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.9'
+          cache-dependency-path: gui_interface/fyne-ui/go.sum
+
+      - name: Build the .ipa
+        run: |
+          set -eu
+          make fyne-ui-ios-ipa \
+            CC="xcrun -sdk iphoneos clang -arch arm64 -miphoneos-version-min=17.0" \
+            IOS_IPA=Mercury-${{ inputs.version }}-ios-sideload.ipa
+          codesign -dv ios/MercuryUI.app 2>&1 | grep -q 'Signature=adhoc'
+
+      - name: Upload the .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: Mercury-${{ inputs.version }}-ios-sideload.ipa
+
   # ---- Create GitHub release ----
   release:
     name: Create GitHub release
-    needs: [sign, macos]
-    # The macOS job is opt-in; without this the whole release is skipped when
-    # it is, because a skipped dependency skips its dependents.
-    if: ${{ always() && needs.sign.result == 'success' && needs.macos.result != 'failure' }}
+    needs: [sign, macos, android, ios]
+    # The macOS and Android jobs are opt-in; without this the whole release is
+    # skipped when one is, because a skipped dependency skips its dependents.
+    if: ${{ always() && needs.sign.result == 'success' && needs.macos.result != 'failure' && needs.android.result != 'failure' && needs.ios.result != 'failure' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -369,6 +467,16 @@ jobs:
         uses: actions/download-artifact@v4
         with: { name: macos-dmg }
 
+      - name: Download the Android .apk
+        if: ${{ inputs.build_android }}
+        uses: actions/download-artifact@v4
+        with: { name: android-apk }
+
+      - name: Download the iOS .ipa
+        if: ${{ inputs.build_ios }}
+        uses: actions/download-artifact@v4
+        with: { name: ios-ipa }
+
       - name: Create release
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: |
@@ -382,6 +490,10 @@ jobs:
           if [ -n "$SETUP" ]; then ASSETS="$ASSETS ./${SETUP}"; fi
           DMG=$(ls Mercury-*-universal.dmg 2>/dev/null | head -1 || true)
           if [ -n "$DMG" ]; then ASSETS="$ASSETS ./${DMG}"; fi
+          APK=$(ls Mercury-*-android-arm64.apk 2>/dev/null | head -1 || true)
+          if [ -n "$APK" ]; then ASSETS="$ASSETS ./${APK}"; fi
+          IPA=$(ls Mercury-*-ios-sideload.ipa 2>/dev/null | head -1 || true)
+          if [ -n "$IPA" ]; then ASSETS="$ASSETS ./${IPA}"; fi
           gh release create "v${{ inputs.version }}" $ASSETS \
             --repo Rhizomatica/mercury --target mercuryv2 --generate-notes \
             --title "Mercury ${{ inputs.version }}"
