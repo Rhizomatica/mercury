@@ -52,6 +52,12 @@ Upgrade every station you talk to at once.
     caller ends at once.
   - The last bytes are delivered on a hang-up: a reply written just before
     DISCONNECT is no longer lost (it was in 2 of 4 tries).
+  - A callee that hears the same CALL twice on DATAC16 answers the repeat on
+    the MFSK floor (#420): its DATAC16 answer did not get back.  On air
+    (an sBitx calling an IC-7100) none of the DATAC16 answers arrived and
+    every MFSK one did.  In the simulator, on such a one-sided link, the
+    connect takes 30 s instead of 51.5 s.  The caller holds its next CALL
+    while one of its decoders hears that answer arriving.
 - **A 500 Hz MFSK floor for BW500 sessions** (#406): 32 tones 15.6 Hz apart,
   inside a 500 Hz filter. Wide sessions keep the 1 kHz floor. In the
   simulator a BW500 session now completes at -14 dB; at -12 dB it is slower
@@ -78,6 +84,29 @@ Upgrade every station you talk to at once.
   Before, it logged only to its console window.
 - **Standard channels in the Watterson simulator**: the ITU-R and CCIR
   presets (#379).
+
+## Technology previews: Android and iOS
+
+Both are the Mercury GUI with the modem inside, for trying out, not yet for
+relying on.
+
+- **Android**: `Mercury-1.9.20-android-arm64.apk`, to sideload (64-bit ARM).
+  - The radio's USB sound card is picked in Soundcards, by name ("USB Audio
+    CODEC (USB)"); capture takes the signal without the phone's voice
+    processing.
+  - CAT and PTT over the radio's own USB cable: Radio, method Hamlib,
+    **"Direct USB, no driver (experimental)..."**.  Android gives an app no
+    serial port, so the bundled Hamlib drives the radio's USB-serial chip
+    itself (Silicon Labs CP210x: Icom IC-7100 and IC-7300, Yaesu FT-710,
+    many cables; Hamlib/Hamlib#2272).
+  - The .apk is signed with Mercury's release key: a test build installed
+    before has to be uninstalled first.
+- **iOS** (iPhone and iPad): through AltStore PAL (EU, Brazil, Japan) once
+  Apple has notarized it; not available yet.
+- **The same USB path on Linux** without the chip's kernel driver, or
+  without access to `/dev/ttyUSB*` (the Jolla Phone): give Hamlib's device
+  as `usb:VVVV:PPPP[:SERIAL][@INTERFACE]` (#421), with a Hamlib that has
+  Hamlib/Hamlib#2272.
 
 ## Fixes
 
@@ -108,6 +137,7 @@ Upgrade every station you talk to at once.
 | On air | Gateway ⇄ estacao2 (both sBitx, 7.050 MHz into dummy loads, 20 %), the build before against this release, alternated | Keyboard chat about 30 % faster; a 5 KB file and UUCP both ways equal within the on-air spread; everything delivered |
 | Simulator | `tests/sim`, 120 seeds a cell, AWGN, cliffs, fading, NVIS, steps, BW500 and BW2300 | Equal or better than the build before in every cell but the BW500 fringe at -12 dB (above) |
 | Idle sessions | Two FSMs, 100 idle sessions of 30 minutes, 10 dB with 10/20/30 % of frames lost, and fading at 0 dB (#413) | Sessions dropped: 33/82/98 and 64 before, 0/5/31 and 3 now |
+| Android | The .apk on a Jolla Phone (Sailfish OS 5.2, Android 15 App Support); the USB-serial path with Hamlib's rigctl and Mercury on the same phone's Linux side (IC-7100), and on Debian 12 (FT-710) | Starts, receives and decodes; CAT reads, PTT keys and releases. CAT and the USB sound card inside the Android app are not yet tried on a phone with a radio |
 | Continuous integration | Every merged change | Unit tests, two-daemon integration tests, ASan/UBSan, TSan; builds for Linux amd64, arm64, armhf, Windows x64, macOS arm64, and the Fyne GUI. The integration tests also run on a fresh random channel seed each time, and every seed is logged so a failure can be replayed (#415) |
 
 ## Known limits
@@ -117,3 +147,8 @@ Upgrade every station you talk to at once.
 - At 30 Hz of Doppler (itur-hd) it is just usable.
 - BW500 at -12 dB is slower than before.
 - Optional encryption (#410) is not in this release.
+- Android: the app must stay in the foreground (no background service yet);
+  only CP210x USB-serial chips; a device picked in Soundcards may have to
+  be picked again after the radio is plugged in again.  Tested on Android
+  15 only: one function the app uses arrived in Android 11, so older
+  versions may not start it.
