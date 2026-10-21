@@ -19,21 +19,34 @@ import (
 // TestHalfWidthColumnMinSizeReservesTwiceWidestChild pins the layout's MinSize
 // to twice its widest child: Layout hands each child half the container width,
 // so a smaller MinSize would resize the cards below their own minimum.
-func TestHalfWidthColumnMinSizeReservesTwiceWidestChild(t *testing.T) {
+// The column asks for the widest child only, so it fits a phone in
+// portrait; it gives each child half a wide window, and on a narrow one as
+// much as the child needs, up to the full width.
+func TestHalfWidthColumnFitsNarrowWindows(t *testing.T) {
 	test.NewTempApp(t)
 
 	wide := canvas.NewRectangle(color.Transparent)
 	wide.SetMinSize(fyne.NewSize(200, 20))
 	narrow := canvas.NewRectangle(color.Transparent)
 	narrow.SetMinSize(fyne.NewSize(60, 40))
+	objs := []fyne.CanvasObject{wide, narrow}
 
 	var col halfWidthColumn
-	min := col.MinSize([]fyne.CanvasObject{wide, narrow})
-	if got, want := min.Width, float32(400); got != want {
+	min := col.MinSize(objs)
+	if got, want := min.Width, float32(200); got != want {
 		t.Fatalf("MinSize width = %v, want %v", got, want)
 	}
 	if got, want := min.Height, float32(20+40+theme.Padding()); got != want {
 		t.Fatalf("MinSize height = %v, want %v", got, want)
+	}
+
+	col.Layout(objs, fyne.NewSize(800, 100)) // desktop: half each
+	if wide.Size().Width != 400 || narrow.Size().Width != 400 {
+		t.Fatalf("at 800 wide: %v and %v, want 400 each", wide.Size().Width, narrow.Size().Width)
+	}
+	col.Layout(objs, fyne.NewSize(300, 100)) // phone: the wide one needs more than half
+	if wide.Size().Width != 200 || narrow.Size().Width != 150 {
+		t.Fatalf("at 300 wide: %v and %v, want 200 and 150", wide.Size().Width, narrow.Size().Width)
 	}
 }
 

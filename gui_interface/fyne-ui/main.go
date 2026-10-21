@@ -2138,23 +2138,31 @@ func compactTelemetryRow(label, value fyne.CanvasObject) fyne.CanvasObject {
 }
 
 // halfWidthColumn stacks its children vertically, each left-aligned and
-// constrained to half the available width. The top control panel uses it so the
-// TX card and Telemetry card sit in a compact column instead of stretching
-// across the whole window.
+// given half the available width where that is room enough for it, else
+// as much as it needs up to the full width.  The top control panel uses it so
+// the TX card and Telemetry card sit in a compact column on a desktop window
+// instead of stretching across it, and still fit a phone in portrait (about
+// 430 px wide: twice the widest card would not).
 type halfWidthColumn struct{}
 
 func (halfWidthColumn) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	width := size.Width / 2
 	padding := theme.Padding()
 	y := float32(0)
 	for _, child := range objects {
 		if !child.Visible() {
 			continue
 		}
-		height := child.MinSize().Height
+		m := child.MinSize()
+		width := size.Width / 2
+		if width < m.Width {
+			width = m.Width
+		}
+		if width > size.Width {
+			width = size.Width
+		}
 		child.Move(fyne.NewPos(0, y))
-		child.Resize(fyne.NewSize(width, height))
-		y += height + padding
+		child.Resize(fyne.NewSize(width, m.Height))
+		y += m.Height + padding
 	}
 }
 
@@ -2176,8 +2184,7 @@ func (halfWidthColumn) MinSize(objects []fyne.CanvasObject) fyne.Size {
 		}
 		addPadding = true
 	}
-	// Layout hands each child half the width, so the column needs twice the
-	// widest child to avoid resizing the cards below their own minimum.
-	minSize.Width *= 2
+	// The widest child, not twice it: Layout widens a child past half the
+	// width when the window is narrow.
 	return minSize
 }
