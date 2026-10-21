@@ -33,6 +33,7 @@ Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
 their own, and no 1.9.x release connects to it in either direction (within
 1.9.x, 1.9.18 and 1.9.19 did not connect to each other either).  Both ends of
 a session must run a release from the same protocol version; see
+[docs/RELEASE-1.9.20.md](docs/RELEASE-1.9.20.md),
 [docs/RELEASE-1.9.19.md](docs/RELEASE-1.9.19.md) and
 [docs/UPGRADING-TO-1.9.18.md](docs/UPGRADING-TO-1.9.18.md) before upgrading.
 
