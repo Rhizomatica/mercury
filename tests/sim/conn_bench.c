@@ -1,7 +1,9 @@
 /* Connect and disconnect times over the two-FSM sim (2.0 plan, P2).
  *
  *   conn_bench <seed> <channel> [callee]
- *   channel := cliff:<snr_db> | fade:<snr_db>[:<doppler_hz>] | nvis
+ *   channel := cliff:<snr_db> | asym:<fwd_db>:<ret_db> | fade:<snr_db>[:<doppler_hz>] | nvis
+ *
+ * asym: A's frames (the CALLs) at fwd_db, B's (the ACCEPTs) at ret_db.
  *
  * Unlike ab_bench the channel applies from the first CALL: the connect is
  * what is measured.  B listens, A calls.  B's application writes a 64-byte
@@ -16,6 +18,7 @@
  *   banner=    ...to B's banner delivered to A: what a user waits for
  *   disc=      the hang-up to both ends idle (-1: not in 10 min)
  *   disc_x=    ...to the end that hung up idle
+ *   coll=      keydowns destroyed by overlap (SIM_HD)
  */
 #include "sim_clock.h"
 #include "sim_channel.h"
@@ -58,6 +61,10 @@ int main(int argc, char **argv)
     if (!strncmp(ch, "cliff:", 6)) {
         sim_set_rx_snr(s, (float)atof(ch + 6));
         sim_set_snr(s, atof(ch + 6));
+    } else if (!strncmp(ch, "asym:", 5)) {
+        double f = 0, r = 0;
+        if (sscanf(ch + 5, "%lf:%lf", &f, &r) != 2) { fprintf(stderr, "asym:<fwd>:<ret>\n"); return 1; }
+        sim_set_snr_asym(s, f, r);
     } else if (!strncmp(ch, "fade:", 5)) {
         double m = 0, d = 0.5;
         sscanf(ch + 5, "%lf:%lf", &m, &d);
@@ -68,6 +75,14 @@ int main(int argc, char **argv)
     } else {
         fprintf(stderr, "unknown channel %s\n", ch); return 1;
     }
+
+    /* SIM_HD=1: half duplex (two keydowns at once destroy each other);
+     * SIM_CS=<ms>: carrier sense, a station hears the peer that long after it
+     * keys (listen-before-talk reads it).  Both off by default. */
+    if (getenv("SIM_HD") && atoi(getenv("SIM_HD")))
+        sim_set_half_duplex(s, true);
+    if (getenv("SIM_CS"))
+        sim_set_carrier_sense(s, true, (uint32_t)atoi(getenv("SIM_CS")));
 
     arq_event_t listen = { .id = ARQ_EV_APP_LISTEN };
     sim_inject(s, sim_b(s), &listen);
@@ -93,8 +108,8 @@ int main(int argc, char **argv)
     double c_a = ta ? (ta - t0) / 1000.0 : -1, c_b = tb ? (tb - t0) / 1000.0 : -1,
            c_bn = tbn ? (tbn - t0) / 1000.0 : -1;
     if (!(ta && tb && tbn)) {
-        printf("seed=%llu chan=%s connect=%.1f connect_b=%.1f banner=%.1f disc=-1 disc_x=-1\n",
-               (unsigned long long)seed, ch, c_a, c_b, c_bn);
+        printf("seed=%llu chan=%s connect=%.1f connect_b=%.1f banner=%.1f disc=-1 disc_x=-1 coll=%d\n",
+               (unsigned long long)seed, ch, c_a, c_b, c_bn, sim_collisions(s));
         sim_destroy(s); return 0;
     }
 
@@ -130,9 +145,9 @@ int main(int argc, char **argv)
         if (idle(sim_a(s)) && idle(sim_b(s))) tboth = sim_clock_now();
         if (!moved) break;
     }
-    printf("seed=%llu chan=%s connect=%.1f connect_b=%.1f banner=%.1f disc=%.1f disc_x=%.1f\n",
+    printf("seed=%llu chan=%s connect=%.1f connect_b=%.1f banner=%.1f disc=%.1f disc_x=%.1f coll=%d\n",
            (unsigned long long)seed, ch, c_a, c_b, c_bn,
-           tboth ? (tboth - t2) / 1000.0 : -1.0, tx ? (tx - t2) / 1000.0 : -1.0);
+           tboth ? (tboth - t2) / 1000.0 : -1.0, tx ? (tx - t2) / 1000.0 : -1.0, sim_collisions(s));
     sim_destroy(s);
     return 0;
 }

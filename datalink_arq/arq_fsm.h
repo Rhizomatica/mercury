@@ -188,8 +188,8 @@ typedef struct
      * this, whatever its sync does meanwhile (arq_note_rx_preamble). */
     uint64_t rx_frame_busy_until_ms;
     uint64_t nav_busy_until_ms;     /* a NAV header heard: the peer's keydown runs until then */
-    uint8_t  disc_defer_count;         /* consecutive busy-channel deferrals
-                                        * of our DISCONNECT                 */
+    uint8_t  defer_count;              /* consecutive busy-channel deferrals
+                                        * of our DISCONNECT, or our CALL    */
     bool     tx_active;                /* we are keyed (TX_STARTED seen, no
                                         * TX_COMPLETE yet)                   */
     uint64_t last_tx_end_ms;           /* when our last transmission ended  */

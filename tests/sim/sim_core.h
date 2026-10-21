@@ -53,6 +53,8 @@ void            sim_set_per(sim_t *s, double per);
 void            sim_set_rx_snr(sim_t *s, float snr_db);
 /* Coherent fade: cliff-model channel SNR + delivered-frame SNR together. */
 void            sim_set_snr(sim_t *s, double snr_db);
+/* ...with its own SNR each way: dir 0 is A sending, dir 1 B. */
+void            sim_set_snr_asym(sim_t *s, double snr_dir0_db, double snr_dir1_db);
 
 /* Rayleigh fading around mean_snr_db at doppler_hz (see sim_channel_set_fading). */
 void            sim_set_fading(sim_t *s, double mean_snr_db, double doppler_hz);

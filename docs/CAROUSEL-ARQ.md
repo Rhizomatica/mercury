@@ -183,6 +183,21 @@ frame on MFSK.
 - The callee answers every repeat of a session's CALL with the same ACCEPT
   (rung, nonce): the caller may have decoded any of them, so they must not
   differ.  Both ends then cut the same pieces (spec R25).
+- It answers on the CALL's carrier, except a repeat on the control mode:
+  that one says the caller heard none of its ACCEPTs there, and gets its
+  ACCEPT on the floor -- unless the last one went there already, so that a
+  floor ACCEPT the caller keyed over costs one round, not the connect.  The
+  caller listens on the floor from its first repeat on.  Its next CALL waits
+  while one of its decoders is on a frame arriving (not the energy busy
+  detector), and after such a wait until `ARQ_CALL_DECODE_WAIT_MS` (5 s) past
+  the frame's end, so an ACCEPT decodes before a CALL goes out.  An ACCEPT
+  on the floor to a control-mode CALL does not make the caller control-deaf:
+  the SNR decides.  On air (2026-10-21) an sBitx's DATAC16 CALLs reached an
+  IC-7100, none of its DATAC16 ACCEPTs came back, and the MFSK CALL that
+  connected cost 22 s; sim, asym:-4:-9, 60 seeds: connect 51.5 -> 30.0 s,
+  the dead-forward cells unchanged, nvis (random DATAC16 loss) +9.7 s on
+  the 8 seeds that lose one ACCEPT and -21..-30 s on the 2 that lose two
+  (specs/connect/ConnectCarrier.tla).
 - The callee's callsign is not on the air in full: the caller knows whom it
   called, and the CRC confirms it.
 

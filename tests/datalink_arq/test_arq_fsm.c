@@ -409,6 +409,7 @@ void test_mfsk_only_connect_starts_deaf_on_the_floor(void)
         ev = make_event(ARQ_EV_APP_CONNECT);
         strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
         arq_fsm_dispatch(&sess, &ev);
+        if (mfsk) sess.call_carrier = MERCURY_MODE_MFSK;   /* the CALLs escalated */
         ev = make_event(ARQ_EV_RX_ACCEPT);
         ev.session_id = sess.session_id;
         ev.rx_snr = 10.0f;
@@ -420,6 +421,142 @@ void test_mfsk_only_connect_starts_deaf_on_the_floor(void)
         if (mfsk) TEST_ASSERT_EQUAL_INT(0, sess.car_rx_level);
         else      TEST_ASSERT_GREATER_THAN(0, sess.car_rx_level);
     }
+}
+
+/* An MFSK ACCEPT to a CALL on the control mode is the callee's answer to a
+ * repeat (accept_carrier): it decoded our control-mode CALLs, and one ACCEPT
+ * of its was lost.  The SNR decides deafness, not the carrier. */
+void test_floor_accept_to_a_control_mode_call_is_not_deafness(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_FALSE(mercury_mode_is_mfsk(sess.call_carrier));
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    ev.rx_snr = 10.0f;
+    ev.mode = MERCURY_MODE_MFSK;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.car_ctl_deaf);
+    TEST_ASSERT_GREATER_THAN(0, sess.car_rx_level);
+}
+
+/* The callee's carrier for each ACCEPT: the first on the CALL's; a repeat on
+ * the control mode on the floor (the caller heard none of ours there: on air
+ * 2026-10-21, 0 of 3 DATAC16 ACCEPTs, every MFSK one); the next such repeat
+ * on the control mode again, so that a floor ACCEPT the caller keyed over
+ * costs one round, not the connect; an MFSK CALL on MFSK. */
+static int answer_mode(int call_mode)
+{
+    arq_event_t ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    ev.rx_snr = 5.0f;
+    ev.bw_hz = 2300;
+    ev.mode = call_mode;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    RESET_FAKE(fake_send_tx_frame);
+    ev = make_event(ARQ_EV_TIMER_RETRY);          /* one channel guard later */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    return fake_send_tx_frame_fake.arg1_val;
+}
+
+void test_repeat_on_control_mode_is_answered_on_the_floor(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, answer_mode(FREEDV_MODE_DATAC16));
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK,   answer_mode(FREEDV_MODE_DATAC16));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, answer_mode(FREEDV_MODE_DATAC16));
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK,   answer_mode(MERCURY_MODE_MFSK));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+}
+
+/* The caller listens on the floor from its first repeat on, where the callee
+ * may answer it; and its next CALL waits while a frame it caught is arriving,
+ * then until that frame could have decoded (ARQ_CALL_DECODE_WAIT_MS): keyed at
+ * the ACCEPT's end, it went out from a caller connected a moment later, and the
+ * callee took it for a redial (sim, asym:-4:-9).  Nothing arriving, it goes on
+ * time. */
+static void call_twice(void)
+{
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "A0AAA");
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;   /* arq_get_bw() stub reads this; 0 is not a bandwidth */
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "B0BBB", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);                 /* CALL 1 */
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    mock_set_uptime_ms(time_now_ms() + 8000);
+    ev = make_event(ARQ_EV_TIMER_RETRY);          /* CALL 2 */
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+}
+
+/* The energy busy detector (off by default) holds no CALL: only our decoders
+ * on a frame do. */
+void test_busy_detector_does_not_hold_a_call(void)
+{
+    call_twice();
+    mock_set_uptime_ms(time_now_ms() + 8000);
+    fake_channel_busy_fake.return_val = true;
+    RESET_FAKE(fake_send_tx_frame);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+}
+
+void test_call_after_a_repeat_listens_on_the_floor_and_waits_for_a_frame(void)
+{
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "A0AAA");
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;   /* arq_get_bw() stub reads this; 0 is not a bandwidth */
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "B0BBB", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);                 /* CALL 1 */
+    TEST_ASSERT_FALSE(mercury_mode_is_mfsk(sess.peer_tx_mode));
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    RESET_FAKE(fake_send_tx_frame);
+    mock_set_uptime_ms(time_now_ms() + 8000);
+    ev = make_event(ARQ_EV_TIMER_RETRY);          /* CALL 2: nothing arriving */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, fake_send_tx_frame_fake.arg1_val);
+    TEST_ASSERT_EQUAL_INT(arq_floor_mode(arq_get_bw()), sess.peer_tx_mode);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    uint64_t t = time_now_ms() + 8000;            /* CALL 3 due: an ACCEPT arriving */
+    mock_set_uptime_ms(t);
+    sess.rx_frame_busy_until_ms = t + 6000;
+    RESET_FAKE(fake_send_tx_frame);
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+
+    mock_set_uptime_ms(t + 6000);                 /* it ended, not yet decoded */
+    sess.last_rx_sync_ms = t + 6000 - 1;
+    arq_fsm_dispatch(&sess, &ev);
+    mock_set_uptime_ms(t + 6000 + ARQ_CALL_DECODE_WAIT_MS - 100);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+
+    mock_set_uptime_ms(t + 6000 + ARQ_CALL_DECODE_WAIT_MS);   /* nothing came of it */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, fake_send_tx_frame_fake.arg1_val);
 }
 
 /* The listen mode (initial_payload_mode) is an operator setting for the IDLE
@@ -1477,6 +1614,10 @@ int main(void)
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
     RUN_TEST(test_mfsk_only_connect_starts_deaf_on_the_floor);
+    RUN_TEST(test_floor_accept_to_a_control_mode_call_is_not_deafness);
+    RUN_TEST(test_repeat_on_control_mode_is_answered_on_the_floor);
+    RUN_TEST(test_call_after_a_repeat_listens_on_the_floor_and_waits_for_a_frame);
+    RUN_TEST(test_busy_detector_does_not_hold_a_call);
     RUN_TEST(test_listen_mode_does_not_leak_into_inbound_session);
     RUN_TEST(test_listen_mode_restored_after_session_ends);
     RUN_TEST(test_disconnect_from_connected);

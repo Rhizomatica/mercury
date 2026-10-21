@@ -31,9 +31,9 @@ What it models:
   that did not take it; a required callee (`EReq`) answers only a CALL it
   takes.
 
-Not modelled: the carrier (DATAC16 or MFSK: a frame is lost or not), the
-session once up (its turns, rungs and blocks are the other specs'), its
-teardown.
+Not modelled: the carrier (DATAC16 or MFSK: a frame is lost or not;
+ConnectCarrier below has it), the session once up (its turns, rungs and
+blocks are the other specs'), its teardown.
 
 Properties:
 
@@ -80,5 +80,54 @@ Results:
   that a repeated CALL must keep the session's bandwidth, as it keeps the
   nonce and rung: a caller that re-CONNECTs with another bandwidth and, by
   chance, the same session id may decode an older ACCEPT.
+
+## ConnectCarrier
+
+    java -cp /opt/TLA+Toolbox/tla2tools.jar tlc2.TLC -workers 4 -deadlock \
+        -metadir /tmp/tlc-carrier -config ConnectCarrier.cfg ConnectCarrier.tla
+
+The carriers and timing ConnectHandshake leaves out, in 0.25 s steps
+(`arq_call_carrier`, `call_answer_carrier`, `accept_carrier`,
+`call_must_wait`):
+
+- The callee answers a repeated CALL on the control mode on the floor,
+  unless its last ACCEPT went there; the first answer, and an MFSK CALL's,
+  go on the CALL's carrier.  On air (2026-10-21, an sBitx calling an
+  IC-7100) 0 of 3 DATAC16 ACCEPTs arrived and every MFSK one did, and the
+  caller's MFSK CALL cost 22 s more.
+- The caller listens on the floor from its first repeat on.  A CALL that
+  comes due while one of its decoders is on a frame arriving waits, and
+  once it has, until `ARQ_CALL_DECODE_WAIT_MS` past the frame's end (the
+  floor's decode allowance and a deferral step).  The energy busy detector
+  holds no CALL.
+- Any frame may be lost, and a decoder may miss an ACCEPT arriving (`Sense`).
+
+Properties: `NoOverlap` (decoders always catch an ACCEPT: no two keydowns
+at once); `Early` (the fast forward path and the floor delivering, the fast
+return dead: connected on the second CALL's answer, no third CALL);
+`Connects` (the floor delivering, decoders catching ACCEPTs or not:
+connected by the horizon).
+
+Results:
+
+- `ConnectCarrier.cfg` (every path "any"): no error, 405606 distinct states.
+- `ConnectCarrier_early.cfg`: no error, 23876.
+- `ConnectCarrier_floor.cfg` (`Sense` "any"): no error, 355346.
+- `Mut_old.cfg`, the code before (no floor answer, no floor listening, no
+  hold): violates `Early` (a third CALL, the floor one, 22 s later).
+- `Mut_nohold.cfg`: the CALL goes when due.  Violates `NoOverlap`: it keys
+  over the floor ACCEPT, which outlasts the 8 s call interval.
+- `Mut_nodecwait.cfg`: the hold ends with the frame.  Violates `Early`: the
+  CALL goes out before the ACCEPT decodes (sim, asym:-4:-9: the callee, now
+  connected, took it for a redial).
+- `Mut_noalt.cfg`: every repeat on the control mode answered on the floor.
+  Violates `Connects`: a floor ACCEPT the caller's decoders miss is keyed
+  over every time.
+- `Mut_nolisten.cfg`: the caller does not listen on the floor.  Violates
+  `Early`.
+- At 0.5 s steps the rounding ate the last floor CALL's 0.75 s of slack and
+  `Connects` failed on a tie with the caller giving up, in the old code too:
+  the reason for 0.25 s.  The floor call interval is safe from 21 s up (the
+  code's is 24 s).
 
 Give each TLC run its own `-metadir`.

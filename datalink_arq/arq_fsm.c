@@ -145,9 +145,10 @@ static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_t
     {
         sess->host_released  = false;        /* a new session: a new reader */
     }
-    if (new_state == ARQ_CONN_DISCONNECTING && sess->conn_state != ARQ_CONN_DISCONNECTING)
+    if ((new_state == ARQ_CONN_DISCONNECTING || new_state == ARQ_CONN_CALLING) &&
+        sess->conn_state != new_state)
     {
-        sess->disc_defer_count = 0;          /* a fresh teardown: a fresh budget */
+        sess->defer_count = 0;          /* a fresh teardown or call: a fresh budget */
     }
     /* The carousel runs only in CONNECTED; its seed lasts until the station is
      * idle, so the teardown still hears its peer. */
@@ -276,6 +277,37 @@ int arq_call_carrier(const arq_session_t *sess)
          ? arq_floor_mode(arq_get_bw()) : sess->control_mode;
 }
 
+/* The carrier an ACCEPT to my last CALL may come back on: the CALL's own, or
+ * my floor for a repeat on the control mode, which the callee may answer there
+ * (accept_carrier).  The first CALL is no repeat.  An ACCEPT on the floor
+ * outlasts the control mode's call interval: the next CALL waits for it while
+ * it is arriving (call_must_wait). */
+static int call_answer_carrier(const arq_session_t *sess)
+{
+    if (mercury_mode_is_mfsk(sess->call_carrier) || sess->call_sends_done < 2)
+        return sess->call_carrier;
+    return arq_floor_mode(arq_get_bw());
+}
+
+/* The callee's carrier for an ACCEPT to this CALL, of a session it has
+ * answered already: the CALL's own, except a repeat on the control mode.  That
+ * one says the caller heard none of our ACCEPTs there -- a weak return path:
+ * on air (2026-10-21, sBitx calling an IC-7100) 0 of 3 DATAC16 ACCEPTs
+ * arrived and every MFSK one did, and the caller's MFSK CALL then cost 22 s
+ * more.  Answered on the floor the caller listens on after a repeat
+ * (call_answer_carrier), if that is the session's floor too. */
+static int accept_carrier(const arq_session_t *sess, const arq_event_t *ev)
+{
+    int floor = arq_floor_mode(ev->bw_hz);
+    /* Not twice running: the caller holds its next CALL for our ACCEPT only
+     * while one of its decoders is on it, and keys over one they missed.  On
+     * the control mode then, and its floor CALL after gets ours on the floor
+     * (specs/connect/ConnectCarrier.tla, Connects with Sense "any"). */
+    if (mercury_mode_is_mfsk(ev->mode) || floor != sess->floor_mode || sess->call_rx_mode == floor)
+        return ev->mode;
+    return floor;
+}
+
 /* The ACCEPT names the caller's start rung and says whether we hear it below
  * the control mode (then the rung is the floor).  A floor-only caller's first
  * control from us would otherwise be its only way to learn that, and at the
@@ -340,9 +372,11 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
         if (!is_accept) {
             sess->call_carrier = mode;
             sess->call_sends_done++;
-            /* An ACCEPT to an MFSK CALL comes back on MFSK: listen for it. */
-            if (mercury_mode_is_mfsk(mode))
-                sess->peer_tx_mode = mode;
+            /* An ACCEPT to an MFSK CALL, or to a repeat, comes back on MFSK:
+             * listen for it. */
+            int answer = call_answer_carrier(sess);
+            if (mercury_mode_is_mfsk(answer))
+                sess->peer_tx_mode = answer;
         }
         if (mode != sess->control_mode)
             HLOGI(LOG_COMP, "%s on the MFSK floor (%s)", is_accept ? "ACCEPT" : "CALL",
@@ -412,11 +446,17 @@ static void send_disconnect_frame(arq_session_t *sess)
  * answer is turns the caller times and the callee answers in slots
  * (docs/CAROUSEL-ARQ.md).  So this check reduces the collision rate; it does
  * not eliminate it. */
+static bool decoder_hears_frame(const arq_session_t *sess);
 static bool peer_is_transmitting(const arq_session_t *sess)
 {
     if (g_cbs.channel_busy && g_cbs.channel_busy())
         return true;
+    return decoder_hears_frame(sess);
+}
 
+/* The first signal alone: one of our decoders is on a frame. */
+static bool decoder_hears_frame(const arq_session_t *sess)
+{
     uint64_t now = time_now_ms();
     if (now < sess->rx_frame_busy_until_ms)
         return true;          /* a frame whose preamble was caught: see arq_note_rx_preamble */
@@ -866,7 +906,8 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = ev->session_id;
-        sess->call_rx_mode    = ev->mode;
+        /* a repeat after our ACCEPTs ran out: answered as in ACCEPTING */
+        sess->call_rx_mode    = same_session ? accept_carrier(sess, ev) : ev->mode;
         if (!same_session)
         {
             /* A new session takes the CALL's bandwidth; a repeat keeps the
@@ -950,6 +991,34 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
     }
 }
 
+/* A CALL waits while a frame we caught is arriving (decoder_hears_frame; not
+ * the energy busy detector, off by default and not to hold CALLs): the
+ * ACCEPT to a repeat, on the floor, outlasts the control mode's call interval
+ * (accept_carrier), and another station's frame is no place for a CALL
+ * either.  Once held, also until that frame could have decoded: a CALL keyed
+ * as the ACCEPT ended went out from a caller connected a moment later, and the
+ * callee answered it over the caller's first round (sim, asym:-4:-9).  At most
+ * one floor frame's airtime and its decode, then we key regardless. */
+static bool call_must_wait(arq_session_t *sess)
+{
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(arq_floor_mode(arq_get_bw()));
+    float frame_ms = (tm ? tm->frame_duration_s : 13.5f) * 1000.0f;
+    unsigned cap = (unsigned)((frame_ms + ARQ_CALL_DECODE_WAIT_MS) / ARQ_CHANNEL_DEFER_MS) + 1;
+    uint64_t now = time_now_ms();
+    bool busy = decoder_hears_frame(sess) ||
+                (sess->defer_count > 0 && sess->last_rx_sync_ms &&
+                 now < sess->last_rx_sync_ms + ARQ_CALL_DECODE_WAIT_MS);
+    if (!busy || sess->defer_count >= cap)
+    {
+        sess->defer_count = 0;
+        return false;
+    }
+    if (sess->defer_count++ == 0)
+        HLOGD(LOG_COMP, "CALL held: a frame is arriving");
+    sess->deadline_ms = now + ARQ_CHANNEL_DEFER_MS;
+    return true;
+}
+
 static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
 {
     switch (ev->id)
@@ -968,8 +1037,14 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         if (sess->car_tx_level > session_max_level())
             sess->car_tx_level = session_max_level();
         sess->car_rx_level = session_start_level(ev->rx_snr);
-        /* An ACCEPT heard only on MFSK: as the callee's MFSK CALL above. */
-        sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB || mercury_mode_is_mfsk(ev->mode);
+        /* An ACCEPT heard only on MFSK, to an MFSK CALL: as the callee's MFSK
+         * CALL above.  One to a repeat on the control mode (accept_carrier)
+         * says only that an ACCEPT there was lost -- the callee decoded our
+         * control-mode CALLs -- so the SNR decides: taken as deafness, a lost
+         * frame's worth of bad luck put a good link's control on the floor
+         * (sim, nvis: a callee's DISCONNECT 12.4 -> 17.1 s). */
+        sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB ||
+                             (mercury_mode_is_mfsk(ev->mode) && mercury_mode_is_mfsk(sess->call_carrier));
         if (sess->car_ctl_deaf) sess->car_rx_level = 0;
         sess->car_my_snr   = ev->rx_snr;
         if (g_cbs.notify_connected)
@@ -999,6 +1074,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TIMER_RETRY:
+        if (sess->tx_retries_left > 0 && call_must_wait(sess))
+            break;
         if (sess->tx_retries_left > 0)
         {
             sess->tx_retries_left--;
@@ -1115,8 +1192,9 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * (It re-measured here once, and the ends could disagree: spec R25.)
          * Answer on the carrier THIS CALL came on: a caller escalates when it
          * hears none of our ACCEPTs -- a weak return path -- and an answer
-         * kept on DATAC16 kept failing the same way (#235). */
-        sess->call_rx_mode      = ev->mode;
+         * kept on DATAC16 kept failing the same way (#235).  A repeat on
+         * DATAC16 says the same thing, sooner: the floor (accept_carrier). */
+        sess->call_rx_mode      = accept_carrier(sess, ev);
         break;
 
     case ARQ_EV_TX_COMPLETE:
@@ -1265,11 +1343,11 @@ static void fire_deferred_connect(arq_session_t *sess)
 static bool disconnect_must_wait(arq_session_t *sess)
 {
     uint64_t now = time_now_ms();
-    if (sess->disc_defer_count >= ARQ_CHANNEL_DEFER_MAX)
+    if (sess->defer_count >= ARQ_CHANNEL_DEFER_MAX)
     {
         HLOGW(LOG_COMP, "DISCONNECT deferral cap reached (%u) - keying anyway",
-              (unsigned)sess->disc_defer_count);
-        sess->disc_defer_count = 0;
+              (unsigned)sess->defer_count);
+        sess->defer_count = 0;
         return false;
     }
     uint64_t guard  = (uint64_t)ARQ_CHANNEL_GUARD_MS;
@@ -1284,17 +1362,17 @@ static bool disconnect_must_wait(arq_session_t *sess)
 
     if (!sess->tx_active && !peer_is_transmitting(sess) && now >= clear_at)
     {
-        sess->disc_defer_count = 0;
+        sess->defer_count = 0;
         return false;
     }
-    sess->disc_defer_count++;
+    sess->defer_count++;
     uint64_t next = now + ARQ_CHANNEL_DEFER_MS;
     if (!sess->tx_active && !peer_is_transmitting(sess) && clear_at > now)
         next = clear_at;           /* the only thing left is the window */
     HLOGD(LOG_COMP, "DISCONNECT deferred (%s) %u/%u",
           sess->tx_active ? "still keyed" :
           peer_is_transmitting(sess) ? "peer transmitting" : "reply window",
-          (unsigned)sess->disc_defer_count, (unsigned)ARQ_CHANNEL_DEFER_MAX);
+          (unsigned)sess->defer_count, (unsigned)ARQ_CHANNEL_DEFER_MAX);
     sess->deadline_ms = next;
     return true;
 }

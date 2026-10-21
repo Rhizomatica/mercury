@@ -224,6 +224,13 @@ uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank);
 #define ARQ_CHANNEL_SYNC_HOLD_MS      250
 #define ARQ_CHANNEL_DEFER_MS          500
 #define ARQ_CHANNEL_DEFER_MAX         20   /* ~10 s, then key regardless */
+/* A CALL held for a frame (arq_fsm.c, call_must_wait) waits this long past
+ * the frame's end, so that the frame can decode first: an ACCEPT does, and a
+ * CALL keyed just before it went out from a caller already connected.  The
+ * floor's decode allowance (carousel.c D_MFSK_MS 4500; ~3.7 s on air) and one
+ * deferral step: a decode at the allowance's very end otherwise ties with the
+ * CALL (specs/connect/ConnectCarrier.tla, DW). */
+#define ARQ_CALL_DECODE_WAIT_MS       (4500 + ARQ_CHANNEL_DEFER_MS)
 /* Before a DISCONNECT: how long past the longer reply guard to leave for a
  * frame our last transmission invited to start and be heard, before keying
  * over the gap. */

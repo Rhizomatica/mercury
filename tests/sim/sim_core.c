@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <math.h>
 #include <assert.h>
 
 /* ======================================================================
@@ -61,6 +62,7 @@ struct sim {
     int              pending_count;
 
     float            rx_snr_db;  /* SNR stamped on delivered frames */
+    float            rx_snr_dir_db[2];  /* ...per direction (sim_set_snr_asym), NAN: rx_snr_db */
 
     /* Half-duplex shared medium.  Two stations keyed at once destroy each
      * other's frames; without this the sim cannot represent a collision at
@@ -95,6 +97,13 @@ struct sim {
 
 /* Add a pending event. Asserts on queue overflow (shouldn't happen for
  * a session, but catches bugs early). */
+/* The SNR a frame sent in direction dir arrives with. */
+static float stamp(const sim_t *s, int dir)
+{
+    float d = s->rx_snr_dir_db[dir & 1];
+    return isnan(d) ? s->rx_snr_db : d;
+}
+
 static void enqueue(sim_t *s, const sim_pending_t *p)
 {
     assert(s->pending_count < SIM_PENDING_MAX && "pending queue overflow");
@@ -190,7 +199,7 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                 .kind        = SIM_PENDING_FRAME,
                 .mode        = of.mode,
                 .frame_len   = of.len,
-                .rx_snr      = s->rx_snr_db, /* default 12 dB; sim_set_rx_snr models fades */
+                .rx_snr      = stamp(s, dir), /* default 12 dB; sim_set_rx_snr models fades */
                 .tx_start_ms = now_ms,
                 .tx_end_ms   = tx_end,
             };
@@ -265,7 +274,7 @@ static void drain_keydown_from(sim_t *s, sim_endpoint_t *sender,
             .target      = peer,
             .kind        = SIM_PENDING_FRAME,
             .frame_len   = kd.f[i].len,
-            .rx_snr      = s->rx_snr_db,
+            .rx_snr      = stamp(s, dir),
             .tx_start_ms = start[i],
             .tx_end_ms   = end[i],
             .car         = true,
@@ -389,6 +398,7 @@ sim_t *sim_create(const sim_channel_cfg_t *chan_cfg,
     s->ch = sim_channel_create(chan_cfg);
     if (!s->a || !s->b || !s->ch) { sim_destroy(s); return NULL; }
     s->rx_snr_db = 12.0f;
+    s->rx_snr_dir_db[0] = s->rx_snr_dir_db[1] = NAN;
 
     arq_timing_init(&s->timing);
     /* Register shared callbacks once; they read s_active for per-call context. */
@@ -435,7 +445,11 @@ bool sim_keyed(sim_t *s, sim_endpoint_t *ep)
 /* Fade controls: change channel loss and delivered-frame SNR mid-simulation
  * (a real fade degrades both — surviving frames also arrive weaker). */
 void sim_set_per(sim_t *s, double per)      { sim_channel_set_per(s->ch, per); }
-void sim_set_rx_snr(sim_t *s, float snr_db) { s->rx_snr_db = snr_db; }
+void sim_set_rx_snr(sim_t *s, float snr_db)
+{
+    s->rx_snr_db = snr_db;
+    s->rx_snr_dir_db[0] = s->rx_snr_dir_db[1] = NAN;
+}
 
 /* Coherent SNR change: enables the channel's mode-aware cliff model AND
  * stamps the same SNR on delivered frames, so the FSM's SNR feedback agrees
@@ -444,12 +458,24 @@ void sim_set_snr(sim_t *s, double snr_db)
 {
     sim_channel_set_snr(s->ch, snr_db);
     s->rx_snr_db = (float)snr_db;
+    s->rx_snr_dir_db[0] = s->rx_snr_dir_db[1] = NAN;
+}
+
+/* The same with its own SNR each way: dir 0 is A sending (A's CALLs, the
+ * forward path), dir 1 B sending. */
+void sim_set_snr_asym(sim_t *s, double snr_dir0_db, double snr_dir1_db)
+{
+    sim_channel_set_snr_asym(s->ch, snr_dir0_db, snr_dir1_db);
+    s->rx_snr_db = (float)(snr_dir0_db < snr_dir1_db ? snr_dir0_db : snr_dir1_db);
+    s->rx_snr_dir_db[0] = (float)snr_dir0_db;
+    s->rx_snr_dir_db[1] = (float)snr_dir1_db;
 }
 
 void sim_set_fading(sim_t *s, double mean_snr_db, double doppler_hz)
 {
     sim_channel_set_fading(s->ch, mean_snr_db, doppler_hz);
     s->rx_snr_db = (float)mean_snr_db;   /* stamped on frames: the mean */
+    s->rx_snr_dir_db[0] = s->rx_snr_dir_db[1] = NAN;
 }
 
 void sim_set_mode_per(sim_t *s, const sim_mode_per_t *table, int count,
@@ -457,6 +483,7 @@ void sim_set_mode_per(sim_t *s, const sim_mode_per_t *table, int count,
 {
     sim_channel_set_mode_per(s->ch, table, count);
     s->rx_snr_db = rx_snr_db;
+    s->rx_snr_dir_db[0] = s->rx_snr_dir_db[1] = NAN;
 }
 
 void sim_inject(sim_t *s, sim_endpoint_t *ep, const arq_event_t *ev)
