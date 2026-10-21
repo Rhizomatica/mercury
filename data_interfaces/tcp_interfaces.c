@@ -92,7 +92,7 @@ static atomic_bool bcast_client_done = false;
 /* A broadcast client is attached and its worker drains the RX ring. */
 static atomic_bool bcast_client_present = false;
 /* The host program's tap on every broadcast frame decoded (broadcast_set_rx_tap). */
-static void (*_Atomic bcast_rx_tap)(const uint8_t *frame, size_t len, int mode, float snr) = NULL;
+static void (*_Atomic bcast_rx_tap)(const uint8_t *frame, size_t len, int mode, float snr);   /* static: starts NULL (clang takes no NULL initializer here) */
 static _Atomic uint8_t bcast_reply_cmd = CMD_DATA;
 
 #if defined(MSG_NOSIGNAL)
