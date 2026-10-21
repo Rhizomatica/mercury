@@ -112,3 +112,61 @@ jobs:
       - name: Run Integration Tests
         shell: bash
         run: make integration-test
+
+  # The same suite on a new channel seed per test (tests/integration/README.md,
+  # "Fixed and random seeds").  The fixed job above is the gate: same channel
+  # every run, so a change in the result is the code's.  This one hunts what
+  # the fixed channel hides -- a frame that decodes on the one stretch of noise
+  # the fixed seed gives can sit right at its cliff -- so it reports without
+  # blocking: a failure here is a lead, with its seed in the log and in the
+  # seed-history artifact (MERCURY_TEST_SEED=<seed> reruns it).
+  integration-tests-random-seed:
+    name: Integration Tests, random channel seed (Linux amd64, Debian 13)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 30
+    continue-on-error: true
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            build-essential \
+            git \
+            libpulse-dev \
+            libasound2-dev \
+            libhamlib-dev \
+            libssl-dev \
+            pkg-config \
+            golang-go
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Build Mercury
+        shell: bash
+        run: make
+
+      - name: Run Integration Tests (random seed)
+        shell: bash
+        run: make integration-test-random
+
+      - name: Seed history
+        if: always()
+        shell: bash
+        run: cat tests/integration/seed-history.log 2>/dev/null || echo "no seed history"
+
+      - name: Upload seed history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seed-history
+          path: tests/integration/seed-history.log
+          if-no-files-found: ignore

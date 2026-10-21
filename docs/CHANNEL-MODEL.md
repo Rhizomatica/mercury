@@ -217,7 +217,10 @@ line.
 it as "(pinned)". The tap draws and the noise draws come from one random
 stream. So a seed names one fade only for one configuration: the same
 spectrum, paths, sample rate and AWGN setting. Change `--No` from on to off,
-or the sample rate, and the same seed is a different fade.
+or the sample rate, and the same seed is a different fade.  In the Go
+harness, `MERCURY_TEST_SEED` (fixed, `random` or a number) seeds both
+engines per direction and records every seed it used
+(tests/integration/README.md); `ch` takes `--seed N`.
 
 **Scope of the model.** The presets use the single-component form of F.1487
 that `stdchan` also uses: one Gaussian component per path, equal spreads on

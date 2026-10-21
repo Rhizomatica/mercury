@@ -30,7 +30,7 @@ func TestMercuryARQBidirectional(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
 
-	params := DefaultChannelParams()
+	params := channelParamsFor(t)
 	// Channel engine: clean ch.c (default) or the Watterson HF fading model.
 	// The on-air DATAC15 data-decode failure does NOT reproduce on the clean
 	// channel, so set MERCURY_CH_ENGINE=watterson (+ MERCURY_CH_FADING) to add

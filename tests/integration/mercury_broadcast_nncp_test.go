@@ -141,7 +141,7 @@ func TestBroadcastNNCPBundleOverChannel(t *testing.T) {
 	}
 
 	// --- build the channel -------------------------------------------------
-	params := DefaultChannelParams()
+	params := channelParamsFor(t)
 	var chBin string
 	var err error
 	if os.Getenv("MERCURY_CH_ENGINE") == "watterson" {

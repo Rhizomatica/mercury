@@ -86,11 +86,45 @@ conditions (all optional; default is codec2 `ch` on an effectively clean link):
 | `MERCURY_CH_NO` | AWGN noise density dBHz (`ch`/`watterson`; SNR3k ≈ −No − 14.82). For `pathsim`, carries its native `--snr` dB instead |
 | `MERCURY_CH_FADING` | fading profile — `ch`: `mpg`/`mpp`/`mpd`; `watterson`: any name from `utils/watterson_test --list-presets`, e.g. `ccir-poor` or `itur-mm` (standard), or the legacy `good`/`moderate`/`poor`/`flutter`/`mpg`/`mpp`/`mpd` (Butterworth taps; the watterson `mpg`/`mpp`/`mpd` are not `ch`'s profiles); `pathsim`: a preset name, e.g. `ccir-poor`, `midlat-dist-nvis` |
 | `MERCURY_CH_GAIN` | linear channel gain (default 1.0) |
-| `MERCURY_CH_NO_FWD` / `_REV` | per-direction noise override (asymmetric link: A→B forward data vs B→A reverse polls and patterns) |
+| `MERCURY_CH_NO_FWD` / `_REV` | per-direction noise override (asymmetric link: A→B forward data vs B→A reverse polls and patterns); both transports (FIFO and `-x sock`) |
 | `MERCURY_CH_FADING_FWD` / `_REV` | per-direction fading profile (`none` disables one direction) |
 | `MERCURY_TEST_PAYLOAD_KB` | transfer size in KB (default ~102 bytes = 3 DATAC15 frames) |
 | `MERCURY_TEST_LOGDIR` | directory to keep per-instance logs (default: temp, deleted) |
+| `MERCURY_TEST_SEED` | the channel's noise/fading seed: unset = fixed, `random` = a new one per test, a number = rerun that seed (see below) |
+| `MERCURY_TEST_SEED_LOG` | where the seed history goes (default `tests/integration/seed-history.log`) |
 | `MERCURY_TEST_BIN_A` / `_B` | run station A or B on another `mercury` binary, to compare two builds of the same protocol version (a 1.9.x binary does not connect to this one) |
+
+### Fixed and random seeds
+
+The channel runs in one of two modes (`seed_test.go`):
+
+- **Fixed** (`MERCURY_TEST_SEED` unset; `make integration-test`): every run
+  gets the same noise and fading.  For benchmarks and A/B comparisons, where a
+  change in the result must come from the code.  `ch` runs unseeded as it
+  always has, so fixed-mode numbers compare with earlier ones; Watterson gets
+  `MERCURY_WATTERSON_SEED`, or 1.
+- **Random** (`MERCURY_TEST_SEED=random`; `make integration-test-random`):
+  every test draws a new seed.  For finding issues a fixed channel never
+  shows: the connect handshake repeats to the millisecond, so with a fixed
+  seed a burst lands on the same stretch of the same noise every run, and a
+  frame that decodes there passes every time however close to its cliff it
+  sits.
+
+Each direction gets its own seed derived from the run's.  Every test logs its
+seed and the command that reruns it, repeats both on failure, and appends a
+line to the seed history: time, git hash, test, mode, seed, PASS/FAIL, and the
+`MERCURY_*` channel settings the rerun needs.  For example (a history line,
+then the line a failure prints):
+
+```
+2026-10-21T14:02:11Z 73d94ef TestMercuryARQDisconnectReachesFloorPeer random 3141592653 FAIL MERCURY_CH_NO_FWD=-24.82 ...
+channel seed: random 3141592653 -- reproduce with: MERCURY_CH_NO_FWD=-24.82 ... MERCURY_TEST_SEED=3141592653 go test -run '^TestMercuryARQDisconnectReachesFloorPeer$'
+```
+
+A seed reproduces the channel, not the wall clock: on the FIFO bridge a burst
+still lands a few milliseconds differently each run, so a marginal failure
+may need a few reruns of its seed; under `MERCURY_TEST_TRANSPORT=sock` the
+connect path replays exactly.
 
 Every Mercury the tests start gets a private, temporary state directory
 (`XDG_STATE_HOME`, `LOCALAPPDATA`/`APPDATA`, and `HOME` on macOS; see
