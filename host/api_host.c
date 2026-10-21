@@ -20,6 +20,7 @@
 #include "tcp_interfaces.h"
 #include "bcast_file.h"
 #include "bcast_carousel.h"
+#include "bcast_rx_host.h"
 #include "broadcast.h"
 
 /* ---- chat ---- */
@@ -148,4 +149,36 @@ const char *mercury_host_busy_reason(void)
     if (bcast_carousel_sending())
         return "broadcast";
     return NULL;
+}
+
+/* ---- broadcast-plane RX ---- */
+
+static mercury_host_bcast_rx_ops s_rx_ops;
+
+static void rx_object(const uint8_t *data, size_t len, const char *name, bool sealed_ok, void *user)
+{
+    (void)user;
+    if (s_rx_ops.on_object)
+        s_rx_ops.on_object(data, len, name, sealed_ok, s_rx_ops.user);
+}
+
+static void rx_frame(const uint8_t *frame, size_t len, int mode, float snr, void *user)
+{
+    (void)user;
+    if (s_rx_ops.on_frame)
+        s_rx_ops.on_frame(frame, len, mode, snr, s_rx_ops.user);
+}
+
+int mercury_host_set_bcast_rx(const mercury_host_bcast_rx_ops *ops)
+{
+    if (!ops || (!ops->on_object && !ops->on_frame))
+    {
+        bcast_rx_host_set(NULL, NULL, NULL);
+        memset(&s_rx_ops, 0, sizeof(s_rx_ops));
+        return MERCURY_HOST_OK;
+    }
+    bcast_rx_host_set(NULL, NULL, NULL);          /* stopped before the ops change */
+    s_rx_ops = *ops;
+    return bcast_rx_host_set(ops->on_object ? rx_object : NULL, ops->on_frame ? rx_frame : NULL, NULL) == 0
+           ? MERCURY_HOST_OK : MERCURY_HOST_BAD;
 }

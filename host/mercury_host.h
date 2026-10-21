@@ -217,6 +217,27 @@ int  mercury_host_bcast_send(const char *name, const uint8_t *data, size_t len, 
 void mercury_host_bcast_stop(void);
 void mercury_host_bcast_stats(mercury_host_bcast_stats_t *out);
 
+/* ---- what the broadcast plane hears -----------------------------------------
+ *
+ * on_frame: every broadcast frame decoded, at the listen mode (chat and file
+ * frames alike; received chat lines also go to the chat store, see above);
+ * mode is the FreeDV mode number, snr the modem's estimate in dB.
+ * on_object: each file the frames complete, its bytes and the name it was
+ * sent under, at a listen mode that carries files; Mercury files nothing.
+ * sealed_ok: the file was sealed and opened with the station's broadcast key
+ * -- always false until encryption (PR #410) is in.  Both run on a thread of
+ * Mercury's: copy and return.  Nothing is dropped: a 256 KB queue takes the
+ * frames, and a callback that keeps it full holds up the modem's RX.  Either may be NULL; NULL ops (or both NULL)
+ * stops it.  MERCURY_HOST_BAD when the receiver could not start.  Beside a
+ * broadcast TCP client, if one is attached: it gets every frame too. */
+typedef struct {
+    void (*on_object)(const uint8_t *data, size_t len, const char *name, bool sealed_ok, void *user);
+    void (*on_frame)(const uint8_t *frame, size_t len, int mode, float snr, void *user);
+    void *user;
+} mercury_host_bcast_rx_ops;
+
+int mercury_host_set_bcast_rx(const mercury_host_bcast_rx_ops *ops);
+
 #ifdef __cplusplus
 }
 #endif

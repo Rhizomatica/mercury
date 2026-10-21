@@ -70,7 +70,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
             test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
             test_message_store test_ui_history test_ws_protocol \
-            test_monitor_frame test_hermes_log test_host test_api_host test_bcast_carousel
+            test_monitor_frame test_hermes_log test_host test_api_host test_bcast_carousel test_bcast_rx_host
 
 .PHONY: all test clean
 
@@ -284,6 +284,12 @@ RAPTORQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
 test_bcast_carousel: datalink_broadcast/test_bcast_carousel.c $(UNITY_SRC) \
                      ../datalink_broadcast/bcast_carousel.c ../datalink_broadcast/bcast_file.c \
                      ../common/ring_buffer_posix.c ../common/shm_posix.c ../common/hermes_log.c $(RAPTORQ_SRC)
+	$(CC) $(CFLAGS) -I.. -I../datalink_broadcast -I../datalink_broadcast/raptorq/include \
+	      -I../datalink_broadcast/raptorq/deps -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
+
+test_bcast_rx_host: datalink_broadcast/test_bcast_rx_host.c $(UNITY_SRC) \
+                    ../datalink_broadcast/bcast_rx_host.c ../datalink_broadcast/bcast_file.c \
+                    ../common/ring_buffer_posix.c ../common/shm_posix.c ../common/hermes_log.c $(RAPTORQ_SRC)
 	$(CC) $(CFLAGS) -I.. -I../datalink_broadcast -I../datalink_broadcast/raptorq/include \
 	      -I../datalink_broadcast/raptorq/deps -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 

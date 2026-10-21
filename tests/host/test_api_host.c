@@ -14,6 +14,7 @@
 #include "modem.h"
 #include "bcast_carousel.h"
 #include "bcast_status.h"
+#include "bcast_rx_host.h"
 
 /* ---- stubs ---- */
 static bool   s_connected;
@@ -60,6 +61,14 @@ void bcast_carousel_stop(void) { s_car_stopped = true; }
 void bcast_carousel_get(bcast_car_status_t *out) { *out = s_car; }
 bool bcast_carousel_sending(void) { return s_car.state == BCAST_CAR_SENDING; }
 const char *bcast_car_state_name(bcast_car_state_t st) { return st == BCAST_CAR_SENDING ? "sending" : "idle"; }
+
+static bcast_host_object_fn s_rx_obj;
+static bcast_host_frame_fn  s_rx_frame;
+static int s_rx_sets;
+int bcast_rx_host_set(bcast_host_object_fn o, bcast_host_frame_fn f, void *u)
+{
+    (void)u; s_rx_obj = o; s_rx_frame = f; s_rx_sets++; return 0;
+}
 
 void setUp(void)
 {
@@ -160,6 +169,40 @@ void test_bcast_carousel_calls(void)
     TEST_ASSERT_EQUAL_STRING("arq", mercury_host_busy_reason());
 }
 
+/* What the broadcast plane hears reaches the host's ops with its own user
+ * pointer; only the callbacks given are started; NULL ops stop it. */
+static int   s_host_frames, s_host_objects;
+static void *s_host_user;
+static void host_frame(const uint8_t *f, size_t l, int m, float snr, void *u)
+{
+    (void)f; (void)l; (void)m; (void)snr; s_host_user = u; s_host_frames++;
+}
+static void host_object(const uint8_t *d, size_t l, const char *n, bool sealed, void *u)
+{
+    (void)d; (void)l; (void)n; (void)sealed; s_host_user = u; s_host_objects++;
+}
+
+void test_bcast_rx_ops(void)
+{
+    int me;
+    mercury_host_bcast_rx_ops ops = { .on_frame = host_frame, .user = &me };
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_OK, mercury_host_set_bcast_rx(&ops));
+    TEST_ASSERT_NULL(s_rx_obj);
+    TEST_ASSERT_NOT_NULL(s_rx_frame);
+    s_rx_frame((const uint8_t *)"f", 1, 0x10, 3.0f, NULL);
+    TEST_ASSERT_EQUAL_INT(1, s_host_frames);
+    TEST_ASSERT_EQUAL_PTR(&me, s_host_user);
+
+    ops.on_object = host_object;
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_OK, mercury_host_set_bcast_rx(&ops));
+    s_rx_obj((const uint8_t *)"x", 1, "a.txt", false, NULL);
+    TEST_ASSERT_EQUAL_INT(1, s_host_objects);
+
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_OK, mercury_host_set_bcast_rx(NULL));
+    TEST_ASSERT_NULL(s_rx_obj);
+    TEST_ASSERT_NULL(s_rx_frame);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -169,5 +212,6 @@ int main(void)
     RUN_TEST(test_chat_since_passes_the_cursor);
     RUN_TEST(test_listen_mode);
     RUN_TEST(test_bcast_carousel_calls);
+    RUN_TEST(test_bcast_rx_ops);
     return UNITY_END();
 }
