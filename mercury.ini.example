@@ -90,6 +90,10 @@ method = none
 
 ; Backend endpoint. For serial use a serial device (for example COM7 or
 ; /dev/ttyUSB0). For Hamlib use its serial device or ip:port endpoint.
+; Where there is no /dev/ttyUSB* (Android, a phone kernel without the
+; chip's driver) a Hamlib with usb_serial takes the USB chip itself:
+; usb:VVVV:PPPP[:SERIAL][@INTERFACE], e.g. "usb:10c4:ea60:IC-7100 02010347 A"
+; (needs read/write access to its /dev/bus/usb node).
 device =
 
 ; method=serial: which modem-control line keys the radio: rts (default), dtr, or both.

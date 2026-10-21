@@ -35,6 +35,7 @@
 #define RADIO_PORT_H
 
 #include <stddef.h>
+#include <string.h>
 
 typedef enum
 {
@@ -61,6 +62,11 @@ static inline int radio_port_path_is_serial(const char *path)
         return 1;
 
     if (path[0] == '\\')                      /* \\.\COMnn (Windows, >COM9)  */
+        return 1;
+
+    /* A USB-serial chip Hamlib drives itself (Hamlib's usb_serial.c): an
+     * Android app, or a kernel without the chip's driver. */
+    if (!strncmp(path, "usb:", 4) || !strncmp(path, "usbfd:", 6))
         return 1;
 
     if ((path[0] == 'C' || path[0] == 'c') &&
