@@ -7,7 +7,8 @@
 #   2. Build unsigned Windows zip (debian container, mingw cross-compile)
 #   3. Authenticode-sign the binaries (certum-signer container, jsign + SimplySign)
 #   4. Build the Android .apk, signed with the release key (secrets)
-#   5. Create GitHub release with signed zip (+ installer, .dmg, .apk)
+#   5. Build the iOS sideload .ipa
+#   6. Create GitHub release with signed zip (+ installer, .dmg, .apk, .ipa)
 
 name: Release
 
@@ -30,6 +31,11 @@ on:
         type: boolean
       build_android:
         description: 'Build the Android .apk, signed with the release key'
+        required: false
+        default: true
+        type: boolean
+      build_ios:
+        description: 'Build the iOS sideload .ipa (SideStore, AltStore Classic)'
         required: false
         default: true
         type: boolean
@@ -402,13 +408,46 @@ jobs:
           name: android-apk
           path: Mercury-${{ inputs.version }}-android-arm64.apk
 
+  # ---- iOS sideload .ipa ----
+  # Signed ad hoc, with no provisioning profile: SideStore and AltStore
+  # Classic re-sign it with their user's Apple ID.  (The AltStore PAL build
+  # goes through App Store Connect and Apple's notarization instead.)
+  ios:
+    name: Build iOS sideload .ipa
+    needs: bump
+    if: ${{ inputs.build_ios }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: mercuryv2, fetch-depth: 1 }
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.9'
+          cache-dependency-path: gui_interface/fyne-ui/go.sum
+
+      - name: Build the .ipa
+        run: |
+          set -eu
+          make fyne-ui-ios-ipa \
+            CC="xcrun -sdk iphoneos clang -arch arm64 -miphoneos-version-min=17.0" \
+            IOS_IPA=Mercury-${{ inputs.version }}-ios-sideload.ipa
+          codesign -dv ios/MercuryUI.app 2>&1 | grep -q 'Signature=adhoc'
+
+      - name: Upload the .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: Mercury-${{ inputs.version }}-ios-sideload.ipa
+
   # ---- Create GitHub release ----
   release:
     name: Create GitHub release
-    needs: [sign, macos, android]
+    needs: [sign, macos, android, ios]
     # The macOS and Android jobs are opt-in; without this the whole release is
     # skipped when one is, because a skipped dependency skips its dependents.
-    if: ${{ always() && needs.sign.result == 'success' && needs.macos.result != 'failure' && needs.android.result != 'failure' }}
+    if: ${{ always() && needs.sign.result == 'success' && needs.macos.result != 'failure' && needs.android.result != 'failure' && needs.ios.result != 'failure' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -433,6 +472,11 @@ jobs:
         uses: actions/download-artifact@v4
         with: { name: android-apk }
 
+      - name: Download the iOS .ipa
+        if: ${{ inputs.build_ios }}
+        uses: actions/download-artifact@v4
+        with: { name: ios-ipa }
+
       - name: Create release
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: |
@@ -448,6 +492,8 @@ jobs:
           if [ -n "$DMG" ]; then ASSETS="$ASSETS ./${DMG}"; fi
           APK=$(ls Mercury-*-android-arm64.apk 2>/dev/null | head -1 || true)
           if [ -n "$APK" ]; then ASSETS="$ASSETS ./${APK}"; fi
+          IPA=$(ls Mercury-*-ios-sideload.ipa 2>/dev/null | head -1 || true)
+          if [ -n "$IPA" ]; then ASSETS="$ASSETS ./${IPA}"; fi
           gh release create "v${{ inputs.version }}" $ASSETS \
             --repo Rhizomatica/mercury --target mercuryv2 --generate-notes \
             --title "Mercury ${{ inputs.version }}"

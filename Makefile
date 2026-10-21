@@ -739,7 +739,10 @@ endif
 #        IOS_SIGN_IDENTITY="Apple Distribution: ..." IOS_PROFILE=path/to/profile.mobileprovision \
 #        [IOS_BUILD=<build number>]
 # IOS_BUILD is CFBundleVersion: every upload of the same version needs a new one.
-IOS_IPA ?= Mercury-$(MERCURY_VERSION).ipa
+# Without IOS_SIGN_IDENTITY it is the sideload .ipa (SideStore, AltStore
+# Classic): signed ad hoc, no profile, which the installer re-signs with its
+# user's Apple ID.
+IOS_IPA ?= Mercury-$(MERCURY_VERSION)$(if $(IOS_SIGN_IDENTITY),,-ios-sideload).ipa
 IOS_BUILD ?= $(MERCURY_VERSION)
 IOS_ASSETS = ios/build-assets
 
@@ -747,8 +750,8 @@ fyne-ui-ios-ipa: fyne-ui-ios
 ifeq ($(TARGET_IOS_SIM),1)
 	$(error an .ipa is a device build: use the iphoneos compiler)
 endif
-	@test -n "$(IOS_SIGN_IDENTITY)" -a -f "$(IOS_PROFILE)" || { \
-		echo "error: set IOS_SIGN_IDENTITY (an Apple Distribution identity) and IOS_PROFILE (its .mobileprovision)"; exit 1; }
+	@test -z "$(IOS_SIGN_IDENTITY)" -o -f "$(IOS_PROFILE)" || { \
+		echo "error: IOS_SIGN_IDENTITY (an Apple Distribution identity) needs IOS_PROFILE (its .mobileprovision)"; exit 1; }
 	rm -rf $(IOS_ASSETS) && mkdir -p $(IOS_ASSETS)/Assets.xcassets/AppIcon.appiconset
 	cp ios/AppIcon.appiconset/Contents.json $(FYNE_UI_DIR)/mercury-ui.png $(IOS_ASSETS)/Assets.xcassets/AppIcon.appiconset/
 	xcrun actool --compile $(IOS_UI_APP) --platform iphoneos --minimum-deployment-target 17.0 \
@@ -767,6 +770,9 @@ endif
 		-c "Add :UIRequiredDeviceCapabilities array" -c "Add :UIRequiredDeviceCapabilities:0 string arm64" \
 		-c "Set :CFBundleVersion $(IOS_BUILD)" $$P
 	cp ios/PrivacyInfo.xcprivacy $(IOS_UI_APP)/
+ifeq ($(IOS_SIGN_IDENTITY),)
+	codesign --force --sign - $(IOS_UI_APP)
+else
 	cp "$(IOS_PROFILE)" $(IOS_UI_APP)/embedded.mobileprovision
 	# Entitlements from the profile's app ID and team.  The profile's own
 	# keychain group is a wildcard (TEAM.*), which is not valid in an app's
@@ -778,6 +784,7 @@ endif
 	$(PLIST_BUDDY) -c "Add :application-identifier string $$A" -c "Add :com.apple.developer.team-identifier string $$T" \
 		-c "Add :get-task-allow bool false" -c "Add :beta-reports-active bool true" $$E >/dev/null
 	codesign --force --sign "$(IOS_SIGN_IDENTITY)" --entitlements $(IOS_ASSETS)/entitlements.plist $(IOS_UI_APP)
+endif
 	codesign --verify --deep --strict $(IOS_UI_APP)
 	mkdir -p $(IOS_ASSETS)/Payload && cp -R $(IOS_UI_APP) $(IOS_ASSETS)/Payload/
 	rm -f $(IOS_IPA) && cd $(IOS_ASSETS) && zip -qry $(abspath $(IOS_IPA)) Payload
