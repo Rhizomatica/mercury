@@ -89,6 +89,10 @@ static _Atomic bool tnc_txq_open = false;
 #endif
 static atomic_int tnc_last_buffer_sent = -1;
 static atomic_bool bcast_client_done = false;
+/* A broadcast client is attached and its worker drains the RX ring. */
+static atomic_bool bcast_client_present = false;
+/* The host program's tap on every broadcast frame decoded (broadcast_set_rx_tap). */
+static void (*_Atomic bcast_rx_tap)(const uint8_t *frame, size_t len, int mode, float snr) = NULL;
 static _Atomic uint8_t bcast_reply_cmd = CMD_DATA;
 
 #if defined(MSG_NOSIGNAL)
@@ -1344,6 +1348,51 @@ static void bcast_store_peer(const uint8_t *payload, int len, char *peer, size_t
     peer[0] = '\0';
 }
 
+void broadcast_set_rx_tap(void (*tap)(const uint8_t *frame, size_t len, int mode, float snr))
+{
+    atomic_store(&bcast_rx_tap, tap);
+}
+
+/* Every broadcast frame the modem decodes, at the listen mode's size.
+ *
+ * Received chat is stored here, once, whoever is attached: it used to be
+ * stored by the TCP client's worker only, so a station with no broadcast
+ * client (an embedded host, or nobody at all) kept none of what it heard.
+ * Raw hermes-broadcast/AX.25 frames are filtered out by the store's
+ * printable-text check; the modem's zero padding is trimmed so trailing NULs
+ * don't poison the next line.
+ *
+ * The host's tap sees every frame.  The TCP client gets it only while one is
+ * attached: the RX ring is drained by that client's worker alone, and with
+ * none, a full ring made the modem's RX thread wait for good. */
+void broadcast_rx_frame(const uint8_t *frame, size_t len, int mode, float snr)
+{
+    uint8_t copy[MAX_PAYLOAD + 8];
+    if (!frame || len == 0 || len > MAX_PAYLOAD)
+        return;
+
+    memcpy(copy, frame, len);
+    uint8_t *payload_start;
+    int payload_len;
+    (void)bcast_get_tx_payload(copy, len, &payload_start, &payload_len);
+    if (payload_len > 0)
+    {
+        int text_len = payload_len;
+        while (text_len > 0 && payload_start[text_len - 1] == '\0')
+            text_len--;
+        char peer[CALLSIGN_MAX_SIZE];
+        bcast_store_peer(payload_start, text_len, peer, sizeof(peer));
+        msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_RX, peer, payload_start, (size_t)text_len);
+    }
+
+    void (*tap)(const uint8_t *, size_t, int, float) = atomic_load(&bcast_rx_tap);
+    if (tap)
+        tap(frame, len, mode, snr);
+
+    if (atomic_load(&bcast_client_present))
+        write_buffer(data_rx_buffer_broadcast, (uint8_t *)frame, len);
+}
+
 void *send_thread(void *client_socket_ptr)
 {
     int client_socket = *((int *)client_socket_ptr);
@@ -1404,18 +1453,8 @@ void *send_thread(void *client_socket_ptr)
         if (payload_len <= 0)
             continue;
 
-        /* Persist received broadcast chat; raw hermes-broadcast/AX.25 frames
-         * are filtered out by the printable-text check inside the store.
-         * Trim the modem's zero padding (legacy/hermes-broadcast frames carry
-         * no length prefix) so trailing NUL bytes don't accumulate in the
-         * line buffer and poison the next message. */
-        int text_len = payload_len;
-        while (text_len > 0 && payload_start[text_len - 1] == '\0')
-            text_len--;
-        char peer[CALLSIGN_MAX_SIZE];
-        bcast_store_peer(payload_start, text_len, peer, sizeof(peer));
-        msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_RX, peer, payload_start, (size_t)text_len);
-
+        /* (received chat is stored where the frame is decoded:
+         * broadcast_rx_frame) */
         int kiss_len = kiss_write_frame(payload_start, payload_len, reply_cmd, kiss_buffer);
         HLOGI("tcp-bcast", "Sending KISS frame to client: kiss_cmd=0x%02X payload=%d kiss_len=%d",
               reply_cmd, payload_len, kiss_len);
@@ -1587,6 +1626,7 @@ void *tcp_server_thread(void *port_ptr)
 
         bcast_client_done = false;
         atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
+        atomic_store(&bcast_client_present, true);
 
         /* New client, clean slate: drop any partial broadcast line left in the
          * store's feed buffer from the previous client. */
@@ -1639,6 +1679,7 @@ void *tcp_server_thread(void *port_ptr)
         SOCK_SHUTDOWN(client_socket);
         pthread_join(recv_tid, NULL);
         bcast_client_done = true;
+        atomic_store(&bcast_client_present, false);
         if (send_started)
             pthread_join(send_tid, NULL);
         clear_buffer(data_rx_buffer_broadcast);

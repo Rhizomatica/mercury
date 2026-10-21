@@ -68,6 +68,12 @@ void tnc_send_buffer(uint32_t bytes);
 int broadcast_send_message(const uint8_t *msg, size_t len);
 /* The longest such message at the listen mode, 0 with none set yet. */
 size_t broadcast_message_max(void);
+/* Every broadcast frame the modem decodes: stores received chat, gives the
+ * frame to the host's tap and, while one is attached, to the TCP client. */
+void broadcast_rx_frame(const uint8_t *frame, size_t len, int mode, float snr);
+/* The host program's tap on those frames (NULL: none).  Called on the
+ * modem's RX thread: copy and return. */
+void broadcast_set_rx_tap(void (*tap)(const uint8_t *frame, size_t len, int mode, float snr));
 /* Is a periodic BUFFER report due: the count changed, or -- in a session,
  * with bytes still to confirm -- no BUFFER line went for
  * TNC_BUFFER_REPEAT_MS (50 s)?  (#397) */

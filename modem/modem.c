@@ -2129,7 +2129,7 @@ static void process_received_frame(const uint8_t *data,
                   payload_nbytes, expect_bcast);
             break;
         }
-        write_buffer(data_rx_buffer_broadcast, (uint8_t *)data, payload_nbytes);
+        broadcast_rx_frame((const uint8_t *)data, payload_nbytes, mode, snr_est);
         break;
     }
     default:

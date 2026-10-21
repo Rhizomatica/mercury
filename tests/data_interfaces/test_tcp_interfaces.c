@@ -109,10 +109,18 @@ void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bu
 
 /* ---- message_store stubs ---- */
 
+static char last_feed_plane[8], last_feed_dir[4], last_feed_text[256];
+static int  feed_count = 0;
 void msg_store_feed(const char *plane, const char *dir, const char *peer,
                     const uint8_t *data, size_t len)
 {
-    (void)plane; (void)dir; (void)peer; (void)data; (void)len;
+    (void)peer;
+    snprintf(last_feed_plane, sizeof(last_feed_plane), "%s", plane);
+    snprintf(last_feed_dir, sizeof(last_feed_dir), "%s", dir);
+    size_t n = len < sizeof(last_feed_text) - 1 ? len : sizeof(last_feed_text) - 1;
+    memcpy(last_feed_text, data, n);
+    last_feed_text[n] = '\0';
+    feed_count++;
 }
 
 void msg_store_reset(const char *plane, const char *dir)
@@ -1079,6 +1087,45 @@ void test_broadcast_send_message_frames_or_refuses(void)
     broadcast_frame_size_cfg = 0;
 }
 
+/* Every decoded broadcast frame: its chat stored once, client or not; the
+ * host's tap sees it; the TCP client's ring gets it only while one is
+ * attached (with none, a full ring stalled the modem's RX thread). */
+static int tap_calls = 0;
+static size_t tap_len = 0;
+static void test_tap(const uint8_t *f, size_t len, int mode, float snr)
+{
+    (void)f; (void)mode; (void)snr; tap_calls++; tap_len = len;
+}
+
+void test_broadcast_rx_frame_stores_taps_and_feeds_the_client(void)
+{
+    const size_t fsz = 30;
+    uint8_t frame[64] = {0};
+    frame[0] = BCAST_HDR_BYTE_LEN;
+    frame[1] = 0; frame[2] = 8;
+    memcpy(frame + 3, "hi there", 8);
+
+    feed_count = 0; tap_calls = 0;
+    int writes = write_buffer_call_count;
+    atomic_store(&bcast_client_present, false);
+    broadcast_set_rx_tap(test_tap);
+    broadcast_rx_frame(frame, fsz, 1, 3.0f);
+    TEST_ASSERT_EQUAL_INT(1, feed_count);
+    TEST_ASSERT_EQUAL_STRING("bcast", last_feed_plane);
+    TEST_ASSERT_EQUAL_STRING("rx", last_feed_dir);
+    TEST_ASSERT_EQUAL_STRING("hi there", last_feed_text);
+    TEST_ASSERT_EQUAL_INT(1, tap_calls);
+    TEST_ASSERT_EQUAL_size_t(fsz, tap_len);
+    TEST_ASSERT_EQUAL_INT(writes, write_buffer_call_count);      /* no client: not queued */
+
+    atomic_store(&bcast_client_present, true);
+    broadcast_rx_frame(frame, fsz, 1, 3.0f);
+    TEST_ASSERT_EQUAL_INT(writes + 1, write_buffer_call_count);  /* a client: queued */
+    TEST_ASSERT_EQUAL_INT(2, feed_count);                        /* stored once a frame */
+    atomic_store(&bcast_client_present, false);
+    broadcast_set_rx_tap(NULL);
+}
+
 void test_bcast_rx_cmd_data_exact_size(void)
 {
     const size_t fsz = 10;
@@ -1980,6 +2027,7 @@ int main(void)
     RUN_TEST(test_tnc_send_monitor_never_drops_a_line);
     /* Broadcast framing helper tests */
     RUN_TEST(test_broadcast_send_message_frames_or_refuses);
+    RUN_TEST(test_broadcast_rx_frame_stores_taps_and_feeds_the_client);
     RUN_TEST(test_bcast_rx_cmd_data_exact_size);
     RUN_TEST(test_bcast_rx_cmd_data_0x60_is_not_special);
     RUN_TEST(test_bcast_rx_cmd_data_short_lowercase_wrapped);
