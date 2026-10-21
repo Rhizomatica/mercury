@@ -128,7 +128,7 @@ func TestBroadcastSurvivesStrayARQData(t *testing.T) {
 	cmdB, procB, outB, errB := start("B", bRX, bTX, bPort)
 	defer func() { _ = stopProcess(t, cmdB, procB, outB.Name(), errB.Name()) }()
 
-	bridge := startChannelBridge(ctx, chBin, aTX, bRX, bTX, aRX, DefaultChannelParams())
+	bridge := startChannelBridge(ctx, chBin, aTX, bRX, bTX, aRX, channelParamsFor(t))
 	defer bridge.Close()
 
 	fail := func(format string, args ...interface{}) {

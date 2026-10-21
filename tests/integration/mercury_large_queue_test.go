@@ -30,7 +30,7 @@ func TestMercuryARQLargeQueueNoWedge(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
 
-	params := DefaultChannelParams()
+	params := channelParamsFor(t)
 	chBin, err := buildCh(repoRoot)
 	if err != nil {
 		t.Skipf("channel simulator unavailable: %v", err)

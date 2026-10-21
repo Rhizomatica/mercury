@@ -40,7 +40,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
 
-	params := DefaultChannelParams()
+	params := channelParamsFor(t)
 
 	// Channel engine: codec2 ch.c (default), the Watterson HF model, or the
 	// AE4JY pathsim reference (MERCURY_CH_ENGINE=pathsim, streaming-mode
@@ -169,8 +169,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 	}
 
 	if useSock {
-		fwd, rev := params, params
-		fwd.SeedSalt, rev.SeedSalt = 1, 2
+		fwd, rev := directionParams(params)
 		sim, err := startSockSim(ctx, chBin, sockA, sockB, fwd, rev)
 		if err != nil {
 			t.Fatalf("start sock sim: %v", err)

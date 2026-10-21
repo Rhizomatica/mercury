@@ -118,7 +118,10 @@ int main(int argc, char *argv[]) {
         "delay\n"
         "[--ssbfilt 0|1]        SSB bandwidth filter (default 1 on)\n"
         "[--mulipath_delay ms]  Optionally adjust multipath delay\n"
-        "[--No dBHz]            AWGN Noise density dB/Hz (default -100)"
+        "[--No dBHz]            AWGN Noise density dB/Hz (default -100)\n"
+        "[--seed N]             Seed the AWGN generator (default: unseeded,\n"
+        "                       the C library's fixed sequence; the --mp*\n"
+        "                       fading files are read from the start either way)"
         "\n",
         argv[0]);
     exit(1);
@@ -170,9 +173,10 @@ int main(int argc, char *argv[]) {
         {"mpd", no_argument, 0, 'd'},
         {"multipath_delay", required_argument, 0, 'm'},
         {"No", required_argument, 0, 'n'},
+        {"seed", required_argument, 0, 'S'},
         {0, 0, 0, 0}};
 
-    o = getopt_long(argc, argv, "c:df:g:im:n:opr:s:tu:h", long_opts, &opt_idx);
+    o = getopt_long(argc, argv, "c:df:g:im:n:opr:s:tu:hS:", long_opts, &opt_idx);
 
     switch (o) {
       case 'c':
@@ -210,6 +214,9 @@ int main(int argc, char *argv[]) {
         break;
       case 't':
         ctest = 1;
+        break;
+      case 'S':
+        srand((unsigned)strtoul(optarg, NULL, 0));
         break;
       case 'u':
         fading_dir = strdup(optarg);

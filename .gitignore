@@ -100,3 +100,6 @@ utils/mfsk_puncture_sweep
 # TLC error-trace dumps (written next to the spec on a violation)
 *_TTrace_*.tla
 *_TTrace_*.bin
+
+# Go harness: the seeds random-seed runs used (tests/integration/README.md)
+tests/integration/seed-history.log

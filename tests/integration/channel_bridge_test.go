@@ -48,6 +48,11 @@ type ChannelParams struct {
 	// keeps a pinned run exactly reproducible while making the two paths
 	// independent.
 	SeedSalt uint32
+
+	// The run's channel seed and how it was chosen (seed_test.go): fixed,
+	// random or pinned.  "" for params not built by channelParamsFor.
+	SeedMode string
+	Seed     uint32
 }
 
 func DefaultChannelParams() ChannelParams {
@@ -269,8 +274,11 @@ func (b *boundedBuffer) String() string {
 }
 
 func buildCh(repoRoot string) (string, error) {
-	dst := filepath.Join(repoRoot, "modem", "freedv", "ch")
-	if executableExists(dst) {
+	dir := filepath.Join(repoRoot, "modem", "freedv")
+	dst := filepath.Join(dir, "ch")
+	// Rebuild when ch.c or the library is newer: a ch left from before an
+	// option was added (--seed) would refuse the run.
+	if executableExists(dst) && !newerThan(dst, filepath.Join(dir, "ch.c"), filepath.Join(dir, "libfreedvdata.a")) {
 		return dst, nil
 	}
 	cmd := exec.Command("gcc", "-Wall", "-O2", "-std=gnu11", "-I.", "-o", "ch", "ch.c",
@@ -286,23 +294,16 @@ func buildCh(repoRoot string) (string, error) {
 	return dst, nil
 }
 
-type channelBridge struct {
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-}
-
-func startChannelBridge(ctx context.Context, chBin string,
-	aTX, bRX, bTX, aRX string, params ChannelParams) *channelBridge {
-
-	bridgeCtx, cancel := context.WithCancel(ctx)
-	cb := &channelBridge{cancel: cancel}
-
+// directionParams splits a link into its two directions, each with its own
+// seed salt and the MERCURY_CH_*_FWD / _REV overrides, for both the FIFO
+// bridge and the sock bench.
+func directionParams(params ChannelParams) (fwd, rev ChannelParams) {
 	// Per-direction No override to reproduce an ASYMMETRIC link, e.g. the OTA
 	// estacao6<->estacao10 case (workable forward, ~5 dB weaker reverse that
 	// kills ACK survival).  A->B is forward (caller's data); B->A is reverse
 	// (callee's ACKs).  MERCURY_CH_NO_FWD / MERCURY_CH_NO_REV (dBHz) override
 	// each direction; unset = symmetric params.No_dBHz.  ch: SNR3k = -No - 14.82.
-	fwd, rev := params, params
+	fwd, rev = params, params
 	fwd.SeedSalt, rev.SeedSalt = 1, 2
 	if v := os.Getenv("MERCURY_CH_NO_FWD"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
@@ -329,6 +330,35 @@ func startChannelBridge(ctx context.Context, chBin string,
 			rev.Fading = ""
 		}
 	}
+	return fwd, rev
+}
+
+// newerThan: is any of srcs modified after dst?
+func newerThan(dst string, srcs ...string) bool {
+	d, err := os.Stat(dst)
+	if err != nil {
+		return true
+	}
+	for _, src := range srcs {
+		if st, err := os.Stat(src); err == nil && st.ModTime().After(d.ModTime()) {
+			return true
+		}
+	}
+	return false
+}
+
+type channelBridge struct {
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+func startChannelBridge(ctx context.Context, chBin string,
+	aTX, bRX, bTX, aRX string, params ChannelParams) *channelBridge {
+
+	bridgeCtx, cancel := context.WithCancel(ctx)
+	cb := &channelBridge{cancel: cancel}
+
+	fwd, rev := directionParams(params)
 
 	cb.wg.Add(2)
 	go func() { defer cb.wg.Done(); runChannelDir(bridgeCtx, chBin, aTX, bRX, fwd) }()
@@ -386,15 +416,12 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 	// reason if it refuses to start.  Printed when the child exits.
 	chStderr := &boundedBuffer{limit: 16 * 1024}
 	chCmd.Stderr = chStderr
-	// Give each direction its own fading realisation (see SeedSalt).  Only
-	// when the run is pinned: unpinned, each channel process already seeds
-	// itself from clock+pid and is independent anyway.
-	if base := os.Getenv("MERCURY_WATTERSON_SEED"); base != "" && params.SeedSalt != 0 {
-		if b, err := strconv.ParseUint(base, 0, 32); err == nil {
-			chCmd.Env = append(os.Environ(),
-				fmt.Sprintf("MERCURY_WATTERSON_SEED=%d",
-					uint32(b)*2654435761+params.SeedSalt))
-		}
+	// Each direction its own noise and fading realisation (see SeedSalt and
+	// seed_test.go).
+	seedArgs, seedEnv := params.seedArgsEnv()
+	chCmd.Args = append(chCmd.Args, seedArgs...)
+	if seedEnv != nil {
+		chCmd.Env = seedEnv
 	}
 
 	chStdin, err := chCmd.StdinPipe()

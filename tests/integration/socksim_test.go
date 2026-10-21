@@ -143,11 +143,10 @@ func startSockChannel(ctx context.Context, chBin string, p ChannelParams) (*sock
 	// any comparison against a standalone modem test meaningless.
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
-	if base := os.Getenv("MERCURY_WATTERSON_SEED"); base != "" && p.SeedSalt != 0 {
-		if v, err := parseSeed(base); err == nil {
-			cmd.Env = append(os.Environ(),
-				fmt.Sprintf("MERCURY_WATTERSON_SEED=%d", v*2654435761+p.SeedSalt))
-		}
+	seedArgs, seedEnv := p.seedArgsEnv()
+	cmd.Args = append(cmd.Args, seedArgs...)
+	if seedEnv != nil {
+		cmd.Env = seedEnv
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -202,12 +201,6 @@ func (c *sockChannel) Close() {
 		<-done
 	}
 	c.stdout.Close()
-}
-
-func parseSeed(s string) (uint32, error) {
-	var v uint64
-	_, err := fmt.Sscan(s, &v)
-	return uint32(v), err
 }
 
 // sendSim writes one sim->station frame.
