@@ -87,6 +87,19 @@ static const char *ptt_method_name(ptt_method_t method)
 /* ------------------------------------------------------------------------- */
 /* Hamlib backend                                                            */
 
+/* radio_io_set_usb_fd(): one "usb:..." device and the descriptor for it. */
+static char g_usb_device[256];
+static int g_usb_fd = -1;
+static pthread_mutex_t g_usb_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void radio_io_set_usb_fd(const char *device, int fd)
+{
+    pthread_mutex_lock(&g_usb_lock);
+    snprintf(g_usb_device, sizeof(g_usb_device), "%s", fd >= 0 && device ? device : "");
+    g_usb_fd = fd >= 0 && device ? fd : -1;
+    pthread_mutex_unlock(&g_usb_lock);
+}
+
 #ifdef HAVE_HAMLIB
 static RIG *g_radio = NULL;
 
@@ -142,19 +155,6 @@ static const char *radio_io_get_conf(RIG *radio, const char *key, char *buf, int
 }
 
 /* Returns which of RTS (1) and DTR (2) it held low by default. */
-
-/* radio_io_set_usb_fd(): one "usb:..." device and the descriptor for it. */
-static char g_usb_device[256];
-static int g_usb_fd = -1;
-static pthread_mutex_t g_usb_lock = PTHREAD_MUTEX_INITIALIZER;
-
-void radio_io_set_usb_fd(const char *device, int fd)
-{
-    pthread_mutex_lock(&g_usb_lock);
-    snprintf(g_usb_device, sizeof(g_usb_device), "%s", fd >= 0 && device ? device : "");
-    g_usb_fd = fd >= 0 && device ? fd : -1;
-    pthread_mutex_unlock(&g_usb_lock);
-}
 
 static bool radio_io_usb_fd_for(const char *device, char *out, size_t len)
 {
