@@ -96,15 +96,23 @@ HAVE_HERMES_SHM := 0
 endif
 
 # Android (TARGET_ANDROID, from the NDK compiler's target in config.mk).  Audio
-# goes through AAudio.  No hamlib, CM108 or serial PTT (an app reaches USB
-# devices only through Java's UsbManager) and no POSIX shared memory (bionic
-# has no shm_open): PTT is the radio's VOX.  config.mk, which also tells,
-# comes later than the hamlib probe below, so ask the compiler here.
+# goes through AAudio.  Hamlib is the vendored radio_io/hamlib-android: an app
+# reaches the rig's USB-serial chip only through Java's UsbManager, and that
+# Hamlib drives the chip itself ("usbfd:N").  No CM108 or Mercury serial PTT,
+# and no POSIX shared memory (bionic has no shm_open).  config.mk, which also
+# tells, comes later than the hamlib probe below, so ask the compiler here.
 ifneq ($(findstring android,$(shell $(CC) -dumpmachine 2>/dev/null)),)
 FFAUDIO_LINKFLAGS := -laaudio -llog -lm
+HAMLIB_ANDROID_DIR := radio_io/hamlib-android/$(if $(findstring x86_64,$(shell $(CC) -dumpmachine 2>/dev/null)),x86_64,arm64-v8a)
+ifneq ($(wildcard $(HAMLIB_ANDROID_DIR)/lib/libhamlib.a),)
+HAVE_HAMLIB := 1
+HAMLIB_CFLAGS := -I$(HAMLIB_ANDROID_DIR)/include -DHAVE_HAMLIB
+HAMLIB_LDFLAGS := $(HAMLIB_ANDROID_DIR)/lib/libhamlib.a -ldl
+else
 HAVE_HAMLIB := 0
 HAMLIB_CFLAGS :=
 HAMLIB_LDFLAGS :=
+endif
 HAVE_HERMES_SHM := 0
 endif
 

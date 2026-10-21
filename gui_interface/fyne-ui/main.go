@@ -1502,6 +1502,11 @@ func main() {
 		gpioRow := container.NewGridWithColumns(2,
 			widget.NewLabel("CM108 GPIO"), bindings.cm108GPIOSelect)
 		previousMethod := pttMethodID(bindings.pttMethodSelect.Selected)
+		// Android: open the radio's USB chip for Hamlib (usb_android.go)
+		usbBox := container.NewVBox()
+		if row := directUSBRow(myWindow, bindings.devicePathEntry, appendLog); row != nil {
+			usbBox.Add(row)
+		}
 		updateMethodFields := func(label string) {
 			method := pttMethodID(label)
 			if method == "cm108" && (previousMethod == "serial" || previousMethod == "hamlib") {
@@ -1511,8 +1516,10 @@ func main() {
 			lineRow.Hide()
 			invertRow.Hide()
 			gpioRow.Hide()
+			usbBox.Hide()
 			switch method {
 			case "hamlib":
+				usbBox.Show()
 				deviceRow.Show()
 				modelRow.Show()
 				baudRow.Show()
@@ -1541,6 +1548,7 @@ func main() {
 			container.NewGridWithColumns(2,
 				widget.NewLabel("PTT Method"), bindings.pttMethodSelect),
 			deviceRow,
+			usbBox,
 			modelRow,
 			baudRow,
 			lineRow,
@@ -1761,6 +1769,7 @@ func main() {
 
 		logPath := filepath.Join(getLogDir(), "mercury_engine.log")
 		ensureMicPermission(appendLog)
+		ensureUSBRadio(defaultConfig, appendLog)
 		appendLog("Starting Mercury engine...\n")
 		// Forward the process args so the engine's own CLI parser applies them.
 		if err := mercuryStart(defaultConfig, logPath, os.Args); err != nil {

@@ -158,6 +158,7 @@ TARGET_ANDROID :=
 ifneq ($(findstring android,$(TARGET_MACHINE)),)
   TARGET_ANDROID := 1
   TARGET_GOARCH := $(if $(findstring x86_64,$(TARGET_MACHINE)),amd64,arm64)
+  ANDROID_ABI := $(if $(findstring x86_64,$(TARGET_MACHINE)),x86_64,arm64-v8a)
 endif
 
 # --- Platform-specific flags for aarch64 targets ---

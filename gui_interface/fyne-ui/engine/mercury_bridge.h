@@ -95,6 +95,11 @@ int mercury_ui_get_radio_list(ui_device_t *out, int max,
                               int *cm108_gpio);
 int mercury_ui_get_input_channel(void);
 
+/* Android: the usbfs descriptor the app opened (UsbManager) for the radio's
+ * "usb:VVVV:PPPP[:SERIAL]" device; Hamlib is then handed "usbfd:N".  fd < 0
+ * forgets it. */
+void mercury_ui_set_usb_fd(const char *device, int fd);
+
 /* Copy the current audio subsystem name ("alsa", "pulse", ...) into `name`.
  * Never returns NULL; `name` is always NUL-terminated. */
 void mercury_ui_get_audio_system(char *name, int name_len);
