@@ -446,27 +446,28 @@ static void send_disconnect_frame(arq_session_t *sess)
  * answer is turns the caller times and the callee answers in slots
  * (docs/CAROUSEL-ARQ.md).  So this check reduces the collision rate; it does
  * not eliminate it. */
-static bool decoder_hears_frame(const arq_session_t *sess);
-static bool peer_is_transmitting(const arq_session_t *sess)
+static int decoder_hears_frame(const arq_session_t *sess);
+/* By what sign (CAR_KEYED_*), 0: none. */
+static int peer_is_transmitting(const arq_session_t *sess)
 {
     if (g_cbs.channel_busy && g_cbs.channel_busy())
-        return true;
+        return CAR_KEYED_BUSY;
     return decoder_hears_frame(sess);
 }
 
 /* The first signal alone: one of our decoders is on a frame. */
-static bool decoder_hears_frame(const arq_session_t *sess)
+static int decoder_hears_frame(const arq_session_t *sess)
 {
     uint64_t now = time_now_ms();
     if (now < sess->rx_frame_busy_until_ms)
-        return true;          /* a frame whose preamble was caught: see arq_note_rx_preamble */
+        return CAR_KEYED_PREAMBLE;   /* a frame whose preamble was caught: see arq_note_rx_preamble */
     if (now < sess->nav_busy_until_ms)
-        return true;          /* its NAV header was heard: see arq_note_rx_nav */
+        return CAR_KEYED_NAV;        /* its NAV header was heard: see arq_note_rx_nav */
     if (sess->last_rx_sync_ms == 0)
-        return false;
+        return 0;
     if (now < sess->last_rx_sync_ms)
-        return true;          /* clock went backwards; treat as busy */
-    return (now - sess->last_rx_sync_ms) < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS;
+        return CAR_KEYED_SYNC;       /* clock went backwards; treat as busy */
+    return (now - sess->last_rx_sync_ms) < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS ? CAR_KEYED_SYNC : 0;
 }
 
 
@@ -586,8 +587,8 @@ static void car_io_pattern(void *ctx, int kind)
     if (g_cbs.send_pattern)
         g_cbs.send_pattern(kind == CAR_PATTERN_BREAK ? ARQ_PATTERN_BREAK : ARQ_PATTERN_ACK);
 }
-static bool peer_is_transmitting(const arq_session_t *sess);
-static bool car_io_peer_keyed(void *ctx) { return peer_is_transmitting((arq_session_t *)ctx); }
+static int peer_is_transmitting(const arq_session_t *sess);
+static int car_io_peer_keyed(void *ctx) { return peer_is_transmitting((arq_session_t *)ctx); }
 
 static size_t car_io_tx_read(void *ctx, uint8_t *buf, size_t max)
 {

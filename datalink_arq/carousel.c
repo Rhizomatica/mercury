@@ -596,11 +596,24 @@ uint64_t car_next_deadline(const car_t *c)
     return d;
 }
 
-static bool peer_keyed(car_t *c, uint64_t now)
+static int peer_keyed(car_t *c, uint64_t now)
 {
-    bool k = c->io.peer_keyed && c->io.peer_keyed(c->io.ctx);
+    int k = c->io.peer_keyed ? c->io.peer_keyed(c->io.ctx) : 0;
     if (k) c->last_carrier_ms = now;
     return k;
+}
+
+/* The log's words for a CAR_KEYED_* sign: "the channel is busy" read as the
+ * busy detector, which is off by default (on air 2026-10-21: an 11.5 s hold
+ * that was a caught preamble). */
+static const char *keyed_why(int k)
+{
+    switch (k) {
+    case CAR_KEYED_PREAMBLE: return "a frame's preamble was caught, held for its airtime";
+    case CAR_KEYED_NAV:      return "the peer's NAV header";
+    case CAR_KEYED_BUSY:     return "the busy detector";
+    default:                 return "a decoder is in sync on a frame";
+    }
 }
 
 /* Why a planned keydown is waiting, said once per hold: a log that shows
@@ -608,7 +621,7 @@ static bool peer_keyed(car_t *c, uint64_t now)
  * Not the carrier of an ordinary turnaround: only a hold past HELD_SAY_MS. */
 #define HELD_SAY_MS 2000
 enum { HELD_NONE, HELD_SLOTS, HELD_CARRIER, HELD_CARRIER_SAID };
-static void note_held(car_t *c, int why, uint64_t now, uint64_t ms)
+static void note_held(car_t *c, int why, int keyed, uint64_t now, uint64_t ms)
 {
     if (why == HELD_SLOTS) {
         if (c->held != HELD_SLOTS && ms >= HELD_SAY_MS)
@@ -621,7 +634,7 @@ static void note_held(car_t *c, int why, uint64_t now, uint64_t ms)
         c->held_since = now;
     } else if (c->held == HELD_CARRIER && now - c->held_since >= HELD_SAY_MS) {
         c->held = HELD_CARRIER_SAID;
-        car_trace(c, "tx: held %llu ms so far, the channel is busy", (unsigned long long)(now - c->held_since));
+        car_trace(c, "tx: held %llu ms so far: %s", (unsigned long long)(now - c->held_since), keyed_why(keyed));
     }
 }
 
@@ -630,8 +643,9 @@ static void note_held(car_t *c, int why, uint64_t now, uint64_t ms)
 static bool defer_if_busy(car_t *c, int t, uint64_t now)
 {
     if (c->tx_busy) { arm(c, t, now + CARRIER_CHECK_MS); return true; }
-    if (peer_keyed(c, now)) {
-        note_held(c, HELD_CARRIER, now, 0);
+    int k = peer_keyed(c, now);
+    if (k) {
+        note_held(c, HELD_CARRIER, k, now, 0);
         arm(c, t, now + CARRIER_CHECK_MS);
         return true;
     }
@@ -2240,7 +2254,7 @@ static void m_try(car_t *c, uint64_t now)
             at = best;
         }
     }
-    if (at > now) { note_held(c, HELD_SLOTS, now, at - now); arm(c, CAR_T_M, at); return; }
+    if (at > now) { note_held(c, HELD_SLOTS, 0, now, at - now); arm(c, CAR_T_M, at); return; }
     if (defer_if_busy(c, CAR_T_M, now)) return;     /* another station on the channel */
     c->held = HELD_NONE;
     m_key_plan(c);
