@@ -82,6 +82,13 @@ typedef struct {
     int    bcast_cycle;
     int    bcast_cycles_total;
     uint64_t bcast_frames_sent;
+    /* The Hermes-Lite 2's settings (-x hl2); hl2_valid is false on any other
+     * audio system. */
+    bool   hl2_valid;
+    uint64_t hl2_frequency_hz;
+    int    hl2_rx_gain_db;
+    int    hl2_tx_drive;
+    bool   hl2_pa;
 } ui_status_t;
 
 /* Render the snapshot as the status JSON remote clients already expect.

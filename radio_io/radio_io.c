@@ -747,6 +747,13 @@ static bool radio_io_copy_frequency_cache(uint64_t *frequency_hz,
     return true;
 }
 
+void radio_io_report_frequency(uint64_t frequency_hz)
+{
+    atomic_store_explicit(&g_frequency_hz, frequency_hz, memory_order_relaxed);
+    atomic_store_explicit(&g_frequency_read_ms, hermes_uptime_ms(), memory_order_relaxed);
+    atomic_store_explicit(&g_frequency_valid, frequency_hz != 0, memory_order_release);
+}
+
 bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz,
                             uint64_t *age_ms)
 {

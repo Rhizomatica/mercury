@@ -177,10 +177,26 @@ void test_status_json_is_byte_exact(void)
         "\"listen_mode\":1,"
         "\"listen_mode_name\":\"DATAC3\","
         "\"busy\":\"broadcast\","
-        "\"broadcast\":{\"state\":\"sending\",\"cycle\":2,\"cycles_total\":5,\"frames_sent\":77}}";
+        "\"broadcast\":{\"state\":\"sending\",\"cycle\":2,\"cycles_total\":5,\"frames_sent\":77},"
+        "\"hl2\":null}";
 
     TEST_ASSERT_EQUAL_STRING(expect, buf);
     TEST_ASSERT_EQUAL_INT((int)strlen(expect), n);
+}
+
+/* On -x hl2 the radio's settings ride at the end. */
+void test_status_json_carries_hl2_settings(void)
+{
+    ui_status_t st = sample();
+    char buf[1024];
+    st.hl2_valid = true;
+    st.hl2_frequency_hz = 7074000;
+    st.hl2_rx_gain_db = -4;
+    st.hl2_tx_drive = 200;
+    st.hl2_pa = true;
+    TEST_ASSERT_TRUE(ui_status_to_json(&st, buf, sizeof(buf)) > 0);
+    const char *tail = "\"hl2\":{\"frequency_hz\":7074000,\"rx_gain_db\":-4,\"tx_drive\":200,\"pa\":true}}";
+    TEST_ASSERT_EQUAL_STRING(tail, buf + strlen(buf) - strlen(tail));
 }
 
 /* direction is derived from the transmit flag, not carried separately. */
@@ -290,6 +306,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_status_json_is_byte_exact);
+    RUN_TEST(test_status_json_carries_hl2_settings);
     RUN_TEST(test_peer_snr_unknown_is_flagged_not_zero);
     RUN_TEST(test_peer_hears_mode_in_carousel);
     RUN_TEST(test_audio_failure_is_reported);

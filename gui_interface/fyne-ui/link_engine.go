@@ -381,6 +381,11 @@ func statusFromC(cst *C.ui_status_t) telemetryState {
 		FreqOffsetValid:    bool(cst.freq_offset_valid),
 		FreqOffsetHz:       float64(cst.freq_offset_hz),
 		FreqOffsetAgeMs:    int64(cst.freq_offset_age_ms),
+		HL2Valid:           bool(cst.hl2_valid),
+		HL2FreqHz:          int64(cst.hl2_frequency_hz),
+		HL2RxGainDB:        int(cst.hl2_rx_gain_db),
+		HL2TxDrive:         int(cst.hl2_tx_drive),
+		HL2PA:              bool(cst.hl2_pa),
 	}
 }
 

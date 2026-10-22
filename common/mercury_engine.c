@@ -256,6 +256,11 @@ int mercury_engine_init(const mercury_config *cfg,
     }
 
     /* ---- audio I/O ---- */
+    audioio_hl2_settings hl2 = {
+        .frequency_hz = cfg->hl2_frequency_hz, .rx_gain_db = cfg->hl2_rx_gain_db,
+        .tx_drive = cfg->hl2_tx_drive, .pa = cfg->hl2_pa,
+    };
+    audioio_hl2_set(&hl2);
     if (!audioio_rings_external(g_audio_system))
     {
         HLOGI("engine", "Initialising audio I/O (subsystem=%d)", g_audio_system);

@@ -52,9 +52,11 @@ void mercury_cli_print_usage(const char *prog)
     printf(" -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.\n");
     printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
     printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
-    printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, oss, coreaudio, aaudio, dsound, wasapi, shm, rtp, null, fifo or sock. Default is alsa on Linux, dsound on Windows.\n");
+    printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, oss, coreaudio, aaudio, dsound, wasapi, hl2, shm, rtp, null, fifo or sock. Default is alsa on Linux, dsound on Windows.\n");
     printf("                            null, fifo and sock are developer/test backends; fifo uses raw s32le PCM at 8 kHz via -i/-o paths; sock is a framed, virtual-clock lockstep transport (MERCURY_AUDIO_SOCK=<path>).\n");
     printf("                            rtp exchanges the radio signal with hermes-radio-daemon as RTP multicast: -i <rx group>[,iface] (default 239.255.72.1,lo), -o <tx group> (default 239.255.72.2); PTT travels in the TX stream.\n");
+    printf("                            hl2 uses a Hermes-Lite 2 on the network as radio and sound card: -i auto (the first that answers a broadcast) or -i <host>[:port]; set its frequency with -F (or [hl2] in the INI).\n");
+    printf(" -F [frequency_hz]          Hermes-Lite 2 (-x hl2) dial frequency in Hz, upper sideband. Without one it receives but never transmits.\n");
     printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.\n");
     printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.\n");
     printf(" -U [ui_port]               Sets the UI port (WebSocket port). Default is 10000. Requires -G.\n");
@@ -125,7 +127,7 @@ int mercury_cli_parse(int argc, char **argv,
         return -1;
 
     const int mode_count = mercury_cli_mode_count();
-    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGQTVd";
+    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGQTVdF:";
 
     memset(out, 0, sizeof(*out));
     cfg_set_defaults(&out->cfg);
@@ -337,6 +339,21 @@ int mercury_cli_parse(int argc, char **argv,
                 out->cfg.sound_system = AUDIO_SUBSYSTEM_SOCK;
             if (!strcmp(optarg, "rtp"))
                 out->cfg.sound_system = AUDIO_SUBSYSTEM_RTP;
+            if (!strcmp(optarg, "hl2"))
+                out->cfg.sound_system = AUDIO_SUBSYSTEM_HL2;
+            break;
+        case 'F':
+            if (optarg)
+            {
+                char *endptr = NULL;
+                long value = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || value < 10000 || value > 38400000)
+                {
+                    fprintf(stderr, "Invalid frequency '%s' Hz. Valid range is 10000..38400000.\n", optarg);
+                    return -1;
+                }
+                out->cfg.hl2_frequency_hz = (uint32_t)value;
+            }
             break;
         case 'z':
             out->action = MERCURY_CLI_LIST_SNDCARDS;

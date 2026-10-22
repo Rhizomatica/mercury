@@ -119,6 +119,22 @@ func TestParseStatusMessage(t *testing.T) {
 	}
 }
 
+// -x hl2 publishes the radio's settings; any other audio system sends null.
+func TestParseStatusMessageHL2Settings(t *testing.T) {
+	status, err := parseStatusMessage([]byte(`{"type":"status","hl2":{"frequency_hz":7074000,"rx_gain_db":-4,"tx_drive":200,"pa":true}}`))
+	if err != nil {
+		t.Fatalf("parseStatusMessage returned error: %v", err)
+	}
+	if !status.HL2Valid || status.HL2FreqHz != 7074000 || status.HL2RxGainDB != -4 ||
+		status.HL2TxDrive != 200 || !status.HL2PA {
+		t.Fatalf("hl2 settings parsed as %+v", status)
+	}
+	status, err = parseStatusMessage([]byte(`{"type":"status","hl2":null}`))
+	if err != nil || status.HL2Valid {
+		t.Fatalf("hl2 null: valid=%v err=%v", status.HL2Valid, err)
+	}
+}
+
 func TestParseStatusMessageReportsAudioFailure(t *testing.T) {
 	payload := []byte(`{"type":"status","audio_ok":false,"audio_error":"capture: device negotiated 44100 Hz, not a multiple of 8000 Hz"}`)
 
