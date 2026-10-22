@@ -61,6 +61,10 @@ TX test sends a modem signal through the speaker.
    AltStore is told (marketplace notifications on) and processes it;
    `GET https://api.altstore.io/adps/<ADP id>` gives its `downloadURL` when
    done.
-4. Host the ADP unchanged (directory layout, `manifest.json` byte for byte),
-   then add the version at the top of `versions` in `altstore-source.json`
-   and publish the source.
+4. Host the ADP unchanged (directory layout, `manifest.json` byte for byte)
+   under `docs/altstore/adp/<build>/` on mercuryv2, then add the version at
+   the top of `versions` in `docs/altstore/source.json` (`date`, `size`,
+   `downloadURL` = the hosted `manifest.json`).  GitHub Pages serves
+   mercuryv2:/docs, so the source is
+   `https://rhizomatica.github.io/mercury/altstore/source.json`, with the
+   icon and screenshots beside it.
