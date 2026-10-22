@@ -75,6 +75,18 @@ void test_config_register(void)
     TEST_ASSERT_EQUAL_HEX8_ARRAY(want, cc, 5);
     hl2_wire_cc_config(cc, &CFG, true);
     TEST_ASSERT_EQUAL_HEX8(0x01, cc[0]);           /* MOX */
+
+    /* RX rate in C1 bits 1:0; 0 and anything unknown mean 48 kHz */
+    const uint32_t rates[] = { 0, 48000, 96000, 192000, 384000, 44100 };
+    const uint8_t bits[]   = { 0, 0,     1,     2,      3,      0 };
+    for (int i = 0; i < 6; i++)
+    {
+        hl2_wire_cfg c = CFG;
+        c.rx_rate = rates[i];
+        hl2_wire_cc_config(cc, &c, false);
+        TEST_ASSERT_EQUAL_HEX8(bits[i], cc[1]);
+        TEST_ASSERT_EQUAL_HEX8(0x88, cc[2]);
+    }
 }
 
 void test_filter_bits_per_band(void)

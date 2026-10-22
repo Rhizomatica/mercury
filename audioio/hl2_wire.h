@@ -70,6 +70,11 @@ enum {
 
 typedef struct {
     uint32_t freq_hz;   /* dial frequency (suppressed carrier), RX = TX      */
+    uint32_t rx_rate;   /* RX I/Q rate: 48000 (or 0), 96000, 192000, 384000.
+                           EP6 still carries 126 samples a packet, so they
+                           arrive rx_rate / 48000 times as often; TX stays
+                           48 kHz, so a host sends one EP2 per that many EP6
+                           (deskHPSDR's pacing).  Mercury uses 48000.        */
     uint8_t  drive;     /* 0..255; the HL2 uses the top 4 bits (0.5 dB steps,
                            0 = no RF at all)                                 */
     int      lna_db;    /* -12..+48                                          */
@@ -163,11 +168,18 @@ static inline void hl2_wire_set_cc(uint8_t cc[5], uint8_t addr, uint32_t value, 
     hl2_wire_wr_be(cc + 1, value, 4);
 }
 
-/* Frame 1: the configuration register. 48 kHz, one receiver, duplex (the
- * radio keeps streaming RX while it transmits), the band's filters. */
+/* The config register's speed bits (C1 bits 1:0). */
+static inline uint8_t hl2_wire_speed_bits(uint32_t rx_rate)
+{
+    return rx_rate == 96000 ? 1 : rx_rate == 192000 ? 2 : rx_rate == 384000 ? 3 : 0;
+}
+
+/* Frame 1: the configuration register: the RX rate, one receiver, duplex
+ * (the radio keeps streaming RX while it transmits), the band's filters. */
 static inline void hl2_wire_cc_config(uint8_t cc[5], const hl2_wire_cfg *c, bool mox)
 {
-    uint32_t v = ((uint32_t) hl2_wire_filter_bits(c->freq_hz) << 1) << 16   /* C2 */
+    uint32_t v = (uint32_t) hl2_wire_speed_bits(c->rx_rate) << 24          /* C1 */
+               | ((uint32_t) hl2_wire_filter_bits(c->freq_hz) << 1) << 16  /* C2 */
                | 0x04u;                                                    /* C4 */
     hl2_wire_set_cc(cc, 0x00, v, mox);
 }
