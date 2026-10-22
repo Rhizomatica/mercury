@@ -117,10 +117,15 @@ BUILD_CONFIG := $(MAKEFILE_LIST)
 # standalone mercury_cli.o (built with -DHAVE_HERMES_SHM) in the daemon
 # archive.  .mercury_host holds the mode the objects were built for; it is
 # rewritten only when the mode changes, which then rebuilds them.  The
-# top-level make writes it before any sub-make reads it.
+# top-level make writes it before any sub-make reads it.  A make that only
+# cleans does not write it: `make clean` would otherwise leave it behind
+# (its sub-makes run after the top-level rm), and dpkg-source refuses a
+# Debian build whose clean tree differs from the source.
 MERCURY_HOST_STAMP := $(MERCURY_TOP)/.mercury_host
+ifneq ($(if $(MAKECMDGOALS),$(filter-out clean distclean doxygen-clean,$(MAKECMDGOALS)),all),)
 ifneq ($(shell cat $(MERCURY_HOST_STAMP) 2>/dev/null),$(MERCURY_HOST))
 $(shell echo $(MERCURY_HOST) > $(MERCURY_HOST_STAMP))
+endif
 endif
 BUILD_CONFIG += $(MERCURY_HOST_STAMP)
 
