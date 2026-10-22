@@ -24,7 +24,9 @@
  * On the wire a signal above the radio's frequency arrives at a NEGATIVE
  * frequency of (first word) + j(second word), the convention of WDSP and so
  * of every host built on it (piHPSDR, deskHPSDR, Thetis): WDSP's USB filter
- * and its CTUN shift both assume it, and deskHPSDR's hpsdrsim generates it.
+ * and its CTUN shift both assume it, deskHPSDR's hpsdrsim generates it, and
+ * a real HL2 confirms it (an AM carrier tuned 2 kHz below and above, see
+ * docs/HERMES-LITE-2.md).
  * This codec conjugates at the boundary (Q = -second word, both ways), so
  * everything above it sees the upper sideband on positive frequencies.
  *

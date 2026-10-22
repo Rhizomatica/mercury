@@ -74,7 +74,7 @@ pa = true                    ; the 5 W PA; false = the ~10 mW output
 - **Sideband:** a signal above the dial frequency arrives at a negative
   frequency of (first word) + j(second word), as WDSP and every host built
   on it (piHPSDR, deskHPSDR, Thetis) assume, and as deskHPSDR's simulator
-  generates.  Mercury conjugates at the wire, so its own DSP works with
+  generates; checked on a real HL2 with an AM broadcast carrier.  Mercury conjugates at the wire, so its own DSP works with
   upper sideband on positive frequencies (`audioio/hl2_wire.h`).
 - **Keeping the link up:** lost UDP packets are filled with silence and
   counted.  If the stream stops for 2 s, Mercury asks the radio to start
@@ -102,7 +102,7 @@ pa = true                    ; the 5 W PA; false = the ~10 mW output
 | SSB modem, unit test (`tests/audioio/test_hl2_dsp.c`) | Passband 200-2950 Hz flat within 0.2 dB; lower sideband, DC and the interpolation images > 60 dB down; AGC never clips a signal 60 dB above the noise |
 | deskHPSDR's radio simulator (`hpsdrsim -hermeslite2`) | Its decode of every register is as intended; its 14.1 MHz test signal demodulates as a 1000 Hz tone when tuned 1 kHz below it, and is rejected when tuned 1 kHz above it |
 | Two Mercury daemons, two emulated HL2s (`tests/integration/mercury_hl2_linux_test.go`) | Connect, 2 KB transfer, DISCONNECT on both ends; TX in exact lockstep with the radio clock, no TX buffer underruns |
-| A real HL2 (gateware 73.2), receive only | Discovery and streaming. The sideband on real signals is still to be checked with an antenna, and transmitting has not been tried yet |
+| A real HL2 (gateware 73.2, N2ADR filter board), receive only | Discovery, streaming and the registers work. A local AM station at 880 kHz lands at +1998 Hz tuned to 878 kHz and at -2002 Hz tuned to 882 kHz: the sideband convention holds on hardware. Tuned to 879 kHz it demodulates as a 1000 Hz tone, and tuned to 881 kHz it is rejected. Transmitting has not been tried yet |
 
 ## Not yet
 
