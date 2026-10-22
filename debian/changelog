@@ -1,3 +1,41 @@
+mercury (1.9.20-1) unstable; urgency=medium
+
+  * Release 1.9.20.
+  * tests: test_mfsk's concurrent-decoder noise from mercury_prng, not rand_r.
+  * arq: end idle sessions whose peer left; free spent poll slots (#384).
+  * carousel: small messages on the shortest rung (#384).
+  * carousel: rung agreement after a lost ack (TLA+), idle polls sized for a reply; sim traffic scripts.
+  * Add configurable default station callsign.
+  * modem: a payload decoder switched to its mode drops a sync it still holds.
+  * docs: a presentation of Mercury's 2026 work (beamer, 16:9).
+  * docs/presentations: say what the air-protocol version is.
+  * log: report an unopenable -L file, and where the log landed.
+  * docs: add WebSocket API documentation.
+  * docs/presentations: no bench-specific figures; the 500 Hz MFSK floor as it stands.
+  * arq: log what a peer's DISCONNECT leaves undelivered (#392).
+  * host: libmercury_host.a, Mercury linked into hermes-radio-daemon.
+  * arq: a DISCONNECT never overtakes the application's last bytes (backport).
+  * Channel model update.
+  * Mercury 2.0: fast ladder, explicit SNR, faster teardown (breaks on-air compatibility).
+  * arq: log decoded connect traffic (sender/recipient) and add TRACE log level.
+  * main: on Windows, log to logs\mercury_engine.log by default.
+  * tnc: BUFFER again after 50 s without one; the control port drops no line.
+  * Idle watchdog on 2.0: ask again soon, and a one-frame poll has no continuation slots (#407).
+  * host API: broadcast carousel, chat, listen mode, status and RX callbacks for radiod.
+  * tests/integration: fixed and random channel seeds, every seed recorded.
+  * docs: privacy policy.
+  * host: a broadcast chat line goes with its newline.
+  * arq: answer a repeated DATAC16 CALL on the floor; name what holds a keydown.
+  * radio_io: accept Hamlib usb: device names as serial ports.
+  * ios: Mercury on iOS -- a RemoteIO audio backend and an app host (draft).
+  * Android .apk and iOS sideload .ipa, technology previews for 1.9.20.
+  * docs: release notes for 1.9.20.
+  * docs: ready for 1.9.20 (spec rules for #420, Android/iOS, usb:, Doxygen).
+  * docs: the AltStore source on GitHub Pages.
+  * docs/altstore: the notarization submission is 1.9.20.
+
+ -- Rafael Diniz <rafael@riseup.net>  Thu, 22 Oct 2026 08:41:32 +0000
+
 mercury (1.9.19-1) unstable; urgency=medium
 
   * Release 1.9.19.
