@@ -52,7 +52,7 @@ TX test sends a modem signal through the speaker.
 1. `make fyne-ui-ios-ipa` on the Mac, then upload with `xcrun altool
    --upload-app` (see the Makefile target for the signing setup).
 2. In App Store Connect: the version's number is the build's
-   `CFBundleShortVersionString` (1.9.19 for build 1.9.19.1; a new app's
+   `CFBundleShortVersionString` (1.9.20 for build 1.9.20; a new app's
    version starts as "1.0"), Review Type **Notarization**, attach the
    build, Add for Review, Submit to App Review.  The API does all of it
    but App Privacy, the EU trader (DSA) status and the review contact,

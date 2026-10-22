@@ -17,13 +17,13 @@
       "category": "utilities",
       "versions": [
         {
-          "version": "1.9.19",
-          "buildVersion": "1.9.19.1",
+          "version": "1.9.20",
+          "buildVersion": "1.9.20",
           "date": "ADP_DATE",
-          "downloadURL": "https://rhizomatica.github.io/mercury/altstore/adp/1.9.19.1/manifest.json",
+          "downloadURL": "https://rhizomatica.github.io/mercury/altstore/adp/1.9.20/manifest.json",
           "size": 0,
           "minOSVersion": "17.0",
-          "localizedDescription": "First notarized build: the Mercury GUI with the modem inside, on RemoteIO. Technology preview."
+          "localizedDescription": "First notarized build: the Mercury GUI with the modem inside, on RemoteIO. Technology preview, as in the 1.9.20 release."
         }
       ],
       "appPermissions": {
