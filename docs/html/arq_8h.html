@@ -218,6 +218,8 @@ Functions</h2></td></tr>
 <tr class="separator:a038f8fadbf7592b7985dd075a74dfa66"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae9f7bd1d6a107320c2544fd376913baf" id="r_ae9f7bd1d6a107320c2544fd376913baf"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#ae9f7bd1d6a107320c2544fd376913baf">arq_conn_get_calls</a> (char *my_call, char *src_addr, char *dst_addr, size_t bufsz)</td></tr>
 <tr class="separator:ae9f7bd1d6a107320c2544fd376913baf"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a6a23772ab70f53120a8c70f1c49da74b" id="r_a6a23772ab70f53120a8c70f1c49da74b"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#a6a23772ab70f53120a8c70f1c49da74b">arq_set_callsign</a> (const char *callsign)</td></tr>
+<tr class="separator:a6a23772ab70f53120a8c70f1c49da74b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a6e92cdb1e4e76da4143eb55ac181f8ca" id="r_a6e92cdb1e4e76da4143eb55ac181f8ca"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#a6e92cdb1e4e76da4143eb55ac181f8ca">arq_notify_virtual_time</a> (void)</td></tr>
 <tr class="separator:a6e92cdb1e4e76da4143eb55ac181f8ca"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a124478c5cd13f1e211666b2051e6ac70" id="r_a124478c5cd13f1e211666b2051e6ac70"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#a124478c5cd13f1e211666b2051e6ac70">arq_init</a> (size_t frame_size, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
@@ -237,12 +239,17 @@ Functions</h2></td></tr>
 <tr class="memitem:ac508dd91b0ac44ed4dc4b8c34ed188a8" id="r_ac508dd91b0ac44ed4dc4b8c34ed188a8"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#ac508dd91b0ac44ed4dc4b8c34ed188a8">arq_is_link_connected</a> (void)</td></tr>
 <tr class="memdesc:ac508dd91b0ac44ed4dc4b8c34ed188a8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Check whether ARQ link is connected.  <br /></td></tr>
 <tr class="separator:ac508dd91b0ac44ed4dc4b8c34ed188a8"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a69b46dd4efce4e449be2653957c5935b" id="r_a69b46dd4efce4e449be2653957c5935b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#a69b46dd4efce4e449be2653957c5935b">arq_session_active</a> (void)</td></tr>
+<tr class="memdesc:a69b46dd4efce4e449be2653957c5935b"><td class="mdescLeft">&#160;</td><td class="mdescRight">A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED, DISCONNECTING): what stops a broadcast carousel.  <br /></td></tr>
+<tr class="separator:a69b46dd4efce4e449be2653957c5935b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aaab420ad37cc5ff46152130992da7fb4" id="r_aaab420ad37cc5ff46152130992da7fb4"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#aaab420ad37cc5ff46152130992da7fb4">arq_discard_stale_rx</a> (void)</td></tr>
 <tr class="memdesc:aaab420ad37cc5ff46152130992da7fb4"><td class="mdescLeft">&#160;</td><td class="mdescRight">Drop received bytes an ended session left in the RX buffer.  <br /></td></tr>
 <tr class="separator:aaab420ad37cc5ff46152130992da7fb4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ad254ed20853c861bb167be3909ccf669" id="r_ad254ed20853c861bb167be3909ccf669"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#ad254ed20853c861bb167be3909ccf669">arq_reported_bandwidth_hz</a> (void)</td></tr>
 <tr class="memdesc:ad254ed20853c861bb167be3909ccf669"><td class="mdescLeft">&#160;</td><td class="mdescRight">Get the configured ARQ bandwidth token to report to VARA clients.  <br /></td></tr>
 <tr class="separator:ad254ed20853c861bb167be3909ccf669"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a239d1c8b6e8b8ada446e67f36ff39ab5" id="r_a239d1c8b6e8b8ada446e67f36ff39ab5"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#a239d1c8b6e8b8ada446e67f36ff39ab5">arq_set_session_bw</a> (int <a class="el" href="carousel_8c.html#a30c888e8758f5c25df50cf62f461d58e">bw_hz</a>, bool from_call)</td></tr>
+<tr class="separator:a239d1c8b6e8b8ada446e67f36ff39ab5"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ace211c35fb67ea6ac3d9115b6145f404" id="r_ace211c35fb67ea6ac3d9115b6145f404"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#ace211c35fb67ea6ac3d9115b6145f404">arq_queue_data</a> (const uint8_t *data, size_t len)</td></tr>
 <tr class="memdesc:ace211c35fb67ea6ac3d9115b6145f404"><td class="mdescLeft">&#160;</td><td class="mdescRight">Queue outbound payload bytes for ARQ transmission.  <br /></td></tr>
 <tr class="separator:ace211c35fb67ea6ac3d9115b6145f404"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -258,7 +265,7 @@ Functions</h2></td></tr>
 <tr class="memdesc:a67d12cb2540272e8dde165df7f3d8c47"><td class="mdescLeft">&#160;</td><td class="mdescRight">Inform ARQ of modem mode/frame size actually active in modem.  <br /></td></tr>
 <tr class="separator:a67d12cb2540272e8dde165df7f3d8c47"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a762bcd87687cd9dc81b5831b96893350" id="r_a762bcd87687cd9dc81b5831b96893350"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#a762bcd87687cd9dc81b5831b96893350">arq_handle_incoming_connect_frame</a> (uint8_t *data, size_t frame_size, float rx_snr, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
-<tr class="memdesc:a762bcd87687cd9dc81b5831b96893350"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle an incoming CALL/ACCEPT frame (protocol version 1).  <br /></td></tr>
+<tr class="memdesc:a762bcd87687cd9dc81b5831b96893350"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle an incoming CALL/ACCEPT frame (protocol version 3).  <br /></td></tr>
 <tr class="separator:a762bcd87687cd9dc81b5831b96893350"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a0b5e650da406bb512ef3be2828f8f901" id="r_a0b5e650da406bb512ef3be2828f8f901"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#a0b5e650da406bb512ef3be2828f8f901">arq_handle_carousel_frame</a> (const uint8_t *data, size_t frame_size, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, bool from_control, float rx_snr, uint32_t age_ms)</td></tr>
 <tr class="separator:a0b5e650da406bb512ef3be2828f8f901"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -842,7 +849,7 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Handle an incoming CALL/ACCEPT frame (protocol version 1). </p>
+<p>Handle an incoming CALL/ACCEPT frame (protocol version 3). </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">data</td><td>Frame bytes. </td></tr>
@@ -1226,6 +1233,26 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a69b46dd4efce4e449be2653957c5935b" name="a69b46dd4efce4e449be2653957c5935b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a69b46dd4efce4e449be2653957c5935b">&#9670;&#160;</a></span>arq_session_active()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_active </td>
+          <td>(</td>
+          <td class="paramtype">void&#160;</td>
+          <td class="paramname"></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED, DISCONNECTING): what stops a broadcast carousel. </p>
+
+</div>
+</div>
 <a id="a67d12cb2540272e8dde165df7f3d8c47" name="a67d12cb2540272e8dde165df7f3d8c47"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a67d12cb2540272e8dde165df7f3d8c47">&#9670;&#160;</a></span>arq_set_active_modem_mode()</h2>
 
@@ -1260,6 +1287,24 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
+
+</div>
+</div>
+<a id="a6a23772ab70f53120a8c70f1c49da74b" name="a6a23772ab70f53120a8c70f1c49da74b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6a23772ab70f53120a8c70f1c49da74b">&#9670;&#160;</a></span>arq_set_callsign()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_set_callsign </td>
+          <td>(</td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>callsign</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
 
 </div>
 </div>
@@ -1346,6 +1391,34 @@ Variables</h2></td></tr>
           <td class="paramtype">int&#160;</td>
           <td class="paramname"><em>ms</em></td><td>)</td>
           <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a239d1c8b6e8b8ada446e67f36ff39ab5" name="a239d1c8b6e8b8ada446e67f36ff39ab5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a239d1c8b6e8b8ada446e67f36ff39ab5">&#9670;&#160;</a></span>arq_set_session_bw()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_set_session_bw </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>bw_hz</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">bool&#160;</td>
+          <td class="paramname"><em>from_call</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
         </tr>
       </table>
 </div><div class="memdoc">

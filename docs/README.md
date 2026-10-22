@@ -13,7 +13,7 @@ having — they are not updated as the code moves on.
 
 | Document | What it covers |
 |---|---|
-| [RELEASE-1.9.20.md](RELEASE-1.9.20.md) | **1.9.20 does not talk to 1.9.19 on the air.** The 2.0 architecture: a ladder that starts where the SNR says and falls back fast, quicker connect and teardown, a 500 Hz MFSK floor, high-Doppler channels, and what was tested. |
+| [RELEASE-1.9.20.md](RELEASE-1.9.20.md) | **1.9.20 does not talk to 1.9.19 on the air.** The 2.0 architecture: a ladder that starts where the SNR says and falls back fast, quicker connect and teardown, a 500 Hz MFSK floor, high-Doppler channels, and what was tested. Android and iOS as technology previews. |
 | [RELEASE-1.9.19.md](RELEASE-1.9.19.md) | **1.9.19 does not talk to 1.9.18 on the air.** MFSK moved to the centre of the passband (1500 Hz), what an operator sees with mixed versions, and what was tested on air. |
 | [RELEASE-1.9.18.md](RELEASE-1.9.18.md) | What changed since 1.9.17 and what to check before upgrading, with 1.9.17 and 1.9.18 measured side by side on real modems and on air. |
 | [UPGRADING-TO-1.9.18.md](UPGRADING-TO-1.9.18.md) | **Read before upgrading:** 1.9.18 does not talk to 1.9.x on the air. What an operator sees with mixed versions, how to upgrade a network, and what was tested before the release. |
