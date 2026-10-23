@@ -153,6 +153,22 @@ The dB value is converted to linear (`10^(dB/20)`) and pushed via
 `modem_set_tx_gain`, then persisted to the INI. Source:
 `ui_communication.c:333-348`.
 
+### 3.4a `set_hl2_config`
+
+Set the Hermes-Lite 2's radio settings (`-x hl2`, see
+[HERMES-LITE-2.md](HERMES-LITE-2.md)).  An empty field keeps the current
+value.  Applied at once, also mid-session, and persisted to the `[hl2]` INI
+section.
+
+| Field | Meaning |
+|---|---|
+| `value` | Dial frequency in Hz, upper sideband, `0..38400000` (out of range is an error); `0` = unset, never transmits |
+| `value2` | RX gain in dB, clamped to **[-12, +48]** |
+| `value3` | TX drive, clamped to **[0, 255]** |
+| `value4` | PA: `"1"` on, `"0"` off |
+
+The current values ride in the status event's `hl2` field.
+
 ### 3.5 `set_callsign`
 
 Persist the operator callsign so it survives a restart.
@@ -247,6 +263,7 @@ order is a stable wire format — do not reorder.
 | `radio_frequency_hz` / `radio_frequency_age_ms` | Cached Hamlib frequency, or `null` |
 | `peer_snr` / `peer_snr_valid` | Kept for compatibility (`-99.9` / `false`) |
 | `peer_hears_mode` | Highest rung the peer reports supporting |
+| `hl2` | On `-x hl2`, `{"frequency_hz":N,"rx_gain_db":N,"tx_drive":N,"pa":bool}`; `null` otherwise (last field) |
 
 See [WEBSOCKET_STATUS.md](WEBSOCKET_STATUS.md) for the full semantics of the
 ARQ-mode, frequency and peer fields.

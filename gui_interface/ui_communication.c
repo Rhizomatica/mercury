@@ -334,6 +334,36 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
         pthread_mutex_unlock(&ctx->cfg_mutex);
 
+    } else if (strcmp(cmd->command, "set_hl2_config") == 0) {
+        /* The Hermes-Lite 2's radio settings: value = frequency (Hz), value2
+         * = RX gain (dB), value3 = TX drive (0..255), value4 = PA ("1"/"0").
+         * An empty value keeps the current one.  Live, and persisted. */
+        audioio_hl2_settings hl2;
+        audioio_hl2_get(&hl2);
+        if (cmd->value[0]) {
+            long long hz = atoll(cmd->value);
+            if (hz < 0 || hz > 38400000) {
+                HLOGW(UI_LOG_TAG, "set_hl2_config: frequency %s Hz out of range", cmd->value);
+                return -1;
+            }
+            hl2.frequency_hz = (uint64_t)hz;
+        }
+        if (cmd->value2[0]) hl2.rx_gain_db = atoi(cmd->value2);
+        if (cmd->value3[0]) hl2.tx_drive = atoi(cmd->value3);
+        if (cmd->value4[0]) hl2.pa = strcmp(cmd->value4, "0") != 0;
+        audioio_hl2_set(&hl2);
+        audioio_hl2_get(&hl2);                       /* as clamped */
+        HLOGI(UI_LOG_TAG, "HL2: %.3f kHz, RX gain %d dB, drive %d, PA %s",
+              hl2.frequency_hz / 1000.0, hl2.rx_gain_db, hl2.tx_drive, hl2.pa ? "on" : "off");
+        pthread_mutex_lock(&ctx->cfg_mutex);
+        ctx->cfg.hl2_frequency_hz = (uint32_t)hl2.frequency_hz;
+        ctx->cfg.hl2_rx_gain_db = hl2.rx_gain_db;
+        ctx->cfg.hl2_tx_drive = hl2.tx_drive;
+        ctx->cfg.hl2_pa = hl2.pa;
+        if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
+            HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+        pthread_mutex_unlock(&ctx->cfg_mutex);
+
     } else if (strcmp(cmd->command, "set_callsign") == 0) {
         /* The embedded client persists its "My callsign" here so the operator's
          * callsign survives a restart instead of falling back to "NOCALL"
@@ -663,6 +693,18 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
      * without it the UI shows a perfectly healthy station that happens to hear
      * nothing. */
     out->audio_ok = audioio_health_ok(out->audio_error, sizeof(out->audio_error));
+
+    out->hl2_valid = atomic_load_explicit(&ctx->audio_system, memory_order_relaxed) ==
+                     AUDIO_SUBSYSTEM_HL2;
+    if (out->hl2_valid)
+    {
+        audioio_hl2_settings hl2;
+        audioio_hl2_get(&hl2);
+        out->hl2_frequency_hz = hl2.frequency_hz;
+        out->hl2_rx_gain_db = hl2.rx_gain_db;
+        out->hl2_tx_drive = hl2.tx_drive;
+        out->hl2_pa = hl2.pa;
+    }
 
     bool allow_frequency_poll = !(have_snap && snap.initialized &&
                                   (snap.connected || snap.trx == 1));

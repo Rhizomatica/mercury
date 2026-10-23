@@ -52,7 +52,7 @@ TX test sends a modem signal through the speaker.
 1. `make fyne-ui-ios-ipa` on the Mac, then upload with `xcrun altool
    --upload-app` (see the Makefile target for the signing setup).
 2. In App Store Connect: the version's number is the build's
-   `CFBundleShortVersionString` (1.9.19 for build 1.9.19.1; a new app's
+   `CFBundleShortVersionString` (1.9.20 for build 1.9.20; a new app's
    version starts as "1.0"), Review Type **Notarization**, attach the
    build, Add for Review, Submit to App Review.  The API does all of it
    but App Privacy, the EU trader (DSA) status and the review contact,
@@ -61,6 +61,26 @@ TX test sends a modem signal through the speaker.
    AltStore is told (marketplace notifications on) and processes it;
    `GET https://api.altstore.io/adps/<ADP id>` gives its `downloadURL` when
    done.
-4. Host the ADP unchanged (directory layout, `manifest.json` byte for byte),
-   then add the version at the top of `versions` in `altstore-source.json`
-   and publish the source.
+4. Host the ADP unchanged (directory layout, `manifest.json` byte for byte)
+   under `docs/altstore/adp/<build>/` on mercuryv2, then add the version at
+   the top of `versions` in `docs/altstore/source.json` (`date`, `size`,
+   `downloadURL` = the hosted `manifest.json`).  GitHub Pages serves
+   mercuryv2:/docs, so the source is
+   `https://rhizomatica.github.io/mercury/altstore/source.json`, with the
+   icon and screenshots beside it.
+
+## Discoverability
+
+The source is federated, so it can be found on explore.alt.store as
+@rhizomatica@alt.store, and its apps, updates and news reach followers on
+Mastodon, Threads and Bluesky.  That needs `fediUsername` in
+`docs/altstore/source.json` (it cannot be changed later) and one call once
+the source with that key is live:
+
+```
+curl -X POST https://api.altstore.io/federate \
+     --header "Content-Type: application/json" \
+     --data '{"source": "https://rhizomatica.github.io/mercury/altstore/source.json"}'
+```
+
+AltStore runs that account; changes to it go through apps@altstore.io.

@@ -20,6 +20,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <sys/types.h>
 
@@ -37,6 +38,7 @@
 #define AUDIO_SUBSYSTEM_FIFO 9
 #define AUDIO_SUBSYSTEM_SOCK 10
 #define AUDIO_SUBSYSTEM_RTP 11   /* RTP multicast from/to the radio daemon */
+#define AUDIO_SUBSYSTEM_HL2 12   /* a Hermes-Lite 2 on the network (hl2.h) */
 
 #define LEFT 0
 #define RIGHT 1
@@ -121,6 +123,20 @@ bool audioio_rings_external(int audio_system);
  * written.  A build with only one entry (e.g. CoreAudio on macOS) has no
  * runtime choice; a UI should hide its subsystem picker then. */
 int audioio_available_subsystems(int *subsystems, int max);
+
+/* The Hermes-Lite 2's radio settings (-x hl2): frequency (0 = unset, never
+ * transmits), RX gain -12..+48 dB, TX drive 0..255, the 5 W PA.  Live: a
+ * running transport picks them up within a few ms.  The daemon build has no
+ * HL2; there they read as zero and setting them does nothing. */
+typedef struct {
+    uint64_t frequency_hz;
+    int      rx_gain_db;
+    int      tx_drive;
+    bool     pa;
+} audioio_hl2_settings;
+
+void audioio_hl2_set(const audioio_hl2_settings *s);
+void audioio_hl2_get(audioio_hl2_settings *s);
 
 int tx_transfer(double *buffer, size_t len);
 int rx_transfer(double *buffer, size_t len);

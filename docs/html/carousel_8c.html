@@ -163,6 +163,10 @@ Macros</h2></td></tr>
 <tr class="separator:a760aebaff0275b5cc6d6d39670ea5444"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a79f5e0da680295e2366f9bcd2e5fc7f9" id="r_a79f5e0da680295e2366f9bcd2e5fc7f9"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a79f5e0da680295e2366f9bcd2e5fc7f9">MAX_KEYDOWN_MS</a>&#160;&#160;&#160;30000    /* airtime cap per round                  */</td></tr>
 <tr class="separator:a79f5e0da680295e2366f9bcd2e5fc7f9"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7bdcf34e57373c970aa54c29e79fbb18" id="r_a7bdcf34e57373c970aa54c29e79fbb18"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a7bdcf34e57373c970aa54c29e79fbb18">BL_SMALL_BYTES</a>&#160;&#160;&#160;90    /* one DATAC3 frame's pieces, with the check and a margin */</td></tr>
+<tr class="separator:a7bdcf34e57373c970aa54c29e79fbb18"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a714c76decdc6b4d89fa40ff0289cbb17" id="r_a714c76decdc6b4d89fa40ff0289cbb17"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a714c76decdc6b4d89fa40ff0289cbb17">BL_MEDIUM_BYTES</a>&#160;&#160;&#160;460   /* ...one DATAC1 frame's */</td></tr>
+<tr class="separator:a714c76decdc6b4d89fa40ff0289cbb17"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a507bbfe414afcf87329124e7ed3252e2" id="r_a507bbfe414afcf87329124e7ed3252e2"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a507bbfe414afcf87329124e7ed3252e2">HEAD_MS</a>&#160;&#160;&#160;(110 + <a class="el" href="carousel_8c.html#ad35b89e4996cda112be2dcce5e9c2fab">nav_lead</a>(c))</td></tr>
 <tr class="separator:a507bbfe414afcf87329124e7ed3252e2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aae1cbfad412ced04316fad046e5128c8" id="r_aae1cbfad412ced04316fad046e5128c8"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aae1cbfad412ced04316fad046e5128c8">TAIL_MS</a>&#160;&#160;&#160;200</td></tr>
@@ -209,10 +213,16 @@ Macros</h2></td></tr>
 <tr class="separator:acc58497f1599ab74deb0cc51a8018bd4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac0b1a8b4a8c199f40f58732ea3e1c15f" id="r_ac0b1a8b4a8c199f40f58732ea3e1c15f"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ac0b1a8b4a8c199f40f58732ea3e1c15f">CTL_FLOOR_MARK</a>&#160;&#160;&#160;0x07</td></tr>
 <tr class="separator:ac0b1a8b4a8c199f40f58732ea3e1c15f"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac4294561ec5a2ac6e45d2442fd961042" id="r_ac4294561ec5a2ac6e45d2442fd961042"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ac4294561ec5a2ac6e45d2442fd961042">SILENT_MS</a>&#160;&#160;&#160;150000</td></tr>
+<tr class="separator:ac4294561ec5a2ac6e45d2442fd961042"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:abe567b60b9b653d8726dd25cf522e5cd" id="r_abe567b60b9b653d8726dd25cf522e5cd"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#abe567b60b9b653d8726dd25cf522e5cd">CTL_DEAF_ON_DB</a>&#160;&#160;&#160;(<a class="el" href="arq__protocol_8h.html#aa9d46ded519ccc2d477d25a4dc501227">ARQ_SNR_MIN_DATAC15_DB</a> - 0.5f)</td></tr>
 <tr class="separator:abe567b60b9b653d8726dd25cf522e5cd"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a90fff80575df8fe5aa02a7db5dd201b8" id="r_a90fff80575df8fe5aa02a7db5dd201b8"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a90fff80575df8fe5aa02a7db5dd201b8">CTL_DEAF_OFF_DB</a>&#160;&#160;&#160;(<a class="el" href="arq__protocol_8h.html#aa9d46ded519ccc2d477d25a4dc501227">ARQ_SNR_MIN_DATAC15_DB</a> + 1.0f)</td></tr>
 <tr class="separator:a90fff80575df8fe5aa02a7db5dd201b8"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ae2896cc0656e6a18919c8c39a8c60472" id="r_ae2896cc0656e6a18919c8c39a8c60472"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ae2896cc0656e6a18919c8c39a8c60472">SNR_CODE_NONE</a>&#160;&#160;&#160;63</td></tr>
+<tr class="separator:ae2896cc0656e6a18919c8c39a8c60472"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abeeff7a79e242fd4ff46fdc3da8a1914" id="r_abeeff7a79e242fd4ff46fdc3da8a1914"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#abeeff7a79e242fd4ff46fdc3da8a1914">HELD_SAY_MS</a>&#160;&#160;&#160;2000</td></tr>
+<tr class="separator:abeeff7a79e242fd4ff46fdc3da8a1914"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aa716ddc6920d413fffa92ad9436ba23f" id="r_aa716ddc6920d413fffa92ad9436ba23f"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aa716ddc6920d413fffa92ad9436ba23f">BLOCK_MIN_K</a>&#160;&#160;&#160;8</td></tr>
 <tr class="separator:aa716ddc6920d413fffa92ad9436ba23f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae8cdfd546f16ab99b9abe6493fa12eec" id="r_ae8cdfd546f16ab99b9abe6493fa12eec"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ae8cdfd546f16ab99b9abe6493fa12eec">BLOCK_AIR_MS</a>&#160;&#160;&#160;60000</td></tr>
@@ -272,51 +282,69 @@ Macros</h2></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="enum-members" name="enum-members"></a>
 Enumerations</h2></td></tr>
-<tr class="memitem:a99fb83031ce9923c84392b4e92f956b5" id="r_a99fb83031ce9923c84392b4e92f956b5"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <a class="el" href="carousel_8c.html#a99fb83031ce9923c84392b4e92f956b5ae5553f9e0a67f1d3ae47367d5c5bf929">M_DATA</a>
-, <a class="el" href="carousel_8c.html#a99fb83031ce9923c84392b4e92f956b5a15f5c0043f59c0799635efe0e2cb6ea6">M_POLL</a>
-, <a class="el" href="carousel_8c.html#a99fb83031ce9923c84392b4e92f956b5a04876dcfb654a0c29d1faac646c82620">M_REQ</a>
-, <a class="el" href="carousel_8c.html#a99fb83031ce9923c84392b4e92f956b5a37970cb39b365005a03d9481f784f248">M_STATUS</a>
+<tr class="memitem:a99fb83031ce9923c84392b4e92f956b5" id="r_a99fb83031ce9923c84392b4e92f956b5"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <a class="el" href="carousel_8c.html#a99fb83031ce9923c84392b4e92f956b5af3a3ccd5d57b9a0370bb5d2b10143cd0">BL_NONE</a>
+, <a class="el" href="carousel_8c.html#a99fb83031ce9923c84392b4e92f956b5a0bf218bac702fa2e3d374e299c832746">BL_SMALL</a>
+, <a class="el" href="carousel_8c.html#a99fb83031ce9923c84392b4e92f956b5a7d6e6e90751a773ac4f092818f26dd11">BL_MEDIUM</a>
+, <a class="el" href="carousel_8c.html#a99fb83031ce9923c84392b4e92f956b5ae12324c236747afe5815af8cfba60b7b">BL_LARGE</a>
  }</td></tr>
 <tr class="separator:a99fb83031ce9923c84392b4e92f956b5"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:abc6126af1d45847bc59afa0aa3216b04" id="r_abc6126af1d45847bc59afa0aa3216b04"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <br />
-&#160;&#160;<a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04ae261023c4e1074585d347a15a0652699">KD_NONE</a>
-, <a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04afe28904b98583bd27289207bc17a8c28">KD_POLL</a>
-, <a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04ab285c54e42ea13ca372cb6f4128f175e">KD_ROUND</a>
-, <a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04ab8fd90a01c73581a74a576892b6f9006">KD_PATTERN_ACK</a>
-, <br />
-&#160;&#160;<a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04a385b910854c562b80b637d2b548f2bbe">KD_PATTERN_BREAK</a>
-, <a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04aa27083d6ffeb8e9eb3f5fe700956022b">KD_REQ</a>
-, <a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04a88516b1bf9d6b7f1f01dce3e875c6f34">KD_DONE</a>
-, <a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04a8e86fddc7316e6c2cc947a6c7af5401f">KD_BOTH</a>
-<br />
+<tr class="memitem:abc6126af1d45847bc59afa0aa3216b04" id="r_abc6126af1d45847bc59afa0aa3216b04"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04ae5553f9e0a67f1d3ae47367d5c5bf929">M_DATA</a>
+, <a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04a15f5c0043f59c0799635efe0e2cb6ea6">M_POLL</a>
+, <a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04a04876dcfb654a0c29d1faac646c82620">M_REQ</a>
+, <a class="el" href="carousel_8c.html#abc6126af1d45847bc59afa0aa3216b04a37970cb39b365005a03d9481f784f248">M_STATUS</a>
  }</td></tr>
 <tr class="separator:abc6126af1d45847bc59afa0aa3216b04"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:adc29c2ff13d900c2f185ee95427fb06c" id="r_adc29c2ff13d900c2f185ee95427fb06c"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <a class="el" href="carousel_8c.html#adc29c2ff13d900c2f185ee95427fb06ca3793f74e5990f63329226d4302574dd7">PH_IDLE</a>
-, <a class="el" href="carousel_8c.html#adc29c2ff13d900c2f185ee95427fb06cac4bf03805070bf971d8ba91fbfcb849e">PH_SEND</a>
-, <a class="el" href="carousel_8c.html#adc29c2ff13d900c2f185ee95427fb06cace7947f789039738952fa339b2fb9b5f">PH_RECV</a>
+<tr class="memitem:adc29c2ff13d900c2f185ee95427fb06c" id="r_adc29c2ff13d900c2f185ee95427fb06c"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <a class="el" href="carousel_8c.html#adc29c2ff13d900c2f185ee95427fb06cada61f99f12c1562d7ca7a76e037a9cbd">CAR_DEAF_SNR</a> = 1
+, <a class="el" href="carousel_8c.html#adc29c2ff13d900c2f185ee95427fb06ca4a955f455704f0f13662f19dd6e64fb4">CAR_DEAF_HARD</a> = 2
  }</td></tr>
 <tr class="separator:adc29c2ff13d900c2f185ee95427fb06c"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a61dadd085c1777f559549e05962b2c9e" id="r_a61dadd085c1777f559549e05962b2c9e"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <a class="el" href="carousel_8c.html#a61dadd085c1777f559549e05962b2c9eabc5135ddbbff4b94e337b373dc753e07">MS_WAIT</a>
-, <a class="el" href="carousel_8c.html#a61dadd085c1777f559549e05962b2c9eab0ae6c3b3e7a5dfe7505414538438d2b">MS_PLAN</a>
-, <a class="el" href="carousel_8c.html#a61dadd085c1777f559549e05962b2c9eab8ddae616ede0a992bb71b0ba707b176">MS_IDLE</a>
+<tr class="memitem:a61dadd085c1777f559549e05962b2c9e" id="r_a61dadd085c1777f559549e05962b2c9e"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <a class="el" href="carousel_8c.html#a61dadd085c1777f559549e05962b2c9eac2528ab6b7e3b9eaf00d71f5842fb78a">HELD_NONE</a>
+, <a class="el" href="carousel_8c.html#a61dadd085c1777f559549e05962b2c9eabb0c31556a8ebd5014ffc868332ce6e6">HELD_SLOTS</a>
+, <a class="el" href="carousel_8c.html#a61dadd085c1777f559549e05962b2c9ea2c8a33b6f294ac1ba6cb150eb6d36f4d">HELD_CARRIER</a>
+, <a class="el" href="carousel_8c.html#a61dadd085c1777f559549e05962b2c9ea91627450d39ca9b8ae7b33506d48f0dc">HELD_CARRIER_SAID</a>
  }</td></tr>
 <tr class="separator:a61dadd085c1777f559549e05962b2c9e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a726ca809ffd3d67ab4b8476646f26635" id="r_a726ca809ffd3d67ab4b8476646f26635"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <br />
-&#160;&#160;<a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635aa1f964dcb37d6e134c0ff461f64a77c0">ANC_POLL</a>
-, <a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635a15d4508098f55f3f8ec01fd3689b38cf">ANC_DONE</a>
-, <a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635aca37adbb4c786bc81575f612aabd409f">ANC_ROUND</a>
-, <a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635a61d87d80f6b37f97729cb007e8130b56">ANC_REQ</a>
+&#160;&#160;<a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635ae261023c4e1074585d347a15a0652699">KD_NONE</a>
+, <a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635afe28904b98583bd27289207bc17a8c28">KD_POLL</a>
+, <a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635ab285c54e42ea13ca372cb6f4128f175e">KD_ROUND</a>
+, <a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635ab8fd90a01c73581a74a576892b6f9006">KD_PATTERN_ACK</a>
 , <br />
-&#160;&#160;<a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635aedfe1f3bbfdaa200591be2828778e796">ANC_PATTERN</a>
-, <a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635ac63818737f88b05e10b1afbab2d3a47d">ANC_BOTH</a>
+&#160;&#160;<a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635a385b910854c562b80b637d2b548f2bbe">KD_PATTERN_BREAK</a>
+, <a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635aa27083d6ffeb8e9eb3f5fe700956022b">KD_REQ</a>
+, <a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635a88516b1bf9d6b7f1f01dce3e875c6f34">KD_DONE</a>
+, <a class="el" href="carousel_8c.html#a726ca809ffd3d67ab4b8476646f26635a8e86fddc7316e6c2cc947a6c7af5401f">KD_BOTH</a>
 <br />
  }</td></tr>
 <tr class="separator:a726ca809ffd3d67ab4b8476646f26635"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a0411cd49bb5b71852cecd93bcbf0ca2d" id="r_a0411cd49bb5b71852cecd93bcbf0ca2d"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <a class="el" href="carousel_8c.html#a0411cd49bb5b71852cecd93bcbf0ca2da3793f74e5990f63329226d4302574dd7">PH_IDLE</a>
+, <a class="el" href="carousel_8c.html#a0411cd49bb5b71852cecd93bcbf0ca2dac4bf03805070bf971d8ba91fbfcb849e">PH_SEND</a>
+, <a class="el" href="carousel_8c.html#a0411cd49bb5b71852cecd93bcbf0ca2dace7947f789039738952fa339b2fb9b5f">PH_RECV</a>
+ }</td></tr>
+<tr class="separator:a0411cd49bb5b71852cecd93bcbf0ca2d"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abed82baf7f470b522273a3e37c24c600" id="r_abed82baf7f470b522273a3e37c24c600"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <a class="el" href="carousel_8c.html#abed82baf7f470b522273a3e37c24c600abc5135ddbbff4b94e337b373dc753e07">MS_WAIT</a>
+, <a class="el" href="carousel_8c.html#abed82baf7f470b522273a3e37c24c600ab0ae6c3b3e7a5dfe7505414538438d2b">MS_PLAN</a>
+, <a class="el" href="carousel_8c.html#abed82baf7f470b522273a3e37c24c600ab8ddae616ede0a992bb71b0ba707b176">MS_IDLE</a>
+ }</td></tr>
+<tr class="separator:abed82baf7f470b522273a3e37c24c600"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ab04a0655cd1e3bcac5e8f48c18df1a57" id="r_ab04a0655cd1e3bcac5e8f48c18df1a57"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom">{ <br />
+&#160;&#160;<a class="el" href="carousel_8c.html#ab04a0655cd1e3bcac5e8f48c18df1a57aa1f964dcb37d6e134c0ff461f64a77c0">ANC_POLL</a>
+, <a class="el" href="carousel_8c.html#ab04a0655cd1e3bcac5e8f48c18df1a57a15d4508098f55f3f8ec01fd3689b38cf">ANC_DONE</a>
+, <a class="el" href="carousel_8c.html#ab04a0655cd1e3bcac5e8f48c18df1a57aca37adbb4c786bc81575f612aabd409f">ANC_ROUND</a>
+, <a class="el" href="carousel_8c.html#ab04a0655cd1e3bcac5e8f48c18df1a57a61d87d80f6b37f97729cb007e8130b56">ANC_REQ</a>
+, <br />
+&#160;&#160;<a class="el" href="carousel_8c.html#ab04a0655cd1e3bcac5e8f48c18df1a57aedfe1f3bbfdaa200591be2828778e796">ANC_PATTERN</a>
+, <a class="el" href="carousel_8c.html#ab04a0655cd1e3bcac5e8f48c18df1a57ac63818737f88b05e10b1afbab2d3a47d">ANC_BOTH</a>
+<br />
+ }</td></tr>
+<tr class="separator:ab04a0655cd1e3bcac5e8f48c18df1a57"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
 <tr class="memitem:ad3c90b88bf65df25aa2ec0c1af680ae5" id="r_ad3c90b88bf65df25aa2ec0c1af680ae5"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ad3c90b88bf65df25aa2ec0c1af680ae5">car_set_nav_ms</a> (uint32_t ms)</td></tr>
 <tr class="separator:ad3c90b88bf65df25aa2ec0c1af680ae5"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ab7e29ca976438362f855c81446a94e76" id="r_ab7e29ca976438362f855c81446a94e76"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ab7e29ca976438362f855c81446a94e76">car_set_short_rung</a> (bool on)</td></tr>
+<tr class="separator:ab7e29ca976438362f855c81446a94e76"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:acc0d8f48f447204516a7b5d38aa84cb1" id="r_acc0d8f48f447204516a7b5d38aa84cb1"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#acc0d8f48f447204516a7b5d38aa84cb1">car_set_nav_below_db</a> (float db)</td></tr>
 <tr class="separator:acc0d8f48f447204516a7b5d38aa84cb1"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a19f24f61bd9d823b56c611669f31772b" id="r_a19f24f61bd9d823b56c611669f31772b"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a19f24f61bd9d823b56c611669f31772b">car_set_nav_loss</a> (double loss)</td></tr>
@@ -325,20 +353,28 @@ Functions</h2></td></tr>
 <tr class="separator:aa64cc650744a01af21782948c753d309"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ad35b89e4996cda112be2dcce5e9c2fab" id="r_ad35b89e4996cda112be2dcce5e9c2fab"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ad35b89e4996cda112be2dcce5e9c2fab">nav_lead</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:ad35b89e4996cda112be2dcce5e9c2fab"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ab6c0cf63fd83a3dafd4928b7cd6708fa" id="r_ab6c0cf63fd83a3dafd4928b7cd6708fa"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ab6c0cf63fd83a3dafd4928b7cd6708fa">burst_gap_ms</a> (int lv)</td></tr>
-<tr class="separator:ab6c0cf63fd83a3dafd4928b7cd6708fa"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aada8efacd0d7bdb3f34e251bdda60279" id="r_aada8efacd0d7bdb3f34e251bdda60279"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aada8efacd0d7bdb3f34e251bdda60279">lmode</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv)</td></tr>
+<tr class="separator:aada8efacd0d7bdb3f34e251bdda60279"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a863ad57664b528b5aca85949981f4d02" id="r_a863ad57664b528b5aca85949981f4d02"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a863ad57664b528b5aca85949981f4d02">burst_gap_ms</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv)</td></tr>
+<tr class="separator:a863ad57664b528b5aca85949981f4d02"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a67ae50fe6fa3f902f4bf445958bed2f3" id="r_a67ae50fe6fa3f902f4bf445958bed2f3"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a67ae50fe6fa3f902f4bf445958bed2f3">car_level_mode</a> (int level)</td></tr>
 <tr class="separator:a67ae50fe6fa3f902f4bf445958bed2f3"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a1501cc5218da1f9be27977e3e1419c15" id="r_a1501cc5218da1f9be27977e3e1419c15"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a1501cc5218da1f9be27977e3e1419c15">car_session_level_mode</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int level)</td></tr>
+<tr class="separator:a1501cc5218da1f9be27977e3e1419c15"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a95777f7c6c4b410a2beed26aaf3bee1b" id="r_a95777f7c6c4b410a2beed26aaf3bee1b"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a95777f7c6c4b410a2beed26aaf3bee1b">has_data</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:a95777f7c6c4b410a2beed26aaf3bee1b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae0247140f71226deaf816dd31746cf04" id="r_ae0247140f71226deaf816dd31746cf04"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ae0247140f71226deaf816dd31746cf04">peer_direction_done</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:ae0247140f71226deaf816dd31746cf04"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aa9cbf362b5531076c829e423e4755f80" id="r_aa9cbf362b5531076c829e423e4755f80"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aa9cbf362b5531076c829e423e4755f80">car_is_idle</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:aa9cbf362b5531076c829e423e4755f80"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7f771beb0bbcd6d0284b1014dd6379db" id="r_a7f771beb0bbcd6d0284b1014dd6379db"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a7f771beb0bbcd6d0284b1014dd6379db">car_is_drained</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:a7f771beb0bbcd6d0284b1014dd6379db"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a65217c9340661614a570048513f33858" id="r_a65217c9340661614a570048513f33858"><td class="memItemLeft" align="right" valign="top">size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a65217c9340661614a570048513f33858">car_tx_inflight</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:a65217c9340661614a570048513f33858"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aa7c405162ea94d54d7a39e6f486b9f64" id="r_aa7c405162ea94d54d7a39e6f486b9f64"><td class="memItemLeft" align="right" valign="top">const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aa7c405162ea94d54d7a39e6f486b9f64">car_failed</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:aa7c405162ea94d54d7a39e6f486b9f64"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a4c7366afe306ecbcec99b866ba379092" id="r_a4c7366afe306ecbcec99b866ba379092"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a4c7366afe306ecbcec99b866ba379092">car_rx_verified</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:a4c7366afe306ecbcec99b866ba379092"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a839bde96d45c3ab5e948fac437546fd3" id="r_a839bde96d45c3ab5e948fac437546fd3"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a839bde96d45c3ab5e948fac437546fd3">car_overruns</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:a839bde96d45c3ab5e948fac437546fd3"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ada816d869f7adec62e64b2999fbdb279" id="r_ada816d869f7adec62e64b2999fbdb279"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ada816d869f7adec62e64b2999fbdb279">mslot_lo</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, const <a class="el" href="structcar__mlog__t.html">car_mlog_t</a> *l, int i)</td></tr>
@@ -359,8 +395,10 @@ Functions</h2></td></tr>
 <tr class="separator:a6de3617b57b6c484c8275c69facb22d5"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3ebb7c33c67e648f3e80f7eaf7df97fd" id="r_a3ebb7c33c67e648f3e80f7eaf7df97fd"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a3ebb7c33c67e648f3e80f7eaf7df97fd">mode_air</a> (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
 <tr class="separator:a3ebb7c33c67e648f3e80f7eaf7df97fd"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a37cc3a10aecf8976620661521a156b4f" id="r_a37cc3a10aecf8976620661521a156b4f"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a37cc3a10aecf8976620661521a156b4f">level_air</a> (int lv)</td></tr>
-<tr class="separator:a37cc3a10aecf8976620661521a156b4f"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:acb4559dc95ed066101bc147c62bd13ad" id="r_acb4559dc95ed066101bc147c62bd13ad"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#acb4559dc95ed066101bc147c62bd13ad">level_air</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv)</td></tr>
+<tr class="separator:acb4559dc95ed066101bc147c62bd13ad"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a8a34ae0ebbe7433a25f9d76432642abc" id="r_a8a34ae0ebbe7433a25f9d76432642abc"><td class="memItemLeft" align="right" valign="top">static float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a8a34ae0ebbe7433a25f9d76432642abc">peer_hears_me_db</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:a8a34ae0ebbe7433a25f9d76432642abc"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a69604e33d06f44d01c31756d7dec7deb" id="r_a69604e33d06f44d01c31756d7dec7deb"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a69604e33d06f44d01c31756d7dec7deb">ctl_on_floor</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:a69604e33d06f44d01c31756d7dec7deb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3cf9edc1e03e5b3edf3d663caa16d4df" id="r_a3cf9edc1e03e5b3edf3d663caa16d4df"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a3cf9edc1e03e5b3edf3d663caa16d4df">peer_ctl_on_floor</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
@@ -371,26 +409,32 @@ Functions</h2></td></tr>
 <tr class="separator:a456773945d7c4f2828556f2ca8e8d155"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:addd72eadd6488f37a3e468e882e72681" id="r_addd72eadd6488f37a3e468e882e72681"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#addd72eadd6488f37a3e468e882e72681">inline_poll</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:addd72eadd6488f37a3e468e882e72681"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a70105da1eff59e8992fa5beafc253cd7" id="r_a70105da1eff59e8992fa5beafc253cd7"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a70105da1eff59e8992fa5beafc253cd7">round_air</a> (int lv, int n)</td></tr>
-<tr class="separator:a70105da1eff59e8992fa5beafc253cd7"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a67d16b77a4e9b9d4904075c09b0e34d6" id="r_a67d16b77a4e9b9d4904075c09b0e34d6"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a67d16b77a4e9b9d4904075c09b0e34d6">keydown_cap</a> (int lv)</td></tr>
-<tr class="separator:a67d16b77a4e9b9d4904075c09b0e34d6"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7dae691e9ae0cb654bf52c17ffd51d42" id="r_a7dae691e9ae0cb654bf52c17ffd51d42"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a7dae691e9ae0cb654bf52c17ffd51d42">round_air</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv, int n)</td></tr>
+<tr class="separator:a7dae691e9ae0cb654bf52c17ffd51d42"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aed960c7b96a8b8454ad4c60b22553f5d" id="r_aed960c7b96a8b8454ad4c60b22553f5d"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aed960c7b96a8b8454ad4c60b22553f5d">keydown_cap</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv)</td></tr>
+<tr class="separator:aed960c7b96a8b8454ad4c60b22553f5d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a0068c0a1d2ad41ba7f592f86030e5945" id="r_a0068c0a1d2ad41ba7f592f86030e5945"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a0068c0a1d2ad41ba7f592f86030e5945">round_n</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:a0068c0a1d2ad41ba7f592f86030e5945"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aef220e2958813f311048d84835c23e3c" id="r_aef220e2958813f311048d84835c23e3c"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aef220e2958813f311048d84835c23e3c">both_ok</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv)</td></tr>
 <tr class="separator:aef220e2958813f311048d84835c23e3c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a6e0f54490a75006360b87e548311b4d8" id="r_a6e0f54490a75006360b87e548311b4d8"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a6e0f54490a75006360b87e548311b4d8">offer_both</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now)</td></tr>
 <tr class="separator:a6e0f54490a75006360b87e548311b4d8"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aad62d22757b8ad49f4b3d5170c9ac2c4" id="r_aad62d22757b8ad49f4b3d5170c9ac2c4"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aad62d22757b8ad49f4b3d5170c9ac2c4">turn_quantum</a> (int lv)</td></tr>
-<tr class="separator:aad62d22757b8ad49f4b3d5170c9ac2c4"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:abc5319dc9a09274b8c28d86b7a4337a9" id="r_abc5319dc9a09274b8c28d86b7a4337a9"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#abc5319dc9a09274b8c28d86b7a4337a9">turn_cap</a> (int lv)</td></tr>
-<tr class="separator:abc5319dc9a09274b8c28d86b7a4337a9"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ad6a5c463e586fd7040781c317aa276e6" id="r_ad6a5c463e586fd7040781c317aa276e6"><td class="memItemLeft" align="right" valign="top">static size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ad6a5c463e586fd7040781c317aa276e6">m_peer_expect</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:ad6a5c463e586fd7040781c317aa276e6"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a5a6749c1636ef2bd3f9a14df4c991286" id="r_a5a6749c1636ef2bd3f9a14df4c991286"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a5a6749c1636ef2bd3f9a14df4c991286">turn_quantum</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv)</td></tr>
+<tr class="separator:a5a6749c1636ef2bd3f9a14df4c991286"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac4a7ded760c45a69cc41c95a02e2d283" id="r_ac4a7ded760c45a69cc41c95a02e2d283"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ac4a7ded760c45a69cc41c95a02e2d283">turn_cap</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv)</td></tr>
+<tr class="separator:ac4a7ded760c45a69cc41c95a02e2d283"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a417a57cf76c8140af2c775acc7a7c51c" id="r_a417a57cf76c8140af2c775acc7a7c51c"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a417a57cf76c8140af2c775acc7a7c51c">snr_code</a> (float db)</td></tr>
+<tr class="separator:a417a57cf76c8140af2c775acc7a7c51c"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac6c5ec7eb2992ae00e6b5612a90f8588" id="r_ac6c5ec7eb2992ae00e6b5612a90f8588"><td class="memItemLeft" align="right" valign="top">static float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ac6c5ec7eb2992ae00e6b5612a90f8588">snr_of_code</a> (int code)</td></tr>
+<tr class="separator:ac6c5ec7eb2992ae00e6b5612a90f8588"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a72df85e521b706d38fef3bb5e63503fa" id="r_a72df85e521b706d38fef3bb5e63503fa"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a72df85e521b706d38fef3bb5e63503fa">encode_ctl</a> (const msg_t *m, uint8_t *b)</td></tr>
 <tr class="separator:a72df85e521b706d38fef3bb5e63503fa"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a64d003b8eb606b77b795c3ed29faa8a8" id="r_a64d003b8eb606b77b795c3ed29faa8a8"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a64d003b8eb606b77b795c3ed29faa8a8">put_ctl</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, <a class="el" href="structcar__frame__t.html">car_frame_t</a> *f, const msg_t *m)</td></tr>
 <tr class="separator:a64d003b8eb606b77b795c3ed29faa8a8"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ad0e34185f28f646c1d63af3da4c0ffa4" id="r_ad0e34185f28f646c1d63af3da4c0ffa4"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ad0e34185f28f646c1d63af3da4c0ffa4">decode_ctl</a> (const uint8_t *b, size_t len, msg_t *m)</td></tr>
-<tr class="separator:ad0e34185f28f646c1d63af3da4c0ffa4"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a26dc51aee7fadebd6901ae4611681d89" id="r_a26dc51aee7fadebd6901ae4611681d89"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a26dc51aee7fadebd6901ae4611681d89">decode_ctl</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, const uint8_t *b, size_t len, msg_t *m)</td></tr>
+<tr class="separator:a26dc51aee7fadebd6901ae4611681d89"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aad050152592e1abb6ec8158bc7139855" id="r_aad050152592e1abb6ec8158bc7139855"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aad050152592e1abb6ec8158bc7139855">decode_data</a> (const uint8_t *b, size_t len, msg_t *m, int P)</td></tr>
 <tr class="separator:aad050152592e1abb6ec8158bc7139855"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a6037b0876c4d8abea879331bf7a0f6d0" id="r_a6037b0876c4d8abea879331bf7a0f6d0"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a6037b0876c4d8abea879331bf7a0f6d0">put_seg_hdr</a> (uint8_t *p, const <a class="el" href="structcar__sblock__t.html">car_sblock_t</a> *s, int count, int first, int P)</td></tr>
@@ -403,8 +447,12 @@ Functions</h2></td></tr>
 <tr class="separator:a9da31f12c10d027b530e2098e15e63c2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aed06f1d32662a7df2aec5fafacc13794" id="r_aed06f1d32662a7df2aec5fafacc13794"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aed06f1d32662a7df2aec5fafacc13794">car_next_deadline</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:aed06f1d32662a7df2aec5fafacc13794"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aad93cc11c9ba55363fb0cf04ca51f691" id="r_aad93cc11c9ba55363fb0cf04ca51f691"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aad93cc11c9ba55363fb0cf04ca51f691">peer_keyed</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now)</td></tr>
-<tr class="separator:aad93cc11c9ba55363fb0cf04ca51f691"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a6dcb0c64c6863759f33fd3c9b36ff5a1" id="r_a6dcb0c64c6863759f33fd3c9b36ff5a1"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a6dcb0c64c6863759f33fd3c9b36ff5a1">peer_keyed</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now)</td></tr>
+<tr class="separator:a6dcb0c64c6863759f33fd3c9b36ff5a1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a3b8c6d88ace56cfe55b6839384ea2908" id="r_a3b8c6d88ace56cfe55b6839384ea2908"><td class="memItemLeft" align="right" valign="top">static const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a3b8c6d88ace56cfe55b6839384ea2908">keyed_why</a> (int k)</td></tr>
+<tr class="separator:a3b8c6d88ace56cfe55b6839384ea2908"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a24fc6829e83af93f596d57565d400941" id="r_a24fc6829e83af93f596d57565d400941"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a24fc6829e83af93f596d57565d400941">note_held</a> (<a class="el" href="structcar__t.html">car_t</a> *c, int why, int keyed, uint64_t now, uint64_t ms)</td></tr>
+<tr class="separator:a24fc6829e83af93f596d57565d400941"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a57885b9a2edc244181207bd07756db80" id="r_a57885b9a2edc244181207bd07756db80"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a57885b9a2edc244181207bd07756db80">defer_if_busy</a> (<a class="el" href="structcar__t.html">car_t</a> *c, int t, uint64_t now)</td></tr>
 <tr class="separator:a57885b9a2edc244181207bd07756db80"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:afe4ae82ae59e94652518007b7dc5083d" id="r_afe4ae82ae59e94652518007b7dc5083d"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#afe4ae82ae59e94652518007b7dc5083d">keydown</a> (<a class="el" href="structcar__t.html">car_t</a> *c, <a class="el" href="structcar__frame__t.html">car_frame_t</a> *fr, int n)</td></tr>
@@ -457,6 +505,12 @@ Functions</h2></td></tr>
 <tr class="separator:ac20abaa619c470850d75b9766816a378"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4aafcdf72288e82ac5856d9c374d04ee" id="r_a4aafcdf72288e82ac5856d9c374d04ee"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a4aafcdf72288e82ac5856d9c374d04ee">cap_level</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv)</td></tr>
 <tr class="separator:a4aafcdf72288e82ac5856d9c374d04ee"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:acdbb2e79aca94581c6c933d062391663" id="r_acdbb2e79aca94581c6c933d062391663"><td class="memItemLeft" align="right" valign="top">static float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#acdbb2e79aca94581c6c933d062391663">my_snr</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:acdbb2e79aca94581c6c933d062391663"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a403d6a89932ae40827765223e6fea7c9" id="r_a403d6a89932ae40827765223e6fea7c9"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a403d6a89932ae40827765223e6fea7c9">take_peer_snr</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now, const msg_t *m)</td></tr>
+<tr class="separator:a403d6a89932ae40827765223e6fea7c9"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a733c906c3354486a8e9d9f2eb8afbda5" id="r_a733c906c3354486a8e9d9f2eb8afbda5"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a733c906c3354486a8e9d9f2eb8afbda5">fall_level</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int top)</td></tr>
+<tr class="separator:a733c906c3354486a8e9d9f2eb8afbda5"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:acc1ef05ba007e0f5c6f4658bc7869d7b" id="r_acc1ef05ba007e0f5c6f4658bc7869d7b"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#acc1ef05ba007e0f5c6f4658bc7869d7b">choose_level</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now)</td></tr>
 <tr class="separator:acc1ef05ba007e0f5c6f4658bc7869d7b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aa9776ab3069bf3721bb6c1b123e83231" id="r_aa9776ab3069bf3721bb6c1b123e83231"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aa9776ab3069bf3721bb6c1b123e83231">peer_outstanding</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
@@ -467,28 +521,42 @@ Functions</h2></td></tr>
 <tr class="separator:ad599558e05fcdd2454e371ade7b4039d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a6f9fab9df12df2ab38406de6b4cb31d3" id="r_a6f9fab9df12df2ab38406de6b4cb31d3"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a6f9fab9df12df2ab38406de6b4cb31d3">deliver_in_order</a> (<a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:a6f9fab9df12df2ab38406de6b4cb31d3"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:add5efc5a74b1df5a392168161681a397" id="r_add5efc5a74b1df5a392168161681a397"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#add5efc5a74b1df5a392168161681a397">peer_ended</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, bool ending)</td></tr>
+<tr class="separator:add5efc5a74b1df5a392168161681a397"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a000e53eaf799562555b217bf76e72f39" id="r_a000e53eaf799562555b217bf76e72f39"><td class="memItemLeft" align="right" valign="top">static uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a000e53eaf799562555b217bf76e72f39">my_backlog</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:a000e53eaf799562555b217bf76e72f39"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ad25bbcf79bd979c137bd53756a4db0c2" id="r_ad25bbcf79bd979c137bd53756a4db0c2"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ad25bbcf79bd979c137bd53756a4db0c2">stamp_hint</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, msg_t *m)</td></tr>
+<tr class="separator:ad25bbcf79bd979c137bd53756a4db0c2"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a5f1c75c98fbc21ca59a3a9667e55ee26" id="r_a5f1c75c98fbc21ca59a3a9667e55ee26"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a5f1c75c98fbc21ca59a3a9667e55ee26">short_rung</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv, size_t bytes, int *pn)</td></tr>
+<tr class="separator:a5f1c75c98fbc21ca59a3a9667e55ee26"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a717a29fcaccb5b9f0ad4bd65d6e9c207" id="r_a717a29fcaccb5b9f0ad4bd65d6e9c207"><td class="memItemLeft" align="right" valign="top">static size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a717a29fcaccb5b9f0ad4bd65d6e9c207">peer_next_guess</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:a717a29fcaccb5b9f0ad4bd65d6e9c207"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a6df5639b1369f6bdde7e8de8cfb5d843" id="r_a6df5639b1369f6bdde7e8de8cfb5d843"><td class="memItemLeft" align="right" valign="top">static size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a6df5639b1369f6bdde7e8de8cfb5d843">peer_backlog_bytes</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:a6df5639b1369f6bdde7e8de8cfb5d843"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aae0842e979a101c3b24336077d3cdea2" id="r_aae0842e979a101c3b24336077d3cdea2"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aae0842e979a101c3b24336077d3cdea2">fill_poll</a> (<a class="el" href="structcar__t.html">car_t</a> *c, msg_t *m)</td></tr>
 <tr class="separator:aae0842e979a101c3b24336077d3cdea2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a57d4aa20e023f986c3352a2ca6e59cf1" id="r_a57d4aa20e023f986c3352a2ca6e59cf1"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a57d4aa20e023f986c3352a2ca6e59cf1">take_pieces</a> (<a class="el" href="structcar__t.html">car_t</a> *c, const msg_t *m)</td></tr>
 <tr class="separator:a57d4aa20e023f986c3352a2ca6e59cf1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a40f8b7bd10ee15263ea8fab33860dcfe" id="r_a40f8b7bd10ee15263ea8fab33860dcfe"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a40f8b7bd10ee15263ea8fab33860dcfe">poll_k</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv, int n)</td></tr>
+<tr class="separator:a40f8b7bd10ee15263ea8fab33860dcfe"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aff303a52889bdd7c74a0f4cea17fa593" id="r_aff303a52889bdd7c74a0f4cea17fa593"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aff303a52889bdd7c74a0f4cea17fa593">ctl_air_max</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:aff303a52889bdd7c74a0f4cea17fa593"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a46c5d859e99d4dda2d2434757e3d0b96" id="r_a46c5d859e99d4dda2d2434757e3d0b96"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a46c5d859e99d4dda2d2434757e3d0b96">s_ctl_for</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, bool deaf)</td></tr>
 <tr class="separator:a46c5d859e99d4dda2d2434757e3d0b96"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a16178d6a40c5f10e7e710f451bc5406a" id="r_a16178d6a40c5f10e7e710f451bc5406a"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a16178d6a40c5f10e7e710f451bc5406a">s_ctl_ms</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:a16178d6a40c5f10e7e710f451bc5406a"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a92d6745128ed1f13f80103f89ade2c63" id="r_a92d6745128ed1f13f80103f89ade2c63"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a92d6745128ed1f13f80103f89ade2c63">s_round_ms</a> (int lv, int n)</td></tr>
-<tr class="separator:a92d6745128ed1f13f80103f89ade2c63"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a99ee85f692d88008eca6200771e704cb" id="r_a99ee85f692d88008eca6200771e704cb"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a99ee85f692d88008eca6200771e704cb">s_round_ms</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv, int n)</td></tr>
+<tr class="separator:a99ee85f692d88008eca6200771e704cb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a466bc6c4b99848820f1eb19e6339e0cb" id="r_a466bc6c4b99848820f1eb19e6339e0cb"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a466bc6c4b99848820f1eb19e6339e0cb">s_pat_ms</a> (void)</td></tr>
 <tr class="separator:a466bc6c4b99848820f1eb19e6339e0cb"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a7772474c7050b9afb6681f32047d47a4" id="r_a7772474c7050b9afb6681f32047d47a4"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a7772474c7050b9afb6681f32047d47a4">r_cap_ms</a> (void)</td></tr>
-<tr class="separator:a7772474c7050b9afb6681f32047d47a4"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a895afc7364ba060e4fba11dc9f9c9834" id="r_a895afc7364ba060e4fba11dc9f9c9834"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a895afc7364ba060e4fba11dc9f9c9834">r_cap_ms</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:a895afc7364ba060e4fba11dc9f9c9834"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ade9c506183ab7d6087542e7486177f47" id="r_ade9c506183ab7d6087542e7486177f47"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ade9c506183ab7d6087542e7486177f47">d_of_mode</a> (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
 <tr class="separator:ade9c506183ab7d6087542e7486177f47"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3711d2e2480542218eca2b6e2e09d74a" id="r_a3711d2e2480542218eca2b6e2e09d74a"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a3711d2e2480542218eca2b6e2e09d74a">slot_period</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, uint32_t d, uint32_t r)</td></tr>
 <tr class="separator:a3711d2e2480542218eca2b6e2e09d74a"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a9e9fab1566868b975dfad8057d6bb9e0" id="r_a9e9fab1566868b975dfad8057d6bb9e0"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a9e9fab1566868b975dfad8057d6bb9e0">r_floor_ms</a> (void)</td></tr>
-<tr class="separator:a9e9fab1566868b975dfad8057d6bb9e0"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac28aec47a6551d9c05798777c597e227" id="r_ac28aec47a6551d9c05798777c597e227"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ac28aec47a6551d9c05798777c597e227">r_floor_ms</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:ac28aec47a6551d9c05798777c597e227"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aa306725f83e0237e90e251365f315ff7" id="r_aa306725f83e0237e90e251365f315ff7"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aa306725f83e0237e90e251365f315ff7">m_log_add</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t e)</td></tr>
 <tr class="separator:aa306725f83e0237e90e251365f315ff7"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a66da061aeb670d776b50017234558d7a" id="r_a66da061aeb670d776b50017234558d7a"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a66da061aeb670d776b50017234558d7a">m_free_from</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, uint64_t s, uint64_t len)</td></tr>
@@ -497,6 +565,8 @@ Functions</h2></td></tr>
 <tr class="separator:a66bd736913a0df55cc0c49f5ae43637c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a737b27e44e359c4f2fea743e5ecd2329" id="r_a737b27e44e359c4f2fea743e5ecd2329"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a737b27e44e359c4f2fea743e5ecd2329">m_close_slot</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t te, int mk, bool pat, int slot)</td></tr>
 <tr class="separator:a737b27e44e359c4f2fea743e5ecd2329"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a97576f53913b048afae7da0dfd9f4ffb" id="r_a97576f53913b048afae7da0dfd9f4ffb"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a97576f53913b048afae7da0dfd9f4ffb">m_close_spent</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t te, int mk)</td></tr>
+<tr class="separator:a97576f53913b048afae7da0dfd9f4ffb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a829d1625e7b114743842587bee1f6e16" id="r_a829d1625e7b114743842587bee1f6e16"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a829d1625e7b114743842587bee1f6e16">send_poll_ex</a> (<a class="el" href="structcar__t.html">car_t</a> *c, int lv, int n, uint8_t id, bool with_round)</td></tr>
 <tr class="separator:a829d1625e7b114743842587bee1f6e16"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a70c8a23f97617ec9c3e161ba3b3c3fa3" id="r_a70c8a23f97617ec9c3e161ba3b3c3fa3"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a70c8a23f97617ec9c3e161ba3b3c3fa3">send_poll</a> (<a class="el" href="structcar__t.html">car_t</a> *c, int lv, int n, uint8_t id)</td></tr>
@@ -517,6 +587,10 @@ Functions</h2></td></tr>
 <tr class="separator:ad1d31228b85f3009d75e354f8dc748fb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae8a46f094c615b7d5227e6cbece1f971" id="r_ae8a46f094c615b7d5227e6cbece1f971"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ae8a46f094c615b7d5227e6cbece1f971">rx_measure</a> (<a class="el" href="structcar__t.html">car_t</a> *c, int lv, uint64_t now)</td></tr>
 <tr class="separator:ae8a46f094c615b7d5227e6cbece1f971"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a88a0856486e4e44338462431740f91ab" id="r_a88a0856486e4e44338462431740f91ab"><td class="memItemLeft" align="right" valign="top">static size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a88a0856486e4e44338462431740f91ab">s_peer_expect</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:a88a0856486e4e44338462431740f91ab"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aed40f560bcdeff40604042f65510b2d8" id="r_aed40f560bcdeff40604042f65510b2d8"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aed40f560bcdeff40604042f65510b2d8">deaf_rung</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, int lv)</td></tr>
+<tr class="separator:aed40f560bcdeff40604042f65510b2d8"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ab856b4594e2ef8a5e0bb38dfd094dfb4" id="r_ab856b4594e2ef8a5e0bb38dfd094dfb4"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ab856b4594e2ef8a5e0bb38dfd094dfb4">rx_next</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now, int *plv, int *pn)</td></tr>
 <tr class="separator:ab856b4594e2ef8a5e0bb38dfd094dfb4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a21d4be63a1495669730462a35a959727" id="r_a21d4be63a1495669730462a35a959727"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a21d4be63a1495669730462a35a959727">rx_frame</a> (<a class="el" href="structcar__t.html">car_t</a> *c, const msg_t *m, int lv, bool counts)</td></tr>
@@ -561,6 +635,8 @@ Functions</h2></td></tr>
 <tr class="separator:a0fed6e8592b502783cbd41dc9eca1802"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ab573da52957941a4c4c04fd8cb9e4316" id="r_ab573da52957941a4c4c04fd8cb9e4316"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ab573da52957941a4c4c04fd8cb9e4316">s_heard_m</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now)</td></tr>
 <tr class="separator:ab573da52957941a4c4c04fd8cb9e4316"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ab50fd7135ec5b0ef5541cc64ee20d385" id="r_ab50fd7135ec5b0ef5541cc64ee20d385"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ab50fd7135ec5b0ef5541cc64ee20d385">s_idle_rung</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now)</td></tr>
+<tr class="separator:ab50fd7135ec5b0ef5541cc64ee20d385"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ad579445c5de7d57066c2d3694ce1dee2" id="r_ad579445c5de7d57066c2d3694ce1dee2"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#ad579445c5de7d57066c2d3694ce1dee2">s_answer</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now, bool req)</td></tr>
 <tr class="separator:ad579445c5de7d57066c2d3694ce1dee2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a5635bd7d041bc6ba71c8bee3518dd662" id="r_a5635bd7d041bc6ba71c8bee3518dd662"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a5635bd7d041bc6ba71c8bee3518dd662">s_answer_both</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now)</td></tr>
@@ -575,6 +651,8 @@ Functions</h2></td></tr>
 <tr class="separator:a8d6311c2707bcf59186b4a0de80e63d7"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a2529119320ee094b2f97a8e31bf592d3" id="r_a2529119320ee094b2f97a8e31bf592d3"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a2529119320ee094b2f97a8e31bf592d3">car_init</a> (<a class="el" href="structcar__t.html">car_t</a> *c, const <a class="el" href="structcar__io__t.html">car_io_t</a> *io, int rx_level, int tx_level)</td></tr>
 <tr class="separator:a2529119320ee094b2f97a8e31bf592d3"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a3b751dced8f73c218829241046efd143" id="r_a3b751dced8f73c218829241046efd143"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a3b751dced8f73c218829241046efd143">car_set_floor_mode</a> (<a class="el" href="structcar__t.html">car_t</a> *c, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
+<tr class="separator:a3b751dced8f73c218829241046efd143"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a389eba588e52bda29fde3509d468dbd1" id="r_a389eba588e52bda29fde3509d468dbd1"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a389eba588e52bda29fde3509d468dbd1">car_max_level_for_bw</a> (int <a class="el" href="carousel_8c.html#a30c888e8758f5c25df50cf62f461d58e">bw_hz</a>)</td></tr>
 <tr class="separator:a389eba588e52bda29fde3509d468dbd1"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a275f23a379c9a34d6c7eec680b6e9e0a" id="r_a275f23a379c9a34d6c7eec680b6e9e0a"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a275f23a379c9a34d6c7eec680b6e9e0a">car_set_max_level</a> (<a class="el" href="structcar__t.html">car_t</a> *c, int lv)</td></tr>
@@ -599,8 +677,10 @@ Functions</h2></td></tr>
 <tr class="separator:a73eee34a307aa0067986ea3de3fafd4e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a9e4387e8458738ea42a6cdcc58089b63" id="r_a9e4387e8458738ea42a6cdcc58089b63"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a9e4387e8458738ea42a6cdcc58089b63">car_seed_ctl_deaf</a> (<a class="el" href="structcar__t.html">car_t</a> *c, bool mine, bool peers)</td></tr>
 <tr class="separator:a9e4387e8458738ea42a6cdcc58089b63"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aa1acba088667f688688612d33d95cba0" id="r_aa1acba088667f688688612d33d95cba0"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aa1acba088667f688688612d33d95cba0">car_on_frame</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now, const uint8_t *bytes, size_t len, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, bool control, float snr_db, uint32_t age_ms)</td></tr>
-<tr class="separator:aa1acba088667f688688612d33d95cba0"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abf160f40dca6490ff21ebafb7bcff259" id="r_abf160f40dca6490ff21ebafb7bcff259"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#abf160f40dca6490ff21ebafb7bcff259">car_seed_snr</a> (<a class="el" href="structcar__t.html">car_t</a> *c, float mine, float peers)</td></tr>
+<tr class="separator:abf160f40dca6490ff21ebafb7bcff259"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a4bd6bd1d020d6308fcc0b8e05e37a1d4" id="r_a4bd6bd1d020d6308fcc0b8e05e37a1d4"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a4bd6bd1d020d6308fcc0b8e05e37a1d4">car_on_frame</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now, const uint8_t *bytes, size_t len, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, bool control, float snr_db, uint32_t age_ms)</td></tr>
+<tr class="separator:a4bd6bd1d020d6308fcc0b8e05e37a1d4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3e1063835ee3e46d31f321cb212a6c3e" id="r_a3e1063835ee3e46d31f321cb212a6c3e"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a3e1063835ee3e46d31f321cb212a6c3e">car_on_tx_done</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now)</td></tr>
 <tr class="separator:a3e1063835ee3e46d31f321cb212a6c3e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aee9f3adea3a4d61918aaa825c94cd9eb" id="r_aee9f3adea3a4d61918aaa825c94cd9eb"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aee9f3adea3a4d61918aaa825c94cd9eb">pattern_in_time</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now)</td></tr>
@@ -621,6 +701,8 @@ Functions</h2></td></tr>
 <tr class="separator:af8c83f7cb1be90ff282c7f8300425880"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a27c6c09bad20ba5f7247a57ce3d6563c" id="r_a27c6c09bad20ba5f7247a57ce3d6563c"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a27c6c09bad20ba5f7247a57ce3d6563c">car_log_ctl</a> (<a class="el" href="structcar__t.html">car_t</a> *c, uint64_t end, uint32_t tg)</td></tr>
 <tr class="separator:a27c6c09bad20ba5f7247a57ce3d6563c"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a118f407767fad15e1038a01e4f116137" id="r_a118f407767fad15e1038a01e4f116137"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a118f407767fad15e1038a01e4f116137">car_wish_end</a> (<a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:a118f407767fad15e1038a01e4f116137"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aed7fdd71c6d81fe48f41a04e942f4c4c" id="r_aed7fdd71c6d81fe48f41a04e942f4c4c"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aed7fdd71c6d81fe48f41a04e942f4c4c">car_request_end</a> (<a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:aed7fdd71c6d81fe48f41a04e942f4c4c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
@@ -628,28 +710,30 @@ Functions</h2></td></tr>
 Variables</h2></td></tr>
 <tr class="memitem:aaf2548ce3eacdd9f1e1a05ac1217bf93" id="r_aaf2548ce3eacdd9f1e1a05ac1217bf93"><td class="memItemLeft" align="right" valign="top">static uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aaf2548ce3eacdd9f1e1a05ac1217bf93">g_nav_ms</a></td></tr>
 <tr class="separator:aaf2548ce3eacdd9f1e1a05ac1217bf93"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a4a79eb04640303f7216f7875904ebc08" id="r_a4a79eb04640303f7216f7875904ebc08"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a4a79eb04640303f7216f7875904ebc08">g_short_rung</a> = true</td></tr>
+<tr class="separator:a4a79eb04640303f7216f7875904ebc08"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a58ae73e837c898099b2e4c89f939f126" id="r_a58ae73e837c898099b2e4c89f939f126"><td class="memItemLeft" align="right" valign="top">static float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a58ae73e837c898099b2e4c89f939f126">g_nav_below_db</a> = 99.0f</td></tr>
 <tr class="separator:a58ae73e837c898099b2e4c89f939f126"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a58da600153dee67f57be202cc16e68b2" id="r_a58da600153dee67f57be202cc16e68b2"><td class="memItemLeft" align="right" valign="top">static double&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a58da600153dee67f57be202cc16e68b2">g_nav_loss</a> = 0.3</td></tr>
 <tr class="separator:a58da600153dee67f57be202cc16e68b2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:acde1e063f915d9cf0978b15744e959f5" id="r_acde1e063f915d9cf0978b15744e959f5"><td class="memItemLeft" align="right" valign="top">static const int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#acde1e063f915d9cf0978b15744e959f5">LADDER</a> [<a class="el" href="carousel_8h.html#a626ac0374ec2ecf1a25d0dcf18a8a538">CAR_NLEVELS</a>]</td></tr>
 <tr class="separator:acde1e063f915d9cf0978b15744e959f5"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:abf01d56be5ecedf64d1e64a830f0f9ad" id="r_abf01d56be5ecedf64d1e64a830f0f9ad"><td class="memItemLeft" >struct {&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
+<tr class="memitem:aa01eba826c045105a89d29f617ce475c" id="r_aa01eba826c045105a89d29f617ce475c"><td class="memItemLeft" >struct {&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a9558c85187f9e0705891168b09c48bf6" id="r_a9558c85187f9e0705891168b09c48bf6"><td class="memItemLeft" >&#160;&#160;&#160;int&#160;&#160;&#160;<a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
-<tr class="separator:a9558c85187f9e0705891168b09c48bf6"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a54ec99f0f01b0bed0868a3efeb08426c" id="r_a54ec99f0f01b0bed0868a3efeb08426c"><td class="memItemLeft" >&#160;&#160;&#160;float&#160;&#160;&#160;<a class="el" href="carousel_8c.html#aabab74ec474d854a65c5949c7c134ebc">min_db</a>&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
-<tr class="separator:a54ec99f0f01b0bed0868a3efeb08426c"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:abf01d56be5ecedf64d1e64a830f0f9ad" id="r_abf01d56be5ecedf64d1e64a830f0f9ad"><td class="memItemLeft" valign="top">}&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#abf01d56be5ecedf64d1e64a830f0f9ad">START</a> []&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
-<tr class="separator:abf01d56be5ecedf64d1e64a830f0f9ad"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a9888471b4ba959a4fc192798327d66e2" id="r_a9888471b4ba959a4fc192798327d66e2"><td class="memItemLeft" >struct {&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
+<tr class="memitem:a12e594818ac3cff5988555eb7520d9e1" id="r_a12e594818ac3cff5988555eb7520d9e1"><td class="memItemLeft" >&#160;&#160;&#160;int&#160;&#160;&#160;<a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
+<tr class="separator:a12e594818ac3cff5988555eb7520d9e1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ae2879de2fa5c5dc8a972599a22613392" id="r_ae2879de2fa5c5dc8a972599a22613392"><td class="memItemLeft" >&#160;&#160;&#160;float&#160;&#160;&#160;<a class="el" href="carousel_8c.html#aabab74ec474d854a65c5949c7c134ebc">min_db</a>&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
+<tr class="separator:ae2879de2fa5c5dc8a972599a22613392"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa01eba826c045105a89d29f617ce475c" id="r_aa01eba826c045105a89d29f617ce475c"><td class="memItemLeft" valign="top">}&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aa01eba826c045105a89d29f617ce475c">START</a> []&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
+<tr class="separator:aa01eba826c045105a89d29f617ce475c"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa4dacfd4b185d647b056afdbf9dcfb0c" id="r_aa4dacfd4b185d647b056afdbf9dcfb0c"><td class="memItemLeft" >struct {&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ac20556d95593a0ca97568d0df900124b" id="r_ac20556d95593a0ca97568d0df900124b"><td class="memItemLeft" >&#160;&#160;&#160;int&#160;&#160;&#160;<a class="el" href="carousel_8c.html#a30c888e8758f5c25df50cf62f461d58e">bw_hz</a>&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
-<tr class="separator:ac20556d95593a0ca97568d0df900124b"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ab71f722a4111fafd547053bf0ef59cf1" id="r_ab71f722a4111fafd547053bf0ef59cf1"><td class="memItemLeft" >&#160;&#160;&#160;int&#160;&#160;&#160;<a class="el" href="carousel_8c.html#a86fe8057787aac887847108b347680fa">top_mode</a>&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
-<tr class="separator:ab71f722a4111fafd547053bf0ef59cf1"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a9888471b4ba959a4fc192798327d66e2" id="r_a9888471b4ba959a4fc192798327d66e2"><td class="memItemLeft" valign="top">}&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#a9888471b4ba959a4fc192798327d66e2">BW_TOP</a> []&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
-<tr class="separator:a9888471b4ba959a4fc192798327d66e2"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a3224222d26720f5cebc88d10c8b02286" id="r_a3224222d26720f5cebc88d10c8b02286"><td class="memItemLeft" >&#160;&#160;&#160;int&#160;&#160;&#160;<a class="el" href="carousel_8c.html#a30c888e8758f5c25df50cf62f461d58e">bw_hz</a>&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
+<tr class="separator:a3224222d26720f5cebc88d10c8b02286"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abfed8190d1d746a234c83b5278e61648" id="r_abfed8190d1d746a234c83b5278e61648"><td class="memItemLeft" >&#160;&#160;&#160;int&#160;&#160;&#160;<a class="el" href="carousel_8c.html#a86fe8057787aac887847108b347680fa">top_mode</a>&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
+<tr class="separator:abfed8190d1d746a234c83b5278e61648"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa4dacfd4b185d647b056afdbf9dcfb0c" id="r_aa4dacfd4b185d647b056afdbf9dcfb0c"><td class="memItemLeft" valign="top">}&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8c.html#aa4dacfd4b185d647b056afdbf9dcfb0c">BW_TOP</a> []&#160;</td><td class="memItemRight" valign="bottom"></td></tr>
+<tr class="separator:aa4dacfd4b185d647b056afdbf9dcfb0c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <h2 class="groupheader">Macro Definition Documentation</h2>
 <a id="a10af3a27a5a00beb888eaf46e24bf585" name="a10af3a27a5a00beb888eaf46e24bf585"></a>
@@ -660,6 +744,34 @@ Variables</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">#define APP_GRACE_MS&#160;&#160;&#160;1000</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a714c76decdc6b4d89fa40ff0289cbb17" name="a714c76decdc6b4d89fa40ff0289cbb17"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a714c76decdc6b4d89fa40ff0289cbb17">&#9670;&#160;</a></span>BL_MEDIUM_BYTES</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define BL_MEDIUM_BYTES&#160;&#160;&#160;460   /* ...one DATAC1 frame's */</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a7bdcf34e57373c970aa54c29e79fbb18" name="a7bdcf34e57373c970aa54c29e79fbb18"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7bdcf34e57373c970aa54c29e79fbb18">&#9670;&#160;</a></span>BL_SMALL_BYTES</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define BL_SMALL_BYTES&#160;&#160;&#160;90    /* one DATAC3 frame's pieces, with the check and a margin */</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -1100,6 +1212,20 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="abeeff7a79e242fd4ff46fdc3da8a1914" name="abeeff7a79e242fd4ff46fdc3da8a1914"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abeeff7a79e242fd4ff46fdc3da8a1914">&#9670;&#160;</a></span>HELD_SAY_MS</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define HELD_SAY_MS&#160;&#160;&#160;2000</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a279ef25990a6dabebb97c7c995e137ce" name="a279ef25990a6dabebb97c7c995e137ce"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a279ef25990a6dabebb97c7c995e137ce">&#9670;&#160;</a></span>IDLE_POLL_MAX_MS</h2>
 
@@ -1408,6 +1534,20 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="ac4294561ec5a2ac6e45d2442fd961042" name="ac4294561ec5a2ac6e45d2442fd961042"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac4294561ec5a2ac6e45d2442fd961042">&#9670;&#160;</a></span>SILENT_MS</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define SILENT_MS&#160;&#160;&#160;150000</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a0412e21c7e5b75079984dba82e5cab1d" name="a0412e21c7e5b75079984dba82e5cab1d"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a0412e21c7e5b75079984dba82e5cab1d">&#9670;&#160;</a></span>SLOW_RUNG_FRAMES</h2>
 
@@ -1416,6 +1556,20 @@ Variables</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">#define SLOW_RUNG_FRAMES&#160;&#160;&#160;3        /* round cap on the two slowest rungs      */</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ae2896cc0656e6a18919c8c39a8c60472" name="ae2896cc0656e6a18919c8c39a8c60472"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae2896cc0656e6a18919c8c39a8c60472">&#9670;&#160;</a></span>SNR_CODE_NONE</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define SNR_CODE_NONE&#160;&#160;&#160;63</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -1533,10 +1687,10 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 <table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a99fb83031ce9923c84392b4e92f956b5ae5553f9e0a67f1d3ae47367d5c5bf929" name="a99fb83031ce9923c84392b4e92f956b5ae5553f9e0a67f1d3ae47367d5c5bf929"></a>M_DATA&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a99fb83031ce9923c84392b4e92f956b5a15f5c0043f59c0799635efe0e2cb6ea6" name="a99fb83031ce9923c84392b4e92f956b5a15f5c0043f59c0799635efe0e2cb6ea6"></a>M_POLL&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a99fb83031ce9923c84392b4e92f956b5a04876dcfb654a0c29d1faac646c82620" name="a99fb83031ce9923c84392b4e92f956b5a04876dcfb654a0c29d1faac646c82620"></a>M_REQ&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a99fb83031ce9923c84392b4e92f956b5a37970cb39b365005a03d9481f784f248" name="a99fb83031ce9923c84392b4e92f956b5a37970cb39b365005a03d9481f784f248"></a>M_STATUS&#160;</td><td class="fielddoc"></td></tr>
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a99fb83031ce9923c84392b4e92f956b5af3a3ccd5d57b9a0370bb5d2b10143cd0" name="a99fb83031ce9923c84392b4e92f956b5af3a3ccd5d57b9a0370bb5d2b10143cd0"></a>BL_NONE&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a99fb83031ce9923c84392b4e92f956b5a0bf218bac702fa2e3d374e299c832746" name="a99fb83031ce9923c84392b4e92f956b5a0bf218bac702fa2e3d374e299c832746"></a>BL_SMALL&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a99fb83031ce9923c84392b4e92f956b5a7d6e6e90751a773ac4f092818f26dd11" name="a99fb83031ce9923c84392b4e92f956b5a7d6e6e90751a773ac4f092818f26dd11"></a>BL_MEDIUM&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a99fb83031ce9923c84392b4e92f956b5ae12324c236747afe5815af8cfba60b7b" name="a99fb83031ce9923c84392b4e92f956b5ae12324c236747afe5815af8cfba60b7b"></a>BL_LARGE&#160;</td><td class="fielddoc"></td></tr>
 </table>
 
 </div>
@@ -1553,14 +1707,10 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 <table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04ae261023c4e1074585d347a15a0652699" name="abc6126af1d45847bc59afa0aa3216b04ae261023c4e1074585d347a15a0652699"></a>KD_NONE&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04afe28904b98583bd27289207bc17a8c28" name="abc6126af1d45847bc59afa0aa3216b04afe28904b98583bd27289207bc17a8c28"></a>KD_POLL&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04ab285c54e42ea13ca372cb6f4128f175e" name="abc6126af1d45847bc59afa0aa3216b04ab285c54e42ea13ca372cb6f4128f175e"></a>KD_ROUND&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04ab8fd90a01c73581a74a576892b6f9006" name="abc6126af1d45847bc59afa0aa3216b04ab8fd90a01c73581a74a576892b6f9006"></a>KD_PATTERN_ACK&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04a385b910854c562b80b637d2b548f2bbe" name="abc6126af1d45847bc59afa0aa3216b04a385b910854c562b80b637d2b548f2bbe"></a>KD_PATTERN_BREAK&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04aa27083d6ffeb8e9eb3f5fe700956022b" name="abc6126af1d45847bc59afa0aa3216b04aa27083d6ffeb8e9eb3f5fe700956022b"></a>KD_REQ&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04a88516b1bf9d6b7f1f01dce3e875c6f34" name="abc6126af1d45847bc59afa0aa3216b04a88516b1bf9d6b7f1f01dce3e875c6f34"></a>KD_DONE&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04a8e86fddc7316e6c2cc947a6c7af5401f" name="abc6126af1d45847bc59afa0aa3216b04a8e86fddc7316e6c2cc947a6c7af5401f"></a>KD_BOTH&#160;</td><td class="fielddoc"></td></tr>
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04ae5553f9e0a67f1d3ae47367d5c5bf929" name="abc6126af1d45847bc59afa0aa3216b04ae5553f9e0a67f1d3ae47367d5c5bf929"></a>M_DATA&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04a15f5c0043f59c0799635efe0e2cb6ea6" name="abc6126af1d45847bc59afa0aa3216b04a15f5c0043f59c0799635efe0e2cb6ea6"></a>M_POLL&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04a04876dcfb654a0c29d1faac646c82620" name="abc6126af1d45847bc59afa0aa3216b04a04876dcfb654a0c29d1faac646c82620"></a>M_REQ&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="abc6126af1d45847bc59afa0aa3216b04a37970cb39b365005a03d9481f784f248" name="abc6126af1d45847bc59afa0aa3216b04a37970cb39b365005a03d9481f784f248"></a>M_STATUS&#160;</td><td class="fielddoc"></td></tr>
 </table>
 
 </div>
@@ -1577,9 +1727,8 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 <table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="adc29c2ff13d900c2f185ee95427fb06ca3793f74e5990f63329226d4302574dd7" name="adc29c2ff13d900c2f185ee95427fb06ca3793f74e5990f63329226d4302574dd7"></a>PH_IDLE&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="adc29c2ff13d900c2f185ee95427fb06cac4bf03805070bf971d8ba91fbfcb849e" name="adc29c2ff13d900c2f185ee95427fb06cac4bf03805070bf971d8ba91fbfcb849e"></a>PH_SEND&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="adc29c2ff13d900c2f185ee95427fb06cace7947f789039738952fa339b2fb9b5f" name="adc29c2ff13d900c2f185ee95427fb06cace7947f789039738952fa339b2fb9b5f"></a>PH_RECV&#160;</td><td class="fielddoc"></td></tr>
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="adc29c2ff13d900c2f185ee95427fb06cada61f99f12c1562d7ca7a76e037a9cbd" name="adc29c2ff13d900c2f185ee95427fb06cada61f99f12c1562d7ca7a76e037a9cbd"></a>CAR_DEAF_SNR&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="adc29c2ff13d900c2f185ee95427fb06ca4a955f455704f0f13662f19dd6e64fb4" name="adc29c2ff13d900c2f185ee95427fb06ca4a955f455704f0f13662f19dd6e64fb4"></a>CAR_DEAF_HARD&#160;</td><td class="fielddoc"></td></tr>
 </table>
 
 </div>
@@ -1596,9 +1745,10 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 <table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a61dadd085c1777f559549e05962b2c9eabc5135ddbbff4b94e337b373dc753e07" name="a61dadd085c1777f559549e05962b2c9eabc5135ddbbff4b94e337b373dc753e07"></a>MS_WAIT&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a61dadd085c1777f559549e05962b2c9eab0ae6c3b3e7a5dfe7505414538438d2b" name="a61dadd085c1777f559549e05962b2c9eab0ae6c3b3e7a5dfe7505414538438d2b"></a>MS_PLAN&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a61dadd085c1777f559549e05962b2c9eab8ddae616ede0a992bb71b0ba707b176" name="a61dadd085c1777f559549e05962b2c9eab8ddae616ede0a992bb71b0ba707b176"></a>MS_IDLE&#160;</td><td class="fielddoc"></td></tr>
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a61dadd085c1777f559549e05962b2c9eac2528ab6b7e3b9eaf00d71f5842fb78a" name="a61dadd085c1777f559549e05962b2c9eac2528ab6b7e3b9eaf00d71f5842fb78a"></a>HELD_NONE&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a61dadd085c1777f559549e05962b2c9eabb0c31556a8ebd5014ffc868332ce6e6" name="a61dadd085c1777f559549e05962b2c9eabb0c31556a8ebd5014ffc868332ce6e6"></a>HELD_SLOTS&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a61dadd085c1777f559549e05962b2c9ea2c8a33b6f294ac1ba6cb150eb6d36f4d" name="a61dadd085c1777f559549e05962b2c9ea2c8a33b6f294ac1ba6cb150eb6d36f4d"></a>HELD_CARRIER&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a61dadd085c1777f559549e05962b2c9ea91627450d39ca9b8ae7b33506d48f0dc" name="a61dadd085c1777f559549e05962b2c9ea91627450d39ca9b8ae7b33506d48f0dc"></a>HELD_CARRIER_SAID&#160;</td><td class="fielddoc"></td></tr>
 </table>
 
 </div>
@@ -1615,12 +1765,74 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 <table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635aa1f964dcb37d6e134c0ff461f64a77c0" name="a726ca809ffd3d67ab4b8476646f26635aa1f964dcb37d6e134c0ff461f64a77c0"></a>ANC_POLL&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635a15d4508098f55f3f8ec01fd3689b38cf" name="a726ca809ffd3d67ab4b8476646f26635a15d4508098f55f3f8ec01fd3689b38cf"></a>ANC_DONE&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635aca37adbb4c786bc81575f612aabd409f" name="a726ca809ffd3d67ab4b8476646f26635aca37adbb4c786bc81575f612aabd409f"></a>ANC_ROUND&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635a61d87d80f6b37f97729cb007e8130b56" name="a726ca809ffd3d67ab4b8476646f26635a61d87d80f6b37f97729cb007e8130b56"></a>ANC_REQ&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635aedfe1f3bbfdaa200591be2828778e796" name="a726ca809ffd3d67ab4b8476646f26635aedfe1f3bbfdaa200591be2828778e796"></a>ANC_PATTERN&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635ac63818737f88b05e10b1afbab2d3a47d" name="a726ca809ffd3d67ab4b8476646f26635ac63818737f88b05e10b1afbab2d3a47d"></a>ANC_BOTH&#160;</td><td class="fielddoc"></td></tr>
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635ae261023c4e1074585d347a15a0652699" name="a726ca809ffd3d67ab4b8476646f26635ae261023c4e1074585d347a15a0652699"></a>KD_NONE&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635afe28904b98583bd27289207bc17a8c28" name="a726ca809ffd3d67ab4b8476646f26635afe28904b98583bd27289207bc17a8c28"></a>KD_POLL&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635ab285c54e42ea13ca372cb6f4128f175e" name="a726ca809ffd3d67ab4b8476646f26635ab285c54e42ea13ca372cb6f4128f175e"></a>KD_ROUND&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635ab8fd90a01c73581a74a576892b6f9006" name="a726ca809ffd3d67ab4b8476646f26635ab8fd90a01c73581a74a576892b6f9006"></a>KD_PATTERN_ACK&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635a385b910854c562b80b637d2b548f2bbe" name="a726ca809ffd3d67ab4b8476646f26635a385b910854c562b80b637d2b548f2bbe"></a>KD_PATTERN_BREAK&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635aa27083d6ffeb8e9eb3f5fe700956022b" name="a726ca809ffd3d67ab4b8476646f26635aa27083d6ffeb8e9eb3f5fe700956022b"></a>KD_REQ&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635a88516b1bf9d6b7f1f01dce3e875c6f34" name="a726ca809ffd3d67ab4b8476646f26635a88516b1bf9d6b7f1f01dce3e875c6f34"></a>KD_DONE&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a726ca809ffd3d67ab4b8476646f26635a8e86fddc7316e6c2cc947a6c7af5401f" name="a726ca809ffd3d67ab4b8476646f26635a8e86fddc7316e6c2cc947a6c7af5401f"></a>KD_BOTH&#160;</td><td class="fielddoc"></td></tr>
+</table>
+
+</div>
+</div>
+<a id="a0411cd49bb5b71852cecd93bcbf0ca2d" name="a0411cd49bb5b71852cecd93bcbf0ca2d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0411cd49bb5b71852cecd93bcbf0ca2d">&#9670;&#160;</a></span>anonymous enum</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">anonymous enum</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<table class="fieldtable">
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a0411cd49bb5b71852cecd93bcbf0ca2da3793f74e5990f63329226d4302574dd7" name="a0411cd49bb5b71852cecd93bcbf0ca2da3793f74e5990f63329226d4302574dd7"></a>PH_IDLE&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a0411cd49bb5b71852cecd93bcbf0ca2dac4bf03805070bf971d8ba91fbfcb849e" name="a0411cd49bb5b71852cecd93bcbf0ca2dac4bf03805070bf971d8ba91fbfcb849e"></a>PH_SEND&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a0411cd49bb5b71852cecd93bcbf0ca2dace7947f789039738952fa339b2fb9b5f" name="a0411cd49bb5b71852cecd93bcbf0ca2dace7947f789039738952fa339b2fb9b5f"></a>PH_RECV&#160;</td><td class="fielddoc"></td></tr>
+</table>
+
+</div>
+</div>
+<a id="abed82baf7f470b522273a3e37c24c600" name="abed82baf7f470b522273a3e37c24c600"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abed82baf7f470b522273a3e37c24c600">&#9670;&#160;</a></span>anonymous enum</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">anonymous enum</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<table class="fieldtable">
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="abed82baf7f470b522273a3e37c24c600abc5135ddbbff4b94e337b373dc753e07" name="abed82baf7f470b522273a3e37c24c600abc5135ddbbff4b94e337b373dc753e07"></a>MS_WAIT&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="abed82baf7f470b522273a3e37c24c600ab0ae6c3b3e7a5dfe7505414538438d2b" name="abed82baf7f470b522273a3e37c24c600ab0ae6c3b3e7a5dfe7505414538438d2b"></a>MS_PLAN&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="abed82baf7f470b522273a3e37c24c600ab8ddae616ede0a992bb71b0ba707b176" name="abed82baf7f470b522273a3e37c24c600ab8ddae616ede0a992bb71b0ba707b176"></a>MS_IDLE&#160;</td><td class="fielddoc"></td></tr>
+</table>
+
+</div>
+</div>
+<a id="ab04a0655cd1e3bcac5e8f48c18df1a57" name="ab04a0655cd1e3bcac5e8f48c18df1a57"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ab04a0655cd1e3bcac5e8f48c18df1a57">&#9670;&#160;</a></span>anonymous enum</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">anonymous enum</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<table class="fieldtable">
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="ab04a0655cd1e3bcac5e8f48c18df1a57aa1f964dcb37d6e134c0ff461f64a77c0" name="ab04a0655cd1e3bcac5e8f48c18df1a57aa1f964dcb37d6e134c0ff461f64a77c0"></a>ANC_POLL&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="ab04a0655cd1e3bcac5e8f48c18df1a57a15d4508098f55f3f8ec01fd3689b38cf" name="ab04a0655cd1e3bcac5e8f48c18df1a57a15d4508098f55f3f8ec01fd3689b38cf"></a>ANC_DONE&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="ab04a0655cd1e3bcac5e8f48c18df1a57aca37adbb4c786bc81575f612aabd409f" name="ab04a0655cd1e3bcac5e8f48c18df1a57aca37adbb4c786bc81575f612aabd409f"></a>ANC_ROUND&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="ab04a0655cd1e3bcac5e8f48c18df1a57a61d87d80f6b37f97729cb007e8130b56" name="ab04a0655cd1e3bcac5e8f48c18df1a57a61d87d80f6b37f97729cb007e8130b56"></a>ANC_REQ&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="ab04a0655cd1e3bcac5e8f48c18df1a57aedfe1f3bbfdaa200591be2828778e796" name="ab04a0655cd1e3bcac5e8f48c18df1a57aedfe1f3bbfdaa200591be2828778e796"></a>ANC_PATTERN&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="ab04a0655cd1e3bcac5e8f48c18df1a57ac63818737f88b05e10b1afbab2d3a47d" name="ab04a0655cd1e3bcac5e8f48c18df1a57ac63818737f88b05e10b1afbab2d3a47d"></a>ANC_BOTH&#160;</td><td class="fielddoc"></td></tr>
 </table>
 
 </div>
@@ -2004,8 +2216,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="ab6c0cf63fd83a3dafd4928b7cd6708fa" name="ab6c0cf63fd83a3dafd4928b7cd6708fa"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ab6c0cf63fd83a3dafd4928b7cd6708fa">&#9670;&#160;</a></span>burst_gap_ms()</h2>
+<a id="a863ad57664b528b5aca85949981f4d02" name="a863ad57664b528b5aca85949981f4d02"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a863ad57664b528b5aca85949981f4d02">&#9670;&#160;</a></span>burst_gap_ms()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -2016,9 +2228,19 @@ Variables</h2></td></tr>
         <tr>
           <td class="memname">static uint32_t burst_gap_ms </td>
           <td>(</td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>lv</em></td><td>)</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
           <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>lv</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
         </tr>
       </table>
   </td>
@@ -2194,6 +2416,24 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a7f771beb0bbcd6d0284b1014dd6379db" name="a7f771beb0bbcd6d0284b1014dd6379db"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7f771beb0bbcd6d0284b1014dd6379db">&#9670;&#160;</a></span>car_is_drained()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool car_is_drained </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="aa9cbf362b5531076c829e423e4755f80" name="aa9cbf362b5531076c829e423e4755f80"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aa9cbf362b5531076c829e423e4755f80">&#9670;&#160;</a></span>car_is_idle()</h2>
 
@@ -2346,14 +2586,14 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="aa1acba088667f688688612d33d95cba0" name="aa1acba088667f688688612d33d95cba0"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aa1acba088667f688688612d33d95cba0">&#9670;&#160;</a></span>car_on_frame()</h2>
+<a id="a4bd6bd1d020d6308fcc0b8e05e37a1d4" name="a4bd6bd1d020d6308fcc0b8e05e37a1d4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4bd6bd1d020d6308fcc0b8e05e37a1d4">&#9670;&#160;</a></span>car_on_frame()</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">void car_on_frame </td>
+          <td class="memname">bool car_on_frame </td>
           <td>(</td>
           <td class="paramtype"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
           <td class="paramname"><em>c</em>, </td>
@@ -2642,6 +2882,24 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a4c7366afe306ecbcec99b866ba379092" name="a4c7366afe306ecbcec99b866ba379092"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4c7366afe306ecbcec99b866ba379092">&#9670;&#160;</a></span>car_rx_verified()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool car_rx_verified </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a9e4387e8458738ea42a6cdcc58089b63" name="a9e4387e8458738ea42a6cdcc58089b63"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a9e4387e8458738ea42a6cdcc58089b63">&#9670;&#160;</a></span>car_seed_ctl_deaf()</h2>
 
@@ -2665,6 +2923,96 @@ Variables</h2></td></tr>
           <td></td>
           <td class="paramtype">bool&#160;</td>
           <td class="paramname"><em>peers</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="abf160f40dca6490ff21ebafb7bcff259" name="abf160f40dca6490ff21ebafb7bcff259"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abf160f40dca6490ff21ebafb7bcff259">&#9670;&#160;</a></span>car_seed_snr()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void car_seed_snr </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">float&#160;</td>
+          <td class="paramname"><em>mine</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">float&#160;</td>
+          <td class="paramname"><em>peers</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a1501cc5218da1f9be27977e3e1419c15" name="a1501cc5218da1f9be27977e3e1419c15"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1501cc5218da1f9be27977e3e1419c15">&#9670;&#160;</a></span>car_session_level_mode()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int car_session_level_mode </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>level</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a3b751dced8f73c218829241046efd143" name="a3b751dced8f73c218829241046efd143"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3b751dced8f73c218829241046efd143">&#9670;&#160;</a></span>car_set_floor_mode()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void car_set_floor_mode </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>mode</em>&#160;</td>
         </tr>
         <tr>
           <td></td>
@@ -2751,6 +3099,24 @@ Variables</h2></td></tr>
           <td>(</td>
           <td class="paramtype">uint32_t&#160;</td>
           <td class="paramname"><em>ms</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ab7e29ca976438362f855c81446a94e76" name="ab7e29ca976438362f855c81446a94e76"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ab7e29ca976438362f855c81446a94e76">&#9670;&#160;</a></span>car_set_short_rung()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void car_set_short_rung </td>
+          <td>(</td>
+          <td class="paramtype">bool&#160;</td>
+          <td class="paramname"><em>on</em></td><td>)</td>
           <td></td>
         </tr>
       </table>
@@ -2998,6 +3364,24 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a118f407767fad15e1038a01e4f116137" name="a118f407767fad15e1038a01e4f116137"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a118f407767fad15e1038a01e4f116137">&#9670;&#160;</a></span>car_wish_end()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void car_wish_end </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="acc1ef05ba007e0f5c6f4658bc7869d7b" name="acc1ef05ba007e0f5c6f4658bc7869d7b"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#acc1ef05ba007e0f5c6f4658bc7869d7b">&#9670;&#160;</a></span>choose_level()</h2>
 
@@ -3154,6 +3538,42 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="aed40f560bcdeff40604042f65510b2d8" name="aed40f560bcdeff40604042f65510b2d8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aed40f560bcdeff40604042f65510b2d8">&#9670;&#160;</a></span>deaf_rung()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static int deaf_rung </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>lv</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="ad599558e05fcdd2454e371ade7b4039d" name="ad599558e05fcdd2454e371ade7b4039d"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ad599558e05fcdd2454e371ade7b4039d">&#9670;&#160;</a></span>decode_block()</h2>
 
@@ -3190,8 +3610,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="ad0e34185f28f646c1d63af3da4c0ffa4" name="ad0e34185f28f646c1d63af3da4c0ffa4"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ad0e34185f28f646c1d63af3da4c0ffa4">&#9670;&#160;</a></span>decode_ctl()</h2>
+<a id="a26dc51aee7fadebd6901ae4611681d89" name="a26dc51aee7fadebd6901ae4611681d89"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a26dc51aee7fadebd6901ae4611681d89">&#9670;&#160;</a></span>decode_ctl()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -3202,6 +3622,12 @@ Variables</h2></td></tr>
         <tr>
           <td class="memname">static bool decode_ctl </td>
           <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
           <td class="paramtype">const uint8_t *&#160;</td>
           <td class="paramname"><em>b</em>, </td>
         </tr>
@@ -3368,6 +3794,42 @@ Variables</h2></td></tr>
           <td></td>
           <td class="paramtype">uint8_t *&#160;</td>
           <td class="paramname"><em>b</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a733c906c3354486a8e9d9f2eb8afbda5" name="a733c906c3354486a8e9d9f2eb8afbda5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a733c906c3354486a8e9d9f2eb8afbda5">&#9670;&#160;</a></span>fall_level()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static int fall_level </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>top</em>&#160;</td>
         </tr>
         <tr>
           <td></td>
@@ -3566,8 +4028,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a67d16b77a4e9b9d4904075c09b0e34d6" name="a67d16b77a4e9b9d4904075c09b0e34d6"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a67d16b77a4e9b9d4904075c09b0e34d6">&#9670;&#160;</a></span>keydown_cap()</h2>
+<a id="aed960c7b96a8b8454ad4c60b22553f5d" name="aed960c7b96a8b8454ad4c60b22553f5d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aed960c7b96a8b8454ad4c60b22553f5d">&#9670;&#160;</a></span>keydown_cap()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -3578,8 +4040,44 @@ Variables</h2></td></tr>
         <tr>
           <td class="memname">static int keydown_cap </td>
           <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
           <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>lv</em></td><td>)</td>
+          <td class="paramname"><em>lv</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a3b8c6d88ace56cfe55b6839384ea2908" name="a3b8c6d88ace56cfe55b6839384ea2908"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3b8c6d88ace56cfe55b6839384ea2908">&#9670;&#160;</a></span>keyed_why()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static const char * keyed_why </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>k</em></td><td>)</td>
           <td></td>
         </tr>
       </table>
@@ -3628,8 +4126,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a37cc3a10aecf8976620661521a156b4f" name="a37cc3a10aecf8976620661521a156b4f"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a37cc3a10aecf8976620661521a156b4f">&#9670;&#160;</a></span>level_air()</h2>
+<a id="acb4559dc95ed066101bc147c62bd13ad" name="acb4559dc95ed066101bc147c62bd13ad"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#acb4559dc95ed066101bc147c62bd13ad">&#9670;&#160;</a></span>level_air()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -3640,9 +4138,19 @@ Variables</h2></td></tr>
         <tr>
           <td class="memname">static uint64_t level_air </td>
           <td>(</td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>lv</em></td><td>)</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
           <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>lv</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
         </tr>
       </table>
   </td>
@@ -4030,6 +4538,42 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="aada8efacd0d7bdb3f34e251bdda60279" name="aada8efacd0d7bdb3f34e251bdda60279"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aada8efacd0d7bdb3f34e251bdda60279">&#9670;&#160;</a></span>lmode()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static int lmode </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>lv</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a66bd736913a0df55cc0c49f5ae43637c" name="a66bd736913a0df55cc0c49f5ae43637c"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a66bd736913a0df55cc0c49f5ae43637c">&#9670;&#160;</a></span>m_close_from()</h2>
 
@@ -4110,6 +4654,48 @@ Variables</h2></td></tr>
           <td></td>
           <td class="paramtype">int&#160;</td>
           <td class="paramname"><em>slot</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a97576f53913b048afae7da0dfd9f4ffb" name="a97576f53913b048afae7da0dfd9f4ffb"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a97576f53913b048afae7da0dfd9f4ffb">&#9670;&#160;</a></span>m_close_spent()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static void m_close_spent </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">uint64_t&#160;</td>
+          <td class="paramname"><em>te</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>mk</em>&#160;</td>
         </tr>
         <tr>
           <td></td>
@@ -4620,6 +5206,32 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="ad6a5c463e586fd7040781c317aa276e6" name="ad6a5c463e586fd7040781c317aa276e6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad6a5c463e586fd7040781c317aa276e6">&#9670;&#160;</a></span>m_peer_expect()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static size_t m_peer_expect </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="ab86d7aca9ed6e2e40addf5299489921a" name="ab86d7aca9ed6e2e40addf5299489921a"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ab86d7aca9ed6e2e40addf5299489921a">&#9670;&#160;</a></span>m_plan()</h2>
 
@@ -4966,6 +5578,32 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a000e53eaf799562555b217bf76e72f39" name="a000e53eaf799562555b217bf76e72f39"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a000e53eaf799562555b217bf76e72f39">&#9670;&#160;</a></span>my_backlog()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static uint8_t my_backlog </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="ae209d7cd9b7fed36d72e6b2e1890d9ed" name="ae209d7cd9b7fed36d72e6b2e1890d9ed"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ae209d7cd9b7fed36d72e6b2e1890d9ed">&#9670;&#160;</a></span>my_ctl_d()</h2>
 
@@ -4977,6 +5615,32 @@ Variables</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">static uint32_t my_ctl_d </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="acdbb2e79aca94581c6c933d062391663" name="acdbb2e79aca94581c6c933d062391663"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#acdbb2e79aca94581c6c933d062391663">&#9670;&#160;</a></span>my_snr()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static float my_snr </td>
           <td>(</td>
           <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
           <td class="paramname"><em>c</em></td><td>)</td>
@@ -5007,6 +5671,60 @@ Variables</h2></td></tr>
           <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
           <td class="paramname"><em>c</em></td><td>)</td>
           <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a24fc6829e83af93f596d57565d400941" name="a24fc6829e83af93f596d57565d400941"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a24fc6829e83af93f596d57565d400941">&#9670;&#160;</a></span>note_held()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static void note_held </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>why</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>keyed</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">uint64_t&#160;</td>
+          <td class="paramname"><em>now</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">uint64_t&#160;</td>
+          <td class="paramname"><em>ms</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
         </tr>
       </table>
   </td>
@@ -5162,6 +5880,32 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a6df5639b1369f6bdde7e8de8cfb5d843" name="a6df5639b1369f6bdde7e8de8cfb5d843"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6df5639b1369f6bdde7e8de8cfb5d843">&#9670;&#160;</a></span>peer_backlog_bytes()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static size_t peer_backlog_bytes </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a3cf9edc1e03e5b3edf3d663caa16d4df" name="a3cf9edc1e03e5b3edf3d663caa16d4df"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a3cf9edc1e03e5b3edf3d663caa16d4df">&#9670;&#160;</a></span>peer_ctl_on_floor()</h2>
 
@@ -5214,8 +5958,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="aad93cc11c9ba55363fb0cf04ca51f691" name="aad93cc11c9ba55363fb0cf04ca51f691"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aad93cc11c9ba55363fb0cf04ca51f691">&#9670;&#160;</a></span>peer_keyed()</h2>
+<a id="add5efc5a74b1df5a392168161681a397" name="add5efc5a74b1df5a392168161681a397"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#add5efc5a74b1df5a392168161681a397">&#9670;&#160;</a></span>peer_ended()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -5224,7 +5968,69 @@ Variables</h2></td></tr>
   <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">static bool peer_keyed </td>
+          <td class="memname">static bool peer_ended </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">bool&#160;</td>
+          <td class="paramname"><em>ending</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a8a34ae0ebbe7433a25f9d76432642abc" name="a8a34ae0ebbe7433a25f9d76432642abc"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a8a34ae0ebbe7433a25f9d76432642abc">&#9670;&#160;</a></span>peer_hears_me_db()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static float peer_hears_me_db </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a6dcb0c64c6863759f33fd3c9b36ff5a1" name="a6dcb0c64c6863759f33fd3c9b36ff5a1"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6dcb0c64c6863759f33fd3c9b36ff5a1">&#9670;&#160;</a></span>peer_keyed()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static int peer_keyed </td>
           <td>(</td>
           <td class="paramtype"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
           <td class="paramname"><em>c</em>, </td>
@@ -5239,6 +6045,32 @@ Variables</h2></td></tr>
           <td></td>
           <td>)</td>
           <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a717a29fcaccb5b9f0ad4bd65d6e9c207" name="a717a29fcaccb5b9f0ad4bd65d6e9c207"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a717a29fcaccb5b9f0ad4bd65d6e9c207">&#9670;&#160;</a></span>peer_next_guess()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static size_t peer_next_guess </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
         </tr>
       </table>
   </td>
@@ -5401,6 +6233,48 @@ Variables</h2></td></tr>
           <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
           <td class="paramname"><em>c</em></td><td>)</td>
           <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a40f8b7bd10ee15263ea8fab33860dcfe" name="a40f8b7bd10ee15263ea8fab33860dcfe"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a40f8b7bd10ee15263ea8fab33860dcfe">&#9670;&#160;</a></span>poll_k()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static int poll_k </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>lv</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>n</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
         </tr>
       </table>
   </td>
@@ -5586,8 +6460,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a7772474c7050b9afb6681f32047d47a4" name="a7772474c7050b9afb6681f32047d47a4"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a7772474c7050b9afb6681f32047d47a4">&#9670;&#160;</a></span>r_cap_ms()</h2>
+<a id="a895afc7364ba060e4fba11dc9f9c9834" name="a895afc7364ba060e4fba11dc9f9c9834"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a895afc7364ba060e4fba11dc9f9c9834">&#9670;&#160;</a></span>r_cap_ms()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -5598,8 +6472,8 @@ Variables</h2></td></tr>
         <tr>
           <td class="memname">static uint32_t r_cap_ms </td>
           <td>(</td>
-          <td class="paramtype">void&#160;</td>
-          <td class="paramname"></td><td>)</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
           <td></td>
         </tr>
       </table>
@@ -5612,8 +6486,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a9e9fab1566868b975dfad8057d6bb9e0" name="a9e9fab1566868b975dfad8057d6bb9e0"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a9e9fab1566868b975dfad8057d6bb9e0">&#9670;&#160;</a></span>r_floor_ms()</h2>
+<a id="ac28aec47a6551d9c05798777c597e227" name="ac28aec47a6551d9c05798777c597e227"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac28aec47a6551d9c05798777c597e227">&#9670;&#160;</a></span>r_floor_ms()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -5624,8 +6498,8 @@ Variables</h2></td></tr>
         <tr>
           <td class="memname">static uint32_t r_floor_ms </td>
           <td>(</td>
-          <td class="paramtype">void&#160;</td>
-          <td class="paramname"></td><td>)</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
           <td></td>
         </tr>
       </table>
@@ -5716,8 +6590,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a70105da1eff59e8992fa5beafc253cd7" name="a70105da1eff59e8992fa5beafc253cd7"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a70105da1eff59e8992fa5beafc253cd7">&#9670;&#160;</a></span>round_air()</h2>
+<a id="a7dae691e9ae0cb654bf52c17ffd51d42" name="a7dae691e9ae0cb654bf52c17ffd51d42"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7dae691e9ae0cb654bf52c17ffd51d42">&#9670;&#160;</a></span>round_air()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -5728,6 +6602,12 @@ Variables</h2></td></tr>
         <tr>
           <td class="memname">static uint64_t round_air </td>
           <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
           <td class="paramtype">int&#160;</td>
           <td class="paramname"><em>lv</em>, </td>
         </tr>
@@ -6220,6 +7100,42 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="ab50fd7135ec5b0ef5541cc64ee20d385" name="ab50fd7135ec5b0ef5541cc64ee20d385"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ab50fd7135ec5b0ef5541cc64ee20d385">&#9670;&#160;</a></span>s_idle_rung()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static int s_idle_rung </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">uint64_t&#160;</td>
+          <td class="paramname"><em>now</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a4b68b4eefaea1ed48d97dd77948e2e34" name="a4b68b4eefaea1ed48d97dd77948e2e34"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a4b68b4eefaea1ed48d97dd77948e2e34">&#9670;&#160;</a></span>s_on_ctl()</h2>
 
@@ -6342,8 +7258,34 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a92d6745128ed1f13f80103f89ade2c63" name="a92d6745128ed1f13f80103f89ade2c63"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a92d6745128ed1f13f80103f89ade2c63">&#9670;&#160;</a></span>s_round_ms()</h2>
+<a id="a88a0856486e4e44338462431740f91ab" name="a88a0856486e4e44338462431740f91ab"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a88a0856486e4e44338462431740f91ab">&#9670;&#160;</a></span>s_peer_expect()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static size_t s_peer_expect </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a99ee85f692d88008eca6200771e704cb" name="a99ee85f692d88008eca6200771e704cb"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a99ee85f692d88008eca6200771e704cb">&#9670;&#160;</a></span>s_round_ms()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -6354,6 +7296,12 @@ Variables</h2></td></tr>
         <tr>
           <td class="memname">static uint32_t s_round_ms </td>
           <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
           <td class="paramtype">int&#160;</td>
           <td class="paramname"><em>lv</em>, </td>
         </tr>
@@ -6660,6 +7608,54 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a5f1c75c98fbc21ca59a3a9667e55ee26" name="a5f1c75c98fbc21ca59a3a9667e55ee26"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5f1c75c98fbc21ca59a3a9667e55ee26">&#9670;&#160;</a></span>short_rung()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static int short_rung </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>lv</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>bytes</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int *&#160;</td>
+          <td class="paramname"><em>pn</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a3711d2e2480542218eca2b6e2e09d74a" name="a3711d2e2480542218eca2b6e2e09d74a"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a3711d2e2480542218eca2b6e2e09d74a">&#9670;&#160;</a></span>slot_period()</h2>
 
@@ -6686,6 +7682,136 @@ Variables</h2></td></tr>
           <td></td>
           <td class="paramtype">uint32_t&#160;</td>
           <td class="paramname"><em>r</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a417a57cf76c8140af2c775acc7a7c51c" name="a417a57cf76c8140af2c775acc7a7c51c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a417a57cf76c8140af2c775acc7a7c51c">&#9670;&#160;</a></span>snr_code()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static int snr_code </td>
+          <td>(</td>
+          <td class="paramtype">float&#160;</td>
+          <td class="paramname"><em>db</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ac6c5ec7eb2992ae00e6b5612a90f8588" name="ac6c5ec7eb2992ae00e6b5612a90f8588"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac6c5ec7eb2992ae00e6b5612a90f8588">&#9670;&#160;</a></span>snr_of_code()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static float snr_of_code </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>code</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ad25bbcf79bd979c137bd53756a4db0c2" name="ad25bbcf79bd979c137bd53756a4db0c2"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad25bbcf79bd979c137bd53756a4db0c2">&#9670;&#160;</a></span>stamp_hint()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static void stamp_hint </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">msg_t *&#160;</td>
+          <td class="paramname"><em>m</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a403d6a89932ae40827765223e6fea7c9" name="a403d6a89932ae40827765223e6fea7c9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a403d6a89932ae40827765223e6fea7c9">&#9670;&#160;</a></span>take_peer_snr()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static void take_peer_snr </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">uint64_t&#160;</td>
+          <td class="paramname"><em>now</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const msg_t *&#160;</td>
+          <td class="paramname"><em>m</em>&#160;</td>
         </tr>
         <tr>
           <td></td>
@@ -6738,8 +7864,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="abc5319dc9a09274b8c28d86b7a4337a9" name="abc5319dc9a09274b8c28d86b7a4337a9"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#abc5319dc9a09274b8c28d86b7a4337a9">&#9670;&#160;</a></span>turn_cap()</h2>
+<a id="ac4a7ded760c45a69cc41c95a02e2d283" name="ac4a7ded760c45a69cc41c95a02e2d283"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac4a7ded760c45a69cc41c95a02e2d283">&#9670;&#160;</a></span>turn_cap()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -6750,9 +7876,19 @@ Variables</h2></td></tr>
         <tr>
           <td class="memname">static uint64_t turn_cap </td>
           <td>(</td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>lv</em></td><td>)</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
           <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>lv</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
         </tr>
       </table>
   </td>
@@ -6764,8 +7900,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="aad62d22757b8ad49f4b3d5170c9ac2c4" name="aad62d22757b8ad49f4b3d5170c9ac2c4"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aad62d22757b8ad49f4b3d5170c9ac2c4">&#9670;&#160;</a></span>turn_quantum()</h2>
+<a id="a5a6749c1636ef2bd3f9a14df4c991286" name="a5a6749c1636ef2bd3f9a14df4c991286"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5a6749c1636ef2bd3f9a14df4c991286">&#9670;&#160;</a></span>turn_quantum()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -6776,9 +7912,19 @@ Variables</h2></td></tr>
         <tr>
           <td class="memname">static uint64_t turn_quantum </td>
           <td>(</td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>lv</em></td><td>)</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
           <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>lv</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
         </tr>
       </table>
   </td>
@@ -6867,8 +8013,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a9888471b4ba959a4fc192798327d66e2" name="a9888471b4ba959a4fc192798327d66e2"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a9888471b4ba959a4fc192798327d66e2">&#9670;&#160;</a></span>[struct]</h2>
+<a id="aa4dacfd4b185d647b056afdbf9dcfb0c" name="aa4dacfd4b185d647b056afdbf9dcfb0c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa4dacfd4b185d647b056afdbf9dcfb0c">&#9670;&#160;</a></span>[struct]</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -6955,6 +8101,28 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a4a79eb04640303f7216f7875904ebc08" name="a4a79eb04640303f7216f7875904ebc08"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4a79eb04640303f7216f7875904ebc08">&#9670;&#160;</a></span>g_short_rung</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool g_short_rung = true</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="acde1e063f915d9cf0978b15744e959f5" name="acde1e063f915d9cf0978b15744e959f5"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#acde1e063f915d9cf0978b15744e959f5">&#9670;&#160;</a></span>LADDER</h2>
 
@@ -7010,8 +8178,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="abf01d56be5ecedf64d1e64a830f0f9ad" name="abf01d56be5ecedf64d1e64a830f0f9ad"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#abf01d56be5ecedf64d1e64a830f0f9ad">&#9670;&#160;</a></span>[struct]</h2>
+<a id="aa01eba826c045105a89d29f617ce475c" name="aa01eba826c045105a89d29f617ce475c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa01eba826c045105a89d29f617ce475c">&#9670;&#160;</a></span>[struct]</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -7028,12 +8196,12 @@ Variables</h2></td></tr>
 <div class="line">    </div>
 <div class="line">    { FREEDV_MODE_DATAC15, -3.0f - <a class="code hl_define" href="arq__protocol_8h.html#a6c72a13757f9a747e65ad4ba8b0e9fae">ARQ_SNR_HYST_DB</a> },</div>
 <div class="line">}</div>
-<div class="ttc" id="aarq__protocol_8h_html_a48ce560e533a9b945560e06b1d33a6f9"><div class="ttname"><a href="arq__protocol_8h.html#a48ce560e533a9b945560e06b1d33a6f9">ARQ_SNR_MIN_DATAC3_DB</a></div><div class="ttdeci">#define ARQ_SNR_MIN_DATAC3_DB</div><div class="ttdef"><b>Definition</b> arq_protocol.h:217</div></div>
-<div class="ttc" id="aarq__protocol_8h_html_a6c72a13757f9a747e65ad4ba8b0e9fae"><div class="ttname"><a href="arq__protocol_8h.html#a6c72a13757f9a747e65ad4ba8b0e9fae">ARQ_SNR_HYST_DB</a></div><div class="ttdeci">#define ARQ_SNR_HYST_DB</div><div class="ttdef"><b>Definition</b> arq_protocol.h:214</div></div>
-<div class="ttc" id="aarq__protocol_8h_html_abd26ee0b8c26eb7922d67279d14394dc"><div class="ttname"><a href="arq__protocol_8h.html#abd26ee0b8c26eb7922d67279d14394dc">ARQ_SNR_MIN_QAM16C2_DB</a></div><div class="ttdeci">#define ARQ_SNR_MIN_QAM16C2_DB</div><div class="ttdef"><b>Definition</b> arq_protocol.h:220</div></div>
-<div class="ttc" id="aarq__protocol_8h_html_ae803809a0e33456bb0d2c44cc1fb761d"><div class="ttname"><a href="arq__protocol_8h.html#ae803809a0e33456bb0d2c44cc1fb761d">ARQ_SNR_MIN_DATAC17_DB</a></div><div class="ttdeci">#define ARQ_SNR_MIN_DATAC17_DB</div><div class="ttdef"><b>Definition</b> arq_protocol.h:219</div></div>
-<div class="ttc" id="aarq__protocol_8h_html_afdc98f53e2482d9346464c1842debbe6"><div class="ttname"><a href="arq__protocol_8h.html#afdc98f53e2482d9346464c1842debbe6">ARQ_SNR_MIN_DATAC1_DB</a></div><div class="ttdeci">#define ARQ_SNR_MIN_DATAC1_DB</div><div class="ttdef"><b>Definition</b> arq_protocol.h:218</div></div>
-<div class="ttc" id="acarousel_8c_html_a76be5fa28992bac4be944f0bf2f6e314"><div class="ttname"><a href="carousel_8c.html#a76be5fa28992bac4be944f0bf2f6e314">DATAC3_START_MARGIN_DB</a></div><div class="ttdeci">#define DATAC3_START_MARGIN_DB</div><div class="ttdef"><b>Definition</b> carousel.c:2329</div></div>
+<div class="ttc" id="aarq__protocol_8h_html_a48ce560e533a9b945560e06b1d33a6f9"><div class="ttname"><a href="arq__protocol_8h.html#a48ce560e533a9b945560e06b1d33a6f9">ARQ_SNR_MIN_DATAC3_DB</a></div><div class="ttdeci">#define ARQ_SNR_MIN_DATAC3_DB</div><div class="ttdef"><b>Definition</b> arq_protocol.h:224</div></div>
+<div class="ttc" id="aarq__protocol_8h_html_a6c72a13757f9a747e65ad4ba8b0e9fae"><div class="ttname"><a href="arq__protocol_8h.html#a6c72a13757f9a747e65ad4ba8b0e9fae">ARQ_SNR_HYST_DB</a></div><div class="ttdeci">#define ARQ_SNR_HYST_DB</div><div class="ttdef"><b>Definition</b> arq_protocol.h:221</div></div>
+<div class="ttc" id="aarq__protocol_8h_html_abd26ee0b8c26eb7922d67279d14394dc"><div class="ttname"><a href="arq__protocol_8h.html#abd26ee0b8c26eb7922d67279d14394dc">ARQ_SNR_MIN_QAM16C2_DB</a></div><div class="ttdeci">#define ARQ_SNR_MIN_QAM16C2_DB</div><div class="ttdef"><b>Definition</b> arq_protocol.h:227</div></div>
+<div class="ttc" id="aarq__protocol_8h_html_ae803809a0e33456bb0d2c44cc1fb761d"><div class="ttname"><a href="arq__protocol_8h.html#ae803809a0e33456bb0d2c44cc1fb761d">ARQ_SNR_MIN_DATAC17_DB</a></div><div class="ttdeci">#define ARQ_SNR_MIN_DATAC17_DB</div><div class="ttdef"><b>Definition</b> arq_protocol.h:226</div></div>
+<div class="ttc" id="aarq__protocol_8h_html_afdc98f53e2482d9346464c1842debbe6"><div class="ttname"><a href="arq__protocol_8h.html#afdc98f53e2482d9346464c1842debbe6">ARQ_SNR_MIN_DATAC1_DB</a></div><div class="ttdeci">#define ARQ_SNR_MIN_DATAC1_DB</div><div class="ttdef"><b>Definition</b> arq_protocol.h:225</div></div>
+<div class="ttc" id="acarousel_8c_html_a76be5fa28992bac4be944f0bf2f6e314"><div class="ttname"><a href="carousel_8c.html#a76be5fa28992bac4be944f0bf2f6e314">DATAC3_START_MARGIN_DB</a></div><div class="ttdeci">#define DATAC3_START_MARGIN_DB</div><div class="ttdef"><b>Definition</b> carousel.c:2810</div></div>
 </div><!-- fragment -->
 </div>
 </div>

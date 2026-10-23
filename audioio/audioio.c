@@ -48,6 +48,7 @@
 #include "cfg_utils.h"
 #include "resampler.h"
 #include "pcm24.h"
+#include "hl2.h"
 
 /* Must match the definition in common/mercury_engine.c: _Atomic, not
  * volatile.  This global is written from the termination signal handler and
@@ -357,9 +358,43 @@ int audioio_available_subsystems(int *subsystems, int max)
 #else
     ADD(AUDIO_SUBSYSTEM_ALSA);
 #endif
+    ADD(AUDIO_SUBSYSTEM_HL2);        /* a network radio: every platform */
 #undef ADD
 
     return n;
+}
+
+/* Placeholder for the radio_playback slot of the transports whose one
+ * thread owns both directions (sock, rtp, hl2): teardown
+ * (audioio_stop_threads/audioio_deinit) joins two threads, so both handles
+ * must be real. */
+static void *idle_thread(void *unused)
+{
+    (void) unused;
+    while (!mercury_stop && !audio_shutdown_)
+        ffthread_sleep(FIFO_AUDIO_POLL_MS * 10);
+    return NULL;
+}
+
+/* -x hl2 runs on the capture device string (the radio's address). */
+static hl2_ctx s_hl2_ctx = {
+    .device = s_capture_dev, .health = audio_health_set, .stop = &audio_shutdown_,
+};
+
+void audioio_hl2_set(const audioio_hl2_settings *st)
+{
+    hl2_set_frequency(st->frequency_hz);
+    hl2_set_rx_gain_db(st->rx_gain_db);
+    hl2_set_tx_drive(st->tx_drive);
+    hl2_set_pa(st->pa);
+}
+
+void audioio_hl2_get(audioio_hl2_settings *st)
+{
+    st->frequency_hz = hl2_get_frequency();
+    st->rx_gain_db = hl2_get_rx_gain_db();
+    st->tx_drive = hl2_get_tx_drive();
+    st->pa = hl2_get_pa();
 }
 
 static void *null_capture_thread(void *unused)
@@ -725,7 +760,7 @@ static int sock_send_full(int fd, const uint8_t *buf, size_t len)
 
 /* The single lockstep worker: RX deposit, clock advance, TX drain -- one
  * frame exchange per sim block.  Runs as the `radio_capture` thread; the
- * paired `radio_playback` slot is sock_idle_thread (teardown joins both). */
+ * paired `radio_playback` slot is idle_thread (teardown joins both). */
 static void *sock_transport_thread(void *device_ptr)
 {
     const char *path = (const char *) device_ptr;
@@ -869,17 +904,6 @@ static void *sock_transport_thread(void *device_ptr)
     free(ring32);
     free(txframe);
     HLOGI("audio-sock", "lockstep transport thread exit");
-    return NULL;
-}
-
-/* Placeholder for the radio_playback slot: the lockstep thread owns both
- * directions, but teardown (audioio_stop_threads/audioio_deinit) joins two
- * threads, so both handles must be real. */
-static void *sock_idle_thread(void *unused)
-{
-    (void) unused;
-    while (!mercury_stop && !audio_shutdown_)
-        ffthread_sleep(FIFO_AUDIO_POLL_MS * 10);
     return NULL;
 }
 
@@ -2335,6 +2359,30 @@ static int get_soundcard_list_int(int audio_system, int mode,
         audio_system == AUDIO_SUBSYSTEM_RTP)
         return 0;
 
+    /* A Hermes-Lite 2 is both directions: "auto" and every radio that
+     * answers a discovery (a running stream shows our own as in use). */
+    if (audio_system == AUDIO_SUBSYSTEM_HL2)
+    {
+        (void) mode;
+        hl2_board b[8];
+        int nb = hl2_discover(b, 8, 400);
+        if (max_count > 0)
+        {
+            snprintf(ids[count], AUDIO_DEV_STR_MAX, "auto");
+            snprintf(dev_names[count], AUDIO_DEV_STR_MAX, "Hermes-Lite 2: the first one found");
+            count++;
+        }
+        for (int i = 0; i < nb && count < max_count; i++, count++)
+        {
+            snprintf(ids[count], AUDIO_DEV_STR_MAX, "%.63s", b[i].addr);
+            snprintf(dev_names[count], AUDIO_DEV_STR_MAX,
+                     "Hermes-Lite 2 at %.63s (%02x:%02x:%02x, gateware %u.%u)%s", b[i].addr,
+                     b[i].mac[3], b[i].mac[4], b[i].mac[5], b[i].gateware, b[i].gateware_minor,
+                     b[i].busy ? ", in use" : "");
+        }
+        return count;
+    }
+
 #if defined(_WIN32)
     if (audio_system == AUDIO_SUBSYSTEM_WASAPI)
         audio = (ffaudio_interface *) &ffwasapi;
@@ -2482,7 +2530,7 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
 
     if (audio_subsys == AUDIO_SUBSYSTEM_SHM || audio_subsys == AUDIO_SUBSYSTEM_NULL ||
         audio_subsys == AUDIO_SUBSYSTEM_FIFO || audio_subsys == AUDIO_SUBSYSTEM_SOCK ||
-        audio_subsys == AUDIO_SUBSYSTEM_RTP)
+        audio_subsys == AUDIO_SUBSYSTEM_RTP || audio_subsys == AUDIO_SUBSYSTEM_HL2)
         return;
 
     /* Heap, not stack: DEVICE_RESOLVE_MAX x AUDIO_DEV_STR_MAX is 16 KB per
@@ -2638,6 +2686,21 @@ void list_soundcards(int audio_system)
     {
         printf("RTP audio subsystem selected (multicast groups, no devices): "
                "-i <rx group>[,iface] -o <tx group>.\n");
+        audio = NULL;
+        return;
+    }
+    if (audio_subsystem == AUDIO_SUBSYSTEM_HL2)
+    {
+        hl2_board b[16];
+        int nb = hl2_discover(b, 16, 1500);
+        printf("Hermes-Lite 2 radios on the local network (-i auto, or -i <address>):\n");
+        for (int i = 0; i < nb; i++)
+            printf("  %s  MAC %02x:%02x:%02x:%02x:%02x:%02x  board %u  gateware %u.%u%s\n",
+                   b[i].addr, b[i].mac[0], b[i].mac[1], b[i].mac[2], b[i].mac[3], b[i].mac[4],
+                   b[i].mac[5], b[i].board_id, b[i].gateware, b[i].gateware_minor,
+                   b[i].busy ? "  (in use by another program)" : "");
+        if (!nb)
+            printf("  none answered a broadcast (a radio on another subnet needs -i <address>)\n");
         audio = NULL;
         return;
     }
@@ -2925,7 +2988,7 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
             return -1;
         fifo_ignore_sigpipe();
         pthread_create(radio_capture, NULL, sock_transport_thread, (void *) s_capture_dev);
-        pthread_create(radio_playback, NULL, sock_idle_thread, NULL);
+        pthread_create(radio_playback, NULL, idle_thread, NULL);
         s_radio_capture = *radio_capture;
         s_radio_playback = *radio_playback;
         return 0;
@@ -2939,11 +3002,20 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
         return -1;
 #else
         pthread_create(radio_capture, NULL, rtp_transport_thread, NULL);
-        pthread_create(radio_playback, NULL, sock_idle_thread, NULL);
+        pthread_create(radio_playback, NULL, idle_thread, NULL);
         s_radio_capture = *radio_capture;
         s_radio_playback = *radio_playback;
         return 0;
 #endif
+    }
+
+    if (audio_subsystem == AUDIO_SUBSYSTEM_HL2)
+    {
+        pthread_create(radio_capture, NULL, hl2_transport_thread, (void *) &s_hl2_ctx);
+        pthread_create(radio_playback, NULL, idle_thread, NULL);
+        s_radio_capture = *radio_capture;
+        s_radio_playback = *radio_playback;
+        return 0;
     }
 
     if (audio_subsystem == AUDIO_SUBSYSTEM_NULL)
@@ -3061,6 +3133,18 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
         return 0;
     }
 
+    if (audio_subsystem == AUDIO_SUBSYSTEM_HL2)
+    {
+#if defined(AUDIOIO_ALSA_PULSE)
+        if (was_pulse || audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+            pthread_mutex_unlock(&s_pulse_lock);
+#endif
+        pthread_create(&s_radio_capture, NULL, hl2_transport_thread, (void *) &s_hl2_ctx);
+        pthread_create(&s_radio_playback, NULL, idle_thread, NULL);
+        HLOGI("audio-restart", "Hermes-Lite 2 transport restarted");
+        return 0;
+    }
+
 #ifndef _WIN32
     if (audio_subsystem == AUDIO_SUBSYSTEM_SOCK)
     {
@@ -3072,7 +3156,7 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
             return -1;
         fifo_ignore_sigpipe();
         pthread_create(&s_radio_capture, NULL, sock_transport_thread, (void *) s_capture_dev);
-        pthread_create(&s_radio_playback, NULL, sock_idle_thread, NULL);
+        pthread_create(&s_radio_playback, NULL, idle_thread, NULL);
         HLOGI("audio-restart", "sock lockstep threads restarted");
         return 0;
     }
@@ -3084,7 +3168,7 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
             pthread_mutex_unlock(&s_pulse_lock);
 #endif
         pthread_create(&s_radio_capture, NULL, rtp_transport_thread, NULL);
-        pthread_create(&s_radio_playback, NULL, sock_idle_thread, NULL);
+        pthread_create(&s_radio_playback, NULL, idle_thread, NULL);
         HLOGI("audio-restart", "RTP transport restarted");
         return 0;
     }

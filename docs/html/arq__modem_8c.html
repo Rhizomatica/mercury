@@ -188,6 +188,10 @@ Functions</h2></td></tr>
 <tr class="separator:afd04700977278532eef094f0f65efcf9"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a40d419d1628f71a24079277f7bc71151" id="r_a40d419d1628f71a24079277f7bc71151"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a40d419d1628f71a24079277f7bc71151">arq_modem_crc_seed</a> (uint16_t seed)</td></tr>
 <tr class="separator:a40d419d1628f71a24079277f7bc71151"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a52ae42a36f113a5f416b76feb97f5de9" id="r_a52ae42a36f113a5f416b76feb97f5de9"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a52ae42a36f113a5f416b76feb97f5de9">arq_modem_set_floor_mode_fn</a> (void(*fn)(int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>))</td></tr>
+<tr class="separator:a52ae42a36f113a5f416b76feb97f5de9"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aadeb75066fac47cce580e8cb0144293e" id="r_aadeb75066fac47cce580e8cb0144293e"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#aadeb75066fac47cce580e8cb0144293e">arq_modem_floor_mode</a> (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
+<tr class="separator:aadeb75066fac47cce580e8cb0144293e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af2af9af0a32a8df135c9ac30df012d88" id="r_af2af9af0a32a8df135c9ac30df012d88"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#af2af9af0a32a8df135c9ac30df012d88">arq_modem_ptt_on</a> (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, size_t frame_size)</td></tr>
 <tr class="memdesc:af2af9af0a32a8df135c9ac30df012d88"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify ARQ that PTT has gone ON.  <br /></td></tr>
 <tr class="separator:af2af9af0a32a8df135c9ac30df012d88"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -225,6 +229,8 @@ Variables</h2></td></tr>
 <tr class="separator:abde24d310b14d80ecfdc24efeb790681"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a67af575954a5ba2cba424fcfef726c31" id="r_a67af575954a5ba2cba424fcfef726c31"><td class="memItemLeft" align="right" valign="top">static void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a67af575954a5ba2cba424fcfef726c31">g_crc_seed_fn</a> )(uint16_t seed) = NULL</td></tr>
 <tr class="separator:a67af575954a5ba2cba424fcfef726c31"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7d3b53c63ff0c8f913b6f220dd0cb42a" id="r_a7d3b53c63ff0c8f913b6f220dd0cb42a"><td class="memItemLeft" align="right" valign="top">static void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__modem_8c.html#a7d3b53c63ff0c8f913b6f220dd0cb42a">g_floor_mode_fn</a> )(int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>) = NULL</td></tr>
+<tr class="separator:a7d3b53c63ff0c8f913b6f220dd0cb42a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <h2 class="groupheader">Macro Definition Documentation</h2>
 <a id="a7a863f6a4418b898cdb82d5ff5fa2752" name="a7a863f6a4418b898cdb82d5ff5fa2752"></a>
@@ -337,6 +343,24 @@ Variables</h2></td></tr>
 
 <p>Enqueue a modem action (called from FSM action callbacks). </p>
 <dl class="section return"><dt>Returns</dt><dd>0 on success, -1 if queue full. </dd></dl>
+
+</div>
+</div>
+<a id="aadeb75066fac47cce580e8cb0144293e" name="aadeb75066fac47cce580e8cb0144293e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aadeb75066fac47cce580e8cb0144293e">&#9670;&#160;</a></span>arq_modem_floor_mode()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_modem_floor_mode </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>mode</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
 
 </div>
 </div>
@@ -567,6 +591,24 @@ channel right now" without including modem.h, keeping this header the single ARQ
 
 </div>
 </div>
+<a id="a52ae42a36f113a5f416b76feb97f5de9" name="a52ae42a36f113a5f416b76feb97f5de9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a52ae42a36f113a5f416b76feb97f5de9">&#9670;&#160;</a></span>arq_modem_set_floor_mode_fn()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_modem_set_floor_mode_fn </td>
+          <td>(</td>
+          <td class="paramtype">void(*)(int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)&#160;</td>
+          <td class="paramname"><em>fn</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <h2 class="groupheader">Variable Documentation</h2>
 <a id="a536b3d3a51854faff9e8cdd998444bdb" name="a536b3d3a51854faff9e8cdd998444bdb"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a536b3d3a51854faff9e8cdd998444bdb">&#9670;&#160;</a></span>g_cap</h2>
@@ -652,6 +694,32 @@ channel right now" without including modem.h, keeping this header the single ARQ
           <td>(</td>
           <td class="paramtype">uint16_t&#160;</td>
           <td class="paramname"><em>seed</em></td><td>)</td>
+          <td> = NULL</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a7d3b53c63ff0c8f913b6f220dd0cb42a" name="a7d3b53c63ff0c8f913b6f220dd0cb42a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7d3b53c63ff0c8f913b6f220dd0cb42a">&#9670;&#160;</a></span>g_floor_mode_fn</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void(* g_floor_mode_fn) (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>) </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>mode</em></td><td>)</td>
           <td> = NULL</td>
         </tr>
       </table>

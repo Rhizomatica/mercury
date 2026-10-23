@@ -114,6 +114,7 @@ var audioSubsystemLabels = map[string]string{
 	"coreaudio": "CoreAudio",
 	"oss":       "OSS",
 	"aaudio":    "AAudio",
+	"hl2":       "Hermes-Lite 2 (network)",
 }
 
 func audioSubsystemLabel(id string) string {
@@ -162,6 +163,13 @@ type telemetryState struct {
 	FreqOffsetValid bool
 	FreqOffsetHz    float64
 	FreqOffsetAgeMs int64
+	// A Hermes-Lite 2's settings (-x hl2); HL2Valid is false on any other
+	// audio system.
+	HL2Valid    bool
+	HL2FreqHz   int64
+	HL2RxGainDB int
+	HL2TxDrive  int
+	HL2PA       bool
 }
 
 type uiBindings struct {
@@ -253,6 +261,13 @@ func parseStatusMessage(payload []byte) (telemetryState, error) {
 		status.FreqOffsetValid = true
 		status.FreqOffsetHz = v
 		status.FreqOffsetAgeMs = int64(toFloat64(raw["freq_offset_age_ms"]))
+	}
+	if hl2, ok := raw["hl2"].(map[string]interface{}); ok {
+		status.HL2Valid = true
+		status.HL2FreqHz = int64(toFloat64(hl2["frequency_hz"]))
+		status.HL2RxGainDB = int(toFloat64(hl2["rx_gain_db"]))
+		status.HL2TxDrive = int(toFloat64(hl2["tx_drive"]))
+		status.HL2PA = toBool(hl2["pa"])
 	}
 	return status, nil
 }
@@ -1452,9 +1467,81 @@ func main() {
 			)
 		}
 
+		// A Hermes-Lite 2 is the radio as well as the sound card: Mercury tunes
+		// it and keys it itself, so its settings live here.
+		state.mu.RLock()
+		tel := state.telemetry
+		state.mu.RUnlock()
+		hl2Freq := widget.NewEntry()
+		hl2Freq.SetPlaceHolder("7074.000")
+		if tel.HL2FreqHz > 0 {
+			hl2Freq.SetText(strconv.FormatFloat(float64(tel.HL2FreqHz)/1000, 'f', 3, 64))
+		}
+		hl2Gain := widget.NewEntry()
+		hl2Gain.SetText("20")
+		hl2Drive := widget.NewSlider(0, 255)
+		hl2Drive.Step = 1
+		hl2Drive.SetValue(128)
+		hl2PA := widget.NewCheck("PA on (5 W output)", nil)
+		hl2PA.SetChecked(true)
+		if tel.HL2Valid {
+			hl2Gain.SetText(strconv.Itoa(tel.HL2RxGainDB))
+			hl2Drive.SetValue(float64(tel.HL2TxDrive))
+			hl2PA.SetChecked(tel.HL2PA)
+		}
+		hl2DriveLabel := widget.NewLabel(fmt.Sprintf("%.0f", hl2Drive.Value))
+		hl2Drive.OnChanged = func(v float64) { hl2DriveLabel.SetText(fmt.Sprintf("%.0f", v)) }
+		hl2Apply := widget.NewButton("Apply radio settings", func() {
+			khz, err := strconv.ParseFloat(strings.TrimSpace(hl2Freq.Text), 64)
+			if err != nil || khz < 10 || khz > 38400 {
+				appendLog("Hermes-Lite 2: enter the dial frequency in kHz, 10 to 38400.\n")
+				return
+			}
+			gain, err := strconv.Atoi(strings.TrimSpace(hl2Gain.Text))
+			if err != nil || gain < -12 || gain > 48 {
+				appendLog("Hermes-Lite 2: RX gain is -12 to 48 dB.\n")
+				return
+			}
+			pa := "0"
+			if hl2PA.Checked {
+				pa = "1"
+			}
+			hz := strconv.FormatInt(int64(math.Round(khz*1000)), 10)
+			drive := fmt.Sprintf("%.0f", hl2Drive.Value)
+			if err := sendWSCommand("set_hl2_config", hz, strconv.Itoa(gain), drive, pa, "", "", ""); err != nil {
+				appendLog(fmt.Sprintf("Failed to send Hermes-Lite 2 settings: %v\n", err))
+			} else {
+				appendLog(fmt.Sprintf("Hermes-Lite 2: %s kHz USB, RX gain %d dB, drive %s, PA %s\n",
+					strconv.FormatFloat(khz, 'f', 3, 64), gain, drive, map[string]string{"1": "on", "0": "off"}[pa]))
+			}
+		})
+		hl2Box := widget.NewCard("Hermes-Lite 2", "Mercury tunes the radio (upper sideband) and keys it in the stream: no CAT or PTT to set up.",
+			container.NewVBox(
+				container.NewGridWithColumns(2,
+					widget.NewLabel("Frequency (kHz)"), hl2Freq,
+					widget.NewLabel("RX gain (dB, -12..48)"), hl2Gain,
+					widget.NewLabel("TX drive (0..255)"), container.NewBorder(nil, nil, nil, hl2DriveLabel, hl2Drive),
+					layout.NewSpacer(), hl2PA,
+				),
+				container.NewHBox(layout.NewSpacer(), hl2Apply, layout.NewSpacer()),
+			))
+		if currentSubsystem != "hl2" {
+			hl2Box.Hide()
+		}
+		if subsystemSelect != nil {
+			subsystemSelect.OnChanged = func(label string) {
+				if audioSubsystemID(label) == "hl2" {
+					hl2Box.Show()
+				} else {
+					hl2Box.Hide()
+				}
+			}
+		}
+
 		content := container.NewVBox(
 			rows,
 			container.NewHBox(layout.NewSpacer(), applyBtn, layout.NewSpacer()),
+			hl2Box,
 		)
 
 		dialog.ShowCustom("Soundcards", "Close", content, myWindow)

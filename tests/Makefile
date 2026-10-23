@@ -64,7 +64,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
-            test_freedv_harq test_sock_wire test_rtp_wire test_virtual_clock test_watterson \
+            test_freedv_harq test_sock_wire test_rtp_wire test_hl2_wire test_hl2_dsp test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
@@ -99,6 +99,13 @@ test_ring_buffer: common/test_ring_buffer.c $(UNITY_SRC) ../common/ring_buffer_p
 
 # Audio resampler test (offline, no sound card)
 test_resampler: audioio/test_resampler.c $(UNITY_SRC) ../audioio/resampler.c
+	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
+
+# Hermes-Lite 2 transport: SSB modem and protocol-1 wire codec (offline)
+test_hl2_dsp: audioio/test_hl2_dsp.c $(UNITY_SRC) ../audioio/hl2_dsp.c
+	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
+
+test_hl2_wire: audioio/test_hl2_wire.c $(UNITY_SRC)
 	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # 24-bit packed PCM conversion test (offline, no sound card)
@@ -233,7 +240,7 @@ test_cfg_utils: common/test_cfg_utils.c $(UNITY_SRC) \
                 ../common/cfg_utils.c ../radio_io/cm108_ptt.c \
                 ../common/hermes_log.c \
                 ../common/iniparser/iniparser.c ../common/iniparser/dictionary.c
-	$(CC) $(CFLAGS) -I../radio_io -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+	$(CC) $(CFLAGS) -I../radio_io -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # A -L path that cannot be opened must say so, not fail silently.
 test_hermes_log: common/test_hermes_log.c $(UNITY_SRC) ../common/hermes_log.c

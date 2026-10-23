@@ -93,6 +93,11 @@ bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz, uint64_t *a
     return ok;
 }
 
+void radio_io_report_frequency(uint64_t frequency_hz)
+{
+    (void) frequency_hz;            /* the host owns the radio's frequency */
+}
+
 /* ---- the rest of radio_io.h: nothing for Mercury to configure ---- */
 
 void radio_io_list_models(void)

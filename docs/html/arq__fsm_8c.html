@@ -88,6 +88,7 @@ $(function() {
 <code>#include &quot;<a class="el" href="arq_8h_source.html">arq.h</a>&quot;</code><br />
 <code>#include &lt;limits.h&gt;</code><br />
 <code>#include &lt;stdlib.h&gt;</code><br />
+<code>#include &lt;math.h&gt;</code><br />
 <code>#include &lt;string.h&gt;</code><br />
 <code>#include &lt;strings.h&gt;</code><br />
 <code>#include &lt;stdint.h&gt;</code><br />
@@ -101,37 +102,39 @@ Include dependency graph for arq_fsm.c:</div>
 <div class="dyncontent">
 <div class="center"><img src="arq__fsm_8c__incl.png" border="0" usemap="#aarq__fsm_8c" alt=""/></div>
 <map name="aarq__fsm_8c" id="aarq__fsm_8c">
-<area shape="rect" title=" " alt="" coords="1168,5,1248,31"/>
+<area shape="rect" title=" " alt="" coords="1212,5,1292,31"/>
 <area shape="rect" href="arq__fsm_8h.html" title=" " alt="" coords="481,86,561,111"/>
-<area shape="poly" title=" " alt="" coords="1168,27,575,94,575,89,1167,21"/>
+<area shape="poly" title=" " alt="" coords="1212,26,575,94,575,89,1211,21"/>
 <area shape="rect" title=" " alt="" coords="629,313,694,339"/>
-<area shape="poly" title=" " alt="" coords="1168,25,1006,44,922,61,889,70,865,81,837,101,816,121,787,164,762,212,746,239,723,267,686,306,682,302,719,264,741,235,758,209,783,162,812,118,833,97,863,76,887,65,921,55,1005,39,1168,20"/>
+<area shape="poly" title=" " alt="" coords="1212,24,1027,42,931,59,893,69,865,81,837,101,816,121,787,164,762,212,746,239,723,267,686,306,682,302,719,264,741,235,758,209,783,161,811,118,833,97,863,76,891,64,930,53,1027,37,1211,19"/>
 <area shape="rect" href="arq_8h.html" title=" " alt="" coords="344,167,395,192"/>
-<area shape="poly" title=" " alt="" coords="1168,22,1019,23,815,30,710,37,613,47,531,62,470,81,445,96,422,116,387,157,383,153,418,112,442,92,468,76,529,57,612,42,710,31,815,24,1019,17,1168,16"/>
+<area shape="poly" title=" " alt="" coords="1212,21,1056,22,838,28,727,35,623,46,535,61,470,81,445,96,422,116,387,157,383,153,418,112,442,92,468,76,533,56,622,41,726,30,838,22,1056,16,1212,16"/>
 <area shape="rect" href="arq__timing_8h.html" title=" " alt="" coords="843,167,936,192"/>
-<area shape="poly" title=" " alt="" coords="1168,23,1095,27,1009,37,931,54,902,66,883,80,875,97,873,116,881,153,876,154,868,116,870,95,879,77,899,62,929,49,1008,32,1095,22,1168,18"/>
+<area shape="poly" title=" " alt="" coords="1212,22,1130,25,1030,34,939,51,905,64,883,80,875,97,873,115,881,153,876,154,868,116,870,95,879,77,903,60,938,46,1030,28,1129,20,1212,17"/>
 <area shape="rect" href="arq__protocol_8h.html" title=" " alt="" coords="240,240,344,265"/>
-<area shape="poly" title=" " alt="" coords="1168,23,759,42,538,59,458,69,413,81,392,94,373,111,341,151,318,192,303,228,298,226,313,190,336,148,369,107,389,90,411,76,457,64,537,54,758,36,1168,18"/>
+<area shape="poly" title=" " alt="" coords="1212,23,780,41,546,58,461,69,413,81,392,94,373,111,341,150,318,192,303,228,298,226,313,190,336,147,369,107,389,90,411,76,460,64,545,53,780,35,1212,18"/>
 <area shape="rect" title=" " alt="" coords="893,86,1064,111"/>
-<area shape="poly" title=" " alt="" coords="1176,33,1026,84,1024,79,1174,28"/>
+<area shape="poly" title=" " alt="" coords="1213,33,1032,85,1031,80,1212,28"/>
 <area shape="rect" title=" " alt="" coords="1088,86,1152,111"/>
-<area shape="poly" title=" " alt="" coords="1197,33,1145,79,1141,75,1193,29"/>
+<area shape="poly" title=" " alt="" coords="1234,33,1152,81,1150,77,1231,29"/>
 <area shape="rect" title=" " alt="" coords="1176,86,1240,111"/>
-<area shape="poly" title=" " alt="" coords="1211,31,1211,72,1205,72,1205,31"/>
-<area shape="rect" title=" " alt="" coords="1265,86,1330,111"/>
-<area shape="poly" title=" " alt="" coords="1223,29,1276,75,1272,79,1219,33"/>
-<area shape="rect" title=" " alt="" coords="1355,86,1427,111"/>
-<area shape="poly" title=" " alt="" coords="1236,28,1352,78,1350,83,1234,33"/>
-<area shape="rect" title=" " alt="" coords="1451,86,1512,111"/>
-<area shape="poly" title=" " alt="" coords="1249,25,1337,46,1439,76,1445,78,1444,83,1438,81,1336,51,1248,30"/>
-<area shape="rect" title=" " alt="" coords="1537,86,1703,111"/>
-<area shape="poly" title=" " alt="" coords="1249,24,1524,76,1549,81,1548,86,1524,81,1248,29"/>
-<area shape="rect" title=" " alt="" coords="1727,86,1899,111"/>
-<area shape="poly" title=" " alt="" coords="1249,20,1450,41,1716,76,1745,81,1744,86,1716,81,1449,47,1248,26"/>
-<area shape="rect" title=" " alt="" coords="1923,86,2053,111"/>
-<area shape="poly" title=" " alt="" coords="1248,18,1527,33,1718,50,1912,76,1934,80,1933,85,1912,81,1718,55,1527,38,1248,23"/>
-<area shape="rect" title=" " alt="" coords="2077,79,2235,119"/>
-<area shape="poly" title=" " alt="" coords="1248,18,1581,32,1818,49,2064,76,2063,81,1818,54,1581,37,1248,23"/>
+<area shape="poly" title=" " alt="" coords="1248,32,1224,75,1219,73,1243,30"/>
+<area shape="rect" title=" " alt="" coords="1265,86,1327,111"/>
+<area shape="poly" title=" " alt="" coords="1261,30,1285,73,1280,75,1256,32"/>
+<area shape="rect" title=" " alt="" coords="1351,86,1417,111"/>
+<area shape="poly" title=" " alt="" coords="1273,29,1354,77,1352,81,1270,33"/>
+<area shape="rect" title=" " alt="" coords="1441,86,1513,111"/>
+<area shape="poly" title=" " alt="" coords="1289,28,1430,76,1437,79,1435,84,1428,81,1287,33"/>
+<area shape="rect" title=" " alt="" coords="1537,86,1599,111"/>
+<area shape="poly" title=" " alt="" coords="1293,23,1399,43,1526,76,1532,78,1530,83,1525,81,1398,48,1292,28"/>
+<area shape="rect" title=" " alt="" coords="1623,86,1790,111"/>
+<area shape="poly" title=" " alt="" coords="1293,23,1611,76,1637,81,1636,86,1610,81,1292,28"/>
+<area shape="rect" title=" " alt="" coords="1814,86,1986,111"/>
+<area shape="poly" title=" " alt="" coords="1292,20,1511,40,1803,76,1832,81,1831,86,1802,81,1510,45,1292,25"/>
+<area shape="rect" title=" " alt="" coords="2010,86,2139,111"/>
+<area shape="poly" title=" " alt="" coords="1292,18,1588,32,1792,49,1999,76,2021,80,2019,85,1998,81,1791,54,1587,37,1292,23"/>
+<area shape="rect" title=" " alt="" coords="2164,79,2321,119"/>
+<area shape="poly" title=" " alt="" coords="1292,17,1431,21,1641,31,1891,48,2150,76,2150,81,1890,54,1641,36,1431,27,1292,23"/>
 <area shape="rect" title=" " alt="" coords="5,313,80,339"/>
 <area shape="poly" title=" " alt="" coords="481,108,376,126,243,154,178,173,120,193,74,217,45,242,38,255,35,269,38,300,33,300,30,269,33,253,41,238,71,212,118,189,176,168,242,149,375,120,481,103"/>
 <area shape="rect" title=" " alt="" coords="408,313,477,339"/>
@@ -176,6 +179,8 @@ Macros</h2></td></tr>
 <tr class="separator:ae79cfb06136a2c36e2ffa4f4f3a67282"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a89b1369b79098d68e07535e7469d0d81" id="r_a89b1369b79098d68e07535e7469d0d81"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a89b1369b79098d68e07535e7469d0d81">ARQ_CAR_PEER_LOST_MS</a>&#160;&#160;&#160;240000</td></tr>
 <tr class="separator:a89b1369b79098d68e07535e7469d0d81"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa365418b84dec48e28f42750d4602f08" id="r_aa365418b84dec48e28f42750d4602f08"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#aa365418b84dec48e28f42750d4602f08">ARQ_CAR_PEER_QUIET_MS</a>&#160;&#160;&#160;120000</td></tr>
+<tr class="separator:aa365418b84dec48e28f42750d4602f08"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ab2b386d5522fe657a7efe6c8240eb7b7" id="r_ab2b386d5522fe657a7efe6c8240eb7b7"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#ab2b386d5522fe657a7efe6c8240eb7b7">ARQ_CAR_END_WAIT_MS</a>&#160;&#160;&#160;180000</td></tr>
 <tr class="separator:ab2b386d5522fe657a7efe6c8240eb7b7"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
@@ -213,8 +218,16 @@ Functions</h2></td></tr>
 <tr class="separator:aa576e831d5dd30a1fdfcd7215cbf3a79"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4b02fb43ab717ed455e98f0c52f30f8f" id="r_a4b02fb43ab717ed455e98f0c52f30f8f"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a4b02fb43ab717ed455e98f0c52f30f8f">car_begin_disconnect</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, uint64_t now)</td></tr>
 <tr class="separator:a4b02fb43ab717ed455e98f0c52f30f8f"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a66f2e42311db1b2f0c8623da1d813b24" id="r_a66f2e42311db1b2f0c8623da1d813b24"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a66f2e42311db1b2f0c8623da1d813b24">sess_enter_td</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, <a class="el" href="arq__fsm_8h.html#a6bbb8ea99f0ecd4d61510e943c890c32">arq_conn_state_t</a> new_state, <a class="el" href="arq__fsm_8h.html#a7c2aa6f9a626fff694f7929397bb6e50">arq_teardown_t</a> td, uint64_t deadline_ms, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64">arq_event_id_t</a> deadline_event)</td></tr>
+<tr class="separator:a66f2e42311db1b2f0c8623da1d813b24"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a748081f3ac95ab19602c691c0e0b8ede" id="r_a748081f3ac95ab19602c691c0e0b8ede"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a748081f3ac95ab19602c691c0e0b8ede">sess_enter</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, <a class="el" href="arq__fsm_8h.html#a6bbb8ea99f0ecd4d61510e943c890c32">arq_conn_state_t</a> new_state, uint64_t deadline_ms, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64">arq_event_id_t</a> deadline_event)</td></tr>
 <tr class="separator:a748081f3ac95ab19602c691c0e0b8ede"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a730f7dc213b682a6e5234c09466a73a8" id="r_a730f7dc213b682a6e5234c09466a73a8"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a730f7dc213b682a6e5234c09466a73a8">callee_ending</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
+<tr class="separator:a730f7dc213b682a6e5234c09466a73a8"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a8c5dbd99b87fd6c8c79b0fad2aed64a6" id="r_a8c5dbd99b87fd6c8c79b0fad2aed64a6"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a8c5dbd99b87fd6c8c79b0fad2aed64a6">call_queued</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
+<tr class="separator:a8c5dbd99b87fd6c8c79b0fad2aed64a6"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a0899dae792dc75465a00da0347c06d36" id="r_a0899dae792dc75465a00da0347c06d36"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a0899dae792dc75465a00da0347c06d36">answering_peer_end</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
+<tr class="separator:a0899dae792dc75465a00da0347c06d36"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4f0d1b0fb11fe4a91d613c31128cd416" id="r_a4f0d1b0fb11fe4a91d613c31128cd416"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a4f0d1b0fb11fe4a91d613c31128cd416">send_frame</a> (int ptype, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, size_t len, const uint8_t *frame, int burst_remaining)</td></tr>
 <tr class="separator:a4f0d1b0fb11fe4a91d613c31128cd416"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a407877d1086141c03f8ac6e98f15fd37" id="r_a407877d1086141c03f8ac6e98f15fd37"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a407877d1086141c03f8ac6e98f15fd37">deadline_from_s</a> (float seconds)</td></tr>
@@ -228,16 +241,24 @@ Functions</h2></td></tr>
 <tr class="memitem:aa7a344841c1d324b1992f438b7d0ac6f" id="r_aa7a344841c1d324b1992f438b7d0ac6f"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#aa7a344841c1d324b1992f438b7d0ac6f">arq_call_carrier</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
 <tr class="memdesc:aa7a344841c1d324b1992f438b7d0ac6f"><td class="mdescLeft">&#160;</td><td class="mdescRight">The carrier the next CALL goes out on: the control mode for the first ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately.  <br /></td></tr>
 <tr class="separator:aa7a344841c1d324b1992f438b7d0ac6f"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a0451be7f40c7499ed454ff76834d07bd" id="r_a0451be7f40c7499ed454ff76834d07bd"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a0451be7f40c7499ed454ff76834d07bd">call_answer_carrier</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
+<tr class="separator:a0451be7f40c7499ed454ff76834d07bd"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7d9810fda771b08d7c62781d284b9683" id="r_a7d9810fda771b08d7c62781d284b9683"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a7d9810fda771b08d7c62781d284b9683">accept_carrier</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, const <a class="el" href="structarq__event__t.html">arq_event_t</a> *ev)</td></tr>
+<tr class="separator:a7d9810fda771b08d7c62781d284b9683"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4d8971ddd36c0a79a8eb4d8f476dbaaa" id="r_a4d8971ddd36c0a79a8eb4d8f476dbaaa"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a4d8971ddd36c0a79a8eb4d8f476dbaaa">accept_level</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
 <tr class="separator:a4d8971ddd36c0a79a8eb4d8f476dbaaa"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7ba1d4243f2d6cc5080e546b39b59f84" id="r_a7ba1d4243f2d6cc5080e546b39b59f84"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a7ba1d4243f2d6cc5080e546b39b59f84">accept_rx_window_ms</a> (int call_mode)</td></tr>
+<tr class="separator:a7ba1d4243f2d6cc5080e546b39b59f84"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac5df2e6eac01f680246bf1b3e7607b96" id="r_ac5df2e6eac01f680246bf1b3e7607b96"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#ac5df2e6eac01f680246bf1b3e7607b96">send_call_accept</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, bool is_accept)</td></tr>
 <tr class="separator:ac5df2e6eac01f680246bf1b3e7607b96"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aff75afb4e222c84e4752bb1391994a89" id="r_aff75afb4e222c84e4752bb1391994a89"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#aff75afb4e222c84e4752bb1391994a89">session_ctl_mode</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
 <tr class="separator:aff75afb4e222c84e4752bb1391994a89"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a1dc11facce0ff0feef38a91f66442ab6" id="r_a1dc11facce0ff0feef38a91f66442ab6"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a1dc11facce0ff0feef38a91f66442ab6">send_disconnect_frame</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
 <tr class="separator:a1dc11facce0ff0feef38a91f66442ab6"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:af77417ceb0456f097a23a6d9d3476dc4" id="r_af77417ceb0456f097a23a6d9d3476dc4"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#af77417ceb0456f097a23a6d9d3476dc4">peer_is_transmitting</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
-<tr class="separator:af77417ceb0456f097a23a6d9d3476dc4"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ad05c320d40e5a87cbf415905b8529b5d" id="r_ad05c320d40e5a87cbf415905b8529b5d"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#ad05c320d40e5a87cbf415905b8529b5d">decoder_hears_frame</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
+<tr class="separator:ad05c320d40e5a87cbf415905b8529b5d"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa5c974b345d553df248f94e6a7274e23" id="r_aa5c974b345d553df248f94e6a7274e23"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#aa5c974b345d553df248f94e6a7274e23">peer_is_transmitting</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
+<tr class="separator:aa5c974b345d553df248f94e6a7274e23"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aa9841b1b163b2ee58eb4b7939197cbbb" id="r_aa9841b1b163b2ee58eb4b7939197cbbb"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#aa9841b1b163b2ee58eb4b7939197cbbb">enter_idle_after_call</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
 <tr class="separator:aa9841b1b163b2ee58eb4b7939197cbbb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:abf9ca390b2423da22af3d21041fec8f2" id="r_abf9ca390b2423da22af3d21041fec8f2"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#abf9ca390b2423da22af3d21041fec8f2">notify_session_ended</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
@@ -247,14 +268,18 @@ Functions</h2></td></tr>
 <tr class="memitem:a0c049f25bdfda3cc5435c41036ae1113" id="r_a0c049f25bdfda3cc5435c41036ae1113"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a0c049f25bdfda3cc5435c41036ae1113">arq_fsm_expect_pattern</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, uint64_t now)</td></tr>
 <tr class="memdesc:a0c049f25bdfda3cc5435c41036ae1113"><td class="mdescLeft">&#160;</td><td class="mdescRight">Whether a pattern can arrive now (the modem's detector runs only then).  <br /></td></tr>
 <tr class="separator:a0c049f25bdfda3cc5435c41036ae1113"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a2cb25138eb12f5ce55525cc8f58aa7de" id="r_a2cb25138eb12f5ce55525cc8f58aa7de"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a2cb25138eb12f5ce55525cc8f58aa7de">disconnect_answered</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
+<tr class="separator:a2cb25138eb12f5ce55525cc8f58aa7de"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:adec7b0f4b7c36aae674a30c175e1e64f" id="r_adec7b0f4b7c36aae674a30c175e1e64f"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#adec7b0f4b7c36aae674a30c175e1e64f">car_peer_quiet</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, uint64_t now)</td></tr>
+<tr class="separator:adec7b0f4b7c36aae674a30c175e1e64f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aeddbe5a059bbf809e911fa893f49fb4a" id="r_aeddbe5a059bbf809e911fa893f49fb4a"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#aeddbe5a059bbf809e911fa893f49fb4a">car_io_keydown</a> (void *ctx, const <a class="el" href="structcar__frame__t.html">car_frame_t</a> *fr, int n)</td></tr>
 <tr class="separator:aeddbe5a059bbf809e911fa893f49fb4a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a911568c40eb7ac008882a710ca31005d" id="r_a911568c40eb7ac008882a710ca31005d"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a911568c40eb7ac008882a710ca31005d">car_io_bind_rx</a> (void *ctx, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
 <tr class="separator:a911568c40eb7ac008882a710ca31005d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:abfb3bdd62cafb08de9dd0b2c80c8321f" id="r_abfb3bdd62cafb08de9dd0b2c80c8321f"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#abfb3bdd62cafb08de9dd0b2c80c8321f">car_io_pattern</a> (void *ctx, int kind)</td></tr>
 <tr class="separator:abfb3bdd62cafb08de9dd0b2c80c8321f"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:af0e0763e111c37fff62068ac6a9b3420" id="r_af0e0763e111c37fff62068ac6a9b3420"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#af0e0763e111c37fff62068ac6a9b3420">car_io_peer_keyed</a> (void *ctx)</td></tr>
-<tr class="separator:af0e0763e111c37fff62068ac6a9b3420"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ade9304eef62959265e55ab22656d34d7" id="r_ade9304eef62959265e55ab22656d34d7"><td class="memItemLeft" align="right" valign="top">static int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#ade9304eef62959265e55ab22656d34d7">car_io_peer_keyed</a> (void *ctx)</td></tr>
+<tr class="separator:ade9304eef62959265e55ab22656d34d7"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a849dcebae47a49d83b24d4dd08f2dcbf" id="r_a849dcebae47a49d83b24d4dd08f2dcbf"><td class="memItemLeft" align="right" valign="top">static size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a849dcebae47a49d83b24d4dd08f2dcbf">car_io_tx_read</a> (void *ctx, uint8_t *buf, size_t max)</td></tr>
 <tr class="separator:a849dcebae47a49d83b24d4dd08f2dcbf"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a66f34d3309298f85d0c5a556d4d4afa5" id="r_a66f34d3309298f85d0c5a556d4d4afa5"><td class="memItemLeft" align="right" valign="top">static size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#a66f34d3309298f85d0c5a556d4d4afa5">car_io_tx_pending</a> (void *ctx)</td></tr>
@@ -285,6 +310,8 @@ Functions</h2></td></tr>
 <tr class="separator:af634e042f717d1069f6e9b088a614b05"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aad0691dc574b54e3e3ad55b7e2961689" id="r_aad0691dc574b54e3e3ad55b7e2961689"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#aad0691dc574b54e3e3ad55b7e2961689">fsm_listening</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, const <a class="el" href="structarq__event__t.html">arq_event_t</a> *ev)</td></tr>
 <tr class="separator:aad0691dc574b54e3e3ad55b7e2961689"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa1937043db8493b7725f2a531b1cb47e" id="r_aa1937043db8493b7725f2a531b1cb47e"><td class="memItemLeft" align="right" valign="top">static bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#aa1937043db8493b7725f2a531b1cb47e">call_must_wait</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
+<tr class="separator:aa1937043db8493b7725f2a531b1cb47e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac28c7e3ec319691f39fec043779bf742" id="r_ac28c7e3ec319691f39fec043779bf742"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#ac28c7e3ec319691f39fec043779bf742">fsm_calling</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, const <a class="el" href="structarq__event__t.html">arq_event_t</a> *ev)</td></tr>
 <tr class="separator:ac28c7e3ec319691f39fec043779bf742"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ab108ca81798c7f8cb17f35fa9b171ce6" id="r_ab108ca81798c7f8cb17f35fa9b171ce6"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8c.html#ab108ca81798c7f8cb17f35fa9b171ce6">fsm_accepting</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, const <a class="el" href="structarq__event__t.html">arq_event_t</a> *ev)</td></tr>
@@ -339,6 +366,20 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="aa365418b84dec48e28f42750d4602f08" name="aa365418b84dec48e28f42750d4602f08"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa365418b84dec48e28f42750d4602f08">&#9670;&#160;</a></span>ARQ_CAR_PEER_QUIET_MS</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define ARQ_CAR_PEER_QUIET_MS&#160;&#160;&#160;120000</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="ae79cfb06136a2c36e2ffa4f4f3a67282" name="ae79cfb06136a2c36e2ffa4f4f3a67282"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ae79cfb06136a2c36e2ffa4f4f3a67282">&#9670;&#160;</a></span>INT_BUFFER_SIZE</h2>
 
@@ -368,6 +409,42 @@ Variables</h2></td></tr>
 </div>
 </div>
 <h2 class="groupheader">Function Documentation</h2>
+<a id="a7d9810fda771b08d7c62781d284b9683" name="a7d9810fda771b08d7c62781d284b9683"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7d9810fda771b08d7c62781d284b9683">&#9670;&#160;</a></span>accept_carrier()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static int accept_carrier </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const <a class="el" href="structarq__event__t.html">arq_event_t</a> *&#160;</td>
+          <td class="paramname"><em>ev</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a4d8971ddd36c0a79a8eb4d8f476dbaaa" name="a4d8971ddd36c0a79a8eb4d8f476dbaaa"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a4d8971ddd36c0a79a8eb4d8f476dbaaa">&#9670;&#160;</a></span>accept_level()</h2>
 
@@ -379,6 +456,58 @@ Variables</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">static int accept_level </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a7ba1d4243f2d6cc5080e546b39b59f84" name="a7ba1d4243f2d6cc5080e546b39b59f84"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7ba1d4243f2d6cc5080e546b39b59f84">&#9670;&#160;</a></span>accept_rx_window_ms()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static uint64_t accept_rx_window_ms </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>call_mode</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a0899dae792dc75465a00da0347c06d36" name="a0899dae792dc75465a00da0347c06d36"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0899dae792dc75465a00da0347c06d36">&#9670;&#160;</a></span>answering_peer_end()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static bool answering_peer_end </td>
           <td>(</td>
           <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
           <td class="paramname"><em>sess</em></td><td>)</td>
@@ -648,6 +777,110 @@ Variables</h2></td></tr>
   </dd>
 </dl>
 <dl class="section return"><dt>Returns</dt><dd>Milliseconds to wait (0 = fire immediately, INT_MAX = no deadline). </dd></dl>
+
+</div>
+</div>
+<a id="a0451be7f40c7499ed454ff76834d07bd" name="a0451be7f40c7499ed454ff76834d07bd"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0451be7f40c7499ed454ff76834d07bd">&#9670;&#160;</a></span>call_answer_carrier()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static int call_answer_carrier </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="aa1937043db8493b7725f2a531b1cb47e" name="aa1937043db8493b7725f2a531b1cb47e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa1937043db8493b7725f2a531b1cb47e">&#9670;&#160;</a></span>call_must_wait()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static bool call_must_wait </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a8c5dbd99b87fd6c8c79b0fad2aed64a6" name="a8c5dbd99b87fd6c8c79b0fad2aed64a6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a8c5dbd99b87fd6c8c79b0fad2aed64a6">&#9670;&#160;</a></span>call_queued()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static bool call_queued </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a730f7dc213b682a6e5234c09466a73a8" name="a730f7dc213b682a6e5234c09466a73a8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a730f7dc213b682a6e5234c09466a73a8">&#9670;&#160;</a></span>callee_ending()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static bool callee_ending </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
 
 </div>
 </div>
@@ -1009,8 +1242,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="af0e0763e111c37fff62068ac6a9b3420" name="af0e0763e111c37fff62068ac6a9b3420"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#af0e0763e111c37fff62068ac6a9b3420">&#9670;&#160;</a></span>car_io_peer_keyed()</h2>
+<a id="ade9304eef62959265e55ab22656d34d7" name="ade9304eef62959265e55ab22656d34d7"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ade9304eef62959265e55ab22656d34d7">&#9670;&#160;</a></span>car_io_peer_keyed()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -1019,7 +1252,7 @@ Variables</h2></td></tr>
   <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">static bool car_io_peer_keyed </td>
+          <td class="memname">static int car_io_peer_keyed </td>
           <td>(</td>
           <td class="paramtype">void *&#160;</td>
           <td class="paramname"><em>ctx</em></td><td>)</td>
@@ -1159,6 +1392,42 @@ Variables</h2></td></tr>
           <td></td>
           <td class="paramtype">size_t&#160;</td>
           <td class="paramname"><em>max</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="adec7b0f4b7c36aae674a30c175e1e64f" name="adec7b0f4b7c36aae674a30c175e1e64f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#adec7b0f4b7c36aae674a30c175e1e64f">&#9670;&#160;</a></span>car_peer_quiet()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static bool car_peer_quiet </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">uint64_t&#160;</td>
+          <td class="paramname"><em>now</em>&#160;</td>
         </tr>
         <tr>
           <td></td>
@@ -1329,6 +1598,58 @@ Variables</h2></td></tr>
           <td>(</td>
           <td class="paramtype">float&#160;</td>
           <td class="paramname"><em>seconds</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ad05c320d40e5a87cbf415905b8529b5d" name="ad05c320d40e5a87cbf415905b8529b5d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad05c320d40e5a87cbf415905b8529b5d">&#9670;&#160;</a></span>decoder_hears_frame()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static int decoder_hears_frame </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a2cb25138eb12f5ce55525cc8f58aa7de" name="a2cb25138eb12f5ce55525cc8f58aa7de"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a2cb25138eb12f5ce55525cc8f58aa7de">&#9670;&#160;</a></span>disconnect_answered()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static void disconnect_answered </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em></td><td>)</td>
           <td></td>
         </tr>
       </table>
@@ -1723,8 +2044,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="af77417ceb0456f097a23a6d9d3476dc4" name="af77417ceb0456f097a23a6d9d3476dc4"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#af77417ceb0456f097a23a6d9d3476dc4">&#9670;&#160;</a></span>peer_is_transmitting()</h2>
+<a id="aa5c974b345d553df248f94e6a7274e23" name="aa5c974b345d553df248f94e6a7274e23"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa5c974b345d553df248f94e6a7274e23">&#9670;&#160;</a></span>peer_is_transmitting()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -1733,7 +2054,7 @@ Variables</h2></td></tr>
   <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">static bool peer_is_transmitting </td>
+          <td class="memname">static int peer_is_transmitting </td>
           <td>(</td>
           <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
           <td class="paramname"><em>sess</em></td><td>)</td>
@@ -1947,6 +2268,60 @@ Variables</h2></td></tr>
           <td></td>
           <td class="paramtype"><a class="el" href="arq__fsm_8h.html#a6bbb8ea99f0ecd4d61510e943c890c32">arq_conn_state_t</a>&#160;</td>
           <td class="paramname"><em>new_state</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">uint64_t&#160;</td>
+          <td class="paramname"><em>deadline_ms</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64">arq_event_id_t</a>&#160;</td>
+          <td class="paramname"><em>deadline_event</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a66f2e42311db1b2f0c8623da1d813b24" name="a66f2e42311db1b2f0c8623da1d813b24"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a66f2e42311db1b2f0c8623da1d813b24">&#9670;&#160;</a></span>sess_enter_td()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static void sess_enter_td </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="arq__fsm_8h.html#a6bbb8ea99f0ecd4d61510e943c890c32">arq_conn_state_t</a>&#160;</td>
+          <td class="paramname"><em>new_state</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="arq__fsm_8h.html#a7c2aa6f9a626fff694f7929397bb6e50">arq_teardown_t</a>&#160;</td>
+          <td class="paramname"><em>td</em>, </td>
         </tr>
         <tr>
           <td class="paramkey"></td>

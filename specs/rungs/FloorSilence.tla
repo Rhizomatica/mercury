@@ -32,8 +32,13 @@
 (* M and S do when the channel comes back (they measure it again: the    *)
 (* floor delivers either way).                                            *)
 (*                                                                         *)
-(* Property: Delivered, every message gets through, with the channel     *)
-(* down for ever if the adversary likes.                                  *)
+(* S's answers say whether it hears M below the control mode.  Down, S   *)
+(* decodes only M's floor keydowns, and an MFSK frame's reading alone     *)
+(* says so (car_on_frame), so its answer keeps M's control on the floor.  *)
+(*                                                                         *)
+(* Properties: Delivered, every message gets through, with the channel   *)
+(* down for ever if the adversary likes; FloorHolds, down, M's control    *)
+(* once on the floor stays there.                                         *)
 (***************************************************************************)
 EXTENDS Integers
 
@@ -45,6 +50,9 @@ CONSTANTS N,      \* messages M sends
                   \*   "nosilence": M never takes the control mode to be out
                   \*   "nostay":    S's round timer takes it off the floor it fell back to
                   \*   "noread":    S, having read the channel down, names a faster rung
+                  \*   "lagread":   S's answer to M's floor control says it hears M above the
+                  \*                control mode, as its smoothed reading did (#431), and M's
+                  \*                control goes back to DATAC16
 
 Floor == 0
 Fast  == 1
@@ -126,7 +134,7 @@ Exchange(clean) ==
               /\ IF heardM THEN
                     /\ mSilent' = 0 /\ mRung' = n
                     /\ mDone' = (sHave' >= mSent)
-                    /\ mCtl' = mCtl
+                    /\ mCtl' \in (IF Mutant = "lagread" /\ ~up THEN {mCtl, "c16"} ELSE {mCtl})
                     /\ mSent' = mSent
                  ELSE
                     /\ MDeaf /\ UNCHANGED <<mSent>>
@@ -154,4 +162,5 @@ TypeOK ==
     /\ mCtl \in {"c16", "floor"} /\ mSilent \in 0 .. FM /\ sSilent \in 0 .. FS
     /\ mSent \in 1 .. N /\ sHave \in 0 .. N /\ lossM \in 0 .. L /\ lossS \in 0 .. L
 Delivered == <>Finished
+FloorHolds == [][~up /\ mCtl = "floor" => mCtl' = "floor"]_vars
 =============================================================================

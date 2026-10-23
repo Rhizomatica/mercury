@@ -94,6 +94,7 @@ $(function() {
 <code>#include &lt;stddef.h&gt;</code><br />
 <code>#include &lt;stdint.h&gt;</code><br />
 <code>#include &lt;stdio.h&gt;</code><br />
+<code>#include &lt;math.h&gt;</code><br />
 <code>#include &lt;string.h&gt;</code><br />
 <code>#include &lt;pthread.h&gt;</code><br />
 <code>#include &lt;stdlib.h&gt;</code><br />
@@ -102,6 +103,7 @@ $(function() {
 <code>#include &lt;limits.h&gt;</code><br />
 <code>#include &lt;stdatomic.h&gt;</code><br />
 <code>#include &quot;../common/hermes_log.h&quot;</code><br />
+<code>#include &quot;../common/os_interop.h&quot;</code><br />
 <code>#include &quot;../common/virtual_clock.h&quot;</code><br />
 <code>#include &quot;../common/defines_modem.h&quot;</code><br />
 <code>#include &quot;../common/ring_buffer_posix.h&quot;</code><br />
@@ -114,63 +116,67 @@ Include dependency graph for arq.c:</div>
 <div class="dyncontent">
 <div class="center"><img src="arq_8c__incl.png" border="0" usemap="#aarq_8c" alt=""/></div>
 <map name="aarq_8c" id="aarq_8c">
-<area shape="rect" title=" " alt="" coords="1313,5,1363,31"/>
+<area shape="rect" title=" " alt="" coords="1399,5,1450,31"/>
 <area shape="rect" href="arq_8h.html" title=" " alt="" coords="1010,240,1061,265"/>
-<area shape="poly" title=" " alt="" coords="1314,29,1258,49,1226,63,1197,81,1152,117,1112,158,1053,230,1049,227,1108,154,1149,113,1194,76,1224,58,1256,44,1312,24"/>
+<area shape="poly" title=" " alt="" coords="1399,24,1358,29,1306,39,1250,56,1197,81,1150,115,1110,156,1052,230,1048,227,1106,152,1147,111,1194,76,1248,51,1305,34,1358,24,1399,19"/>
 <area shape="rect" title=" " alt="" coords="774,387,849,412"/>
-<area shape="poly" title=" " alt="" coords="1313,22,1136,23,1012,29,880,41,755,60,699,73,650,88,609,106,578,127,558,151,551,178,551,254,557,286,573,313,597,335,627,353,661,367,696,377,761,390,760,395,694,383,659,372,625,358,594,339,569,316,552,288,546,254,546,178,553,149,574,123,606,102,648,83,698,67,754,54,880,35,1011,24,1136,18,1313,16"/>
+<area shape="poly" title=" " alt="" coords="1399,24,1205,40,920,73,780,95,662,120,616,134,581,149,559,163,551,179,551,254,557,286,573,313,597,335,627,353,661,367,696,377,761,390,760,395,694,383,659,372,625,358,594,339,569,316,552,288,546,254,546,177,555,160,578,144,614,129,661,115,779,90,919,68,1205,35,1399,19"/>
 <area shape="rect" title=" " alt="" coords="1263,387,1333,412"/>
-<area shape="poly" title=" " alt="" coords="1314,31,1280,50,1265,64,1254,80,1247,99,1254,117,1270,137,1287,152,1324,169,1364,176,1406,177,1448,178,1490,184,1528,203,1546,218,1563,239,1577,265,1583,290,1578,315,1563,340,1548,352,1527,363,1470,379,1405,390,1346,397,1346,392,1404,385,1469,374,1525,358,1545,348,1559,337,1573,313,1578,290,1572,267,1558,241,1542,222,1525,207,1488,189,1448,183,1406,182,1364,181,1322,174,1284,156,1266,141,1249,120,1242,99,1249,77,1261,60,1277,46,1311,27"/>
+<area shape="poly" title=" " alt="" coords="1400,26,1347,36,1290,55,1267,68,1252,82,1247,98,1254,117,1270,137,1287,152,1324,169,1364,176,1406,177,1448,178,1490,184,1528,203,1546,218,1563,239,1577,265,1583,290,1578,315,1563,340,1548,352,1527,363,1470,379,1405,390,1346,397,1346,392,1404,385,1469,374,1525,358,1545,348,1559,337,1573,313,1578,290,1572,267,1558,241,1542,222,1525,207,1488,189,1448,183,1406,182,1364,181,1322,174,1284,156,1266,141,1249,120,1241,98,1248,79,1264,63,1288,50,1346,31,1399,20"/>
 <area shape="rect" title=" " alt="" coords="476,387,541,412"/>
-<area shape="poly" title=" " alt="" coords="1313,23,768,40,448,58,331,69,263,81,210,96,164,111,147,121,134,135,125,153,122,178,122,254,126,283,139,303,159,320,186,336,237,355,312,371,463,391,462,396,311,376,236,361,183,341,156,324,135,307,121,285,117,254,117,178,120,152,129,132,144,117,162,106,208,91,261,76,330,64,448,52,768,35,1313,17"/>
+<area shape="poly" title=" " alt="" coords="1399,22,812,39,464,57,336,68,263,81,210,96,164,111,147,121,134,135,125,153,122,178,122,254,126,283,139,303,159,320,186,336,237,355,312,371,463,391,462,396,311,376,236,361,183,341,156,324,135,307,121,285,117,254,117,178,120,152,129,132,144,117,162,106,208,91,261,76,336,63,464,51,811,33,1399,17"/>
 <area shape="rect" href="arq__fsm_8h.html" title=" " alt="" coords="805,167,885,192"/>
-<area shape="poly" title=" " alt="" coords="1312,23,1223,26,1102,36,985,53,938,66,905,81,887,96,873,115,855,155,850,152,869,113,883,93,902,76,936,61,984,48,1102,31,1223,21,1312,17"/>
+<area shape="poly" title=" " alt="" coords="1399,22,1294,24,1148,31,1073,39,1003,49,946,63,905,81,887,96,873,115,854,155,850,152,869,112,883,93,902,76,944,58,1002,44,1072,34,1147,26,1294,18,1399,17"/>
 <area shape="rect" href="arq__timing_8h.html" title=" " alt="" coords="189,240,282,265"/>
-<area shape="poly" title=" " alt="" coords="1313,22,1103,22,782,28,618,35,473,46,363,61,325,70,302,81,286,95,273,112,255,152,244,192,239,226,234,226,239,191,250,150,269,110,282,92,299,76,323,65,362,56,473,41,618,30,781,23,1103,17,1313,16"/>
+<area shape="poly" title=" " alt="" coords="1399,22,1174,21,825,26,647,33,489,44,368,59,327,69,302,81,286,95,273,112,255,152,244,192,239,226,234,226,239,191,250,150,269,109,282,92,299,76,325,64,367,54,488,38,647,27,825,21,1174,16,1399,16"/>
 <area shape="rect" href="arq__protocol_8h.html" title=" " alt="" coords="407,240,511,265"/>
-<area shape="poly" title=" " alt="" coords="1313,22,1145,26,897,35,662,53,577,65,549,73,531,81,515,95,502,112,482,152,470,192,464,227,459,226,465,191,477,150,497,110,511,92,529,76,547,68,576,60,661,47,897,30,1144,20,1313,17"/>
+<area shape="poly" title=" " alt="" coords="1399,22,1215,24,940,32,801,40,677,50,583,64,551,72,531,81,515,95,502,112,482,152,470,192,464,227,459,226,465,191,477,150,497,109,511,92,529,76,549,67,582,59,677,45,800,35,940,27,1215,19,1399,17"/>
 <area shape="rect" title=" " alt="" coords="207,313,298,339"/>
-<area shape="poly" title=" " alt="" coords="1312,22,1128,27,853,37,589,55,493,67,439,81,415,110,367,172,271,304,267,300,363,169,410,106,437,76,492,61,588,49,852,32,1128,21,1312,17"/>
+<area shape="poly" title=" " alt="" coords="1399,22,1199,26,896,35,604,53,499,65,462,73,439,81,415,110,367,172,271,304,267,300,363,169,410,106,437,76,461,68,498,60,604,47,896,30,1199,20,1399,17"/>
 <area shape="rect" href="carousel_8h.html" title=" " alt="" coords="829,240,911,265"/>
-<area shape="poly" title=" " alt="" coords="1313,23,1234,28,1130,38,1030,55,990,67,962,81,948,101,926,141,883,229,879,226,921,139,943,98,959,77,988,62,1028,50,1129,33,1233,23,1312,18"/>
+<area shape="poly" title=" " alt="" coords="1399,22,1304,25,1174,34,1048,51,997,64,962,81,948,101,926,141,883,229,879,226,921,138,943,98,959,77,996,59,1047,46,1174,28,1304,20,1399,17"/>
 <area shape="rect" href="arq__tnc_8h.html" title=" " alt="" coords="5,167,81,192"/>
-<area shape="poly" title=" " alt="" coords="1312,22,1067,21,684,27,487,33,312,44,177,60,131,70,102,81,84,96,71,115,53,154,48,152,66,112,81,92,99,76,129,65,176,55,311,39,487,28,684,21,1067,16,1312,16"/>
+<area shape="poly" title=" " alt="" coords="1399,22,704,40,303,58,166,69,123,75,102,81,84,96,71,115,53,154,48,152,66,112,81,92,99,76,122,70,165,64,302,53,704,35,1399,17"/>
 <area shape="rect" href="arq__trace_8h.html" title=" " alt="" coords="373,313,460,339"/>
-<area shape="poly" title=" " alt="" coords="1312,22,1137,26,878,36,630,54,541,66,510,73,491,81,450,113,427,147,412,188,398,240,397,271,407,300,402,302,392,272,393,240,407,186,422,144,447,109,489,76,509,68,540,61,630,48,878,31,1137,21,1312,17"/>
+<area shape="poly" title=" " alt="" coords="1399,22,1209,25,921,34,775,41,646,52,547,65,513,73,491,81,450,113,427,147,412,188,398,240,397,271,407,300,402,302,392,272,393,240,407,186,422,144,446,109,489,76,511,67,546,60,645,46,775,36,921,29,1209,20,1399,17"/>
 <area shape="rect" href="arq__modem_8h.html" title=" " alt="" coords="973,86,1074,111"/>
-<area shape="poly" title=" " alt="" coords="1313,28,1083,85,1082,80,1312,23"/>
+<area shape="poly" title=" " alt="" coords="1399,26,1107,81,1086,86,1085,80,1105,76,1399,21"/>
 <area shape="rect" href="arq__channels_8h.html" title=" " alt="" coords="1437,240,1548,265"/>
-<area shape="poly" title=" " alt="" coords="1313,25,1287,31,1258,42,1231,58,1210,80,1203,99,1210,117,1229,143,1253,165,1309,200,1369,223,1424,238,1423,243,1367,229,1307,205,1250,169,1225,146,1205,120,1197,99,1205,77,1228,53,1256,37,1286,26,1312,20"/>
+<area shape="poly" title=" " alt="" coords="1400,24,1335,31,1262,47,1231,59,1211,75,1202,94,1204,105,1210,117,1229,143,1253,165,1309,200,1369,223,1424,238,1423,243,1367,229,1307,205,1250,169,1225,146,1205,120,1199,106,1197,93,1206,72,1229,55,1260,42,1334,25,1399,18"/>
 <area shape="rect" title=" " alt="" coords="1263,86,1325,111"/>
-<area shape="poly" title=" " alt="" coords="1334,32,1310,75,1305,73,1329,30"/>
-<area shape="rect" title=" " alt="" coords="1349,86,1415,111"/>
-<area shape="poly" title=" " alt="" coords="1347,30,1371,73,1366,75,1342,32"/>
-<area shape="rect" title=" " alt="" coords="1439,86,1515,111"/>
-<area shape="poly" title=" " alt="" coords="1360,29,1446,77,1443,82,1357,33"/>
-<area shape="rect" title=" " alt="" coords="1539,86,1603,111"/>
-<area shape="poly" title=" " alt="" coords="1364,24,1438,46,1528,76,1534,78,1532,83,1526,81,1437,51,1363,29"/>
-<area shape="rect" title=" " alt="" coords="1627,86,1686,111"/>
-<area shape="poly" title=" " alt="" coords="1364,20,1474,40,1545,56,1616,76,1622,78,1620,83,1615,81,1544,61,1473,45,1363,26"/>
-<area shape="rect" title=" " alt="" coords="1711,86,1773,111"/>
-<area shape="poly" title=" " alt="" coords="1364,19,1507,36,1603,53,1699,76,1706,78,1704,83,1697,81,1602,58,1507,41,1363,24"/>
-<area shape="rect" title=" " alt="" coords="1798,86,1862,111"/>
-<area shape="poly" title=" " alt="" coords="1364,18,1542,32,1664,49,1787,76,1794,78,1793,84,1785,81,1663,55,1542,37,1364,23"/>
-<area shape="rect" title=" " alt="" coords="1887,86,2053,111"/>
-<area shape="poly" title=" " alt="" coords="1364,19,1575,39,1723,55,1874,76,1903,81,1902,86,1874,81,1722,61,1574,44,1364,24"/>
-<area shape="rect" title=" " alt="" coords="2077,86,2249,111"/>
-<area shape="poly" title=" " alt="" coords="1364,18,1648,35,1855,52,2066,76,2097,81,2096,86,2066,81,1854,57,1648,40,1364,23"/>
-<area shape="rect" title=" " alt="" coords="2273,86,2464,111"/>
-<area shape="poly" title=" " alt="" coords="1364,17,1721,32,1987,49,2262,76,2297,81,2296,86,2262,81,1987,55,1720,37,1363,23"/>
-<area shape="rect" title=" " alt="" coords="2488,79,2636,119"/>
-<area shape="poly" title=" " alt="" coords="1363,16,1525,17,1795,24,2128,41,2302,56,2475,76,2474,81,2302,62,2127,47,1795,29,1525,22,1363,22"/>
-<area shape="rect" title=" " alt="" coords="2660,86,2848,111"/>
-<area shape="poly" title=" " alt="" coords="1364,17,1548,18,1863,25,2249,43,2451,57,2649,76,2685,81,2684,86,2648,81,2451,62,2249,48,1863,30,1548,23,1364,22"/>
-<area shape="rect" title=" " alt="" coords="2873,79,2995,119"/>
-<area shape="poly" title=" " alt="" coords="1364,17,1623,21,2051,30,2510,48,2707,61,2859,76,2859,81,2706,66,2509,54,2051,36,1623,26,1364,22"/>
-<area shape="rect" title=" " alt="" coords="3020,86,3149,111"/>
-<area shape="poly" title=" " alt="" coords="1364,17,1651,20,2128,30,2634,47,2848,60,3008,76,3032,80,3031,86,3007,81,2847,66,2634,53,2128,35,1651,26,1364,22"/>
-<area shape="rect" title=" " alt="" coords="3174,79,3331,119"/>
-<area shape="poly" title=" " alt="" coords="1364,17,1669,21,2184,31,2738,48,2977,61,3160,76,3160,81,2976,66,2738,54,2184,36,1669,26,1363,22"/>
+<area shape="poly" title=" " alt="" coords="1407,33,1326,81,1324,76,1404,29"/>
+<area shape="rect" title=" " alt="" coords="1349,86,1412,111"/>
+<area shape="poly" title=" " alt="" coords="1420,32,1396,75,1392,73,1416,30"/>
+<area shape="rect" title=" " alt="" coords="1436,86,1501,111"/>
+<area shape="poly" title=" " alt="" coords="1433,30,1458,73,1453,75,1429,32"/>
+<area shape="rect" title=" " alt="" coords="1525,86,1601,111"/>
+<area shape="poly" title=" " alt="" coords="1446,29,1532,77,1530,82,1444,33"/>
+<area shape="rect" title=" " alt="" coords="1626,86,1690,111"/>
+<area shape="poly" title=" " alt="" coords="1451,24,1525,46,1615,76,1621,78,1619,83,1613,81,1523,51,1449,29"/>
+<area shape="rect" title=" " alt="" coords="1714,86,1773,111"/>
+<area shape="poly" title=" " alt="" coords="1450,20,1561,40,1632,56,1703,76,1709,78,1707,83,1701,81,1631,61,1560,45,1450,26"/>
+<area shape="rect" title=" " alt="" coords="1797,86,1860,111"/>
+<area shape="poly" title=" " alt="" coords="1450,19,1594,36,1690,53,1785,76,1792,78,1791,83,1784,81,1688,58,1593,41,1450,24"/>
+<area shape="rect" title=" " alt="" coords="1885,86,1949,111"/>
+<area shape="poly" title=" " alt="" coords="1451,18,1629,32,1751,49,1873,76,1881,78,1880,84,1872,81,1750,55,1629,37,1450,23"/>
+<area shape="rect" title=" " alt="" coords="1973,86,2140,111"/>
+<area shape="poly" title=" " alt="" coords="1451,19,1662,39,1810,55,1961,76,1989,81,1988,86,1960,81,1809,61,1661,44,1450,24"/>
+<area shape="rect" title=" " alt="" coords="2164,86,2323,111"/>
+<area shape="poly" title=" " alt="" coords="1451,18,1735,34,1941,51,2153,76,2181,81,2180,86,2152,81,1941,56,1734,39,1450,23"/>
+<area shape="rect" title=" " alt="" coords="2347,86,2519,111"/>
+<area shape="poly" title=" " alt="" coords="1450,17,1802,31,2065,48,2336,76,2367,81,2366,86,2335,81,2065,54,1802,36,1450,22"/>
+<area shape="rect" title=" " alt="" coords="2543,86,2733,111"/>
+<area shape="poly" title=" " alt="" coords="1450,17,1610,20,1875,29,2198,46,2532,76,2568,81,2567,86,2531,81,2198,52,1874,34,1609,25,1450,22"/>
+<area shape="rect" title=" " alt="" coords="2757,79,2905,119"/>
+<area shape="poly" title=" " alt="" coords="1450,17,2048,35,2442,52,2612,63,2744,76,2743,81,2611,69,2442,58,2048,40,1450,23"/>
+<area shape="rect" title=" " alt="" coords="2929,86,3117,111"/>
+<area shape="poly" title=" " alt="" coords="1450,16,1658,16,2017,22,2459,40,2691,55,2918,76,2954,81,2954,86,2918,81,2691,60,2459,45,2016,27,1658,21,1450,22"/>
+<area shape="rect" title=" " alt="" coords="3142,79,3265,119"/>
+<area shape="poly" title=" " alt="" coords="1450,17,1738,20,2219,28,2736,46,2958,59,3129,76,3128,81,2957,65,2736,51,2219,34,1738,25,1450,22"/>
+<area shape="rect" title=" " alt="" coords="3289,86,3419,111"/>
+<area shape="poly" title=" " alt="" coords="1451,17,1766,19,2296,28,2860,45,3099,59,3277,76,3301,80,3300,86,3276,81,3098,64,2860,51,2296,33,1766,25,1451,22"/>
+<area shape="rect" title=" " alt="" coords="3443,79,3601,119"/>
+<area shape="poly" title=" " alt="" coords="1450,17,1783,20,2352,29,2965,47,3228,60,3430,76,3430,81,3228,65,2965,52,2352,34,1783,25,1450,22"/>
 <area shape="poly" title=" " alt="" coords="1035,267,1021,303,1009,323,993,341,962,361,929,377,863,394,861,389,927,372,960,357,990,337,1005,320,1016,300,1030,265"/>
 <area shape="poly" title=" " alt="" coords="1061,251,1105,253,1160,261,1217,279,1244,293,1268,311,1279,325,1288,341,1297,372,1292,373,1283,343,1275,328,1264,315,1241,298,1215,284,1158,266,1104,258,1061,256"/>
 <area shape="poly" title=" " alt="" coords="1010,261,908,283,777,316,710,341,555,388,554,383,708,336,776,311,907,277,1009,256"/>
@@ -272,8 +278,12 @@ Functions</h2></td></tr>
 <tr class="separator:a64bfa44f49f390d87b5724cb229169f0"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae9f7bd1d6a107320c2544fd376913baf" id="r_ae9f7bd1d6a107320c2544fd376913baf"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ae9f7bd1d6a107320c2544fd376913baf">arq_conn_get_calls</a> (char *my_call, char *src_addr, char *dst_addr, size_t bufsz)</td></tr>
 <tr class="separator:ae9f7bd1d6a107320c2544fd376913baf"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a6a23772ab70f53120a8c70f1c49da74b" id="r_a6a23772ab70f53120a8c70f1c49da74b"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a6a23772ab70f53120a8c70f1c49da74b">arq_set_callsign</a> (const char *callsign)</td></tr>
+<tr class="separator:a6a23772ab70f53120a8c70f1c49da74b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a038f8fadbf7592b7985dd075a74dfa66" id="r_a038f8fadbf7592b7985dd075a74dfa66"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a038f8fadbf7592b7985dd075a74dfa66">arq_get_bw</a> (void)</td></tr>
 <tr class="separator:a038f8fadbf7592b7985dd075a74dfa66"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a6315c18b66ad6c79df86c74bfdcb64d4" id="r_a6315c18b66ad6c79df86c74bfdcb64d4"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a6315c18b66ad6c79df86c74bfdcb64d4">wait_payload_written</a> (void)</td></tr>
+<tr class="separator:a6315c18b66ad6c79df86c74bfdcb64d4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a43cdb08aa62b0a621477ca7a092e9d7d" id="r_a43cdb08aa62b0a621477ca7a092e9d7d"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a43cdb08aa62b0a621477ca7a092e9d7d">handle_cmd</a> (const <a class="el" href="structarq__cmd__msg__t.html">arq_cmd_msg_t</a> *msg)</td></tr>
 <tr class="separator:a43cdb08aa62b0a621477ca7a092e9d7d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a5fa9a25e53532bb4dd2612da1d0eac96" id="r_a5fa9a25e53532bb4dd2612da1d0eac96"><td class="memItemLeft" align="right" valign="top">static void *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a5fa9a25e53532bb4dd2612da1d0eac96">arq_cmd_bridge_worker</a> (void *arg)</td></tr>
@@ -284,9 +294,13 @@ Functions</h2></td></tr>
 <tr class="separator:af79b5db367805decf025d14958eb87b7"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a0b5e650da406bb512ef3be2828f8f901" id="r_a0b5e650da406bb512ef3be2828f8f901"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a0b5e650da406bb512ef3be2828f8f901">arq_handle_carousel_frame</a> (const uint8_t *data, size_t frame_size, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, bool from_control, float rx_snr, uint32_t age_ms)</td></tr>
 <tr class="separator:a0b5e650da406bb512ef3be2828f8f901"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aba9dd94e849d8b79a2c30ada2c3cea9a" id="r_aba9dd94e849d8b79a2c30ada2c3cea9a"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#aba9dd94e849d8b79a2c30ada2c3cea9a">log_connect_frame_hex</a> (const char *kind, const uint8_t *data, size_t len)</td></tr>
+<tr class="separator:aba9dd94e849d8b79a2c30ada2c3cea9a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a762bcd87687cd9dc81b5831b96893350" id="r_a762bcd87687cd9dc81b5831b96893350"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a762bcd87687cd9dc81b5831b96893350">arq_handle_incoming_connect_frame</a> (uint8_t *data, size_t frame_size, float rx_snr, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
-<tr class="memdesc:a762bcd87687cd9dc81b5831b96893350"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle an incoming CALL/ACCEPT frame (protocol version 1).  <br /></td></tr>
+<tr class="memdesc:a762bcd87687cd9dc81b5831b96893350"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle an incoming CALL/ACCEPT frame (protocol version 3).  <br /></td></tr>
 <tr class="separator:a762bcd87687cd9dc81b5831b96893350"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a239d1c8b6e8b8ada446e67f36ff39ab5" id="r_a239d1c8b6e8b8ada446e67f36ff39ab5"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a239d1c8b6e8b8ada446e67f36ff39ab5">arq_set_session_bw</a> (int <a class="el" href="carousel_8c.html#a30c888e8758f5c25df50cf62f461d58e">bw_hz</a>, bool from_call)</td></tr>
+<tr class="separator:a239d1c8b6e8b8ada446e67f36ff39ab5"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a0b6771834916d44f282af024af580ccb" id="r_a0b6771834916d44f282af024af580ccb"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a0b6771834916d44f282af024af580ccb">arq_handle_incoming_cq_frame</a> (uint8_t *data, size_t frame_size)</td></tr>
 <tr class="memdesc:a0b6771834916d44f282af024af580ccb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle incoming compact CQ frame and emit host-side CQFRAME notification.  <br /></td></tr>
 <tr class="separator:a0b6771834916d44f282af024af580ccb"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -312,6 +326,9 @@ Functions</h2></td></tr>
 <tr class="separator:a4098ee343c6a96aef872c8d682f5d815"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a5da248268eeb2852dc3383b5062c3635" id="r_a5da248268eeb2852dc3383b5062c3635"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a5da248268eeb2852dc3383b5062c3635">arq_post_pattern_ack</a> (bool is_break)</td></tr>
 <tr class="separator:a5da248268eeb2852dc3383b5062c3635"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a69b46dd4efce4e449be2653957c5935b" id="r_a69b46dd4efce4e449be2653957c5935b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a69b46dd4efce4e449be2653957c5935b">arq_session_active</a> (void)</td></tr>
+<tr class="memdesc:a69b46dd4efce4e449be2653957c5935b"><td class="mdescLeft">&#160;</td><td class="mdescRight">A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED, DISCONNECTING): what stops a broadcast carousel.  <br /></td></tr>
+<tr class="separator:a69b46dd4efce4e449be2653957c5935b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac508dd91b0ac44ed4dc4b8c34ed188a8" id="r_ac508dd91b0ac44ed4dc4b8c34ed188a8"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ac508dd91b0ac44ed4dc4b8c34ed188a8">arq_is_link_connected</a> (void)</td></tr>
 <tr class="memdesc:ac508dd91b0ac44ed4dc4b8c34ed188a8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Check whether ARQ link is connected.  <br /></td></tr>
 <tr class="separator:ac508dd91b0ac44ed4dc4b8c34ed188a8"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -424,6 +441,10 @@ Variables</h2></td></tr>
 <tr class="separator:a74b1fabd63221b8774232e58fb59fa94"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ad245c252cbd5089ef156d17e21e2ac73" id="r_ad245c252cbd5089ef156d17e21e2ac73"><td class="memItemLeft" align="right" valign="top">static _Atomic bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ad245c252cbd5089ef156d17e21e2ac73">g_initialized</a></td></tr>
 <tr class="separator:ad245c252cbd5089ef156d17e21e2ac73"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a5e78f4a232c30d4528bce2fdd3d8dbd2" id="r_a5e78f4a232c30d4528bce2fdd3d8dbd2"><td class="memItemLeft" align="right" valign="top">static atomic_uint&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a5e78f4a232c30d4528bce2fdd3d8dbd2">g_payload_sent</a></td></tr>
+<tr class="separator:a5e78f4a232c30d4528bce2fdd3d8dbd2"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abc93956743dcc45777ef30add0500341" id="r_abc93956743dcc45777ef30add0500341"><td class="memItemLeft" align="right" valign="top">static atomic_uint&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#abc93956743dcc45777ef30add0500341">g_payload_written</a></td></tr>
+<tr class="separator:abc93956743dcc45777ef30add0500341"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <h2 class="groupheader">Macro Definition Documentation</h2>
 <a id="a9e6e26f3b1576402b650da86d62e0ea9" name="a9e6e26f3b1576402b650da86d62e0ea9"></a>
@@ -796,7 +817,7 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Handle an incoming CALL/ACCEPT frame (protocol version 1). </p>
+<p>Handle an incoming CALL/ACCEPT frame (protocol version 3). </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">data</td><td>Frame bytes. </td></tr>
@@ -1206,6 +1227,26 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a69b46dd4efce4e449be2653957c5935b" name="a69b46dd4efce4e449be2653957c5935b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a69b46dd4efce4e449be2653957c5935b">&#9670;&#160;</a></span>arq_session_active()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_active </td>
+          <td>(</td>
+          <td class="paramtype">void&#160;</td>
+          <td class="paramname"></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED, DISCONNECTING): what stops a broadcast carousel. </p>
+
+</div>
+</div>
 <a id="a67d12cb2540272e8dde165df7f3d8c47" name="a67d12cb2540272e8dde165df7f3d8c47"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a67d12cb2540272e8dde165df7f3d8c47">&#9670;&#160;</a></span>arq_set_active_modem_mode()</h2>
 
@@ -1240,6 +1281,24 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
+
+</div>
+</div>
+<a id="a6a23772ab70f53120a8c70f1c49da74b" name="a6a23772ab70f53120a8c70f1c49da74b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6a23772ab70f53120a8c70f1c49da74b">&#9670;&#160;</a></span>arq_set_callsign()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_set_callsign </td>
+          <td>(</td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>callsign</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
 
 </div>
 </div>
@@ -1326,6 +1385,34 @@ Variables</h2></td></tr>
           <td class="paramtype">int&#160;</td>
           <td class="paramname"><em>ms</em></td><td>)</td>
           <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a239d1c8b6e8b8ada446e67f36ff39ab5" name="a239d1c8b6e8b8ada446e67f36ff39ab5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a239d1c8b6e8b8ada446e67f36ff39ab5">&#9670;&#160;</a></span>arq_set_session_bw()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_set_session_bw </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>bw_hz</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">bool&#160;</td>
+          <td class="paramname"><em>from_call</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -2089,6 +2176,48 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="aba9dd94e849d8b79a2c30ada2c3cea9a" name="aba9dd94e849d8b79a2c30ada2c3cea9a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aba9dd94e849d8b79a2c30ada2c3cea9a">&#9670;&#160;</a></span>log_connect_frame_hex()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static void log_connect_frame_hex </td>
+          <td>(</td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>kind</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const uint8_t *&#160;</td>
+          <td class="paramname"><em>data</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>len</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="aa5c09f5a85257cb4bce4526906838d33" name="aa5c09f5a85257cb4bce4526906838d33"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aa5c09f5a85257cb4bce4526906838d33">&#9670;&#160;</a></span>normalize_bandwidth_hz()</h2>
 
@@ -2174,6 +2303,32 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
+
+</div>
+</div>
+<a id="a6315c18b66ad6c79df86c74bfdcb64d4" name="a6315c18b66ad6c79df86c74bfdcb64d4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6315c18b66ad6c79df86c74bfdcb64d4">&#9670;&#160;</a></span>wait_payload_written()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static void wait_payload_written </td>
+          <td>(</td>
+          <td class="paramtype">void&#160;</td>
+          <td class="paramname"></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
 
 </div>
 </div>
@@ -2566,6 +2721,28 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a5e78f4a232c30d4528bce2fdd3d8dbd2" name="a5e78f4a232c30d4528bce2fdd3d8dbd2"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5e78f4a232c30d4528bce2fdd3d8dbd2">&#9670;&#160;</a></span>g_payload_sent</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">atomic_uint g_payload_sent</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a90cb30b9701ea325b7b1af0e1a11d377" name="a90cb30b9701ea325b7b1af0e1a11d377"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a90cb30b9701ea325b7b1af0e1a11d377">&#9670;&#160;</a></span>g_payload_tid</h2>
 
@@ -2577,6 +2754,28 @@ Variables</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">pthread_t g_payload_tid</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="abc93956743dcc45777ef30add0500341" name="abc93956743dcc45777ef30add0500341"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abc93956743dcc45777ef30add0500341">&#9670;&#160;</a></span>g_payload_written</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">atomic_uint g_payload_written</td>
         </tr>
       </table>
   </td>

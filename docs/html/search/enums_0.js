@@ -8,5 +8,6 @@ var searchData=
   ['arq_5fpattern_5fkind_5ft_5',['arq_pattern_kind_t',['../arq_8h.html#a8dd028295c25f08a73580a3a895d57c8',1,'arq.h']]],
   ['arq_5fstatus_5ftype_5ft_6',['arq_status_type_t',['../arq__events_8h.html#a2fce6b97743258e78ceb2f3f04c39e10',1,'arq_events.h']]],
   ['arq_5fsubtype_5ft_7',['arq_subtype_t',['../arq__protocol_8h.html#af5a236497723e49d7064cd4545cf6aa0',1,'arq_protocol.h']]],
-  ['arq_5ftrace_5fkind_5ft_8',['arq_trace_kind_t',['../arq__trace_8h.html#ae43d1d275e536ece9ca823a8dec133c2',1,'arq_trace.h']]]
+  ['arq_5fteardown_5ft_8',['arq_teardown_t',['../arq__fsm_8h.html#a7c2aa6f9a626fff694f7929397bb6e50',1,'arq_fsm.h']]],
+  ['arq_5ftrace_5fkind_5ft_9',['arq_trace_kind_t',['../arq__trace_8h.html#ae43d1d275e536ece9ca823a8dec133c2',1,'arq_trace.h']]]
 ];

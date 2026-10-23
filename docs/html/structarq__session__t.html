@@ -82,19 +82,19 @@ Collaboration diagram for arq_session_t:</div>
 <div class="dyncontent">
 <div class="center"><img src="structarq__session__t__coll__graph.png" border="0" usemap="#aarq__session__t_coll__map" alt="Collaboration graph"/></div>
 <map name="aarq__session__t_coll__map" id="aarq__session__t_coll__map">
-<area shape="rect" title=" " alt="" coords="205,181,308,207"/>
-<area shape="rect" href="structcar__t.html" title=" " alt="" coords="231,93,282,119"/>
-<area shape="poly" title=" " alt="" coords="259,133,259,181,254,181,254,133"/>
+<area shape="rect" title=" " alt="" coords="205,196,308,221"/>
+<area shape="rect" href="structcar__t.html" title=" " alt="" coords="231,108,282,133"/>
+<area shape="poly" title=" " alt="" coords="259,147,259,195,254,195,254,147"/>
 <area shape="rect" href="structcar__io__t.html" title=" " alt="" coords="5,5,73,31"/>
-<area shape="poly" title=" " alt="" coords="83,33,232,92,230,97,81,38"/>
+<area shape="poly" title=" " alt="" coords="72,35,163,82,232,108,230,113,161,86,70,40"/>
 <area shape="rect" href="structcar__mlog__t.html" title=" " alt="" coords="97,5,184,31"/>
-<area shape="poly" title=" " alt="" coords="169,37,242,91,239,95,166,41"/>
+<area shape="poly" title=" " alt="" coords="165,38,216,82,244,106,241,110,212,86,162,42"/>
 <area shape="rect" href="structcar__sblock__t.html" title=" " alt="" coords="209,5,305,31"/>
-<area shape="poly" title=" " alt="" coords="259,45,259,93,254,93,254,45"/>
+<area shape="poly" title=" " alt="" coords="259,45,259,108,254,108,254,45"/>
 <area shape="rect" href="structcar__rblock__t.html" title=" " alt="" coords="329,5,422,31"/>
-<area shape="poly" title=" " alt="" coords="350,41,274,95,271,91,347,37"/>
+<area shape="poly" title=" " alt="" coords="353,41,272,110,268,106,350,37"/>
 <area shape="rect" href="structcar__frame__t.html" title=" " alt="" coords="446,5,537,31"/>
-<area shape="poly" title=" " alt="" coords="448,38,283,98,281,93,446,33"/>
+<area shape="poly" title=" " alt="" coords="457,39,352,86,283,113,281,108,350,82,454,34"/>
 </map>
 <center><span class="legend">[<a href="graph_legend.html">legend</a>]</span></center></div>
 <table class="memberdecls">
@@ -132,8 +132,8 @@ Data Fields</h2></td></tr>
 <tr class="separator:ad55b521c3719df2b5499050750cda398"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a03eebd2ee3971c9e7d9daddad4aeab8e" id="r_a03eebd2ee3971c9e7d9daddad4aeab8e"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a03eebd2ee3971c9e7d9daddad4aeab8e">nav_busy_until_ms</a></td></tr>
 <tr class="separator:a03eebd2ee3971c9e7d9daddad4aeab8e"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a26a22ab1297d77c29954ff69d5a5670b" id="r_a26a22ab1297d77c29954ff69d5a5670b"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a26a22ab1297d77c29954ff69d5a5670b">disc_defer_count</a></td></tr>
-<tr class="separator:a26a22ab1297d77c29954ff69d5a5670b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ae8805aaa92fec9ebec717b0ee72dd666" id="r_ae8805aaa92fec9ebec717b0ee72dd666"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ae8805aaa92fec9ebec717b0ee72dd666">defer_count</a></td></tr>
+<tr class="separator:ae8805aaa92fec9ebec717b0ee72dd666"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a62dfcdcdfde17e01fca1ae78a705d038" id="r_a62dfcdcdfde17e01fca1ae78a705d038"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a62dfcdcdfde17e01fca1ae78a705d038">tx_active</a></td></tr>
 <tr class="separator:a62dfcdcdfde17e01fca1ae78a705d038"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a96eae4a24e97ebaf59c8559fa480c5c5" id="r_a96eae4a24e97ebaf59c8559fa480c5c5"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a96eae4a24e97ebaf59c8559fa480c5c5">last_tx_end_ms</a></td></tr>
@@ -152,22 +152,12 @@ Data Fields</h2></td></tr>
 <tr class="separator:a0795ced440c4dac3a968364e0ed8c7ff"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a5f18d72de820a2d7c45560f7e2ee5410" id="r_a5f18d72de820a2d7c45560f7e2ee5410"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a5f18d72de820a2d7c45560f7e2ee5410">accept_tx_pending</a></td></tr>
 <tr class="separator:a5f18d72de820a2d7c45560f7e2ee5410"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a499c4b05f025bbb145600a019fb57c35" id="r_a499c4b05f025bbb145600a019fb57c35"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a499c4b05f025bbb145600a019fb57c35">deferred_listen_off</a></td></tr>
-<tr class="separator:a499c4b05f025bbb145600a019fb57c35"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a2c4e3cc0cc093fec1f7187a1946127cc" id="r_a2c4e3cc0cc093fec1f7187a1946127cc"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a2c4e3cc0cc093fec1f7187a1946127cc">pending_disconnect_notify</a></td></tr>
-<tr class="separator:a2c4e3cc0cc093fec1f7187a1946127cc"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a9db7537e4c4408896eb20bf33e68643f" id="r_a9db7537e4c4408896eb20bf33e68643f"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a9db7537e4c4408896eb20bf33e68643f">disconnect_sent</a></td></tr>
-<tr class="separator:a9db7537e4c4408896eb20bf33e68643f"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:af30ffb19df562f9b8b036851c2c6bba4" id="r_af30ffb19df562f9b8b036851c2c6bba4"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#af30ffb19df562f9b8b036851c2c6bba4">pending_disconnect_reply</a></td></tr>
-<tr class="separator:af30ffb19df562f9b8b036851c2c6bba4"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ade0a93c712b7330bf8bd9bd64b305727" id="r_ade0a93c712b7330bf8bd9bd64b305727"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ade0a93c712b7330bf8bd9bd64b305727">pending_disconnect</a></td></tr>
-<tr class="separator:ade0a93c712b7330bf8bd9bd64b305727"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a28eba5669b44aabb498748ee3e240005" id="r_a28eba5669b44aabb498748ee3e240005"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a28eba5669b44aabb498748ee3e240005">pending_connect</a></td></tr>
-<tr class="separator:a28eba5669b44aabb498748ee3e240005"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a4fdec979c84fb4f2d9c0d40da2205655" id="r_a4fdec979c84fb4f2d9c0d40da2205655"><td class="memItemLeft" align="right" valign="top"><a class="el" href="arq__fsm_8h.html#a7c2aa6f9a626fff694f7929397bb6e50">arq_teardown_t</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a4fdec979c84fb4f2d9c0d40da2205655">teardown</a></td></tr>
+<tr class="separator:a4fdec979c84fb4f2d9c0d40da2205655"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a04fd7547604d137a0ea11ac1885a56bd" id="r_a04fd7547604d137a0ea11ac1885a56bd"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a04fd7547604d137a0ea11ac1885a56bd">teardown_deadline_ms</a></td></tr>
+<tr class="separator:a04fd7547604d137a0ea11ac1885a56bd"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aafcac5d1f15a39999f4f45391ff177c5" id="r_aafcac5d1f15a39999f4f45391ff177c5"><td class="memItemLeft" align="right" valign="top">char&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#aafcac5d1f15a39999f4f45391ff177c5">pending_connect_call</a> [<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td></tr>
 <tr class="separator:aafcac5d1f15a39999f4f45391ff177c5"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:abf96238a46c7d061810b74bbeb5e2945" id="r_abf96238a46c7d061810b74bbeb5e2945"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#abf96238a46c7d061810b74bbeb5e2945">disconnect_deadline_ms</a></td></tr>
-<tr class="separator:abf96238a46c7d061810b74bbeb5e2945"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a359aabbd8838b6d6a895ba3a146aa2a2" id="r_a359aabbd8838b6d6a895ba3a146aa2a2"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a359aabbd8838b6d6a895ba3a146aa2a2">last_rx_ms</a></td></tr>
 <tr class="separator:a359aabbd8838b6d6a895ba3a146aa2a2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a022d0896248eb9fe151c45ee918c425d" id="r_a022d0896248eb9fe151c45ee918c425d"><td class="memItemLeft" align="right" valign="top"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a022d0896248eb9fe151c45ee918c425d">car</a></td></tr>
@@ -176,10 +166,6 @@ Data Fields</h2></td></tr>
 <tr class="separator:a2050a4187f46e7cd7f9b5a40c3139fe1"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a473bb3d58de514e86288f3a4b8536013" id="r_a473bb3d58de514e86288f3a4b8536013"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a473bb3d58de514e86288f3a4b8536013">car_session</a></td></tr>
 <tr class="separator:a473bb3d58de514e86288f3a4b8536013"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ac92c928b73b3c8e0975874cf766e4021" id="r_ac92c928b73b3c8e0975874cf766e4021"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ac92c928b73b3c8e0975874cf766e4021">car_ending</a></td></tr>
-<tr class="separator:ac92c928b73b3c8e0975874cf766e4021"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:afebdaac2b7ee764d7789a7c75c11ec5a" id="r_afebdaac2b7ee764d7789a7c75c11ec5a"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#afebdaac2b7ee764d7789a7c75c11ec5a">car_end_deadline_ms</a></td></tr>
-<tr class="separator:afebdaac2b7ee764d7789a7c75c11ec5a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a64aeb5f5caf0baa3f10379869be99e69" id="r_a64aeb5f5caf0baa3f10379869be99e69"><td class="memItemLeft" align="right" valign="top">uint16_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a64aeb5f5caf0baa3f10379869be99e69">crc_seed</a></td></tr>
 <tr class="separator:a64aeb5f5caf0baa3f10379869be99e69"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3b01ab72c30e1a813869125ac6c04071" id="r_a3b01ab72c30e1a813869125ac6c04071"><td class="memItemLeft" align="right" valign="top">uint16_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a3b01ab72c30e1a813869125ac6c04071">car_nonce</a></td></tr>
@@ -192,8 +178,14 @@ Data Fields</h2></td></tr>
 <tr class="separator:ac9868c95190af5462fe3a0030fed481d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae541da5390b1b1fe267846d5b614dc6b" id="r_ae541da5390b1b1fe267846d5b614dc6b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ae541da5390b1b1fe267846d5b614dc6b">car_peer_ctl_deaf</a></td></tr>
 <tr class="separator:ae541da5390b1b1fe267846d5b614dc6b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ad93c4bc5036eb2a9502fbd2c9db0354d" id="r_ad93c4bc5036eb2a9502fbd2c9db0354d"><td class="memItemLeft" align="right" valign="top">float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ad93c4bc5036eb2a9502fbd2c9db0354d">car_call_snr</a></td></tr>
+<tr class="separator:ad93c4bc5036eb2a9502fbd2c9db0354d"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a4e3d3b393939a99359e9caccb649bcbc" id="r_a4e3d3b393939a99359e9caccb649bcbc"><td class="memItemLeft" align="right" valign="top">float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a4e3d3b393939a99359e9caccb649bcbc">car_my_snr</a></td></tr>
+<tr class="separator:a4e3d3b393939a99359e9caccb649bcbc"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a1469cb13d48af6f7b661fdbf2bf0f3a1" id="r_a1469cb13d48af6f7b661fdbf2bf0f3a1"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a1469cb13d48af6f7b661fdbf2bf0f3a1">ctl_floor_at_stop</a></td></tr>
 <tr class="separator:a1469cb13d48af6f7b661fdbf2bf0f3a1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a8b36be5ec98ea15cba2242a669b18d2f" id="r_a8b36be5ec98ea15cba2242a669b18d2f"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a8b36be5ec98ea15cba2242a669b18d2f">floor_mode</a></td></tr>
+<tr class="separator:a8b36be5ec98ea15cba2242a669b18d2f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a961357b152b70e4396f700fdbee8eb3e" id="r_a961357b152b70e4396f700fdbee8eb3e"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a961357b152b70e4396f700fdbee8eb3e">car_last_rx_ms</a></td></tr>
 <tr class="separator:a961357b152b70e4396f700fdbee8eb3e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae5427c7247e38025eda04f4500651dd8" id="r_ae5427c7247e38025eda04f4500651dd8"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ae5427c7247e38025eda04f4500651dd8">deadline_ms</a></td></tr>
@@ -300,6 +292,20 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
+<a id="ad93c4bc5036eb2a9502fbd2c9db0354d" name="ad93c4bc5036eb2a9502fbd2c9db0354d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad93c4bc5036eb2a9502fbd2c9db0354d">&#9670;&#160;</a></span>car_call_snr</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">float arq_session_t::car_call_snr</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="ac9868c95190af5462fe3a0030fed481d" name="ac9868c95190af5462fe3a0030fed481d"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ac9868c95190af5462fe3a0030fed481d">&#9670;&#160;</a></span>car_ctl_deaf</h2>
 
@@ -314,34 +320,6 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="afebdaac2b7ee764d7789a7c75c11ec5a" name="afebdaac2b7ee764d7789a7c75c11ec5a"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#afebdaac2b7ee764d7789a7c75c11ec5a">&#9670;&#160;</a></span>car_end_deadline_ms</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">uint64_t arq_session_t::car_end_deadline_ms</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="ac92c928b73b3c8e0975874cf766e4021" name="ac92c928b73b3c8e0975874cf766e4021"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ac92c928b73b3c8e0975874cf766e4021">&#9670;&#160;</a></span>car_ending</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">bool arq_session_t::car_ending</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
 <a id="a961357b152b70e4396f700fdbee8eb3e" name="a961357b152b70e4396f700fdbee8eb3e"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a961357b152b70e4396f700fdbee8eb3e">&#9670;&#160;</a></span>car_last_rx_ms</h2>
 
@@ -350,6 +328,20 @@ Data Fields</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">uint64_t arq_session_t::car_last_rx_ms</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a4e3d3b393939a99359e9caccb649bcbc" name="a4e3d3b393939a99359e9caccb649bcbc"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4e3d3b393939a99359e9caccb649bcbc">&#9670;&#160;</a></span>car_my_snr</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">float arq_session_t::car_my_snr</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -510,56 +502,28 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a499c4b05f025bbb145600a019fb57c35" name="a499c4b05f025bbb145600a019fb57c35"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a499c4b05f025bbb145600a019fb57c35">&#9670;&#160;</a></span>deferred_listen_off</h2>
+<a id="ae8805aaa92fec9ebec717b0ee72dd666" name="ae8805aaa92fec9ebec717b0ee72dd666"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae8805aaa92fec9ebec717b0ee72dd666">&#9670;&#160;</a></span>defer_count</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">bool arq_session_t::deferred_listen_off</td>
+          <td class="memname">uint8_t arq_session_t::defer_count</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
 </div>
 </div>
-<a id="a26a22ab1297d77c29954ff69d5a5670b" name="a26a22ab1297d77c29954ff69d5a5670b"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a26a22ab1297d77c29954ff69d5a5670b">&#9670;&#160;</a></span>disc_defer_count</h2>
+<a id="a8b36be5ec98ea15cba2242a669b18d2f" name="a8b36be5ec98ea15cba2242a669b18d2f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a8b36be5ec98ea15cba2242a669b18d2f">&#9670;&#160;</a></span>floor_mode</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">uint8_t arq_session_t::disc_defer_count</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="abf96238a46c7d061810b74bbeb5e2945" name="abf96238a46c7d061810b74bbeb5e2945"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#abf96238a46c7d061810b74bbeb5e2945">&#9670;&#160;</a></span>disconnect_deadline_ms</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">uint64_t arq_session_t::disconnect_deadline_ms</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="a9db7537e4c4408896eb20bf33e68643f" name="a9db7537e4c4408896eb20bf33e68643f"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a9db7537e4c4408896eb20bf33e68643f">&#9670;&#160;</a></span>disconnect_sent</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">bool arq_session_t::disconnect_sent</td>
+          <td class="memname">int arq_session_t::floor_mode</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -734,20 +698,6 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a28eba5669b44aabb498748ee3e240005" name="a28eba5669b44aabb498748ee3e240005"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a28eba5669b44aabb498748ee3e240005">&#9670;&#160;</a></span>pending_connect</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">bool arq_session_t::pending_connect</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
 <a id="aafcac5d1f15a39999f4f45391ff177c5" name="aafcac5d1f15a39999f4f45391ff177c5"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aafcac5d1f15a39999f4f45391ff177c5">&#9670;&#160;</a></span>pending_connect_call</h2>
 
@@ -756,48 +706,6 @@ Data Fields</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">char arq_session_t::pending_connect_call[<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="ade0a93c712b7330bf8bd9bd64b305727" name="ade0a93c712b7330bf8bd9bd64b305727"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ade0a93c712b7330bf8bd9bd64b305727">&#9670;&#160;</a></span>pending_disconnect</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">bool arq_session_t::pending_disconnect</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="a2c4e3cc0cc093fec1f7187a1946127cc" name="a2c4e3cc0cc093fec1f7187a1946127cc"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a2c4e3cc0cc093fec1f7187a1946127cc">&#9670;&#160;</a></span>pending_disconnect_notify</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">bool arq_session_t::pending_disconnect_notify</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="af30ffb19df562f9b8b036851c2c6bba4" name="af30ffb19df562f9b8b036851c2c6bba4"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#af30ffb19df562f9b8b036851c2c6bba4">&#9670;&#160;</a></span>pending_disconnect_reply</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">bool arq_session_t::pending_disconnect_reply</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -854,6 +762,34 @@ Data Fields</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">uint64_t arq_session_t::state_enter_ms</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a4fdec979c84fb4f2d9c0d40da2205655" name="a4fdec979c84fb4f2d9c0d40da2205655"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4fdec979c84fb4f2d9c0d40da2205655">&#9670;&#160;</a></span>teardown</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="arq__fsm_8h.html#a7c2aa6f9a626fff694f7929397bb6e50">arq_teardown_t</a> arq_session_t::teardown</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a04fd7547604d137a0ea11ac1885a56bd" name="a04fd7547604d137a0ea11ac1885a56bd"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a04fd7547604d137a0ea11ac1885a56bd">&#9670;&#160;</a></span>teardown_deadline_ms</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint64_t arq_session_t::teardown_deadline_ms</td>
         </tr>
       </table>
 </div><div class="memdoc">

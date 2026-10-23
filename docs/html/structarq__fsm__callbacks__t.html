@@ -118,6 +118,9 @@ Data Fields</h2></td></tr>
 <tr class="separator:a4995d7c96168b5cdec94c7465ec6536c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aca02422fc50a73fc736ff9a6e8b96cca" id="r_aca02422fc50a73fc736ff9a6e8b96cca"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#aca02422fc50a73fc736ff9a6e8b96cca">set_crc_seed</a> )(uint16_t seed)</td></tr>
 <tr class="separator:aca02422fc50a73fc736ff9a6e8b96cca"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a99742fcf514f927c189109ae136404ac" id="r_a99742fcf514f927c189109ae136404ac"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a99742fcf514f927c189109ae136404ac">set_floor_mode</a> )(int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
+<tr class="memdesc:a99742fcf514f927c189109ae136404ac"><td class="mdescLeft">&#160;</td><td class="mdescRight">The session's MFSK floor (arq_floor_mode), set with its seed: the geometry patterns are keyed and detected at.  <br /></td></tr>
+<tr class="separator:a99742fcf514f927c189109ae136404ac"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <h2 class="groupheader">Field Documentation</h2>
 <a id="aefa3dd3ff7429f40df503dfce25df2aa" name="aefa3dd3ff7429f40df503dfce25df2aa"></a>
@@ -133,7 +136,7 @@ Data Fields</h2></td></tr>
 </div><div class="memdoc">
 
 <p>Is there energy on the channel right now? Optional (NULL when the station has no busy detector, which is the default) &ndash; used to avoid keying over a transmission we cannot decode, which decoder sync alone cannot see. </p>
-<p>See <a class="el" href="arq__fsm_8c.html#af77417ceb0456f097a23a6d9d3476dc4">peer_is_transmitting()</a> in <a class="el" href="arq__fsm_8c.html">arq_fsm.c</a>. </p>
+<p>See <a class="el" href="arq__fsm_8c.html#aa5c974b345d553df248f94e6a7274e23">peer_is_transmitting()</a> in <a class="el" href="arq__fsm_8c.html">arq_fsm.c</a>. </p>
 
 </div>
 </div>
@@ -313,6 +316,23 @@ Data Fields</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+</div>
+</div>
+<a id="a99742fcf514f927c189109ae136404ac" name="a99742fcf514f927c189109ae136404ac"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a99742fcf514f927c189109ae136404ac">&#9670;&#160;</a></span>set_floor_mode</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void(* arq_fsm_callbacks_t::set_floor_mode) (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>The session's MFSK floor (arq_floor_mode), set with its seed: the geometry patterns are keyed and detected at. </p>
+<p>Optional. </p>
 
 </div>
 </div>

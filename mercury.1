@@ -3,7 +3,7 @@
 .\" Copyright (C) 2025 Rhizomatica
 .\" Author: Rafael Diniz <rafael@riseup.net>
 .\" SPDX-License-Identifier: GPL-3.0-or-later
-.TH MERCURY 1 "2026" "Mercury 1.9.19" "Mercury Manual"
+.TH MERCURY 1 "2026" "Mercury 1.9.20" "Mercury Manual"
 .SH NAME
 mercury \- HF radio modem with ARQ and broadcast data links
 .SH SYNOPSIS
@@ -75,6 +75,7 @@ Valid values:
 .BR oss ,
 .BR coreaudio ,
 .BR aaudio ,
+.BR hl2 ,
 .BR shm ,
 .BR rtp ,
 .BR null ,
@@ -105,6 +106,23 @@ exchanges the radio signal with hermes-radio-daemon as RTP multicast:
 .B \-o
 .I "tx group"
 (default 239.255.72.2); PTT travels in the TX stream.
+.B hl2
+uses a Hermes-Lite 2 on the network as radio and sound card (openHPSDR
+protocol 1; Mercury does the upper-sideband modulation, tunes the radio and
+keys it):
+.B \-i auto
+(the first that answers a broadcast) or
+.B \-i
+.IR host [: port ];
+the frequency comes from
+.B \-F
+or the
+.B [hl2]
+section of the INI.
+.TP
+.BI \-F " frequency_hz"
+Hermes-Lite 2 (\fB\-x hl2\fR) dial frequency in Hz, upper sideband.
+Without one the radio receives but never transmits.
 .TP
 .BI \-k " channel"
 Capture input channel layout:
@@ -217,6 +235,13 @@ Set the selected PTT method's serial device or Hamlib ip:port endpoint (e.g.,
 .IR COM3 ,
 or
 .IR localhost:4532 ).
+Where there is no serial device for the radio (no kernel driver for its
+USB-serial chip, or no access to it), a Hamlib built with usb_serial drives
+the chip itself:
+.IR usb:VVVV:PPPP[:SERIAL][@INTERFACE] ,
+e.g.
+.I "usb:10c4:ea60:IC-7100 02010347 A"
+(the user needs read and write access to the chip's /dev/bus/usb node).
 .TP
 .B \-S
 Select the HERMES shared-memory PTT method.

@@ -24,7 +24,7 @@ presents the result to your application as an ordinary TCP connection.
 - **Adaptive speed** — each direction runs on one of seven rungs, from the 32-tone MFSK floor through DATAC15, DATAC4, DATAC3, DATAC1 and DATAC17 up to QAM16C2. It starts on the rung the connect's SNR supports and moves on measured delivery. Control frames ride DATAC16 (and MFSK, or tone patterns, at the floor), so signalling survives when payload cannot.
 - **Broadcast mode** alongside ARQ, with its own framing and TCP ingress port — used for one-to-many traffic and for [Reticulum](#reticulum) mesh networking.
 - **VARA-style TCP TNC interface** on two sockets (control on the base port, data on base+1), speaking `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, `BITRATE`, `TUNE` (a 1 kHz ATU tuning carrier with a hard 60 s unkey timer) and `MONITOR` (a passive VARA-style monitor that decodes every mode). Existing VARA-aware software can generally talk to Mercury unchanged.
-- **Runs on the audio hardware you have** — `alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, `rtp` (to hermes-radio-daemon), plus `shm`, `null`, `fifo` and `sock` for embedded and test use.
+- **Runs on the audio hardware you have** — `alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, `rtp` (to hermes-radio-daemon), `hl2` (a [Hermes-Lite 2](docs/HERMES-LITE-2.md) on the network, with no sound card or CAT), plus `shm`, `null`, `fifo` and `sock` for embedded and test use.
 - **Keys the radio for you** via Hamlib, serial RTS (including DigiRig), or the HERMES shared-memory interface — or stays out of the way and lets your client do it.
 
 Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
@@ -61,9 +61,11 @@ Options:
  -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.
  -i [device]                Radio Capture device id (eg: "plughw:0,0").
  -o [device]                Radio Playback device id (eg: "plughw:0,0").
- -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, oss, coreaudio, aaudio, dsound, wasapi, shm, rtp, null, fifo or sock. Default is alsa on Linux, dsound on Windows.
+ -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, oss, coreaudio, aaudio, dsound, wasapi, hl2, shm, rtp, null, fifo or sock. Default is alsa on Linux, dsound on Windows.
                             null, fifo and sock are developer/test backends; fifo uses raw s32le PCM at 8 kHz via -i/-o paths; sock is a framed, virtual-clock lockstep transport (MERCURY_AUDIO_SOCK=<path>).
                             rtp exchanges the radio signal with hermes-radio-daemon as RTP multicast: -i <rx group>[,iface] (default 239.255.72.1,lo), -o <tx group> (default 239.255.72.2); PTT travels in the TX stream.
+                            hl2 uses a Hermes-Lite 2 on the network as radio and sound card: -i auto (the first that answers a broadcast) or -i <host>[:port]; set its frequency with -F (or [hl2] in the INI).
+ -F [frequency_hz]          Hermes-Lite 2 (-x hl2) dial frequency in Hz, upper sideband. Without one it receives but never transmits.
  -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.
  -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.
  -U [ui_port]               Sets the UI port (WebSocket port). Default is 10000. Requires -G.
@@ -193,6 +195,33 @@ make fyne-ui
 ./mercury-ui
 ```
 
+### Build the Android .apk (technology preview)
+
+```sh
+# Android NDK r27d, the Android SDK (platform 34, build-tools 34) and the
+# fyne CLI (see "GUI build prerequisites" below)
+T=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+make fyne-ui-android ANDROID_NDK_HOME=$ANDROID_NDK_HOME ANDROID_HOME=$ANDROID_HOME \
+     CC=$T/aarch64-linux-android26-clang AR=$T/llvm-ar
+# -> Mercury-<version>.apk (arm64, debug-signed; ANDROID_RELEASE=1 with
+#    ANDROID_KEYSTORE signs it with a release key)
+```
+
+The GUI with the modem inside, on AAudio, with a vendored Hamlib
+(`radio_io/hamlib-android`) that drives the radio's USB-serial chip itself
+(Radio, method Hamlib, "Direct USB, no driver (experimental)").
+
+### Build for iOS (technology preview)
+
+On a Mac with Xcode:
+
+```sh
+make fyne-ui-ios-ipa CC="xcrun -sdk iphoneos clang -arch arm64 -miphoneos-version-min=17.0"
+# -> Mercury-<version>-ios-sideload.ipa, signed ad hoc (SideStore, AltStore Classic)
+# With IOS_SIGN_IDENTITY and IOS_PROFILE it is the App Store Connect build
+# (AltStore PAL): see ios/ALTSTORE.md.
+```
+
 ### Cross-compile the Windows installer (from Linux)
 
 ```bash
@@ -297,6 +326,59 @@ drag **Mercury** into **Applications**. The build is universal (runs natively
 on Intel and Apple Silicon) and self-contained (no Homebrew needed). It is
 signed with a Developer ID certificate and notarized by Apple, so it opens
 like any other app.
+
+### Install on Android (technology preview)
+
+You need a 64-bit ARM phone or tablet (almost every Android device since
+2017) with Android 11 or later; it was tested on Android 15.
+
+1. On the phone, open the
+   [releases page](https://github.com/Rhizomatica/mercury/releases/latest) and
+   download `Mercury-<version>-android-arm64.apk`.
+2. Open the downloaded file.  Android asks whether to allow installs from
+   that app (your browser or file manager): allow it, go back, and tap
+   **Install**.
+3. Open **Mercury** and allow it to record audio: that is how it hears the
+   radio.  Connect the radio with a USB-OTG adapter.  When Android asks
+   whether Mercury may use the USB device, allow it.
+4. In **Soundcards**, pick the radio's USB sound card (an Icom shows "USB
+   Audio CODEC (USB)").
+5. For CAT and PTT over the radio's own USB cable: **Radio**, method Hamlib,
+   **"Direct USB, no driver (experimental)"**.  It works with Silicon Labs
+   CP210x chips: Icom IC-7100 and IC-7300, Yaesu FT-710, and many cables.
+
+Keep Mercury on screen while you use it: it does not run in the background
+yet.  Later releases install over this one, because they are signed with the
+same key.  A build signed with another key has to be uninstalled first.
+
+### Install on iOS (technology preview)
+
+**With AltStore PAL (EU, Brazil and Japan).**  Mercury is notarized by
+Apple and published as an AltStore PAL source.  Updates arrive through
+AltStore.
+
+1. On the iPhone or iPad, open [altstore.io](https://altstore.io) in Safari
+   and install **AltStore PAL** as it describes.  It is an alternative app
+   marketplace, so it is not in Apple's App Store.  You need version 2.2 or
+   later.
+2. In AltStore PAL, open the **Sources** tab, tap **+**, and enter
+
+   ```
+   https://rhizomatica.github.io/mercury/altstore/source.json
+   ```
+
+3. Mercury appears in the **Browse** tab: install it from there.
+
+Mercury needs iOS 17 or later.
+
+**Anywhere else, with SideStore or AltStore Classic.**  Download
+`Mercury-<version>-ios-sideload.ipa` from the
+[releases page](https://github.com/Rhizomatica/mercury/releases/latest) and
+open it with [SideStore](https://sidestore.io) or
+[AltStore Classic](https://altstore.io).  They sign it with your own Apple
+ID, and with a free Apple ID the app has to be refreshed every 7 days.
+
+How a version is published to AltStore PAL: ios/ALTSTORE.md.
 
 ## Configuration File
 
@@ -477,7 +559,7 @@ taken separately:
 - `modem/freedv` — a subset of FreeDV / codec2, **LGPL-2.1** (see LICENSE-freedv)
 - `common/iniparser` — **MIT** (see common/iniparser/LICENSE)
 - `audioio/ffaudio` and `ffbase` — **Unlicense** / public domain (see audioio/ffaudio/UNLICENSE)
-- Windows binary releases link against Hamlib — **LGPL-2.1** (see radio_io/hamlib-w64/COPYING.LIB.txt)
+- Windows, macOS and Android binary releases link against Hamlib — **LGPL-2.1** (see radio_io/hamlib-w64/COPYING.LIB.txt, radio_io/hamlib-macos/COPYING.LIB.txt and radio_io/hamlib-android/COPYING.LIB.txt; the Android build and its source are described in radio_io/hamlib-android/README.md)
 
 The combined work (the Mercury binary) is distributed under the terms of the
 GPL-3.0-or-later. The LGPL/MIT/Unlicense terms apply to those components only
