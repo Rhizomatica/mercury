@@ -3,6 +3,7 @@
   "identifier": "org.rhizomatica.source",
   "subtitle": "Mercury, the HF radio modem of the HERMES project",
   "website": "https://www.rhizomatica.org/hermes/",
+  "fediUsername": "rhizomatica",
   "nsfw": false,
   "apps": [
     {

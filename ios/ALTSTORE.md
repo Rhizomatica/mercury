@@ -68,3 +68,19 @@ TX test sends a modem signal through the speaker.
    mercuryv2:/docs, so the source is
    `https://rhizomatica.github.io/mercury/altstore/source.json`, with the
    icon and screenshots beside it.
+
+## Discoverability
+
+The source is federated, so it can be found on explore.alt.store as
+@rhizomatica@alt.store, and its apps, updates and news reach followers on
+Mastodon, Threads and Bluesky.  That needs `fediUsername` in
+`docs/altstore/source.json` (it cannot be changed later) and one call once
+the source with that key is live:
+
+```
+curl -X POST https://api.altstore.io/federate \
+     --header "Content-Type: application/json" \
+     --data '{"source": "https://rhizomatica.github.io/mercury/altstore/source.json"}'
+```
+
+AltStore runs that account; changes to it go through apps@altstore.io.
