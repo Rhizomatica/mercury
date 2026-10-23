@@ -54,8 +54,9 @@ fallback) does not take a fallen-back S off the floor.
     java -cp /opt/TLA+Toolbox/tla2tools.jar tlc2.TLC -workers 4 \
         -metadir /tmp/tlc-floor -config FloorSilence.cfg FloorSilence.tla
 
-- `FloorSilence.cfg`: the code's rules.  `Delivered` holds: no error, 696
-  distinct states; also for every `FM`, `FS` in 1..3 (436-1184 states).
+- `FloorSilence.cfg`: the code's rules.  `Delivered` and `FloorHolds`
+  hold: no error, 696 distinct states; also for every `FM`, `FS` in 1..3
+  (436-1184 states).
 - `Mut_fs_nosilence.cfg`: M never takes the control mode to be out.
   Violates `Delivered`: down for good, M's DATAC16 control is never heard.
 - `Mut_fs_nostay.cfg`: the round timer takes S off the floor it fell back
@@ -70,6 +71,19 @@ fallback) does not take a fallen-back S off the floor.
   ladder's height bounded that walk, where here it never ends; on air it
   took 3-4 min to reach the floor.  `fall_level` now starts the walk at the
   rung the latest reading would start a session on.
+- `Mut_fs_lagread.cfg`: S's answer to M's floor control says it hears M
+  above the control mode, and M's control goes back to DATAC16.  Violates
+  `FloorHolds` (`Delivered` alone still holds: 696 states, no error; the
+  floor rounds deliver, a silence later).  The code did this until #431:
+  S judged its deafness by the smoothed SNR, so one -9 dB MFSK reading
+  after 0 dB read -2.7, and a Winlink client's 74 bytes took 311 s in the
+  sim.  An MFSK frame's reading now decides alone.
+
+#431 also brought two rules the model already had: at the silence, M's
+rounds go to the floor with its control (`MDeaf` sets `mRung`; the code
+kept the old rung for one more lost round), and after two unanswered asks
+M's silence is S's (`S_FALLBACK_MS`), so `FM` = `FS` as in
+`FloorSilence.cfg`.
 
 Which model covers the other 2.0 changes:
 

@@ -3009,10 +3009,18 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
         c->snr_valid = true;
         if (!(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
             bool was = c->ctl_deaf != 0;
-            bool deaf = was ? c->snr_ema < CTL_DEAF_OFF_DB : c->snr_ema < CTL_DEAF_ON_DB;
+            /* An MFSK frame's reading alone says I went deaf: 13.8 s of
+             * tones average a fade out, and after the channel fell below
+             * the control mode it is the one reading there is.  Smoothed, a
+             * -9 dB frame after 0 dB read -2.7, I said I heard the peer, and
+             * it put its control back on the control mode for another 90 s
+             * of silence (sim, stepa:0:-9:20:12, the Winlink exchange of
+             * #431: the client's 74 bytes took 311 s). */
+            float db = !was && mercury_mode_is_mfsk(mode) && snr_db < c->snr_ema ? snr_db : c->snr_ema;
+            bool deaf = was ? db < CTL_DEAF_OFF_DB : db < CTL_DEAF_ON_DB;
             c->ctl_deaf = deaf ? CAR_DEAF_SNR : 0;
             if (deaf != was)
-                car_trace(c, "I hear the peer %s the control mode (%.1f dB)", deaf ? "below" : "above", c->snr_ema);
+                car_trace(c, "I hear the peer %s the control mode (%.1f dB)", deaf ? "below" : "above", db);
         }
     }
     bool ctl = control && decode_ctl(c, bytes, len, &m);
@@ -3050,10 +3058,23 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
 void car_on_tx_done(car_t *c, uint64_t now)
 {
     c->tx_busy = false;
-    if (c->io.pattern && now >= c->heard_ms + SILENT_MS && !(c->ctl_deaf && c->peer_ctl_deaf)) {
+    /* Asks unanswered are silence of another kind: S answers an ask on the
+     * control mode, which I hear, not with a fast round multipath may take
+     * (SILENT_MS).  After two, S's not hearing me is the one way left, and
+     * S listens at the floor from S_FALLBACK_MS: go there then.  The
+     * client of a Winlink exchange (#431) asked on DATAC16 for 150 s while
+     * the RMS, deaf to it, already listened on MFSK (sim, stepa:0:-9:20:12:
+     * 74 bytes in 213 s). */
+    uint64_t silent = c->master && c->reqs >= 2 ? S_FALLBACK_MS : SILENT_MS;
+    if (c->io.pattern && now >= c->heard_ms + silent && !(c->ctl_deaf && c->peer_ctl_deaf)) {
         car_trace(c, "nothing of the peer's decoded in %d s: control at the floor",
                   (int)((now - c->heard_ms) / 1000));
         c->ctl_deaf = c->peer_ctl_deaf = true;
+        /* Below the control mode is below DATAC15 too (CTL_DEAF_ON_DB): my
+         * rounds go to the floor with my control, or the next went on the
+         * rung the peer could no longer hear (sim, stepa:0:-9:20:12: one
+         * more lost round, 22 s). */
+        if (c->tx_level > 0) { c->tx_level = 0; c->tx_n = 1; }
     }
     if (!c->master) {                        /* S: its next slot is armed */
         c->s_tx_end = now;
