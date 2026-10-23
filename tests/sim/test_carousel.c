@@ -3,7 +3,8 @@
  * never keys over the peer.
  *
  * Timing is not asserted, except that an idle station keeps hearing its peer
- * within the lost-peer watchdog's 240 s: tests/sim/README.md has the
+ * within the lost-peer watchdog's 240 s, and a message after a drop below the
+ * control mode gets through in that time: tests/sim/README.md has the
  * throughput matrix, run with carousel_bench.
  *
  * Copyright (C) 2026 Rhizomatica
@@ -212,6 +213,36 @@ static void test_carousel_idle_keeps_hearing_the_peer(void)
         }
 }
 
+/* A Winlink exchange whose client -> RMS path falls below the control mode
+ * mid-session (#431: the RMS's banner, the client's 74 bytes, the RMS's
+ * answer).  Each message must get through within the lost-peer watchdog's
+ * 240 s, and each end hear the other in that time.  The client asked on DATAC16 for 150 s while the RMS listened on
+ * MFSK, and then the RMS's smoothed reading of the client's first MFSK frame
+ * (-9 dB after 0) said it heard it above the control mode: back to DATAC16
+ * for another silence (stepa:0:-12:40:12, 432 s for the 74 bytes). */
+static void test_carousel_drop_below_control_mode(void)
+{
+    static const int AT_S[] = { 10, 15, 20, 30, 40 };
+    static const char *TO[] = { "-9", "-12" };
+    setenv("CAR_SCRIPT", "B193,A74,B20", 1);
+    for (size_t t = 0; t < sizeof(TO) / sizeof(TO[0]); t++)
+        for (size_t i = 0; i < sizeof(AT_S) / sizeof(AT_S[0]); i++) {
+            car_sim_result_t r;
+            char chan[48];
+            snprintf(chan, sizeof(chan), "stepa:0:%s:%d:12", TO[t], AT_S[i]);
+            carousel_sim_run(1, chan, false, LIMIT_MS, &r);
+            TEST_ASSERT_TRUE_MESSAGE(r.intact, chan);
+            TEST_ASSERT_NOT_EQUAL_MESSAGE(0, r.done_ms, chan);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.collisions, chan);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.overruns, chan);
+            TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(240000, r.silent_ms[0], chan);
+            TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(240000, r.silent_ms[1], chan);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(3, r.msgs, chan);
+            for (int m = 0; m < r.msgs; m++)
+                TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(240000, r.msg_delay_ms[m], chan);
+        }
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -299,6 +330,7 @@ int main(void)
     RUN_TEST(test_carousel_bandwidth_max_level);
     RUN_TEST(test_carousel_bw500_floor);
     RUN_TEST(test_carousel_request_response_completes);
+    RUN_TEST(test_carousel_drop_below_control_mode);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }
