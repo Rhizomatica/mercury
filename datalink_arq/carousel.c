@@ -307,12 +307,6 @@ static uint64_t level_air(const car_t *c, int lv) { return mode_air(lmode(c, lv)
  * answering every poll (sim, nvis bidir: 3813 s median, trunk 3451; at 150 s
  * 3347, and the floor 155 s after step:10:-12, where 90 s took 100). */
 #define SILENT_MS 150000
-/* car_t.ctl_deaf: deaf by the SNR reading, or HARD -- deaf though the reading
- * says the control mode works (the connect got through on MFSK only).  A
- * reading on an MFSK frame does not clear HARD: MFSK copes with what may be
- * killing the control mode, a Doppler spread or a multipath the SNR does not
- * show.  Only a frame of the peer's on an OFDM mode does. */
-enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2 };
 #define CTL_DEAF_ON_DB   (ARQ_SNR_MIN_DATAC15_DB - 0.5f)
 #define CTL_DEAF_OFF_DB  (ARQ_SNR_MIN_DATAC15_DB + 1.0f)
 /* How the peer hears me now: its last reading of me, moved by as much as my
@@ -337,13 +331,12 @@ static float peer_hears_me_db(const car_t *c)
  * control mode, but hears my floor control only where it listens on the
  * floor, which follows its own reading.  In the sim, step:-12:10, the
  * receiver's first poll after the step went on MFSK (13.8 s) where the
- * control mode (4 s) reached the sender.  Or while I can only transmit
- * MFSK: then the floor is all my radio keys, whatever the reading says. */
+ * control mode (4 s) reached the sender.  For good while I transmit only
+ * MFSK (CAR_DEAF_MFSK_TX). */
 static bool ctl_on_floor(const car_t *c)
 {
-    if (!c->io.pattern) return false;
-    if (c->tx_mfsk) return true;
-    if (!c->peer_ctl_deaf) return false;
+    if (!c->io.pattern || !c->peer_ctl_deaf) return false;
+    if (c->peer_ctl_deaf == CAR_DEAF_MFSK_TX) return true;
     /* A deaf peer whose own reading does not say so went deaf on silence
      * (nothing decoded for SILENT_MS: car_on_tx_done), and that reading is
      * as old as the silence.  Trust the flag: with the reading, a receiver
@@ -353,7 +346,7 @@ static bool ctl_on_floor(const car_t *c)
     float db = peer_hears_me_db(c);
     return !(db >= CTL_DEAF_OFF_DB);
 }
-static bool peer_ctl_on_floor(const car_t *c) { return c->io.pattern && (c->ctl_deaf || c->peer_tx_mfsk); }
+static bool peer_ctl_on_floor(const car_t *c) { return c->io.pattern && c->ctl_deaf; }
 /* The session's piece size (car_t.piece): CAR_PIECE, or CAR_PIECE_FLOOR
  * for a session that starts on the floor (car_start_sender / _receiver).
  * Arrays keep CAR_PIECE-byte rows; a piece uses the first piece_of(c). */
@@ -1166,8 +1159,10 @@ static int probe_every(const car_t *c, int lv)
     return PROBE_EVERY << f;
 }
 
-static int cap_tx(const car_t *c, int lv) { return lv > c->tx_max ? c->tx_max : lv; }
-static int cap_rx(const car_t *c, int lv) { return lv > c->rx_max ? c->rx_max : lv; }
+static int cap_level(const car_t *c, int lv) { return lv > c->max_level ? c->max_level : lv; }
+/* ...and for my rounds: the floor while I transmit only MFSK.  The peer names
+ * the floor for them anyway (deaf to me for good: CAR_DEAF_MFSK_TX). */
+static int cap_tx(const car_t *c, int lv) { return c->peer_ctl_deaf == CAR_DEAF_MFSK_TX ? 0 : cap_level(c, lv); }
 
 /* How I hear the peer, for its control frames: the smoothed reading, or none
  * before the first frame with one. */
@@ -1197,7 +1192,7 @@ static int fall_level(const car_t *c, int top)
 {
     if (!c->snr_valid) return top;
     float db = c->snr_last < c->snr_ema ? c->snr_last : c->snr_ema;
-    int lv = cap_rx(c, car_start_level(db));
+    int lv = cap_level(c, car_start_level(db));
     return lv < top ? lv : top;
 }
 
@@ -1205,7 +1200,7 @@ static int choose_level(const car_t *c, uint64_t now)
 {
     int best = -1;
     double best_gp = -1.0;
-    for (int lv = 0; lv <= c->rx_max; lv++) {
+    for (int lv = 0; lv <= c->max_level; lv++) {
         if (!c->rung[lv].rounds || !level_allowed(c, lv)) continue;
         double gp = level_goodput(c, lv);
         if (gp > best_gp) { best_gp = gp; best = lv; }
@@ -1246,7 +1241,7 @@ static int choose_level(const car_t *c, uint64_t now)
      * dead.  Not in the lower half of the SNR's doubt: there a frame that
      * came is more likely luck than the rung working (sim, cliff:10: a
      * QAM16C2 frame at 10 dB, then two lost, +5 %). */
-    for (int up = best + 1; up <= c->rx_max; up++)
+    for (int up = best + 1; up <= c->max_level; up++)
         if (c->rung[up].rounds && c->rung[up].round_at == c->polls && c->rung[up].sent < 3.0 &&
             c->rung[up].lost < 0.05 && level_allowed(c, up) && level_potential(c, up) > best_gp &&
             !(c->snr_valid && c->snr_ema < level_min_db(up) - SNR_GATE_DB / 2)) {
@@ -1263,13 +1258,13 @@ static int choose_level(const car_t *c, uint64_t now)
      * time its re-probe came due (sim, nvisa:-10 50 KB: +4.1 % on trunk;
      * without, a tie, 15 seeds of 30 each way). */
     if (c->snr_valid && !ctl_on_floor(c)) {
-        int up = cap_rx(c, car_start_level(c->snr_ema));
+        int up = cap_level(c, car_start_level(c->snr_ema));
         if (up > best && level_potential(c, up) > best_gp &&
             (level_allowed(c, up) ? !c->rung[up].rounds || c->polls - c->rung[up].round_at >= probe_every(c, up)
                                   : reprobe_due(c, up, now)))
             return up;
     }
-    for (int up = best + 1; up <= c->rx_max; up++) {
+    for (int up = best + 1; up <= c->max_level; up++) {
         if (level_potential(c, up) <= best_gp)
             continue;                   /* cannot win even with no loss */
         /* Not a first try well below the rung's threshold: there the bench
@@ -2843,7 +2838,6 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->s_prev_lv = c->ok_lv = -1;
     c->rx_data_lv = -1;
     c->max_level = CAR_NLEVELS - 1;
-    c->tx_max = c->rx_max = CAR_NLEVELS - 1;
     c->floor_mode = MERCURY_MODE_MFSK;
 }
 
@@ -2875,25 +2869,8 @@ int car_max_level_for_bw(int bw_hz)
 void car_set_max_level(car_t *c, int lv)
 {
     c->max_level = lv < 0 ? 0 : lv >= CAR_NLEVELS ? CAR_NLEVELS - 1 : lv;
-    c->tx_max = c->max_level;
-    c->rx_max = c->max_level;
-    c->snr_level = cap_rx(c, c->snr_level);
-    c->peer_snr_level = cap_tx(c, c->peer_snr_level);
-}
-
-void car_set_tx_mfsk(car_t *c, bool mine, bool peers)
-{
-    c->tx_mfsk = mine;
-    c->peer_tx_mfsk = peers;
-    c->tx_max = mine ? 0 : c->max_level;
-    c->rx_max = peers ? 0 : c->max_level;
-    c->snr_level = cap_rx(c, c->snr_level);
-    c->peer_snr_level = cap_tx(c, c->peer_snr_level);
-    c->tx_level = c->tx_level >= 0 ? cap_tx(c, c->tx_level) : c->tx_level;
-    if (mine || peers)
-        car_trace(c, "TX-MFSK-only: I %s, the peer %s (tx_max=%d rx_max=%d)",
-                  mine ? "am" : "am not", peers ? "is" : "is not",
-                  c->tx_max, c->rx_max);
+    c->snr_level = cap_level(c, c->snr_level);
+    c->peer_snr_level = cap_level(c, c->peer_snr_level);
 }
 
 /* The session's piece size, as both ends know it: from the rung the callee's
@@ -2929,7 +2906,7 @@ void car_start_sender(car_t *c, uint64_t now)
     c->master = true;
     c->heard_ms = now;
     c->piece = car_piece_for_start(c->peer_snr_level);
-    c->tx_level = c->peer_snr_level; c->tx_n = 1;
+    c->tx_level = cap_tx(c, c->peer_snr_level); c->tx_n = 1;
     c->poll_level = c->snr_level; c->poll_n = 1;
     c->phase = PH_IDLE;
     c->phase_start = now;
@@ -2951,7 +2928,8 @@ void car_start_receiver(car_t *c, uint64_t now)
 
 static void note_peer_ctl_deaf(car_t *c, bool deaf)
 {
-    if (deaf != c->peer_ctl_deaf) {
+    if (c->peer_ctl_deaf == CAR_DEAF_MFSK_TX) return;
+    if (deaf != (c->peer_ctl_deaf != 0)) {
         c->peer_ctl_deaf = deaf;
         car_trace(c, "the peer hears me %s the control mode: control on %s",
                   deaf ? "below" : "above", deaf ? "MFSK" : "the control mode");
@@ -2969,12 +2947,13 @@ static void note_peer_ctl_deaf(car_t *c, bool deaf)
 
 bool car_peer_ctl_deaf(const car_t *c) { return c && ctl_on_floor(c); }
 
-void car_seed_ctl_deaf(car_t *c, bool mine, bool peers)
+void car_seed_ctl_deaf(car_t *c, uint8_t mine, uint8_t peers)
 {
     c->ctl_deaf = mine;
     c->peer_ctl_deaf = peers;
     car_trace(c, "at connect: I hear the peer %s the control mode, it hears me %s it",
-              mine ? "below" : "above", peers ? "below" : "above");
+              mine == CAR_DEAF_MFSK_TX ? "only on MFSK (it transmits nothing else):" : mine ? "below" : "above",
+              peers == CAR_DEAF_MFSK_TX ? "on MFSK only, for I transmit nothing else: below" : peers ? "below" : "above");
 }
 
 /* Without it the caller's first control frames said "no reading" (it had
@@ -2988,7 +2967,7 @@ void car_seed_snr(car_t *c, float mine, float peers)
     /* Deaf at connect though my reading says the control mode works: the
      * connect got through on MFSK only (arq_fsm.c), and the reading is not to
      * be trusted for it (CAR_DEAF_HARD). */
-    if (c->ctl_deaf && mine >= CTL_DEAF_OFF_DB) c->ctl_deaf = CAR_DEAF_HARD;
+    if (c->ctl_deaf == CAR_DEAF_SNR && mine >= CTL_DEAF_OFF_DB) c->ctl_deaf = CAR_DEAF_HARD;
     c->snr_ema = c->snr_last = mine;
     c->snr_ms = 0;
     c->snr_valid = true;
@@ -3029,7 +3008,7 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
         c->snr_last = snr_db;
         c->snr_ms = now;
         c->snr_valid = true;
-        if (!(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
+        if (c->ctl_deaf != CAR_DEAF_MFSK_TX && !(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
             bool was = c->ctl_deaf != 0;
             /* An MFSK frame's reading alone says I went deaf: 13.8 s of
              * tones average a fade out, and after the channel fell below
@@ -3091,7 +3070,8 @@ void car_on_tx_done(car_t *c, uint64_t now)
     if (c->io.pattern && now >= c->heard_ms + silent && !(c->ctl_deaf && c->peer_ctl_deaf)) {
         car_trace(c, "nothing of the peer's decoded in %d s: control at the floor",
                   (int)((now - c->heard_ms) / 1000));
-        c->ctl_deaf = c->peer_ctl_deaf = true;
+        if (c->ctl_deaf != CAR_DEAF_MFSK_TX) c->ctl_deaf = CAR_DEAF_SNR;
+        if (c->peer_ctl_deaf != CAR_DEAF_MFSK_TX) c->peer_ctl_deaf = CAR_DEAF_SNR;
         /* Below the control mode is below DATAC15 too (CTL_DEAF_ON_DB): my
          * rounds go to the floor with my control, or the next went on the
          * rung the peer could no longer hear (sim, stepa:0:-9:20:12: one

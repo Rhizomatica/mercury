@@ -5,6 +5,7 @@
 #include "sim_clock.h"
 #include "arq.h"    /* arq_conn, CALLSIGN_MAX_SIZE, ARQ_BANDWIDTH_FULL_HZ */
 #include "sim_channel.h"   /* SIM_MODE_PATTERN */
+#include "arq_protocol.h"  /* arq_tx_mfsk_only */
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -34,6 +35,7 @@ struct sim_endpoint {
     uint16_t       crc_seed;
 
     uint64_t       last_rx_ms, max_gap_ms;   /* application liveness */
+    bool           mfsk_tx;                  /* transmits only MFSK */
 };
 
 /* v1 context: set before each arq_fsm_dispatch. Also updates arq_conn.my_call_sign
@@ -47,8 +49,11 @@ void sim_endpoint_set_active(sim_endpoint_t *ep)
         snprintf(arq_conn.my_call_sign, sizeof(arq_conn.my_call_sign),
                  "%s", ep->my_call);
         arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+        atomic_store(&arq_tx_mfsk_only, ep->mfsk_tx ? 1 : 0);
     }
 }
+
+void sim_endpoint_set_mfsk_tx(sim_endpoint_t *ep, bool on) { ep->mfsk_tx = on; }
 
 sim_endpoint_t *sim_endpoint_active(void)                    { return s_active; }
 arq_session_t  *sim_endpoint_session(sim_endpoint_t *ep)     { return &ep->sess; }

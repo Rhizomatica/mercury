@@ -624,7 +624,9 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         }
 
         pthread_mutex_lock(&g_sess_lock);
-        int cq_mode = g_sess.control_mode;
+        /* On the floor from a station that transmits only MFSK: a
+         * listener routes it by its packet type off any decoder. */
+        int cq_mode = ARQ_TX_MFSK_ONLY ? arq_floor_mode(bw_hz) : g_sess.control_mode;
         /* Hold g_sess_lock across the call so that g_sess.pending_burst_frames
          * is protected — the event loop also holds this lock during dispatch. */
         cb_send_tx_frame(PACKET_TYPE_ARQ_CQ, cq_mode, (size_t)n, frame, 0);
@@ -914,6 +916,14 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         if (!is_accept)
             HLOGW(LOG_COMP, "CALL for %s from another protocol version (Mercury 1.9.x?): not answered",
                   dialed_call);
+        return false;
+    }
+    if (ARQ_TX_MFSK_ONLY && arq_protocol_connect_minor(data) < 1)
+    {
+        /* Minor 0, 1.9.20, does not read the TX-MFSK-only bit: it would put
+         * my rounds on rungs I cannot send. */
+        HLOGW(LOG_COMP, "%s for %s from Mercury 1.9.20, which cannot reach a TX-MFSK-only station: ignored",
+              is_accept ? "ACCEPT" : "CALL", dialed_call);
         return false;
     }
 
@@ -1329,13 +1339,9 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
      * are what we must answer (on MFSK, #235).  With the listener off while
      * ACCEPTING, the callee only ever heard the DATAC16 CALLs it could not
      * usefully answer: on air (car17, st2 calling the gateway at 2 %), both
-     * MFSK CALLs arrived mid-ACCEPTING, and the call never connected.
-     * CALLING too: the callee may be MFSK-only, so its ACCEPT comes back on
-     * MFSK while our payload decoder still sits on DATAC16 -- the listener is
-     * the only decoder that would hear it. */
+     * MFSK CALLs arrived mid-ACCEPTING, and the call never connected. */
     snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING ||
-                                     g_sess.conn_state == ARQ_CONN_ACCEPTING ||
-                                     g_sess.conn_state == ARQ_CONN_CALLING);
+                                     g_sess.conn_state == ARQ_CONN_ACCEPTING);
     snapshot->listen_floor_mode = arq_floor_mode(normalize_bandwidth_hz(own_bw));
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;

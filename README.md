@@ -31,10 +31,8 @@ Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
 
 **On-air compatibility.** Mercury 2.0's connect frames have a packet type of
 their own, and no 1.9.x release connects to it in either direction (within
-1.9.x, 1.9.18 and 1.9.19 did not connect to each other either).  The
-MFSK-only transmit capability (`[arq] mfsk_tx_only`) needs protocol minor 1
-on both ends.  Both ends of a session must run a release from the same
-protocol version; see
+1.9.x, 1.9.18 and 1.9.19 did not connect to each other either).  Both ends of
+a session must run a release from the same protocol version; see
 [docs/RELEASE-1.9.20.md](docs/RELEASE-1.9.20.md),
 [docs/RELEASE-1.9.19.md](docs/RELEASE-1.9.19.md) and
 [docs/UPGRADING-TO-1.9.18.md](docs/UPGRADING-TO-1.9.18.md) before upgrading.
@@ -112,7 +110,7 @@ Mode behavior notes:
   session token. If either side uses `BW500`, the link stays narrow; `BW2750`
   is preserved in `CONNECTED ... BW` only when both peers advertise it.
 - `FSK_LDPC` is currently **experimental** (mainly for lab/test usage), may have longer decode/sync latency depending on setup, and is not recommended for production links yet.
-- `[arq] mfsk_tx_only = true` makes the station transmit MFSK only (CALL/ACCEPT, control and payload) for radios that can only key FSK — the QRP Labs QDX, QRPguys AFSK III and similar.  Its peers keep its transmit direction on the MFSK floor rung for the whole session; receive is unaffected, so the cost is throughput, not reach.  It needs protocol minor 1 on both ends.
+- `[arq] mfsk_tx_only = true` makes the station transmit MFSK only (CALL/ACCEPT, control and payload) for radios that can only key FSK — the QRP Labs QDX, QRPguys AFSK III and similar.  Its peers keep its transmit direction on the MFSK floor rung for the whole session; receive is unaffected, so the cost is throughput, not reach.  Such a station connects only to releases after 1.9.20; the others still connect to 1.9.20.
 
 PTT control notes:
 - The default method is `none`; Mercury then leaves radio keying to the TCP client.

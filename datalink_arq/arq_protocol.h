@@ -44,23 +44,14 @@
  * Uses PACKET_TYPE_ARQ_CALL2 in the framer byte.
  *
  *  Byte 0: framer byte (PACKET_TYPE_ARQ_CALL2 | BW token, minor revision,
- *          set by write_frame_header)
- *  Byte 1: connect_meta  = (session_id & 0x3F) | (tx_mfsk ? 0x40 : 0)
- *                          | (is_accept ? 0x80 : 0x00)
+ *          TX-MFSK-only bit, set by write_frame_header)
+ *  Byte 1: connect_meta  = (session_id & 0x7F) | (is_accept ? 0x80 : 0x00)
  *  Bytes 2-3:  CRC16-CCITT of DST callsign (little-endian) — for local validation
  *  Bytes 4-13: arithmetic_encode(SRC callsign only) — 10 bytes, fits callsigns up to ~14 chars
- *
- * The tx_mfsk bit (0x40) is a station capability, sent in the CALL by the
- * caller and in the ACCEPT by the callee: "I can only transmit MFSK".  A
- * peer that reads it keeps that station's transmit direction on the MFSK
- * floor rung for the whole session.  It takes a bit out of the session id,
- * which drops it to 6 bits (0..63) — ample for a point-to-point link, where
- * ids are ephemeral and matched with the exchanged callsigns.
  */
 #define ARQ_CONNECT_SESSION_IDX       1
 #define ARQ_CONNECT_PAYLOAD_IDX       2
-#define ARQ_CONNECT_SESSION_MASK      0x3F
-#define ARQ_CONNECT_TXMFSK            0x40
+#define ARQ_CONNECT_SESSION_MASK      0x7F
 #define ARQ_CONNECT_ACCEPT_FLAG       0x80
 #define ARQ_CONTROL_FRAME_SIZE        14
 #define ARQ_CONNECT_META_SIZE         2   /* framer byte + connect_meta byte */
@@ -383,8 +374,9 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
 /* --- CALL/ACCEPT of Mercury 2.0 (PACKET_TYPE_ARQ_CALL2) ---
  *
  * 14 bytes (a DATAC16 frame), padded to the frame on MFSK.  Byte 0 is the
- * framer: type CALL2, and in its extension the bandwidth token (2 bits) and
- * the 2.x minor revision (3 bits, 1).  Every 1.9.x release drops the type,
+ * framer: type CALL2, and in its extension the bandwidth token (2 bits), the
+ * 2.x minor revision (2 bits, 1) and the TX-MFSK-only bit.  Every 1.9.x
+ * release drops the type,
  * and a CALL of theirs (PACKET_TYPE_ARQ_CALL) addressed to this station is
  * logged, not answered: the versions do not connect (docs/CAROUSEL-ARQ.md,
  * "Wire formats").
@@ -397,14 +389,18 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  * never hear each other at the floor, so the version keeps them apart.
  * Version 3 (after 1.9.19) gave a BW500 session its own floor, the 500 Hz
  * MFSK (arq_floor_mode), and was the last value the two bits held.
- * Mercury 2.0 took another packet type (CALL2, above); its minor revision 1
- * folds a "TX-MFSK-only" capability bit into byte 1 (the session id drops
- * from 7 to 6 bits), so a minor-0 station reads a flagged frame as a
- * different session id -- connect_version_ok keeps the minors apart.
+ * Mercury 2.0 took another packet type (CALL2, above).
  *
- *   CALL    1: 0 | session id | tx_mfsk   2-3: CRC16 of the called callsign
+ * Minor 1 added the TX-MFSK-only bit, a station capability: "I can only
+ * transmit MFSK" (arq:mfsk_tx_only; an FSK-only radio).  1.9.20 sent minor
+ * 0 in 3 bits and reads any minor, so it reads a minor-1 frame as before,
+ * the bit as part of the minor; a station of minor 1 or later reads 1.9.20's
+ * frames as before too.  Only a station that sets the bit needs a peer that
+ * reads it, so it ignores frames of minor 0 (arq_protocol_connect_minor).
+ *
+ *   CALL    1: 0 | session id   2-3: CRC16 of the called callsign
  *           4-13: the caller's callsign, arithmetic-coded
- *   ACCEPT  1: 1 | session id | tx_mfsk   2-3: CRC16 of the caller's callsign
+ *   ACCEPT  1: 1 | session id   2-3: CRC16 of the caller's callsign
  *           4-5: CRC16 of the called callsign   6-7: the callee's nonce
  *           8: the caller's start rung (3 bits), the callee hears the caller
  *              below the control mode (bit 3), 4 bits zero
@@ -413,7 +409,8 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
 #define ARQ_CONNECT_MINOR             1
 #define ARQ_CONNECT_EXT_BW_MASK       0x03
 #define ARQ_CONNECT_EXT_MINOR_SHIFT   2
-#define ARQ_CONNECT_EXT_MINOR_MASK    0x1C
+#define ARQ_CONNECT_EXT_MINOR_MASK    0x0C
+#define ARQ_CONNECT_EXT_TXMFSK        0x10  /* the sender transmits only MFSK */
 #define ARQ_ACCEPT_CALLED_CRC_IDX     4
 #define ARQ_ACCEPT_NONCE_IDX          6
 #define ARQ_ACCEPT_LEVEL_IDX          8
@@ -443,6 +440,9 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
 
 /** Is buf a CALL or ACCEPT of this protocol (2.0, any minor revision)? */
 bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len);
+
+/** The 2.x minor revision of a CALL or ACCEPT (version_ok already checked). */
+int arq_protocol_connect_minor(const uint8_t *buf);
 
 /** Is a CALL or ACCEPT addressed to callsign (bytes 2-3, all 16 bits)?
  *  Requires at least ARQ_CONNECT_PAYLOAD_IDX + 2 bytes in @p buf. */

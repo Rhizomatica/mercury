@@ -308,7 +308,8 @@ version, 3 its last value: §16, §17); the byte layout is in
 docs/CAROUSEL-ARQ.md, "Wire formats".
 
 - Both frames: packet type CALL2, framer extension = bandwidth token (2
-  bits), 2.x minor revision (3 bits). A frame of another type is dropped
+  bits), 2.x minor revision (2 bits; 1.9.20 sent 0 in 3), "the sender
+  transmits only MFSK" (1 bit, minor 1). A frame of another type is dropped
   (`arq_protocol_connect_version_ok`); a 1.9.x CALL addressed to this
   station is logged, not answered. 1.9.x therefore does not connect to
   this one.

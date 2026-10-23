@@ -21,7 +21,6 @@
 #include "arq.h"
 #include "arq_timing.h"
 #include "freedv_api.h"
-#include "modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 
 #include <stdio.h>
 #include <string.h>
@@ -29,7 +28,7 @@
 extern int arq_test_session_bw_hz;   /* arq_test_stubs.c: the negotiated BW */
 
 void setUp(void)    { }
-void tearDown(void) { arq_test_session_bw_hz = ARQ_BANDWIDTH_FULL_HZ; atomic_store(&arq_tx_mfsk_only, 0); }
+void tearDown(void) { arq_test_session_bw_hz = ARQ_BANDWIDTH_FULL_HZ; }
 
 static sim_t *make_sim(uint64_t seed, double per)
 {
@@ -601,46 +600,51 @@ void test_car_bw500_runs_on_the_narrow_floor(void)
     arq_conn.bw = bw;
 }
 
-/* A station that can only transmit MFSK keys nothing else.  On a clean 20 dB
- * channel a normal session would climb to the wideband modes; with the
- * TX-MFSK-only capability set, every frame on the air -- CALL/ACCEPT, control
- * and payload, both directions here since the sim shares one process -- is an
- * MFSK frame, and the transfer still delivers. */
+/* A station that transmits only MFSK keys nothing else -- CALL/ACCEPT,
+ * control, payload -- as caller, as callee, or both ends; on a clean 20 dB
+ * channel a normal session would climb to the wideband modes.  Its peer
+ * still keys the faster modes to it, and both directions deliver, 2 KB each
+ * way. */
 void test_car_mfsk_tx_only(void)
 {
     static uint8_t blob[2048];
     fill(blob, sizeof(blob), 31);
-
-    atomic_store(&arq_tx_mfsk_only, 1);
-    sim_t *s = make_sim(7, 0.0);
-    sim_set_snr(s, 20.0);
-    connect_ab(s);
-    sim_run_until_idle(s, 120000);
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
-    queue(s, sim_a(s), blob, sizeof(blob));
-    queue(s, sim_b(s), blob, sizeof(blob));
-    sim_run_until_idle(s, 7200000);
-    size_t got;
-    TEST_ASSERT_TRUE(intact_prefix(sim_b(s), blob, sizeof(blob), &got));
-    TEST_ASSERT_EQUAL_size_t(sizeof(blob), got);
-    TEST_ASSERT_TRUE(intact_prefix(sim_a(s), blob, sizeof(blob), &got));
-    TEST_ASSERT_EQUAL_size_t(sizeof(blob), got);
-
-    TEST_ASSERT_TRUE_MESSAGE(sim_mode_frames(s, MERCURY_MODE_MFSK) > 0, "no MFSK frames keyed");
-    /* No other payload rung may be keyed, and not even the DATAC16 control
-     * mode: with the capability set, control rides the floor too (the sim now
-     * wires send_pattern, so the carousel's pattern acks are on the air).
-     * SIM_MODE_PATTERN is the floor's pattern burst (an MFSK keydown), not a
-     * payload rung. */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, sim_mode_frames(s, FREEDV_MODE_DATAC16),
-                                  "a TX-MFSK-only station keyed DATAC16 control");
-    int non_mfsk = 0;
-    for (int m = 0; m < SIM_MODES; m++)
-        if (m != MERCURY_MODE_MFSK && m != SIM_MODE_PATTERN)
-            non_mfsk += sim_mode_frames(s, m);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, non_mfsk, "a TX-MFSK-only station keyed a payload rung other than MFSK");
-    sim_destroy(s);
-    atomic_store(&arq_tx_mfsk_only, 0);
+    for (int who = 1; who <= 3; who++) {          /* bit 0: A, the caller; bit 1: B */
+        sim_t *s = make_sim(7, 0.0);
+        sim_set_snr(s, 20.0);
+        sim_endpoint_set_mfsk_tx(sim_a(s), who & 1);
+        sim_endpoint_set_mfsk_tx(sim_b(s), who & 2);
+        connect_ab(s);
+        sim_run_until_idle(s, 120000);
+        TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+        queue(s, sim_a(s), blob, sizeof(blob));
+        queue(s, sim_b(s), blob, sizeof(blob));
+        uint64_t t0 = sim_clock_now();
+        static uint8_t rx[sizeof(blob)];
+        while (sim_clock_now() - t0 < 7200000 &&
+               (sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)) < sizeof(blob) ||
+                sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)) < sizeof(blob)))
+            if (sim_run_until_idle(s, 1000) == 0) break;
+        /* 546, 529 and 882 s; with its peer deaf to it only as to any MFSK
+         * connect (CAR_DEAF_HARD: OFDM probes it cannot answer) 694, 1137
+         * and 1234 s */
+        static const uint64_t BOUND_S[4] = { 0, 650, 650, 1050 };
+        TEST_ASSERT_LESS_THAN_UINT64(BOUND_S[who] * 1000, sim_clock_now() - t0);
+        size_t got;
+        TEST_ASSERT_TRUE(intact_prefix(sim_b(s), blob, sizeof(blob), &got));
+        TEST_ASSERT_EQUAL_size_t(sizeof(blob), got);
+        TEST_ASSERT_TRUE(intact_prefix(sim_a(s), blob, sizeof(blob), &got));
+        TEST_ASSERT_EQUAL_size_t(sizeof(blob), got);
+        TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+        sim_endpoint_t *ep[2] = { sim_a(s), sim_b(s) };
+        for (int i = 0; i < 2; i++)
+            if (who & (1 << i))
+                TEST_ASSERT_EQUAL_INT_MESSAGE(0, sim_non_mfsk_frames(s, ep[i]),
+                                              "a TX-MFSK-only station keyed another mode than MFSK");
+            else
+                TEST_ASSERT_GREATER_THAN_INT(0, sim_non_mfsk_frames(s, ep[i]));
+        sim_destroy(s);
+    }
 }
 
 int main(void)

@@ -30,6 +30,8 @@ size_t                     sim_endpoint_delivered(sim_endpoint_t *ep,
 
 const arq_fsm_callbacks_t *sim_endpoint_callbacks(void);
 void                       sim_endpoint_set_active(sim_endpoint_t *ep);
+/* This station transmits only MFSK (arq:mfsk_tx_only, set while it is active). */
+void                       sim_endpoint_set_mfsk_tx(sim_endpoint_t *ep, bool on);
 sim_endpoint_t            *sim_endpoint_active(void);
 bool                       sim_endpoint_take_outframe(sim_endpoint_t *ep, sim_outframe_t *out);
 /* The carousel's keydown, if one was emitted since the last take; and the

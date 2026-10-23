@@ -411,9 +411,10 @@ static int decode_callsign_only_payload(const uint8_t *in, size_t in_len, char *
     return 0;
 }
 
-static uint8_t connect_ext(uint8_t bw_token)
+static uint8_t connect_ext(uint8_t bw_token, bool tx_mfsk)
 {
-    return (uint8_t)(bw_token | (ARQ_CONNECT_MINOR << ARQ_CONNECT_EXT_MINOR_SHIFT));
+    return (uint8_t)(bw_token | (ARQ_CONNECT_MINOR << ARQ_CONNECT_EXT_MINOR_SHIFT) |
+                     (tx_mfsk ? ARQ_CONNECT_EXT_TXMFSK : 0));
 }
 
 static void put_crc16(uint8_t *p, uint16_t crc) { p[0] = (uint8_t)crc; p[1] = (uint8_t)(crc >> 8); }
@@ -421,17 +422,20 @@ static uint16_t get_crc16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8
 
 bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len)
 {
-    /* Any 2.x minor revision at or above ours: a later one keeps the layout
-     * we read, or takes another packet type.  Below ours it does not
-     * connect: minor 1 moved the TX-MFSK capability bit into byte 1 and the
-     * session id down to 6 bits, so a minor-0 station reads a flagged frame's
-     * id differently (and generates ids ours would misread). */
-    if (!buf || buf_len < ARQ_CONTROL_FRAME_SIZE ||
-        frame_header_packet_type(buf[0]) != PACKET_TYPE_ARQ_CALL2)
-        return false;
-    unsigned minor = (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_MINOR_MASK)
-                      >> ARQ_CONNECT_EXT_MINOR_SHIFT;
-    return minor >= ARQ_CONNECT_MINOR;
+    /* Any 2.x minor revision: a later one keeps the layout a 2.0 station
+     * reads, or takes another packet type. */
+    return buf && buf_len >= ARQ_CONTROL_FRAME_SIZE &&
+           frame_header_packet_type(buf[0]) == PACKET_TYPE_ARQ_CALL2;
+}
+
+int arq_protocol_connect_minor(const uint8_t *buf)
+{
+    return (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_MINOR_MASK) >> ARQ_CONNECT_EXT_MINOR_SHIFT;
+}
+
+static bool connect_tx_mfsk(const uint8_t *buf)
+{
+    return (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_TXMFSK) != 0;
 }
 
 static int connect_bw_hz(const uint8_t *buf)
@@ -455,10 +459,9 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
     if (enc_len <= 0)
         return -1;
     memset(buf, 0, ARQ_CONTROL_FRAME_SIZE);
-    buf[ARQ_CONNECT_SESSION_IDX] = (uint8_t)((session_id & ARQ_CONNECT_SESSION_MASK) |
-                                             (tx_mfsk ? ARQ_CONNECT_TXMFSK : 0));
+    buf[ARQ_CONNECT_SESSION_IDX] = (uint8_t)(session_id & ARQ_CONNECT_SESSION_MASK);
     memcpy(buf + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)enc_len);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token));
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token, tx_mfsk));
     return ARQ_CONTROL_FRAME_SIZE;
 }
 
@@ -485,14 +488,13 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
         return -1;
     memset(buf, 0, ARQ_CONTROL_FRAME_SIZE);
     buf[ARQ_CONNECT_SESSION_IDX] = (uint8_t)((session_id & ARQ_CONNECT_SESSION_MASK) |
-                                             (tx_mfsk ? ARQ_CONNECT_TXMFSK : 0) |
                                              ARQ_CONNECT_ACCEPT_FLAG);
     put_crc16(buf + ARQ_CONNECT_PAYLOAD_IDX, arq_protocol_callsign_crc16(caller));
     put_crc16(buf + ARQ_ACCEPT_CALLED_CRC_IDX, arq_protocol_callsign_crc16(called));
     put_crc16(buf + ARQ_ACCEPT_NONCE_IDX, nonce);
     buf[ARQ_ACCEPT_LEVEL_IDX] = (uint8_t)(start_level | (ctl_deaf ? ARQ_ACCEPT_CTL_DEAF_BIT : 0));
     buf[ARQ_ACCEPT_SNR_IDX] = snr_byte(call_snr_db);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token));
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token, tx_mfsk));
     return ARQ_CONTROL_FRAME_SIZE;
 }
 
@@ -517,7 +519,7 @@ int arq_protocol_parse_call(const uint8_t *buf, size_t buf_len,
     if (*bw_hz_out == 0)
         return -1;
     *session_id_out = buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_SESSION_MASK;
-    *tx_mfsk_out    = (buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_TXMFSK) != 0;
+    *tx_mfsk_out    = connect_tx_mfsk(buf);
     return decode_callsign_payload(buf + ARQ_CONNECT_PAYLOAD_IDX, ARQ_CONNECT_MAX_ENCODED,
                                    caller_out, unused);
 }
@@ -541,7 +543,7 @@ int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len, arq_accept_t *
     if (out->bw_hz == 0)
         return -1;
     out->session_id  = buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_SESSION_MASK;
-    out->tx_mfsk     = (buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_TXMFSK) != 0;
+    out->tx_mfsk     = connect_tx_mfsk(buf);
     out->called_crc  = get_crc16(buf + ARQ_ACCEPT_CALLED_CRC_IDX);
     out->nonce       = get_crc16(buf + ARQ_ACCEPT_NONCE_IDX);
     out->start_level = lv & ARQ_ACCEPT_LEVEL_MASK;

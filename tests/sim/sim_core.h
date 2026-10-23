@@ -38,6 +38,8 @@ int             sim_collisions(sim_t *s);
  * MERCURY_MODE_MFSK). */
 #define SIM_MODES 128
 int             sim_mode_frames(sim_t *s, int mode);
+/* Frames this endpoint keyed on another mode than MFSK (connect frames too). */
+int             sim_non_mfsk_frames(sim_t *s, sim_endpoint_t *ep);
 /* The timing context both FSMs share (session byte/frame counters). */
 const void     *sim_timing(sim_t *s);
 

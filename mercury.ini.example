@@ -183,9 +183,9 @@ retry_stagger_ms = 2000
 ; whole session.  Receive is unaffected: the station still decodes whatever
 ; modes its peer can send.  The cost is throughput: the node tops out at the
 ; MFSK floor rung (~98 bytes per ~13.5 s burst), which suits low-rate
-; telemetry and relay nodes.  Both ends must run a release that speaks this
-; capability bit (Mercury 2.0 protocol minor 1), or the session will not come
-; up.
+; telemetry and relay nodes.  The peer must read the capability (protocol
+; minor 1, after 1.9.20): a station with this set ignores 1.9.20 stations.
+; Stations without it keep talking to 1.9.20.
 mfsk_tx_only = false
 
 [channel]
