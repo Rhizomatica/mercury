@@ -600,6 +600,40 @@ void test_car_bw500_runs_on_the_narrow_floor(void)
     arq_conn.bw = bw;
 }
 
+/* #431: a Winlink tail's FF and the asks that follow it all go unanswered on
+ * a return path that faded below the control mode: the caller moves its
+ * control to the floor after a few asks instead of asking on the control mode
+ * until the 150 s silence rule fires (which is past the B2 client's 30 s). */
+void test_car_dead_return_path_goes_to_floor(void)
+{
+    sim_t *s = make_sim(1, 0.0);
+    sim_set_snr(s, 10.0);
+    connect_ab(s);
+    for (int i = 0; i < 1200 && !(state(sim_a(s)) == ARQ_CONN_CONNECTED &&
+                                  state(sim_b(s)) == ARQ_CONN_CONNECTED); i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+
+    /* B (the RMS) sends its banner on the still-good forward path. */
+    static uint8_t banner[64], rx[256];
+    memset(banner, 'S', sizeof(banner));
+    queue(s, sim_b(s), banner, sizeof(banner));
+    for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)) < sizeof(banner); i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_EQUAL_size_t(sizeof(banner), sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)));
+
+    /* The return path (A to B) fades out after the banner. */
+    sim_set_snr_asym(s, -20.0, 10.0);
+    static uint8_t ff[74];
+    memset(ff, 'F', sizeof(ff));
+    queue(s, sim_a(s), ff, sizeof(ff));
+    sim_run_until_idle(s, 60000);
+
+    /* A gives up the control mode well before the 150 s silence rule. */
+    TEST_ASSERT_TRUE(sim_endpoint_session(sim_a(s))->car->ctl_deaf != 0);
+    sim_destroy(s);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -622,5 +656,6 @@ int main(void)
     RUN_TEST(test_car_fuzz);
     RUN_TEST(test_car_bandwidth_caps_the_rungs);
     RUN_TEST(test_car_bw500_runs_on_the_narrow_floor);
+    RUN_TEST(test_car_dead_return_path_goes_to_floor);
     return UNITY_END();
 }

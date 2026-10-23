@@ -132,6 +132,12 @@ static uint32_t nav_lead(const car_t *c) { (void)c; return 0; }
 #define FLOOR_POLL_EVERY_DEEP 12
 #define FLOOR_SILENT_MAX  6
 #define FLOOR_LATE_MS     9000
+/* A data round above the floor went unanswered, and this many asks in a row
+ * went unanswered too: the control mode is not getting through either, so
+ * control goes to the floor at once (as the 150 s silence rule would, long
+ * after a request/response application -- Winlink's FF -- has timed out).
+ * Two unanswered DATAC16 asks are already strong evidence of a dead path. */
+#define REQ_FLOOR_MAX     3
 #define PATTERN_AIR_MS    640
 /* After a pattern above the floor the sender keys later than after a poll:
  * it detects the pattern ~0.25 s after it ends, where a poll is decoded as
@@ -2387,6 +2393,10 @@ static void m_decide_send(car_t *c, uint64_t now)
         }
         c->reqs++;
         car_trace(c, "tx: no answer -- asking (%d)", c->reqs);
+        if (c->io.pattern && c->reqs >= REQ_FLOOR_MAX && !(c->ctl_deaf && c->peer_ctl_deaf)) {
+            car_trace(c, "tx: %d asks unanswered -- control at the floor", c->reqs);
+            c->ctl_deaf = c->peer_ctl_deaf = true;
+        }
         m_plan(c, KD_REQ, 0, 0);
         return;
     }
