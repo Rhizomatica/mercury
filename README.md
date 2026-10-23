@@ -324,20 +324,56 @@ like any other app.
 
 ### Install on Android (technology preview)
 
-Each release has `Mercury-<version>-android-arm64.apk`: sideload it (allow
-installs from your file manager or browser).  It is signed with Mercury's
-release key, so later releases install over it; a build signed otherwise has
-to be uninstalled first.  Choose the radio's USB sound card in Soundcards,
-and for CAT/PTT over its USB cable, Radio > Hamlib > "Direct USB, no driver
-(experimental)" (CP210x chips: Icom IC-7100/IC-7300, Yaesu FT-710, many
-cables).  The app must stay in the foreground.
+You need a 64-bit ARM phone or tablet (almost every Android device since
+2017) with Android 11 or later; it was tested on Android 15.
+
+1. On the phone, open the
+   [releases page](https://github.com/Rhizomatica/mercury/releases/latest) and
+   download `Mercury-<version>-android-arm64.apk`.
+2. Open the downloaded file.  Android asks whether to allow installs from
+   that app (your browser or file manager): allow it, go back, and tap
+   **Install**.
+3. Open **Mercury** and allow it to record audio: that is how it hears the
+   radio.  Connect the radio with a USB-OTG adapter.  When Android asks
+   whether Mercury may use the USB device, allow it.
+4. In **Soundcards**, pick the radio's USB sound card (an Icom shows "USB
+   Audio CODEC (USB)").
+5. For CAT and PTT over the radio's own USB cable: **Radio**, method Hamlib,
+   **"Direct USB, no driver (experimental)"**.  It works with Silicon Labs
+   CP210x chips: Icom IC-7100 and IC-7300, Yaesu FT-710, and many cables.
+
+Keep Mercury on screen while you use it: it does not run in the background
+yet.  Later releases install over this one, because they are signed with the
+same key.  A build signed with another key has to be uninstalled first.
 
 ### Install on iOS (technology preview)
 
-Each release has `Mercury-<version>-ios-sideload.ipa` for SideStore or
-AltStore Classic, which sign it with your own Apple ID (a free one needs a
-refresh every 7 days).  AltStore PAL (EU, Brazil, Japan) will carry the
-Apple-notarized build: see ios/ALTSTORE.md.
+**With AltStore PAL (EU, Brazil and Japan).**  Mercury is notarized by
+Apple and published as an AltStore PAL source.  Updates arrive through
+AltStore.
+
+1. On the iPhone or iPad, open [altstore.io](https://altstore.io) in Safari
+   and install **AltStore PAL** as it describes.  It is an alternative app
+   marketplace, so it is not in Apple's App Store.  You need version 2.2 or
+   later.
+2. In AltStore PAL, open the **Sources** tab, tap **+**, and enter
+
+   ```
+   https://rhizomatica.github.io/mercury/altstore/source.json
+   ```
+
+3. Mercury appears in the **Browse** tab: install it from there.
+
+Mercury needs iOS 17 or later.
+
+**Anywhere else, with SideStore or AltStore Classic.**  Download
+`Mercury-<version>-ios-sideload.ipa` from the
+[releases page](https://github.com/Rhizomatica/mercury/releases/latest) and
+open it with [SideStore](https://sidestore.io) or
+[AltStore Classic](https://altstore.io).  They sign it with your own Apple
+ID, and with a free Apple ID the app has to be refreshed every 7 days.
+
+How a version is published to AltStore PAL: ios/ALTSTORE.md.
 
 ## Configuration File
 
