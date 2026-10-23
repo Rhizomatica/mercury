@@ -76,6 +76,10 @@
 #define CFG_KEY_STORE_ENABLED                 "store:enabled"
 #define CFG_KEY_STORE_PATH                    "store:path"
 #define CFG_KEY_STORE_MAX_MESSAGES            "store:max_messages"
+#define CFG_KEY_HL2_FREQUENCY_HZ    "hl2:frequency_hz"
+#define CFG_KEY_HL2_RX_GAIN_DB      "hl2:rx_gain_db"
+#define CFG_KEY_HL2_TX_DRIVE        "hl2:tx_drive"
+#define CFG_KEY_HL2_PA              "hl2:pa"
 
 /* Max stored callsign length incl. NUL — matches CALLSIGN_MAX_SIZE (arq.h). */
 #define CFG_CALLSIGN_MAX_SIZE 16
@@ -140,6 +144,15 @@ typedef struct {
                                      * (platform data dir).                    */
     int      store_max_messages;    /* In-memory history ring capacity.
                                      * Default 500, clamped 1..10000.          */
+    /* -x hl2 (a Hermes-Lite 2 on the network; the radio's address is the
+     * input device). */
+    uint32_t hl2_frequency_hz;      /* dial frequency, USB. 0 = unset: the
+                                     * radio receives but never transmits.  */
+    int      hl2_rx_gain_db;        /* LNA gain, -12..+48. Default 20.       */
+    int      hl2_tx_drive;          /* 0..255 (the HL2 uses 16 steps of
+                                     * 0.5 dB). Default 128.                 */
+    bool     hl2_pa;                /* the 5 W PA; off = the low-power
+                                     * output. Default true.                 */
 } mercury_config;
 
 /* Load configuration from an INI file into |cfg|.

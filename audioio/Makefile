@@ -98,8 +98,14 @@ audioio.o: audioio.c std.h $(OBJS)
 resampler.o: resampler.c resampler.h
 	$(CC) $(CFLAGS) -std=gnu11 -c resampler.c -o resampler.o
 
-audioio.a: audioio.o resampler.o $(OBJS)
-	$(AR) rc audioio.a audioio.o resampler.o $(OBJS)
+hl2.o: hl2.c hl2.h hl2_wire.h hl2_dsp.h
+	$(CC) $(CFLAGS) -std=gnu11 -c hl2.c -o hl2.o
+
+hl2_dsp.o: hl2_dsp.c hl2_dsp.h
+	$(CC) $(CFLAGS) -std=gnu11 -c hl2_dsp.c -o hl2_dsp.o
+
+audioio.a: audioio.o resampler.o hl2.o hl2_dsp.o $(OBJS)
+	$(AR) rc audioio.a audioio.o resampler.o hl2.o hl2_dsp.o $(OBJS)
 
 .PHONY: clean
 clean:

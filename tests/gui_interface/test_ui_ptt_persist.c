@@ -81,6 +81,8 @@ int  audioio_restart(const char *capture_dev, const char *playback_dev,
                      int audio_subsys, int capture_channel_layout)
 { (void)capture_dev; (void)playback_dev; (void)audio_subsys; (void)capture_channel_layout; return 0; }
 int  audioio_wait_healthy(int timeout_ms) { (void)timeout_ms; return 0; }
+void audioio_hl2_set(const audioio_hl2_settings *s) { (void)s; }
+void audioio_hl2_get(audioio_hl2_settings *s) { memset(s, 0, sizeof(*s)); }
 int  get_soundcard_list(int audio_system, int mode,
                         char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX], int max_count)
 { (void)audio_system; (void)mode; (void)ids; (void)dev_names; (void)max_count; return 0; }

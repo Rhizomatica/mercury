@@ -126,6 +126,11 @@ int radio_io_get_hamlib_log_level(void);
 /* Return the last successfully read Hamlib frequency and its age.  A refresh
  * is attempted only when allow_poll is true and the radio mutex is immediately
  * available; telemetry never waits behind PTT or another radio operation. */
+/* A radio Mercury tunes itself (-x hl2) has no CAT to read the frequency
+ * back from: it reports the frequency here, and radio_io_get_frequency
+ * returns it like a Hamlib reading. */
+void radio_io_report_frequency(uint64_t frequency_hz);
+
 bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz,
                             uint64_t *age_ms);
 

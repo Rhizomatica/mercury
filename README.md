@@ -24,7 +24,7 @@ presents the result to your application as an ordinary TCP connection.
 - **Adaptive speed** — each direction runs on one of seven rungs, from the 32-tone MFSK floor through DATAC15, DATAC4, DATAC3, DATAC1 and DATAC17 up to QAM16C2. It starts on the rung the connect's SNR supports and moves on measured delivery. Control frames ride DATAC16 (and MFSK, or tone patterns, at the floor), so signalling survives when payload cannot.
 - **Broadcast mode** alongside ARQ, with its own framing and TCP ingress port — used for one-to-many traffic and for [Reticulum](#reticulum) mesh networking.
 - **VARA-style TCP TNC interface** on two sockets (control on the base port, data on base+1), speaking `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, `BITRATE`, `TUNE` (a 1 kHz ATU tuning carrier with a hard 60 s unkey timer) and `MONITOR` (a passive VARA-style monitor that decodes every mode). Existing VARA-aware software can generally talk to Mercury unchanged.
-- **Runs on the audio hardware you have** — `alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, `rtp` (to hermes-radio-daemon), plus `shm`, `null`, `fifo` and `sock` for embedded and test use.
+- **Runs on the audio hardware you have** — `alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, `rtp` (to hermes-radio-daemon), `hl2` (a [Hermes-Lite 2](docs/HERMES-LITE-2.md) on the network, with no sound card or CAT), plus `shm`, `null`, `fifo` and `sock` for embedded and test use.
 - **Keys the radio for you** via Hamlib, serial RTS (including DigiRig), or the HERMES shared-memory interface — or stays out of the way and lets your client do it.
 
 Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
@@ -59,9 +59,11 @@ Options:
  -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.
  -i [device]                Radio Capture device id (eg: "plughw:0,0").
  -o [device]                Radio Playback device id (eg: "plughw:0,0").
- -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, oss, coreaudio, aaudio, dsound, wasapi, shm, rtp, null, fifo or sock. Default is alsa on Linux, dsound on Windows.
+ -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, oss, coreaudio, aaudio, dsound, wasapi, hl2, shm, rtp, null, fifo or sock. Default is alsa on Linux, dsound on Windows.
                             null, fifo and sock are developer/test backends; fifo uses raw s32le PCM at 8 kHz via -i/-o paths; sock is a framed, virtual-clock lockstep transport (MERCURY_AUDIO_SOCK=<path>).
                             rtp exchanges the radio signal with hermes-radio-daemon as RTP multicast: -i <rx group>[,iface] (default 239.255.72.1,lo), -o <tx group> (default 239.255.72.2); PTT travels in the TX stream.
+                            hl2 uses a Hermes-Lite 2 on the network as radio and sound card: -i auto (the first that answers a broadcast) or -i <host>[:port]; set its frequency with -F (or [hl2] in the INI).
+ -F [frequency_hz]          Hermes-Lite 2 (-x hl2) dial frequency in Hz, upper sideband. Without one it receives but never transmits.
  -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.
  -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.
  -U [ui_port]               Sets the UI port (WebSocket port). Default is 10000. Requires -G.

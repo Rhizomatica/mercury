@@ -25,6 +25,7 @@
 #include "unity.h"
 #include "cfg_utils.h"
 #include "cm108_ptt.h"
+#include "audioio.h"
 
 static const char *TMP = "test_cfg_roundtrip.ini";
 
@@ -428,6 +429,44 @@ void test_callsign_truncates_to_slot_size(void)
     TEST_ASSERT_EQUAL_STRING("ABCDEFGHIJKLMNO", r.callsign);
 }
 
+/* -x hl2: the sound-system name, the [hl2] defaults, a round trip, and an
+ * out-of-range value keeping the default. */
+void test_hl2_settings_roundtrip(void)
+{
+    TEST_ASSERT_EQUAL_INT(AUDIO_SUBSYSTEM_HL2, cfg_sound_system_parse("hl2"));
+    TEST_ASSERT_EQUAL_STRING("hl2", cfg_sound_system_name(AUDIO_SUBSYSTEM_HL2));
+
+    mercury_config w, r;
+    cfg_set_defaults(&w);
+    TEST_ASSERT_EQUAL_UINT32(0, w.hl2_frequency_hz);       /* unset: never TX */
+    TEST_ASSERT_EQUAL_INT(20, w.hl2_rx_gain_db);
+    TEST_ASSERT_EQUAL_INT(128, w.hl2_tx_drive);
+    TEST_ASSERT_TRUE(w.hl2_pa);
+
+    w.sound_system = AUDIO_SUBSYSTEM_HL2;
+    w.hl2_frequency_hz = 14074000;
+    w.hl2_rx_gain_db = -6;
+    w.hl2_tx_drive = 0;
+    w.hl2_pa = false;
+    TEST_ASSERT_TRUE(cfg_write(&w, TMP));
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_INT(AUDIO_SUBSYSTEM_HL2, r.sound_system);
+    TEST_ASSERT_EQUAL_UINT32(14074000, r.hl2_frequency_hz);
+    TEST_ASSERT_EQUAL_INT(-6, r.hl2_rx_gain_db);
+    TEST_ASSERT_EQUAL_INT(0, r.hl2_tx_drive);
+    TEST_ASSERT_FALSE(r.hl2_pa);
+
+    FILE *f = fopen(TMP, "w");
+    TEST_ASSERT_NOT_NULL(f);
+    fputs("[hl2]\nrx_gain_db = 99\ntx_drive = 300\n", f);
+    fclose(f);
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_INT(20, r.hl2_rx_gain_db);
+    TEST_ASSERT_EQUAL_INT(128, r.hl2_tx_drive);
+}
+
 /* The TRACE log level is opt-in and round-trips through the INI like verbose;
  * trace implies verbose, so a trace-only INI yields verbose=true too. */
 void test_trace_roundtrips(void)
@@ -453,6 +492,7 @@ int main(void)
     RUN_TEST(test_callsign_defaults_empty_and_roundtrips);
     RUN_TEST(test_callsign_truncates_to_slot_size);
     RUN_TEST(test_trace_roundtrips);
+    RUN_TEST(test_hl2_settings_roundtrip);
     RUN_TEST(test_arq_tunables_roundtrip);
     RUN_TEST(test_arq_tunables_clamp_rejects_garbage);
     RUN_TEST(test_removed_arq_keys_are_flagged_not_fatal);

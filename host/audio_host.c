@@ -204,6 +204,16 @@ int audioio_wait_healthy(int timeout_ms)
     return audioio_capture_health() == AUDIO_HEALTH_RUNNING ? 0 : -2;
 }
 
+void audioio_hl2_set(const audioio_hl2_settings *s)
+{
+    (void) s;                       /* no -x hl2 in the daemon build */
+}
+
+void audioio_hl2_get(audioio_hl2_settings *s)
+{
+    memset(s, 0, sizeof(*s));
+}
+
 void list_soundcards(int audio_system)
 {
     (void) audio_system;

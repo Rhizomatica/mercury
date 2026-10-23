@@ -75,6 +75,10 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->store_enabled               = true;
     cfg->store_path[0]               = '\0';
     cfg->store_max_messages          = MSG_STORE_DEFAULT_MAX_LINES;
+    cfg->hl2_frequency_hz            = 0;
+    cfg->hl2_rx_gain_db              = 20;
+    cfg->hl2_tx_drive                = 128;
+    cfg->hl2_pa                      = true;
 }
 
 /* Map a sound-system name to the AUDIO_SUBSYSTEM_* constant.
@@ -95,6 +99,7 @@ int cfg_sound_system_parse(const char *s)
     if (!strcmp(s, "fifo"))      return AUDIO_SUBSYSTEM_FIFO;
     if (!strcmp(s, "sock"))      return AUDIO_SUBSYSTEM_SOCK;
     if (!strcmp(s, "rtp"))       return AUDIO_SUBSYSTEM_RTP;
+    if (!strcmp(s, "hl2"))       return AUDIO_SUBSYSTEM_HL2;
     return -1;
 }
 
@@ -441,6 +446,17 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_STORE_MAX_MESSAGES, cfg->store_max_messages);
     if (i >= 1 && i <= 10000) cfg->store_max_messages = i;
 
+    i = iniparser_getint(ini, CFG_KEY_HL2_FREQUENCY_HZ, (int) cfg->hl2_frequency_hz);
+    if (i >= 0 && i <= 60000000) cfg->hl2_frequency_hz = (uint32_t) i;
+
+    i = iniparser_getint(ini, CFG_KEY_HL2_RX_GAIN_DB, cfg->hl2_rx_gain_db);
+    if (i >= -12 && i <= 48) cfg->hl2_rx_gain_db = i;
+
+    i = iniparser_getint(ini, CFG_KEY_HL2_TX_DRIVE, cfg->hl2_tx_drive);
+    if (i >= 0 && i <= 255) cfg->hl2_tx_drive = i;
+
+    cfg->hl2_pa = (bool) iniparser_getboolean(ini, CFG_KEY_HL2_PA, cfg->hl2_pa ? 1 : 0);
+
     iniparser_freedict(ini);
     return true;
 }
@@ -461,6 +477,7 @@ const char *cfg_sound_system_name(int sys)
     case AUDIO_SUBSYSTEM_FIFO:      return "fifo";
     case AUDIO_SUBSYSTEM_SOCK:      return "sock";
     case AUDIO_SUBSYSTEM_RTP:       return "rtp";
+    case AUDIO_SUBSYSTEM_HL2:       return "hl2";
     default:                        return "auto";
     }
 }
@@ -560,6 +577,12 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     cfg_escape_str(escaped, sizeof(escaped), cfg->store_path);
     fprintf(f, "path = \"%s\"\n", escaped);
     fprintf(f, "max_messages = %d\n", cfg->store_max_messages);
+
+    fprintf(f, "\n[hl2]\n");
+    fprintf(f, "frequency_hz = %u\n", (unsigned) cfg->hl2_frequency_hz);
+    fprintf(f, "rx_gain_db = %d\n", cfg->hl2_rx_gain_db);
+    fprintf(f, "tx_drive = %d\n", cfg->hl2_tx_drive);
+    fprintf(f, "pa = %s\n", cfg->hl2_pa ? "true" : "false");
 
     fclose(f);
     return true;

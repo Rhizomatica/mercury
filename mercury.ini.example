@@ -47,8 +47,11 @@ output_device =
 ; Capture input channel: left, right, or stereo (default: left)
 capture_channel = left
 
-; Sound system / IO API: auto, alsa, pulse, dsound, wasapi, oss, coreaudio, aaudio, shm, null, fifo
+; Sound system / IO API: auto, alsa, pulse, dsound, wasapi, oss, coreaudio, aaudio, hl2, shm, null, fifo
 ; (default: auto — alsa on Linux, dsound on Windows)
+; hl2 is a Hermes-Lite 2 on the network, as radio and sound card: input_device
+; is "auto" (the first that answers a broadcast) or its address; see [hl2]
+; below and docs/HERMES-LITE-2.md.
 ; null is a developer/test backend: RX silence, TX discarded.
 ; fifo is a developer/test backend: raw s32le PCM at 8 kHz via input_device/output_device.
 sound_system = auto
@@ -239,3 +242,16 @@ enabled = true
 ; Number of recent messages kept in memory (and returned by the HISTORY TNC
 ; command). Valid range: 1..10000. (default: 500)
 max_messages = 500
+
+[hl2]
+; Hermes-Lite 2 (sound_system = hl2).  Mercury tunes it and keys it itself.
+; Dial frequency in Hz, upper sideband.  0 (the default) = unset: the radio
+; receives but never transmits.
+frequency_hz = 0
+; RX LNA gain, -12 .. +48 dB (default 20).  Lower it on "ADC overload".
+rx_gain_db = 20
+; TX drive, 0 .. 255 (default 128, about 2 W; the HL2 uses 16 steps of
+; 0.5 dB, and 0 keys with no RF at all).
+tx_drive = 128
+; The 5 W PA (default true); false = the ~10 mW low-power output.
+pa = true
