@@ -402,7 +402,7 @@ While monitor mode is on, the RX path runs one decoder per mode
 (DATAC16, DATAC15, DATAC13, DATAC4, DATAC3, DATAC1, DATAC17, QAM16C2 and
 MFSK) so a frame is heard whatever speed the transmitting station is using.
 Each decoded frame produces an asynchronous `MONITOR ...` line on the control
-port (see [Asynchronous Responses](#asynchronous-responses)).
+port (see [Asynchronous Responses](#asynchronous-responses-mercury--client)).
 
 Monitor mode is **read-only**.  The monitor decoders are separate codec
 instances that never feed the ARQ state machine, so nothing is acknowledged,

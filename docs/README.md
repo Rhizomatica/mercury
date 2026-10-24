@@ -13,6 +13,7 @@ having — they are not updated as the code moves on.
 
 | Document | What it covers |
 |---|---|
+| [RELEASE-1.9.21.md](RELEASE-1.9.21.md) | **1.9.21 talks to 1.9.20.** The fix for a session whose link falls below the control mode (Pat stalling at `FF>`, #431), MFSK-only transmit for FSK-only radios, the Hermes-Lite 2 backend, and the Mac App Store package. |
 | [RELEASE-1.9.20.md](RELEASE-1.9.20.md) | **1.9.20 does not talk to 1.9.19 on the air.** The 2.0 architecture: a ladder that starts where the SNR says and falls back fast, quicker connect and teardown, a 500 Hz MFSK floor, high-Doppler channels, and what was tested. Android and iOS as technology previews. |
 | [RELEASE-1.9.19.md](RELEASE-1.9.19.md) | **1.9.19 does not talk to 1.9.18 on the air.** MFSK moved to the centre of the passband (1500 Hz), what an operator sees with mixed versions, and what was tested on air. |
 | [RELEASE-1.9.18.md](RELEASE-1.9.18.md) | What changed since 1.9.17 and what to check before upgrading, with 1.9.17 and 1.9.18 measured side by side on real modems and on air. |
@@ -22,7 +23,7 @@ having — they are not updated as the code moves on.
 
 | Document | What it covers |
 |---|---|
-| [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md) | The ARQ data link: the connect (protocol version 1), the erasure-coded carousel that every session runs, the MFSK floor, the bandwidth caps, and the wire formats. The main architecture document. |
+| [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md) | The ARQ data link: the connect (CALL2 frames), the erasure-coded carousel that every session runs, the MFSK floor, the bandwidth caps, and the wire formats. The main architecture document. |
 | [CAROUSEL-SPEC.md](CAROUSEL-SPEC.md) | The carousel specified rule by rule, from the code: state, messages, timers, transitions and invariants. |
 | [CAROUSEL-TURNS.md](CAROUSEL-TURNS.md) | Who may key when: the caller's timers and the callee's slots, and the timed TLA+ model behind them. |
 | [ARQ.md](ARQ.md) | The connection FSM and the 1.9.x stop-and-wait data plane -- mostly history now; read CAROUSEL-ARQ.md for the current data link. |

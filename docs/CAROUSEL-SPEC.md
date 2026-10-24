@@ -142,8 +142,8 @@ listed).
 
 | Field | Meaning | Init |
 |---|---|---|
-| `ctl_deaf` | I hear the peer below the control mode (hysteresis: on if `snr_ema < -7.5`, off if `snr_ema >= -6.0`, C:1610-1614); reported in every frame I send. `CAR_DEAF_HARD`: deaf at connect though the SNR says the control mode works (the CALL or ACCEPT came only on MFSK); no MFSK reading clears it, only a decoded OFDM frame or the peer reporting it hears me; while HARD a poll may name the ladder's rung for one frame (`deaf_rung`), else the floor | seeded at connect (C:1594-1600; HARD in `car_seed_snr`) |
-| `peer_ctl_deaf` | the peer reports it hears me below the control mode; overwritten by the bit in every decoded frame (C:1583-1590, 1617, 1621, 1625) | seeded at connect |
+| `ctl_deaf` | I hear the peer below the control mode (hysteresis: on if `snr_ema < -7.5`, off if `snr_ema >= -6.0`, C:1610-1614; an MFSK frame's own reading, when lower than `snr_ema`, decides going deaf alone, #431); reported in every frame I send. `CAR_DEAF_HARD`: deaf at connect though the SNR says the control mode works (the CALL or ACCEPT came only on MFSK); no MFSK reading clears it, only a decoded OFDM frame or the peer reporting it hears me; while HARD a poll may name the ladder's rung for one frame (`deaf_rung`), else the floor | seeded at connect (C:1594-1600; HARD in `car_seed_snr`) |
+| `peer_ctl_deaf` | the peer reports it hears me below the control mode; overwritten by the bit in every decoded frame (C:1583-1590, 1617, 1621, 1625). `CAR_DEAF_MFSK_TX` (in either field): that end transmits only MFSK (`arq:mfsk_tx_only`, the connect's TXMFSK bit); nothing clears it, so that direction's rounds and control stay on the floor for the session | seeded at connect |
 
 ### 2.3 Sender side
 
@@ -907,3 +907,12 @@ calibration needs points above 12 dB.
 | A receiver answers with a pattern only a round that came on the rung it asked for: a sender that missed the poll kept on at the floor, answered "for" the faster rung. | `rx_next` | none |
 | Above the best rung, the receiver probes where the SNR would start a session (`car_start_level`), not the next rung: the floor to DATAC17 took four probes. | `choose_level`; TLA+ `RungAgreement` (a sized poll names any rung) | 90th percentile to DATAC1 after step:-12:10 86 s (219); every other run identical but NVIS (-3.6 % .. +1.0 %) |
 | A poll carries what its sender holds, as a STATUS does (highest block opened, data not yet cut), and the caller takes it: an ack of its last round from a callee with nothing lets the DISCONNECT go at once, where an idle poll for a status cost an exchange more. | `fill_poll`, `m_on_ctl` | the drain decision is in no model, before or after: it is the same check on the same fields, from the callee's last frame either way.  Go harness, the peer hears the DISCONNECT after 18.3 s at +10 dB (29.7), 19.4 s at 0 dB (27.1), 43.8 s at -10 dB (74.6) |
+
+---
+
+## 19. After 1.9.20 (#434, #435)
+
+| Change | Where | Risks |
+|---|---|---|
+| A drop below the control mode mid-session reaches the floor (#431, Pat stalling at `FF>`).  An MFSK frame's reading alone takes `ctl_deaf` on (a smoothed -2.7 dB after one -9 dB frame put the peer's control back on DATAC16); after two unanswered asks the caller's silence is `S_FALLBACK_MS` (90 s), not `SILENT_MS`, since the callee listens at the floor from then; at the silence the caller's rounds go to the floor with its control (`tx_level = 0`). | `car_on_frame`, `car_on_tx_done`; TLA+ `specs/rungs/FloorSilence.tla` (`FloorHolds`, mutant `Mut_fs_lagread`) | sim: the #431 exchange's 74 B 213-432 s -> 123-172 s; nvis 50 KB median +0.9 % (3 of 30 runs moved); conn_bench 4 of 660 rows |
+| `arq:mfsk_tx_only`: a station whose radio keys only FSK sends everything on the floor.  The connect extension's minor revision shrinks to 2 bits (= 1) and its bit 4 says "I transmit only MFSK"; 1.9.20 reads any minor, so stations without the option connect to 1.9.20 both ways, and a station with it ignores minor 0.  The flag is `CAR_DEAF_MFSK_TX` in `ctl_deaf` (the peer's) or `peer_ctl_deaf` (mine): it caps my rounds at the floor (`cap_tx`) and is never cleared.  Such a callee answers a CALL only where its ACCEPT goes on the floor (`accept_keys`); such a caller's first CALL waits the floor's interval; CQ goes on the floor. | `arq_protocol.[ch]`, `arq_fsm.c`, `arq.c`, `carousel.c`; TLA+ `specs/connect/ConnectCarrier.tla` (`MfskTx`, `FloorOnly`; mutants `Mut_loud`, `Mut_firstiv`) | option off: P0, nvisa, conn_bench and bidir identical; not yet keyed on a real FSK-only radio |

@@ -101,7 +101,7 @@ success.
 | `value` | Capture (input) device id | Device id (e.g. `plughw:0,0`); empty = leave current |
 | `value2` | Playback (output) device id | Device id; empty = leave current |
 | `value3` | Input channel | `left` (default), `right`, `stereo`; any other value silently becomes `left` |
-| `value4` | Audio subsystem (optional) | `alsa`, `pulse`, `dsound`, `wasapi`, `oss`, `coreaudio`, `aaudio`, `shm`, `null`, `fifo`, `sock`, `rtp` |
+| `value4` | Audio subsystem (optional) | `alsa`, `pulse`, `dsound`, `wasapi`, `oss`, `coreaudio`, `aaudio`, `shm`, `null`, `fifo`, `sock`, `rtp`, `hl2` |
 
 If the subsystem changes and no device is supplied for it, the stale device id
 is cleared so the new subsystem resolves its own default. Invalid subsystem →
@@ -263,6 +263,10 @@ order is a stable wire format — do not reorder.
 | `radio_frequency_hz` / `radio_frequency_age_ms` | Cached Hamlib frequency, or `null` |
 | `peer_snr` / `peer_snr_valid` | Kept for compatibility (`-99.9` / `false`) |
 | `peer_hears_mode` | Highest rung the peer reports supporting |
+| `freq_offset_hz` / `freq_offset_age_ms` | Carrier offset of the last decoded frame and its age, or `null` |
+| `listen_mode` / `listen_mode_name` | The broadcast plane's listen mode (`MODE` index and name; `-1` and empty while unknown) |
+| `busy` | What holds the modem: `"arq"`, `"broadcast"` or `""` |
+| `broadcast` | The host's broadcast carousel: `{"state":S,"cycle":N,"cycles_total":N,"frames_sent":N}` |
 | `hl2` | On `-x hl2`, `{"frequency_hz":N,"rx_gain_db":N,"tx_drive":N,"pa":bool}`; `null` otherwise (last field) |
 
 See [WEBSOCKET_STATUS.md](WEBSOCKET_STATUS.md) for the full semantics of the

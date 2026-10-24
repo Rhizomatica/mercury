@@ -41,6 +41,9 @@ are appended after the audio-health fields:
   `state` (`idle`, `sending`, `stopped_by_arq`, `stopped`, `done`, `error`),
   `cycle` (the pass now on), `cycles_total` (`0`: until stopped) and
   `frames_sent`.  An ARQ session starting stops it (`stopped_by_arq`).
+- `hl2`: on `-x hl2`, the Hermes-Lite 2's settings,
+  `{"frequency_hz":N,"rx_gain_db":N,"tx_drive":N,"pa":bool}`; `null` with
+  any other sound system.  The last field.
 
 Frequency telemetry is read-only. It never opens another CAT session, changes
 the VFO, or waits for the shared radio mutex. A busy radio causes the optional

@@ -268,6 +268,34 @@ because it teaches people to click through Gatekeeper warnings.
 
 ---
 
+## 6. The Mac App Store build
+
+The store takes something else: the app **sandboxed**
+(`macos/entitlements-appstore.plist`: audio input, USB, serial, network),
+signed with an **Apple Distribution** certificate and its **Mac App Store**
+provisioning profile, inside an installer package signed with a **3rd Party
+Mac Developer Installer** certificate.  The keys and CSRs are made as in
+steps 1 and 2 (certificate types `DISTRIBUTION` and
+`MAC_INSTALLER_DISTRIBUTION`); this build uses Apple's `codesign` and
+`productbuild`, so it runs on a Mac with both identities in a keychain:
+
+```sh
+make fyne-ui-macos-appstore-pkg \
+     MACOS_APPSTORE_IDENTITY="Apple Distribution: ..." \
+     MACOS_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: ..." \
+     MACOS_APPSTORE_PROFILE=path/to/profile.provisionprofile
+xcrun altool --upload-app -t macos -f Mercury-<version>.pkg ...
+```
+
+- It targets macOS 15.0 (`MACOS_STORE_MIN`): the vendored Hamlib and libusb
+  are built for 15.0, and the store refuses a binary newer than
+  `LSMinimumSystemVersion`.
+- `CFBundleVersion` takes at most three integers on macOS and must grow on
+  every upload: `MACOS_BUILD` defaults to MAJOR.MINOR.PATCH×100 (1.9.21 ->
+  1.9.2100); a re-upload of the same version passes 1.9.2101.
+- The embedded profile is installed mode 0644: a profile only root can read
+  is refused at upload (ITMS-90255).
+
 ## Troubleshooting
 
 | symptom | cause |
