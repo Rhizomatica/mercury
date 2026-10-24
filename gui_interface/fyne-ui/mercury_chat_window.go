@@ -53,15 +53,6 @@ func embeddedClientMayConnect(alreadyOurs bool, tel telemetryState) (bool, strin
 	return false, "Another client (uucp, VarAC, RNS...) is attached to the TNC ports."
 }
 
-// closeMercuryClientWindow shuts the embedded client down if it is open.
-// The window's SetOnClosed handler disconnects the sockets and clears the
-// singleton, so this releases the TNC ports as a side effect.
-func closeMercuryClientWindow() {
-	if mercuryClientSingleton != nil {
-		mercuryClientSingleton.win.Close()
-	}
-}
-
 func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string, persistCallsign func(string)) {
 	if mercuryClientSingleton != nil {
 		mercuryClientSingleton.win.RequestFocus()
