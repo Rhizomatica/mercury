@@ -246,7 +246,7 @@ FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
 .PHONY: ios-app fyne-ui-ios fyne-ui-ios-ipa fyne-ui-android
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg sign-macos-bin macos-notarize-dmg fyne-ui-windows windows-installer test integration-test integration-test-random FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-macos-appstore-pkg sign-macos-bin macos-notarize-dmg fyne-ui-windows windows-installer test integration-test integration-test-random FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -930,6 +930,61 @@ fyne-ui-macos-universal-dmg:
 	rm -rf $(FYNE_UI_DIR)/dmg-stage
 	rm -f $(abspath $(MACOS_CLI_PARK))
 	@echo "  -> $(abspath $(MACOS_DMG_UNIVERSAL))  (universal, GUI + CLI)"
+
+# ---- Mac App Store ---------------------------------------------------------
+# The universal Mercury.app sandboxed (macos/entitlements-appstore.plist),
+# signed for the Mac App Store and wrapped in the installer package App Store
+# Connect takes.  On a Mac, with both identities in the keychain:
+#   make fyne-ui-macos-appstore-pkg \
+#        MACOS_APPSTORE_IDENTITY="Apple Distribution: ..." \
+#        MACOS_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: ..." \
+#        MACOS_APPSTORE_PROFILE=path/to/profile.provisionprofile [MACOS_BUILD=<n>]
+# then upload it: xcrun altool --upload-app -t macos -f Mercury-<ver>.pkg ...
+# MACOS_BUILD is CFBundleVersion: at most three integers on macOS, higher on
+# every upload, so MAJOR.MINOR.PATCH*100 (1.9.21 -> 1.9.2100), and a re-upload
+# of the same version adds one (1.9.2101).  The headless CLI is not in it: the
+# store takes one sandboxed app.
+MACOS_APPSTORE_IDENTITY  ?=
+MACOS_INSTALLER_IDENTITY ?=
+MACOS_APPSTORE_PROFILE   ?=
+MACOS_BUILD              ?= $(shell echo $(MERCURY_VERSION) | awk -F. '{ print $$1 "." $$2 "." $$3 * 100 }')
+# The oldest macOS it runs on: the vendored Hamlib and libusb
+# (radio_io/hamlib-macos) are built for 15.0.  Without it clang targets the
+# build machine's SDK, and fyne writes 10.11 into Info.plist.
+MACOS_STORE_MIN          ?= 15.0
+MACOS_PKG                ?= $(MACOS_APP_NAME)-$(MERCURY_VERSION).pkg
+MACOS_STORE_STAGE         = $(FYNE_UI_DIR)/appstore-stage
+
+fyne-ui-macos-appstore-pkg:
+	@test -n "$(MACOS_APPSTORE_IDENTITY)" -a -n "$(MACOS_INSTALLER_IDENTITY)" -a -f "$(MACOS_APPSTORE_PROFILE)" || { \
+		echo "error: needs MACOS_APPSTORE_IDENTITY, MACOS_INSTALLER_IDENTITY and MACOS_APPSTORE_PROFILE"; exit 1; }
+	MACOSX_DEPLOYMENT_TARGET=$(MACOS_STORE_MIN) $(MAKE) fyne-ui-macos-universal
+	rm -rf $(MACOS_STORE_STAGE) && mkdir -p $(MACOS_STORE_STAGE)
+	cp -R $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(MACOS_STORE_STAGE)/
+	P=$(MACOS_STORE_STAGE)/$(MACOS_APP_NAME).app/Contents/Info.plist; \
+	plutil -replace CFBundleShortVersionString -string $(MERCURY_VERSION) $$P && \
+	plutil -replace CFBundleVersion -string $(MACOS_BUILD) $$P && \
+	plutil -replace LSMinimumSystemVersion -string $(MACOS_STORE_MIN) $$P && \
+	plutil -replace LSApplicationCategoryType -string public.app-category.utilities $$P && \
+	plutil -replace ITSAppUsesNonExemptEncryption -bool NO $$P
+	# Readable by all: a profile kept 0600 with the other secrets is refused at
+	# upload (ITMS-90255, files only root can read).
+	install -m 0644 "$(MACOS_APPSTORE_PROFILE)" $(MACOS_STORE_STAGE)/$(MACOS_APP_NAME).app/Contents/embedded.provisionprofile
+	# The sandbox entitlements plus the application and team identifiers of
+	# the profile, as Xcode would sign it.
+	security cms -D -i "$(MACOS_APPSTORE_PROFILE)" > $(MACOS_STORE_STAGE)/profile.plist
+	E=$(MACOS_STORE_STAGE)/entitlements.plist; cp macos/entitlements-appstore.plist $$E; \
+	A=$$($(PLIST_BUDDY) -c "Print :Entitlements:com.apple.application-identifier" $(MACOS_STORE_STAGE)/profile.plist); \
+	T=$$($(PLIST_BUDDY) -c "Print :TeamIdentifier:0" $(MACOS_STORE_STAGE)/profile.plist); \
+	$(PLIST_BUDDY) -c "Add :com.apple.application-identifier string $$A" \
+		-c "Add :com.apple.developer.team-identifier string $$T" $$E >/dev/null
+	codesign --force --options runtime --entitlements $(MACOS_STORE_STAGE)/entitlements.plist \
+		--sign "$(MACOS_APPSTORE_IDENTITY)" $(MACOS_STORE_STAGE)/$(MACOS_APP_NAME).app
+	codesign --verify --deep --strict $(MACOS_STORE_STAGE)/$(MACOS_APP_NAME).app
+	rm -f $(abspath $(MACOS_PKG))
+	productbuild --component $(MACOS_STORE_STAGE)/$(MACOS_APP_NAME).app /Applications \
+		--sign "$(MACOS_INSTALLER_IDENTITY)" $(abspath $(MACOS_PKG))
+	@echo "  -> $(abspath $(MACOS_PKG))  (version $(MERCURY_VERSION), build $(MACOS_BUILD), Mac App Store)"
 
 # ---- Notarization (rcodesign; network, no Mac) ---------------------------
 # Separate from signing on purpose: signing is local and offline, this uploads
