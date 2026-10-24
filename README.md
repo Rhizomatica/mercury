@@ -29,10 +29,12 @@ presents the result to your application as an ordinary TCP connection.
 
 Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
 
-**On-air compatibility.** Mercury 2.0's connect frames have a packet type of
-their own, and no 1.9.x release connects to it in either direction (within
-1.9.x, 1.9.18 and 1.9.19 did not connect to each other either).  Both ends of
-a session must run a release from the same protocol version; see
+**On-air compatibility.** 1.9.20 and later (the "2.0" architecture) connect
+to each other, but not to 1.9.19 or older in either direction: their connect
+frames have a packet type of their own (and 1.9.18 and 1.9.19 did not connect
+to each other either).  A station with `mfsk_tx_only` set needs 1.9.21 or
+later at the other end.  See
+[docs/RELEASE-1.9.21.md](docs/RELEASE-1.9.21.md),
 [docs/RELEASE-1.9.20.md](docs/RELEASE-1.9.20.md),
 [docs/RELEASE-1.9.19.md](docs/RELEASE-1.9.19.md) and
 [docs/UPGRADING-TO-1.9.18.md](docs/UPGRADING-TO-1.9.18.md) before upgrading.
@@ -165,6 +167,9 @@ PTT control notes:
 | `make fyne-ui-macos` | Package `Mercury.app` for the host architecture (run on macOS). **Needs Go + the `fyne` CLI** ([setup](#gui-build-prerequisites-go--fyne)). |
 | `make fyne-ui-macos-dmg` | Wrap the host-arch `Mercury.app` in a drag-to-install `Mercury.dmg` at the repo top level. **Needs Go + the `fyne` CLI** ([setup](#gui-build-prerequisites-go--fyne)). |
 | `make fyne-ui-macos-universal-dmg` | **Distribution build:** universal (x86_64 + arm64) `Mercury.app` wrapped in `Mercury.dmg` at the repo top level. This is the artifact for the website. **Needs Go + the `fyne` CLI** ([setup](#gui-build-prerequisites-go--fyne)). |
+| `make fyne-ui-macos-appstore-pkg` | **Mac App Store build:** the universal `Mercury.app` for macOS 15.0+, sandboxed (`macos/entitlements-appstore.plist`), signed with `MACOS_APPSTORE_IDENTITY` and the profile in `MACOS_APPSTORE_PROFILE`, in an installer package signed with `MACOS_INSTALLER_IDENTITY`, for upload to App Store Connect. |
+| `make test` | Build and run the C unit and simulator tests (`tests/`). |
+| `make integration-test` | Run the Go two-daemon integration tests ([tests/integration](tests/integration/README.md)); `make integration-test-random` uses a fresh channel seed. |
 
 ### Build options
 
