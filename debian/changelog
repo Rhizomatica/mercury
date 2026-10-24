@@ -1,3 +1,19 @@
+mercury (1.9.21-1) unstable; urgency=medium
+
+  * Release 1.9.21.
+  * build: make clean does not write .mercury_host.
+  * docs/altstore: the notarized 1.9.20 ADP, and its source entry.
+  * README: how to install on Android and iOS, step by step.
+  * audioio: a Hermes-Lite 2 on the network as radio and sound card (-x hl2).
+  * docs/altstore: make the AltStore source discoverable (fediUsername rhizomatica).
+  * carousel: a drop below the control mode mid-session reaches the floor (#431).
+  * arq: MFSK-only transmit (#424 reworked: 1.9.20 stays compatible, no new state).
+  * arq: optional MFSK-only transmit for FSK-only radios.
+  * macos: Mac App Store package (sandboxed, macOS 15.0).
+  * docs: 1.9.21 release notes and doc catch-up since 1.9.20.
+
+ -- Rafael Diniz <rafael@riseup.net>  Sat, 24 Oct 2026 09:55:25 +0000
+
 mercury (1.9.20-1) unstable; urgency=medium
 
   * Release 1.9.20.
