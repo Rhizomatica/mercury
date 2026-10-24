@@ -1299,29 +1299,31 @@ func main() {
 	)
 
 	txCard := widget.NewCard("", "", container.NewVBox(
-		bindings.txGainLabel,
+		container.NewHBox(
+			bindings.txGainLabel,
+			layout.NewSpacer(),
+			bindings.txPeakLabel,
+		),
 		txGainSlider,
-		bindings.txPeakLabel,
 	))
 
 	// compact telemetry layout matching screenshot: left labels small, right values small-bold
 	txrxLabel := canvas.NewText("TX/RX", themeDim())
 	txrxLabel.TextSize = directionText.TextSize
-	telemetryGrid := container.NewGridWithColumns(2,
-		txrxLabel,
-		container.NewHBox(
+	telemetryGrid := container.NewVBox(
+		compactTelemetryRow(txrxLabel, container.NewHBox(
 			container.NewVBox(layout.NewSpacer(), container.NewGridWrap(fyne.NewSize(directionText.TextSize, directionText.TextSize), bindings.directionDot), layout.NewSpacer()),
 			bindings.directionText,
-		),
-		canvas.NewText("Bitrate", themeDim()), bindings.bitrateText,
-		bindings.snrRowLabel, bindings.snrText,
-		bindings.peerSnrRowLabel, bindings.peerSnrText,
-		canvas.NewText("My callsign", themeDim()), bindings.userCallsText,
-		canvas.NewText("Target callsign", themeDim()), bindings.destCallsText,
-		canvas.NewText("Client TCP Connected", themeDim()), bindings.tcpText,
-		canvas.NewText("Bytes transmitted", themeDim()), bindings.txBytesText,
-		canvas.NewText("Bytes received", themeDim()), bindings.rxBytesText,
-		canvas.NewText("Freq offset", themeDim()), bindings.freqOffsetText,
+		)),
+		compactTelemetryRow(canvas.NewText("Bitrate", themeDim()), bindings.bitrateText),
+		compactTelemetryRow(bindings.snrRowLabel, bindings.snrText),
+		compactTelemetryRow(bindings.peerSnrRowLabel, bindings.peerSnrText),
+		compactTelemetryRow(canvas.NewText("My callsign", themeDim()), bindings.userCallsText),
+		compactTelemetryRow(canvas.NewText("Target callsign", themeDim()), bindings.destCallsText),
+		compactTelemetryRow(canvas.NewText("Client connected", themeDim()), bindings.tcpText),
+		compactTelemetryRow(canvas.NewText("Bytes transmitted", themeDim()), bindings.txBytesText),
+		compactTelemetryRow(canvas.NewText("Bytes received", themeDim()), bindings.rxBytesText),
+		compactTelemetryRow(canvas.NewText("Freq offset", themeDim()), bindings.freqOffsetText),
 	)
 	telemetryCard := widget.NewCard("Telemetry", "", telemetryGrid)
 
@@ -1386,9 +1388,7 @@ func main() {
 	))
 	bindings.waterfallCard = spectrumCard
 
-	topPanel := container.NewVBox(
-		container.NewVBox(txCard, telemetryCard),
-	)
+	topPanel := container.New(halfWidthColumn{}, txCard, telemetryCard)
 	// A split, not a border: with the spectrum as a border's bottom edge it was
 	// handed its full minimum height before anything else, so on a short screen
 	// it took the lot and the controls above it collapsed to a sliver. A split
@@ -2238,3 +2238,59 @@ func getLogDir() string {
 // colours: they sit on a dark strip of their own.
 func themeForeground() color.Color { return theme.Color(theme.ColorNameForeground) }
 func themeDim() color.Color        { return theme.Color(theme.ColorNamePlaceHolder) }
+
+func compactTelemetryRow(label, value fyne.CanvasObject) fyne.CanvasObject {
+	return container.NewHBox(label, layout.NewSpacer(), value)
+}
+
+// halfWidthColumn stacks its children vertically, each left-aligned and
+// given half the available width where that is room enough for it, else
+// as much as it needs up to the full width.  The top control panel uses it so
+// the TX card and Telemetry card sit in a compact column on a desktop window
+// instead of stretching across it, and still fit a phone in portrait (about
+// 430 px wide: twice the widest card would not).
+type halfWidthColumn struct{}
+
+func (halfWidthColumn) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	padding := theme.Padding()
+	y := float32(0)
+	for _, child := range objects {
+		if !child.Visible() {
+			continue
+		}
+		m := child.MinSize()
+		width := size.Width / 2
+		if width < m.Width {
+			width = m.Width
+		}
+		if width > size.Width {
+			width = size.Width
+		}
+		child.Move(fyne.NewPos(0, y))
+		child.Resize(fyne.NewSize(width, m.Height))
+		y += m.Height + padding
+	}
+}
+
+func (halfWidthColumn) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	minSize := fyne.NewSize(0, 0)
+	addPadding := false
+	padding := theme.Padding()
+	for _, child := range objects {
+		if !child.Visible() {
+			continue
+		}
+		m := child.MinSize()
+		if m.Width > minSize.Width {
+			minSize.Width = m.Width
+		}
+		minSize.Height += m.Height
+		if addPadding {
+			minSize.Height += padding
+		}
+		addPadding = true
+	}
+	// The widest child, not twice it: Layout widens a child past half the
+	// width when the window is narrow.
+	return minSize
+}
