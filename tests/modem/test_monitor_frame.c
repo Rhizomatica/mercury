@@ -67,7 +67,7 @@ void test_monitor_call_frame(void)
 {
     uint8_t frame[64];
     int n = arq_protocol_build_call(frame, sizeof(frame), 42,
-                                    "K7EK", "VK2XYZ", ARQ_BANDWIDTH_FULL_HZ);
+                                    "K7EK", "VK2XYZ", ARQ_BANDWIDTH_FULL_HZ, false);
     TEST_ASSERT_EQUAL_INT(ARQ_CONTROL_FRAME_SIZE, n);
 
     run_frame(frame, (size_t)n, FREEDV_MODE_DATAC16, 18.5f);

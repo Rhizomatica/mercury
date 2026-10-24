@@ -175,6 +175,19 @@ disconnect_drain_timeout_s = 30
 ; Set to 0 to disable and revert to the old fixed retry cadence.
 retry_stagger_ms = 2000
 
+; Transmit MFSK only (default: false).  For radios that can only transmit FSK
+; (not PSK/QAM) — the QRP Labs QDX, QRPguys AFSK III and similar — which can
+; key constant-envelope MFSK but not the OFDM/QAM payload modes.  When set,
+; this station's CALL/ACCEPT, control frames and payload all transmit on the
+; MFSK floor rung, and its peers keep its transmit direction there for the
+; whole session.  Receive is unaffected: the station still decodes whatever
+; modes its peer can send.  The cost is throughput: the node tops out at the
+; MFSK floor rung (~98 bytes per ~13.5 s burst), which suits low-rate
+; telemetry and relay nodes.  The peer must read the capability (protocol
+; minor 1, after 1.9.20): a station with this set ignores 1.9.20 stations.
+; Stations without it keep talking to 1.9.20.
+mfsk_tx_only = false
+
 [channel]
 ; Channel-busy (occupancy) detector.  Mercury classifies the HF channel as
 ; busy/clear from the RX spectrum and reports transitions to the host with

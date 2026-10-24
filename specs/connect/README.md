@@ -124,7 +124,28 @@ Results:
   Violates `Connects`: a floor ACCEPT the caller's decoders miss is keyed
   over every time.
 - `Mut_nolisten.cfg`: the caller does not listen on the floor.  Violates
-  `Early`.
+  `Early` (and `NoOverlap`, below).
+- `MfskTx`, an end that transmits only MFSK (`arq:mfsk_tx_only`, #424):
+  `ConnectCarrier_emfsk.cfg`, `_cmfsk.cfg`, `_cemfsk.cfg` (callee, caller,
+  both; every path "any"): `NoOverlap` and `FloorOnly` hold, 415745, 309216
+  and 309216 distinct states.  `_floor` (`Sense` "any"): `Connects` holds,
+  330069, 291289, 291289.  `_early`: connected on the second CALL's answer,
+  23766, 145768, 145768.  The callee is silent where its ACCEPT would go on
+  fast, so a first CALL on DATAC16 gets no answer and the repeat gets one on
+  the floor.  `ConnectCarrier_emfsk_listenall.cfg`, #424 as opened (that
+  ACCEPT on the floor, every caller listening there from its first CALL):
+  also no error, 26390 states, at the cost of every station's MFSK
+  listener while it calls.
+- `Mut_loud.cfg`: the MFSK-only callee answers a first CALL on the floor
+  without the caller listening there.  Violates `NoOverlap`: the caller's
+  repeat keys over the 13.5 s ACCEPT.
+- `Mut_firstiv.cfg`: an MFSK-only caller's next CALL comes due before its
+  first ends (#424 as opened set the first deadline from the fast interval).
+  Violates `NoOverlap`.  In the connect sim (SIM_HD=1 SIM_CS=1500) the
+  connect took 79 s with 40 collisions in 20 seeds; with the floor's
+  interval 28 s and none.
+- A decoder of the caller's is on an ACCEPT only on a carrier it listens on
+  (since `MfskTx`); `Mut_nolisten.cfg` now violates `NoOverlap` first.
 - At 0.5 s steps the rounding ate the last floor CALL's 0.75 s of slack and
   `Connects` failed on a tie with the caller giving up, in the old code too:
   the reason for 0.25 s.  The floor call interval is safe from 21 s up (the

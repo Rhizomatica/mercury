@@ -74,8 +74,9 @@ void process_monitor_frame(const uint8_t *data, size_t nbytes_out,
             /* An ACCEPT names neither callsign in full: both are CRCs. */
             arq_accept_t acc;
             if (arq_protocol_parse_accept(data, payload_nbytes, &acc) == 0)
-                snprintf(detail, sizeof(detail), "BW=%d SID=%u START=%d",
-                         acc.bw_hz, (unsigned)acc.session_id, acc.start_level);
+                snprintf(detail, sizeof(detail), "BW=%d SID=%u START=%d%s",
+                         acc.bw_hz, (unsigned)acc.session_id, acc.start_level,
+                         acc.tx_mfsk ? " MFSK-TX" : "");
             else
                 snprintf(detail, sizeof(detail), "unparseable");
         }
@@ -84,8 +85,10 @@ void process_monitor_frame(const uint8_t *data, size_t nbytes_out,
             char src[CALLSIGN_MAX_SIZE] = {0};
             uint8_t sid = 0;
             int bw = 0;
-            if (arq_protocol_parse_call(data, payload_nbytes, &sid, src, &bw) == 0)
-                snprintf(detail, sizeof(detail), "FROM=%s BW=%d SID=%u", src, bw, (unsigned)sid);
+            bool tx_mfsk = false;
+            if (arq_protocol_parse_call(data, payload_nbytes, &sid, src, &bw, &tx_mfsk) == 0)
+                snprintf(detail, sizeof(detail), "FROM=%s BW=%d SID=%u%s",
+                         src, bw, (unsigned)sid, tx_mfsk ? " MFSK-TX" : "");
             else
                 snprintf(detail, sizeof(detail), "FROM=?");
         }

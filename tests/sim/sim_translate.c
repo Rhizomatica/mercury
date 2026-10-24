@@ -38,23 +38,30 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
         uint8_t session_id = 0;
         char src[CALLSIGN_MAX_SIZE] = {0};
         int  bw_hz = 0;
+        bool tx_mfsk = false;
         arq_accept_t acc;
         int rc = !arq_protocol_connect_version_ok(frame, frame_size) ? -1
                  : is_accept ? arq_protocol_parse_accept(frame, frame_size, &acc)
-                             : arq_protocol_parse_call(frame, frame_size, &session_id, src, &bw_hz);
+                             : arq_protocol_parse_call(frame, frame_size, &session_id, src, &bw_hz, &tx_mfsk);
         if (rc < 0)
             return false;
-        if (is_accept)
+        if (is_accept) {
             session_id = acc.session_id;
+            tx_mfsk    = acc.tx_mfsk;
+        }
 
         /* Validate DST CRC against the receiver's callsign (all 16 bits). */
         if (receiver_call && receiver_call[0] != 0 &&
             !arq_protocol_connect_dst_matches(frame, frame_size, receiver_call))
             return false;
+        /* As arq.c: a TX-MFSK-only station ignores minor 0 (1.9.20). */
+        if (ARQ_TX_MFSK_ONLY && arq_protocol_connect_minor(frame) < 1)
+            return false;
 
         out_ev->id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;
         out_ev->session_id = session_id;
         out_ev->rx_snr     = rx_snr;
+        out_ev->tx_mfsk    = tx_mfsk;
         if (is_accept) {
             out_ev->car_level      = acc.start_level;
             out_ev->car_ctl_deaf   = acc.ctl_deaf;

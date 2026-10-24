@@ -115,6 +115,7 @@ static const int *unsensed_idx;
 static int unsensed_n;
 static int keydown_no;
 static int kd_overlaps, kd_unexplained;
+static int non_mfsk[2];   /* frames each station keyed on another mode than MFSK */
 void carousel_sim_force_unsensed(const int *kd_idx, int n) { unsensed_idx = kd_idx; unsensed_n = n; }
 static bool unsensed(int kd)
 {
@@ -252,6 +253,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
                               'A' + s->id, i, (size_t)fr[i].len, fr[i].mode);
         }
         if (i) t += fr[i].gap_ms;
+        if (!mercury_mode_is_mfsk(fr[i].mode)) non_mfsk[s->id]++;
         uint64_t air = sim_channel_airtime_ms(fr[i].mode, 0), d;
         if (trace) {
             static const char *K[] = { "poll", "handover", "status", "?" };
@@ -601,6 +603,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     bad_frames = 0;
     slot_breaches = 0;
     frame_no = 0;
+    non_mfsk[0] = non_mfsk[1] = 0;
     keydown_no = 0;
     kd_overlaps = 0;
     kd_unexplained = 0;
@@ -622,8 +625,14 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         double hears = asym ? snr_dir[i ^ 1] : snr_db, heard = asym ? snr_dir[i] : snr_db;
         hears += snr_offset; heard += snr_offset;   /* the connect estimate reads off too */
         if (getenv("CAR_NOHINT")) hears = heard = -99.0;
-        car_init(&s->car, &io, car_start_level((float)hears), car_start_level((float)heard));
-        car_seed_ctl_deaf(&s->car, hears < ARQ_SNR_MIN_DATAC15_DB, heard < ARQ_SNR_MIN_DATAC15_DB);
+        /* CAR_MFSK_TX=A, B or AB: that station transmits only MFSK, and both
+         * ends know it from the connect (arq_fsm.c); a, b: its peer does not */
+        const char *mt = getenv("CAR_MFSK_TX");
+        bool mine = mt && (strchr(mt, 'A' + i) || strchr(mt, 'a' + i)), peers = mt && strchr(mt, 'B' - i);
+        bool known = mt && strchr(mt, 'A' + i);   /* ...and the peer knows it */
+        car_init(&s->car, &io, peers ? 0 : car_start_level((float)hears), known ? 0 : car_start_level((float)heard));
+        car_seed_ctl_deaf(&s->car, peers ? CAR_DEAF_MFSK_TX : hears < ARQ_SNR_MIN_DATAC15_DB,
+                          mine ? CAR_DEAF_MFSK_TX : heard < ARQ_SNR_MIN_DATAC15_DB);
         if (!getenv("CAR_NOHINT")) car_seed_snr(&s->car, (float)hears, (float)heard);   /* as arq_fsm.c's car_start */
         /* CAR_BW=500: a BW500 session, capped at DATAC3 on the 500 Hz floor */
         if (getenv("CAR_BW")) {
@@ -735,6 +744,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         res->msg_delay_ms[k] = sc[k].delivered ? sc[k].delivered - sc[k].written : UINT64_MAX;
     res->collisions = collisions;
     res->frames = frame_no;
+    res->non_mfsk[0] = non_mfsk[0]; res->non_mfsk[1] = non_mfsk[1];
     res->keydowns = keydown_no;
     res->kd_overlaps = kd_overlaps;
     res->kd_unexplained = kd_unexplained;

@@ -12,6 +12,7 @@
 #include "arq_fsm.h"
 #include "arq_timing.h"
 #include "freedv_api.h"
+#include "modem_mfsk.h"   /* mercury_mode_is_mfsk */
 
 #include <stdlib.h>
 #include <string.h>
@@ -78,6 +79,7 @@ struct sim {
     uint64_t         tx_start_ms[2];
     int              collisions;     /* frames destroyed by overlap */
     int              mode_frames[SIM_MODES]; /* frames keyed, by mode (both ways) */
+    int              non_mfsk[2];            /* ...each way, on another mode than MFSK */
 
     /* Carrier sense.  A real station knows the peer is on the air once a
      * decoder holds sync on its frame, which takes the preamble to arrive --
@@ -131,6 +133,7 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
 
         uint32_t airtime = sim_channel_airtime_ms(of.mode, of.len);
         uint64_t tx_end  = now_ms + airtime;
+        if (!mercury_mode_is_mfsk(of.mode)) s->non_mfsk[dir]++;
 
         if (s->carrier_sense)
         {
@@ -227,6 +230,7 @@ static void drain_keydown_from(sim_t *s, sim_endpoint_t *sender,
     {
         if (kd.f[i].mode >= 0 && kd.f[i].mode < SIM_MODES)
             s->mode_frames[kd.f[i].mode]++;
+        if (!mercury_mode_is_mfsk(kd.f[i].mode) && kd.f[i].mode != SIM_MODE_PATTERN) s->non_mfsk[dir]++;
         if (i) t += kd.f[i].gap_ms;
         start[i] = t;
         t += sim_channel_airtime_ms(kd.f[i].mode, kd.f[i].len);
@@ -435,6 +439,7 @@ int  sim_mode_frames(sim_t *s, int mode)
 {
     return mode >= 0 && mode < SIM_MODES ? s->mode_frames[mode] : 0;
 }
+int  sim_non_mfsk_frames(sim_t *s, sim_endpoint_t *ep) { return s->non_mfsk[ep == s->a ? 0 : 1]; }
 bool sim_keyed(sim_t *s, sim_endpoint_t *ep)
 {
     int me = (ep == s->a) ? 0 : 1;

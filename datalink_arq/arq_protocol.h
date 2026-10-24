@@ -41,9 +41,10 @@
 #define ARQ_FRAME_HDR_SIZE    8   /* bytes 0-7 inclusive */
 
 /* CONNECT frames (CALL/ACCEPT) compact layout — 14 bytes, DATAC16 only.
- * Uses PACKET_TYPE_ARQ_CALL in the framer byte.
+ * Uses PACKET_TYPE_ARQ_CALL2 in the framer byte.
  *
- *  Byte 0: framer byte (PACKET_TYPE_ARQ_CALL | BW token, set by write_frame_header)
+ *  Byte 0: framer byte (PACKET_TYPE_ARQ_CALL2 | BW token, minor revision,
+ *          TX-MFSK-only bit, set by write_frame_header)
  *  Byte 1: connect_meta  = (session_id & 0x7F) | (is_accept ? 0x80 : 0x00)
  *  Bytes 2-3:  CRC16-CCITT of DST callsign (little-endian) — for local validation
  *  Bytes 4-13: arithmetic_encode(SRC callsign only) — 10 bytes, fits callsigns up to ~14 chars
@@ -174,6 +175,13 @@ typedef struct
 extern _Atomic int arq_call_retry_slots;
 extern _Atomic int arq_accept_retry_slots;
 extern _Atomic int arq_disconnect_retry_slots;
+
+/* Station capability: transmit MFSK only (FSK-only radios — QDX, AFSK III).
+ * When set, this station's CALL/ACCEPT/control/payload all transmit on the
+ * MFSK floor rung, and its peers keep its transmit direction there.  Set via
+ * arq:mfsk_tx_only (arq_set_tx_mfsk_only). */
+extern _Atomic int arq_tx_mfsk_only;
+#define ARQ_TX_MFSK_ONLY atomic_load(&arq_tx_mfsk_only)
 
 /* Runtime-configurable CALL/ACCEPT retry interval in seconds (set via CALLINT
  * TCP command).  0.0 = use compiled default (7.0s).  Minimum enforced: 4.0s.
@@ -366,8 +374,9 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
 /* --- CALL/ACCEPT of Mercury 2.0 (PACKET_TYPE_ARQ_CALL2) ---
  *
  * 14 bytes (a DATAC16 frame), padded to the frame on MFSK.  Byte 0 is the
- * framer: type CALL2, and in its extension the bandwidth token (2 bits) and
- * the 2.x minor revision (3 bits, 0).  Every 1.9.x release drops the type,
+ * framer: type CALL2, and in its extension the bandwidth token (2 bits), the
+ * 2.x minor revision (2 bits, 1) and the TX-MFSK-only bit.  Every 1.9.x
+ * release drops the type,
  * and a CALL of theirs (PACKET_TYPE_ARQ_CALL) addressed to this station is
  * logged, not answered: the versions do not connect (docs/CAROUSEL-ARQ.md,
  * "Wire formats").
@@ -380,6 +389,14 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  * never hear each other at the floor, so the version keeps them apart.
  * Version 3 (after 1.9.19) gave a BW500 session its own floor, the 500 Hz
  * MFSK (arq_floor_mode), and was the last value the two bits held.
+ * Mercury 2.0 took another packet type (CALL2, above).
+ *
+ * Minor 1 added the TX-MFSK-only bit, a station capability: "I can only
+ * transmit MFSK" (arq:mfsk_tx_only; an FSK-only radio).  1.9.20 sent minor
+ * 0 in 3 bits and reads any minor, so it reads a minor-1 frame as before,
+ * the bit as part of the minor; a station of minor 1 or later reads 1.9.20's
+ * frames as before too.  Only a station that sets the bit needs a peer that
+ * reads it, so it ignores frames of minor 0 (arq_protocol_connect_minor).
  *
  *   CALL    1: 0 | session id   2-3: CRC16 of the called callsign
  *           4-13: the caller's callsign, arithmetic-coded
@@ -389,10 +406,11 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  *              below the control mode (bit 3), 4 bits zero
  *           9: the SNR the callee read the CALL at, dB + 128 (0: unknown)
  *           10-13: zero */
-#define ARQ_CONNECT_MINOR             0
+#define ARQ_CONNECT_MINOR             1
 #define ARQ_CONNECT_EXT_BW_MASK       0x03
 #define ARQ_CONNECT_EXT_MINOR_SHIFT   2
-#define ARQ_CONNECT_EXT_MINOR_MASK    0x1C
+#define ARQ_CONNECT_EXT_MINOR_MASK    0x0C
+#define ARQ_CONNECT_EXT_TXMFSK        0x10  /* the sender transmits only MFSK */
 #define ARQ_ACCEPT_CALLED_CRC_IDX     4
 #define ARQ_ACCEPT_NONCE_IDX          6
 #define ARQ_ACCEPT_LEVEL_IDX          8
@@ -401,35 +419,42 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                                                the control mode */
 #define ARQ_ACCEPT_SNR_IDX            9
 
-/** Build a CALL.  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
+/** Build a CALL.  tx_mfsk: this station can only transmit MFSK.  @return
+ *  ARQ_CONTROL_FRAME_SIZE (14), or -1. */
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
                             uint8_t session_id,
                             const char *caller, const char *called,
-                            int bw_hz);
+                            int bw_hz, bool tx_mfsk);
 
 /** Build an ACCEPT.  called: the callsign the CALL was addressed to (the
  *  callee's primary or a secondary); start_level 0..6; ctl_deaf: the callee
  *  hears the caller below the control mode; call_snr_db: what it read the
- *  CALL at (NAN: unknown).  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
+ *  CALL at (NAN: unknown); tx_mfsk: this station can only transmit MFSK.
+ *  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                               uint8_t session_id,
                               const char *called, const char *caller,
                               int bw_hz, int start_level, bool ctl_deaf,
-                              float call_snr_db, uint16_t nonce);
+                              float call_snr_db, uint16_t nonce,
+                              bool tx_mfsk);
 
 /** Is buf a CALL or ACCEPT of this protocol (2.0, any minor revision)? */
 bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len);
+
+/** The 2.x minor revision of a CALL or ACCEPT (version_ok already checked). */
+int arq_protocol_connect_minor(const uint8_t *buf);
 
 /** Is a CALL or ACCEPT addressed to callsign (bytes 2-3, all 16 bits)?
  *  Requires at least ARQ_CONNECT_PAYLOAD_IDX + 2 bytes in @p buf. */
 bool arq_protocol_connect_dst_matches(const uint8_t *buf, size_t buf_len,
                                       const char *callsign);
 
-/** Parse a CALL: session id, the caller's callsign, the bandwidth.
- *  @return 0, or -1 (wrong version, bad bandwidth token, undecodable call). */
+/** Parse a CALL: session id, the caller's callsign, the bandwidth, and the
+ *  caller's TX-MFSK-only capability.  @return 0, or -1 (wrong version, bad
+ *  bandwidth token, undecodable call). */
 int arq_protocol_parse_call(const uint8_t *buf, size_t buf_len,
                             uint8_t *session_id_out, char *caller_out,
-                            int *bw_hz_out);
+                            int *bw_hz_out, bool *tx_mfsk_out);
 
 typedef struct {
     uint8_t  session_id;
@@ -439,6 +464,7 @@ typedef struct {
     int      start_level;    /* 0..6 */
     bool     ctl_deaf;       /* the callee hears the caller below the control mode */
     float    call_snr_db;    /* what the callee read the CALL at; NAN: unknown */
+    bool     tx_mfsk;        /* the callee can only transmit MFSK */
 } arq_accept_t;
 
 /** Parse an ACCEPT.  @return 0, or -1 (wrong version, bad bandwidth token,

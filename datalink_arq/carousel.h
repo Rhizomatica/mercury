@@ -149,10 +149,11 @@ typedef struct {
     int      max_level;             /* the highest rung the session's bandwidth
                                      * allows (car_set_max_level) */
     int      floor_mode;            /* rung 0's mode (car_set_floor_mode) */
-    uint8_t  ctl_deaf;              /* I hear the peer below the control mode (by
-                                     * its SNR, or CAR_DEAF_HARD: see car_seed_snr): its
-                                     * control must reach me on MFSK (reported) */
-    bool     peer_ctl_deaf;         /* ...and the peer, of me, as it reports */
+    uint8_t  ctl_deaf;              /* I hear the peer below the control mode
+                                     * (CAR_DEAF_*): its control must reach me
+                                     * on MFSK (reported) */
+    uint8_t  peer_ctl_deaf;         /* ...and the peer, of me, as it reports
+                                     * (or CAR_DEAF_MFSK_TX) */
     float    snr_ema;               /* SNR of what the peer sends us, smoothed */
     float    snr_last;              /* ...and its latest reading */
     uint64_t snr_ms;                /* ...and when it came */
@@ -298,9 +299,19 @@ int  car_max_level_for_bw(int bw_hz);
 /* The session's floor, rung 0 (arq_floor_mode of its bandwidth): the 1 kHz
  * MFSK unless set.  Both ends set the same, after car_init. */
 void car_set_floor_mode(car_t *c, int mode);
+/* car_t.ctl_deaf: deaf by the SNR reading, or HARD -- deaf though the reading
+ * says the control mode works (the connect got through on MFSK only).  A
+ * reading on an MFSK frame does not clear HARD: MFSK copes with what may be
+ * killing the control mode, a Doppler spread or a multipath the SNR does not
+ * show.  Only a frame of the peer's on an OFDM mode does.  MFSK_TX is deaf
+ * for good: the station transmits only MFSK (arq:mfsk_tx_only, an FSK-only
+ * radio; the connect's TX-MFSK-only bit).  Its peer holds it in ctl_deaf,
+ * the station itself in peer_ctl_deaf; nothing the session hears clears it. */
+enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2, CAR_DEAF_MFSK_TX = 3 };
 /* Seed, from the connect exchange, whether each end hears the other below the
- * control mode (see ctl_on_floor in carousel.c).  Frames keep both current. */
-void car_seed_ctl_deaf(car_t *c, bool mine, bool peers);
+ * control mode (CAR_DEAF_*; see ctl_on_floor in carousel.c).  Frames keep
+ * both current, all but MFSK_TX. */
+void car_seed_ctl_deaf(car_t *c, uint8_t mine, uint8_t peers);
 /* The connect's SNRs (0: unknown): mine, the reading of the peer's connect
  * frame -- the carousel's first, so its first control frame reports one --
  * and the peer's of mine (the caller has it from the ACCEPT). */

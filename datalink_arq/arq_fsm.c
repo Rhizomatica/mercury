@@ -269,6 +269,10 @@ static int session_tx_read(arq_session_t *sess, uint8_t *buf, size_t len)
 int arq_call_carrier(const arq_session_t *sess)
 {
     if (!sess) return ARQ_CONTROL_MODE;
+    /* A station that can only transmit MFSK calls on MFSK from the first
+     * CALL: its fast DATAC16 slots would never reach the peer. */
+    if (ARQ_TX_MFSK_ONLY)
+        return arq_floor_mode(arq_get_bw());
     if (sess->call_sends_done < ARQ_CALL_FAST_SLOTS)
         return sess->control_mode;
     /* The floor of my own bandwidth: the callee answers min(its own, mine),
@@ -306,6 +310,18 @@ static int accept_carrier(const arq_session_t *sess, const arq_event_t *ev)
     if (mercury_mode_is_mfsk(ev->mode) || floor != sess->floor_mode || sess->call_rx_mode == floor)
         return ev->mode;
     return floor;
+}
+
+/* Does the ACCEPT go out, on the carrier chosen for it (call_rx_mode)?  Not
+ * from a station that transmits only MFSK where that is the control mode:
+ * it stays silent there, and answers the caller's next CALL, which the
+ * caller sends on the floor or, a repeat, listens for there
+ * (call_answer_carrier).  On the floor to a first CALL, the ACCEPT outlasts
+ * the call interval and the caller, listening on the control mode only,
+ * keys its repeat over it (specs/connect/ConnectCarrier.tla, MfskTx). */
+static bool accept_keys(const arq_session_t *sess)
+{
+    return !ARQ_TX_MFSK_ONLY || mercury_mode_is_mfsk(sess->call_rx_mode);
 }
 
 /* The ACCEPT names the caller's start rung and says whether we hear it below
@@ -351,7 +367,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
                                       called, sess->remote_call, bw_hz,
                                       accept_level(sess), sess->car_ctl_deaf,
                                       sess->car_call_snr != 0.0f ? sess->car_call_snr : NAN,
-                                      sess->car_nonce);
+                                      sess->car_nonce, ARQ_TX_MFSK_ONLY);
         /* The ACCEPT is the carousel's first poll: from here the caller's
          * frames carry the session seed, and its first round comes on the rung
          * the ACCEPT names. */
@@ -361,12 +377,14 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     }
     else
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
-                                    my_call, sess->remote_call, bw_hz);
+                                    my_call, sess->remote_call, bw_hz,
+                                    ARQ_TX_MFSK_ONLY);
     if (n > 0)
     {
         /* A CALL escalates to the MFSK floor once the fast slots are spent; an
          * ACCEPT answers on the carrier the CALL came on, so the two ends
-         * never disagree about it. */
+         * never disagree about it.  A station that transmits only MFSK
+         * sends both on MFSK (arq_call_carrier, accept_keys). */
         int mode = is_accept ? (sess->call_rx_mode > 0 ? sess->call_rx_mode : sess->control_mode)
                              : arq_call_carrier(sess);
         if (!is_accept) {
@@ -401,9 +419,9 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
 static int session_ctl_mode(const arq_session_t *sess)
 {
     if (!sess->car)
-        return sess->control_mode;
+        return ARQ_TX_MFSK_ONLY ? sess->floor_mode : sess->control_mode;
     bool deaf = sess->car_active ? car_peer_ctl_deaf(sess->car) : sess->ctl_floor_at_stop;
-    return deaf ? sess->floor_mode : sess->control_mode;
+    return (deaf || ARQ_TX_MFSK_ONLY) ? sess->floor_mode : sess->control_mode;
 }
 
 /* The session's DISCONNECT: the one control frame a session sends outside
@@ -743,7 +761,8 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
     car_set_max_level(sess->car, session_max_level());
     car_set_floor_mode(sess->car, sess->floor_mode);
-    car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf, sess->car_peer_ctl_deaf);
+    car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf,
+                      ARQ_TX_MFSK_ONLY ? CAR_DEAF_MFSK_TX : sess->car_peer_ctl_deaf);
     car_seed_snr(sess->car, sess->car_my_snr, is_caller ? sess->car_call_snr : 0.0f);
     sess->ctl_floor_at_stop = false;
     sess->car_active = true;
@@ -873,15 +892,17 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_APP_CONNECT:
         send_disconnect_reply(sess);    /* owed first; the CALL queues behind it */
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
-        sess->session_id      = (uint8_t)(time_now_ms() & 0x7F) | 0x01;
+        sess->session_id      = (uint8_t)(time_now_ms() & ARQ_CONNECT_SESSION_MASK) | 0x01;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->call_sends_done = 0;
         sess->call_carrier    = 0;
         sess->payload_mode       = FREEDV_MODE_DATAC15;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         send_call_accept(sess, false);
+        /* the first CALL's interval: the floor's from a station that
+         * transmits only MFSK, or its next CALL keys behind this one */
         sess_enter(sess, ARQ_CONN_CALLING,
-                   deadline_from_s(arq_protocol_call_interval_s()),
+                   deadline_from_s(arq_protocol_call_interval_for_mode_s(sess->call_carrier)),
                    ARQ_EV_TIMER_RETRY);
         break;
 
@@ -926,15 +947,17 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
              * session started on DATAC1 by the SNR sent its first round into
              * a callee that never heard it (Go harness, ccir-flutter, itur-ld,
              * -hm, -hd: 0 bytes at every SNR).  The floor then, until an OFDM
-             * frame proves otherwise (carousel.c, CAR_DEAF_HARD). */
-            sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB || mercury_mode_is_mfsk(ev->mode);
+             * frame proves otherwise (carousel.c, CAR_DEAF_HARD).  For good
+             * from a caller that transmits only MFSK (CAR_DEAF_MFSK_TX). */
+            sess->car_ctl_deaf = ev->tx_mfsk ? CAR_DEAF_MFSK_TX
+                               : ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB || mercury_mode_is_mfsk(ev->mode);
             if (sess->car_ctl_deaf) sess->car_rx_level = 0;
             sess->car_call_snr = ev->rx_snr;
             sess->car_my_snr   = ev->rx_snr;
         }
         sess->car_peer_ctl_deaf = false;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
-        sess->accept_tx_pending = true;   /* answering a CALL we just heard */
+        sess->accept_tx_pending = accept_keys(sess);   /* answering a CALL we just heard */
         /* Off the listen mode: here, not in sess_enter, because LISTENING
          * keeps peer_tx_mode on the broadcast mode.  The carousel binds the
          * decoder to the peer's rung once it runs. */
@@ -1043,8 +1066,10 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
          * says only that an ACCEPT there was lost -- the callee decoded our
          * control-mode CALLs -- so the SNR decides: taken as deafness, a lost
          * frame's worth of bad luck put a good link's control on the floor
-         * (sim, nvis: a callee's DISCONNECT 12.4 -> 17.1 s). */
-        sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB ||
+         * (sim, nvis: a callee's DISCONNECT 12.4 -> 17.1 s).  For good from a
+         * callee that transmits only MFSK (CAR_DEAF_MFSK_TX). */
+        sess->car_ctl_deaf = ev->tx_mfsk ? CAR_DEAF_MFSK_TX
+                           : ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB ||
                              (mercury_mode_is_mfsk(ev->mode) && mercury_mode_is_mfsk(sess->call_carrier));
         if (sess->car_ctl_deaf) sess->car_rx_level = 0;
         sess->car_my_snr   = ev->rx_snr;
@@ -1185,7 +1210,6 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * gap the caller has just opened by dropping PTT -- the same schedule
          * fsm_listening uses for the first ACCEPT, and for the same reason. */
         sess->tx_retries_left   = ARQ_ACCEPT_RETRY_SLOTS;
-        sess->accept_tx_pending = true;   /* answering a CALL we just heard */
         sess->deadline_ms       = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
         /* The same ACCEPT again -- the rung, the deafness and the nonce of the
          * first: the caller may decode any of them, and ends that read
@@ -1196,6 +1220,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * kept on DATAC16 kept failing the same way (#235).  A repeat on
          * DATAC16 says the same thing, sooner: the floor (accept_carrier). */
         sess->call_rx_mode      = accept_carrier(sess, ev);
+        sess->accept_tx_pending = accept_keys(sess);   /* answering a CALL we just heard */
         break;
 
     case ARQ_EV_TX_COMPLETE:

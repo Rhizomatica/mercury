@@ -67,6 +67,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->tx_delay_ms           = 10;
     cfg->retry_stagger_ms            = ARQ_RETRY_STAGGER_MS_DEFAULT;
     cfg->removed_keys                = 0;
+    cfg->mfsk_tx_only                = false;
     cfg->busy_detect                 = false;
     cfg->busy_threshold_db           = 10;
     cfg->busy_hysteresis_db          = 3;
@@ -410,6 +411,9 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_ARQ_RETRY_STAGGER_MS, cfg->retry_stagger_ms);
     if (i >= 0 && i <= ARQ_RETRY_STAGGER_MS_MAX) cfg->retry_stagger_ms = i;
 
+    cfg->mfsk_tx_only = (bool) iniparser_getboolean(ini, CFG_KEY_ARQ_MFSK_TX_ONLY,
+                                                    cfg->mfsk_tx_only ? 1 : 0);
+
     cfg->busy_detect = (bool) iniparser_getboolean(ini, CFG_KEY_BUSY_DETECT,
                                                    cfg->busy_detect ? 1 : 0);
 
@@ -556,6 +560,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "\n[arq]\n");
     fprintf(f, "disconnect_drain_timeout_s = %d\n", cfg->disconnect_drain_timeout_s);
     fprintf(f, "retry_stagger_ms = %d\n", cfg->retry_stagger_ms);
+    fprintf(f, "mfsk_tx_only = %s\n", cfg->mfsk_tx_only ? "true" : "false");
 
     fprintf(f, "\n[channel]\n");
     fprintf(f, "busy_detect = %s\n", cfg->busy_detect ? "true" : "false");

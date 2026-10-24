@@ -307,12 +307,6 @@ static uint64_t level_air(const car_t *c, int lv) { return mode_air(lmode(c, lv)
  * answering every poll (sim, nvis bidir: 3813 s median, trunk 3451; at 150 s
  * 3347, and the floor 155 s after step:10:-12, where 90 s took 100). */
 #define SILENT_MS 150000
-/* car_t.ctl_deaf: deaf by the SNR reading, or HARD -- deaf though the reading
- * says the control mode works (the connect got through on MFSK only).  A
- * reading on an MFSK frame does not clear HARD: MFSK copes with what may be
- * killing the control mode, a Doppler spread or a multipath the SNR does not
- * show.  Only a frame of the peer's on an OFDM mode does. */
-enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2 };
 #define CTL_DEAF_ON_DB   (ARQ_SNR_MIN_DATAC15_DB - 0.5f)
 #define CTL_DEAF_OFF_DB  (ARQ_SNR_MIN_DATAC15_DB + 1.0f)
 /* How the peer hears me now: its last reading of me, moved by as much as my
@@ -337,10 +331,12 @@ static float peer_hears_me_db(const car_t *c)
  * control mode, but hears my floor control only where it listens on the
  * floor, which follows its own reading.  In the sim, step:-12:10, the
  * receiver's first poll after the step went on MFSK (13.8 s) where the
- * control mode (4 s) reached the sender. */
+ * control mode (4 s) reached the sender.  For good while I transmit only
+ * MFSK (CAR_DEAF_MFSK_TX). */
 static bool ctl_on_floor(const car_t *c)
 {
     if (!c->io.pattern || !c->peer_ctl_deaf) return false;
+    if (c->peer_ctl_deaf == CAR_DEAF_MFSK_TX) return true;
     /* A deaf peer whose own reading does not say so went deaf on silence
      * (nothing decoded for SILENT_MS: car_on_tx_done), and that reading is
      * as old as the silence.  Trust the flag: with the reading, a receiver
@@ -1164,6 +1160,9 @@ static int probe_every(const car_t *c, int lv)
 }
 
 static int cap_level(const car_t *c, int lv) { return lv > c->max_level ? c->max_level : lv; }
+/* ...and for my rounds: the floor while I transmit only MFSK.  The peer names
+ * the floor for them anyway (deaf to me for good: CAR_DEAF_MFSK_TX). */
+static int cap_tx(const car_t *c, int lv) { return c->peer_ctl_deaf == CAR_DEAF_MFSK_TX ? 0 : cap_level(c, lv); }
 
 /* How I hear the peer, for its control frames: the smoothed reading, or none
  * before the first frame with one. */
@@ -1178,7 +1177,7 @@ static void take_peer_snr(car_t *c, uint64_t now, const msg_t *m)
     c->peer_snr_db = m->snr_db;
     c->peer_snr_ms = now;
     c->peer_snr_mine = c->snr_valid ? c->snr_ema : NAN;
-    c->peer_snr_level = cap_level(c, car_start_level(m->snr_db));
+    c->peer_snr_level = cap_tx(c, car_start_level(m->snr_db));
     c->peer_level_known = true;
 }
 
@@ -2558,10 +2557,10 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
          * it only from answers to rounds bounds that at one, but cost more
          * than it saved in the sim (nvis: chat -5 %, a UUCP-like mix +9 %). */
         c->ok_lv = c->last_lv; c->fell_back = false;
-        if (m->n) { c->tx_level = cap_level(c, m->level); c->tx_n = m->n; }
+        if (m->n) { c->tx_level = cap_tx(c, m->level); c->tx_n = m->n; }
         else if (g_short_rung && m->short_rung && m->level > 0) {
             /* S's ack names where it listens for my next round */
-            int nl = cap_level(c, m->level);
+            int nl = cap_tx(c, m->level);
             if (nl != c->tx_level) c->tx_n = 1;   /* the size it asked for was another rung's */
             c->tx_level = nl;
             c->ok_lv = c->tx_level;
@@ -2767,7 +2766,7 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
         c->floor_silent = 0;
         if (m->h_n) {
             /* M's round follows in this keydown: both ways in one exchange. */
-            if (m->n) { c->tx_level = cap_level(c, m->level); c->tx_n = m->n; }
+            if (m->n) { c->tx_level = cap_tx(c, m->level); c->tx_n = m->n; }
             c->rx_mk = (uint8_t)m->poll_id;
             c->round_seen = 0; c->round_frames = m->h_n; c->round_lv = m->h_level;
             c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
@@ -2778,7 +2777,7 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
             else s_anchor(c, ANC_BOTH, (uint8_t)m->poll_id, eh + CHAIN_GAP_MS + round_air(c, m->h_level, m->h_n),
                           d > dr ? d : dr, 0, 0);
         } else if (m->n) {
-            c->tx_level = cap_level(c, m->level); c->tx_n = m->n;
+            c->tx_level = cap_tx(c, m->level); c->tx_n = m->n;
             car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
             s_anchor(c, ANC_POLL, (uint8_t)m->poll_id, eh, d, poll_k(c, m->level, m->n),
                      s_round_ms(c, m->level, m->n));
@@ -2907,7 +2906,7 @@ void car_start_sender(car_t *c, uint64_t now)
     c->master = true;
     c->heard_ms = now;
     c->piece = car_piece_for_start(c->peer_snr_level);
-    c->tx_level = c->peer_snr_level; c->tx_n = 1;
+    c->tx_level = cap_tx(c, c->peer_snr_level); c->tx_n = 1;
     c->poll_level = c->snr_level; c->poll_n = 1;
     c->phase = PH_IDLE;
     c->phase_start = now;
@@ -2929,7 +2928,8 @@ void car_start_receiver(car_t *c, uint64_t now)
 
 static void note_peer_ctl_deaf(car_t *c, bool deaf)
 {
-    if (deaf != c->peer_ctl_deaf) {
+    if (c->peer_ctl_deaf == CAR_DEAF_MFSK_TX) return;
+    if (deaf != (c->peer_ctl_deaf != 0)) {
         c->peer_ctl_deaf = deaf;
         car_trace(c, "the peer hears me %s the control mode: control on %s",
                   deaf ? "below" : "above", deaf ? "MFSK" : "the control mode");
@@ -2947,12 +2947,13 @@ static void note_peer_ctl_deaf(car_t *c, bool deaf)
 
 bool car_peer_ctl_deaf(const car_t *c) { return c && ctl_on_floor(c); }
 
-void car_seed_ctl_deaf(car_t *c, bool mine, bool peers)
+void car_seed_ctl_deaf(car_t *c, uint8_t mine, uint8_t peers)
 {
     c->ctl_deaf = mine;
     c->peer_ctl_deaf = peers;
     car_trace(c, "at connect: I hear the peer %s the control mode, it hears me %s it",
-              mine ? "below" : "above", peers ? "below" : "above");
+              mine == CAR_DEAF_MFSK_TX ? "only on MFSK (it transmits nothing else):" : mine ? "below" : "above",
+              peers == CAR_DEAF_MFSK_TX ? "on MFSK only, for I transmit nothing else: below" : peers ? "below" : "above");
 }
 
 /* Without it the caller's first control frames said "no reading" (it had
@@ -2966,7 +2967,7 @@ void car_seed_snr(car_t *c, float mine, float peers)
     /* Deaf at connect though my reading says the control mode works: the
      * connect got through on MFSK only (arq_fsm.c), and the reading is not to
      * be trusted for it (CAR_DEAF_HARD). */
-    if (c->ctl_deaf && mine >= CTL_DEAF_OFF_DB) c->ctl_deaf = CAR_DEAF_HARD;
+    if (c->ctl_deaf == CAR_DEAF_SNR && mine >= CTL_DEAF_OFF_DB) c->ctl_deaf = CAR_DEAF_HARD;
     c->snr_ema = c->snr_last = mine;
     c->snr_ms = 0;
     c->snr_valid = true;
@@ -3007,7 +3008,7 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
         c->snr_last = snr_db;
         c->snr_ms = now;
         c->snr_valid = true;
-        if (!(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
+        if (c->ctl_deaf != CAR_DEAF_MFSK_TX && !(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
             bool was = c->ctl_deaf != 0;
             /* An MFSK frame's reading alone says I went deaf: 13.8 s of
              * tones average a fade out, and after the channel fell below
@@ -3069,7 +3070,8 @@ void car_on_tx_done(car_t *c, uint64_t now)
     if (c->io.pattern && now >= c->heard_ms + silent && !(c->ctl_deaf && c->peer_ctl_deaf)) {
         car_trace(c, "nothing of the peer's decoded in %d s: control at the floor",
                   (int)((now - c->heard_ms) / 1000));
-        c->ctl_deaf = c->peer_ctl_deaf = true;
+        if (c->ctl_deaf != CAR_DEAF_MFSK_TX) c->ctl_deaf = CAR_DEAF_SNR;
+        if (c->peer_ctl_deaf != CAR_DEAF_MFSK_TX) c->peer_ctl_deaf = CAR_DEAF_SNR;
         /* Below the control mode is below DATAC15 too (CTL_DEAF_ON_DB): my
          * rounds go to the floor with my control, or the next went on the
          * rung the peer could no longer hear (sim, stepa:0:-9:20:12: one

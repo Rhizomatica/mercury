@@ -156,7 +156,7 @@ frame on MFSK.
 
 | byte | CALL | ACCEPT |
 |---|---|---|
-| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (3, = 0) | the same |
+| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 1), the sender transmits only MFSK (1) | the same |
 | 1 | 0, session id (7) | 1, session id (7) |
 | 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
 | 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |
@@ -174,6 +174,17 @@ frame on MFSK.
   either way round, the caller's six CALLs went unanswered and it gave up
   at 110 s; neither end connected.  The 2.0 callee logged each v3 CALL; the
   v3 callee dropped CALL2 without a word.
+- Minor 1 took the extension's top bit for "I transmit only MFSK"
+  (`arq:mfsk_tx_only`, an FSK-only radio); 1.9.20 sent minor 0 in 3 bits.
+  1.9.20 reads any minor, the bit as part of it, and a station of minor 1
+  reads 1.9.20's frames as minor 0, flag clear: the two connect as before.
+  A station that sets the bit ignores minor 0, which would put its rounds
+  on rungs it cannot send.  Its peer holds the link from it deaf to the
+  control mode for good (`CAR_DEAF_MFSK_TX`): its rounds and its control on
+  the floor, no OFDM probe.  It answers a CALL only where its ACCEPT goes on
+  the floor (`accept_keys`): silent to a first CALL on DATAC16, it answers
+  the repeat, which the caller listens for on the floor
+  (specs/connect/ConnectCarrier.tla, `MfskTx`).
 - 1.9.x carried a 2-bit protocol version in type CALL's extension: 1 was
   1.9.18 (MFSK at 1531-2500 Hz), 2 was 1.9.19 (MFSK centred on 1500 Hz), 3
   gave a BW500 session its own floor; 3 was the last value it held.

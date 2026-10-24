@@ -24,6 +24,8 @@ typedef struct {
                                      allowed (car_overruns), S's outside a slot M's log holds */
     bool     stalled;             /* nothing left to happen, data undelivered */
     int      frames;              /* frames and patterns keyed, both ways */
+    int      non_mfsk[2];         /* ...frames each station keyed on another mode than MFSK
+                                     (control included; CAR_MFSK_TX) */
     int      keydowns;            /* keydowns, both stations */
     int      kd_overlaps;         /* keydowns that started while the peer was on the air */
     int      kd_unexplained;      /* ... over a keydown of the peer that could be sensed */

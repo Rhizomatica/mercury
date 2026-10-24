@@ -600,6 +600,53 @@ void test_car_bw500_runs_on_the_narrow_floor(void)
     arq_conn.bw = bw;
 }
 
+/* A station that transmits only MFSK keys nothing else -- CALL/ACCEPT,
+ * control, payload -- as caller, as callee, or both ends; on a clean 20 dB
+ * channel a normal session would climb to the wideband modes.  Its peer
+ * still keys the faster modes to it, and both directions deliver, 2 KB each
+ * way. */
+void test_car_mfsk_tx_only(void)
+{
+    static uint8_t blob[2048];
+    fill(blob, sizeof(blob), 31);
+    for (int who = 1; who <= 3; who++) {          /* bit 0: A, the caller; bit 1: B */
+        sim_t *s = make_sim(7, 0.0);
+        sim_set_snr(s, 20.0);
+        sim_endpoint_set_mfsk_tx(sim_a(s), who & 1);
+        sim_endpoint_set_mfsk_tx(sim_b(s), who & 2);
+        connect_ab(s);
+        sim_run_until_idle(s, 120000);
+        TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+        queue(s, sim_a(s), blob, sizeof(blob));
+        queue(s, sim_b(s), blob, sizeof(blob));
+        uint64_t t0 = sim_clock_now();
+        static uint8_t rx[sizeof(blob)];
+        while (sim_clock_now() - t0 < 7200000 &&
+               (sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)) < sizeof(blob) ||
+                sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)) < sizeof(blob)))
+            if (sim_run_until_idle(s, 1000) == 0) break;
+        /* 546, 529 and 882 s; with its peer deaf to it only as to any MFSK
+         * connect (CAR_DEAF_HARD: OFDM probes it cannot answer) 694, 1137
+         * and 1234 s */
+        static const uint64_t BOUND_S[4] = { 0, 650, 650, 1050 };
+        TEST_ASSERT_LESS_THAN_UINT64(BOUND_S[who] * 1000, sim_clock_now() - t0);
+        size_t got;
+        TEST_ASSERT_TRUE(intact_prefix(sim_b(s), blob, sizeof(blob), &got));
+        TEST_ASSERT_EQUAL_size_t(sizeof(blob), got);
+        TEST_ASSERT_TRUE(intact_prefix(sim_a(s), blob, sizeof(blob), &got));
+        TEST_ASSERT_EQUAL_size_t(sizeof(blob), got);
+        TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+        sim_endpoint_t *ep[2] = { sim_a(s), sim_b(s) };
+        for (int i = 0; i < 2; i++)
+            if (who & (1 << i))
+                TEST_ASSERT_EQUAL_INT_MESSAGE(0, sim_non_mfsk_frames(s, ep[i]),
+                                              "a TX-MFSK-only station keyed another mode than MFSK");
+            else
+                TEST_ASSERT_GREATER_THAN_INT(0, sim_non_mfsk_frames(s, ep[i]));
+        sim_destroy(s);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -622,5 +669,6 @@ int main(void)
     RUN_TEST(test_car_fuzz);
     RUN_TEST(test_car_bandwidth_caps_the_rungs);
     RUN_TEST(test_car_bw500_runs_on_the_narrow_floor);
+    RUN_TEST(test_car_mfsk_tx_only);
     return UNITY_END();
 }

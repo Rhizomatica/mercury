@@ -84,6 +84,11 @@ int main(int argc, char **argv)
     if (getenv("SIM_CS"))
         sim_set_carrier_sense(s, true, (uint32_t)atoi(getenv("SIM_CS")));
 
+    /* SIM_MFSK_TX=A, B or AB: that station transmits only MFSK */
+    const char *mt = getenv("SIM_MFSK_TX");
+    sim_endpoint_set_mfsk_tx(sim_a(s), mt && strchr(mt, 'A'));
+    sim_endpoint_set_mfsk_tx(sim_b(s), mt && strchr(mt, 'B'));
+
     arq_event_t listen = { .id = ARQ_EV_APP_LISTEN };
     sim_inject(s, sim_b(s), &listen);
     arq_event_t conn = { .id = ARQ_EV_APP_CONNECT };
@@ -145,9 +150,12 @@ int main(int argc, char **argv)
         if (idle(sim_a(s)) && idle(sim_b(s))) tboth = sim_clock_now();
         if (!moved) break;
     }
-    printf("seed=%llu chan=%s connect=%.1f connect_b=%.1f banner=%.1f disc=%.1f disc_x=%.1f coll=%d\n",
+    printf("seed=%llu chan=%s connect=%.1f connect_b=%.1f banner=%.1f disc=%.1f disc_x=%.1f coll=%d",
            (unsigned long long)seed, ch, c_a, c_b, c_bn,
            tboth ? (tboth - t2) / 1000.0 : -1.0, tx ? (tx - t2) / 1000.0 : -1.0, sim_collisions(s));
+    if (mt) printf(" nonmfsk=%d/%d rx=%zu/%zu", sim_non_mfsk_frames(s, sim_a(s)), sim_non_mfsk_frames(s, sim_b(s)),
+                   sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)), sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)));
+    printf("\n");
     sim_destroy(s);
     return 0;
 }

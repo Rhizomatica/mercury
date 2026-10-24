@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define LIMIT_MS (8ULL * 3600 * 1000)
 
@@ -27,7 +28,7 @@ void setUp(void) {}
 void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
-    unsetenv("CAR_SCRIPT");
+    unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -315,6 +316,41 @@ static void test_carousel_bw500_floor(void)
     unsetenv("CAR_BW");
 }
 
+/* A station that transmits only MFSK (arq:mfsk_tx_only) keys nothing else,
+ * control included, both ways full; its peer's rounds still climb the
+ * ladder, and both directions deliver.  Nothing else even from a peer that
+ * does not know (CAR_MFSK_TX=a): one that names it faster rungs and says it
+ * hears its control.  (Not connected on air: arq.c ignores 1.9.20.) */
+static void test_carousel_mfsk_tx_only(void)
+{
+    for (int k = 0; k < 2; k++) {
+        setenv("CAR_MFSK_TX", k ? "b" : "a", 1);
+        car_sim_result_t r;
+        carousel_sim_run(1, "cliff:20", true, 3600000, &r);
+        TEST_ASSERT_TRUE(r.intact);
+        TEST_ASSERT_EQUAL_INT(0, r.non_mfsk[k]);
+    }
+    static const char *WHO[] = { "A", "B", "AB" };
+    static const char *CHAN[] = { "cliff:20", "nvis" };
+    for (int w = 0; w < 3; w++)
+        for (int k = 0; k < 2; k++) {
+            setenv("CAR_MFSK_TX", WHO[w], 1);
+            car_sim_result_t r;
+            carousel_sim_run(1, CHAN[k], true, LIMIT_MS, &r);
+            char msg[64];
+            snprintf(msg, sizeof(msg), "CAR_MFSK_TX=%s %s", WHO[w], CHAN[k]);
+            TEST_ASSERT_TRUE_MESSAGE(r.intact, msg);
+            TEST_ASSERT_NOT_EQUAL_MESSAGE(0, r.done_ms, msg);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.collisions, msg);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.overruns, msg);
+            for (int i = 0; i < 2; i++)
+                if (strchr(WHO[w], 'A' + i))
+                    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.non_mfsk[i], msg);
+                else if (k == 0)
+                    TEST_ASSERT_GREATER_THAN_INT_MESSAGE(0, r.non_mfsk[i], msg);   /* climbed */
+        }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -329,6 +365,7 @@ int main(void)
     RUN_TEST(test_carousel_piece_size_agrees);
     RUN_TEST(test_carousel_bandwidth_max_level);
     RUN_TEST(test_carousel_bw500_floor);
+    RUN_TEST(test_carousel_mfsk_tx_only);
     RUN_TEST(test_carousel_request_response_completes);
     RUN_TEST(test_carousel_drop_below_control_mode);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);

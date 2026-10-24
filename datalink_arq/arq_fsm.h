@@ -116,6 +116,10 @@ typedef struct
     uint16_t car_nonce;
     uint16_t car_called_crc;
 
+    /* RX_CALL / RX_ACCEPT: the peer can only transmit MFSK (its CALL/ACCEPT
+     * carried the TX-MFSK-only capability bit). */
+    bool     tx_mfsk;
+
     /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown):
      * a CALL's sets the start rung the ACCEPT names. */
     float    rx_snr;
@@ -256,7 +260,8 @@ typedef struct
     int      car_rx_level;            /* start rung for the peer's direction:
                                        * the SNR measured here                 */
     int      car_tx_level;            /* ...for ours, from the peer (-1: none) */
-    bool     car_ctl_deaf;            /* connect: I heard the peer below the control mode */
+    uint8_t  car_ctl_deaf;            /* connect: I heard the peer below the control
+                                       * mode (CAR_DEAF_*: MFSK_TX, it transmits only MFSK) */
     bool     car_peer_ctl_deaf;       /* connect: ...and it, me (the CALL came on MFSK) */
     float    car_call_snr;            /* connect: the SNR the callee read the CALL at
                                        * (the callee: its own; the caller: from the

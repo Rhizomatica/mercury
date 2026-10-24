@@ -624,7 +624,9 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         }
 
         pthread_mutex_lock(&g_sess_lock);
-        int cq_mode = g_sess.control_mode;
+        /* On the floor from a station that transmits only MFSK: a
+         * listener routes it by its packet type off any decoder. */
+        int cq_mode = ARQ_TX_MFSK_ONLY ? arq_floor_mode(bw_hz) : g_sess.control_mode;
         /* Hold g_sess_lock across the call so that g_sess.pending_burst_frames
          * is protected — the event loop also holds this lock during dispatch. */
         cb_send_tx_frame(PACKET_TYPE_ARQ_CQ, cq_mode, (size_t)n, frame, 0);
@@ -825,6 +827,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     char caller[CALLSIGN_MAX_SIZE] = {0};
     arq_accept_t acc;
     int bw_hz = 0;
+    bool tx_mfsk = false;
     int rc;
 
     if (!arq_protocol_connect_version_ok(data, frame_size))
@@ -834,9 +837,10 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         rc = arq_protocol_parse_accept(data, frame_size, &acc);
         session_id = acc.session_id;
         bw_hz = acc.bw_hz;
+        tx_mfsk = acc.tx_mfsk;
     }
     else
-        rc = arq_protocol_parse_call(data, frame_size, &session_id, caller, &bw_hz);
+        rc = arq_protocol_parse_call(data, frame_size, &session_id, caller, &bw_hz, &tx_mfsk);
 
     /* CALL/ACCEPT do not pass through arq_handle_incoming_frame, so without
      * this the connect exchange is invisible to the trace -- which is exactly
@@ -914,12 +918,21 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
                   dialed_call);
         return false;
     }
+    if (ARQ_TX_MFSK_ONLY && arq_protocol_connect_minor(data) < 1)
+    {
+        /* Minor 0, 1.9.20, does not read the TX-MFSK-only bit: it would put
+         * my rounds on rungs I cannot send. */
+        HLOGW(LOG_COMP, "%s for %s from Mercury 1.9.20, which cannot reach a TX-MFSK-only station: ignored",
+              is_accept ? "ACCEPT" : "CALL", dialed_call);
+        return false;
+    }
 
     arq_event_t ev = {0};
     ev.id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;
     ev.session_id = session_id;
     ev.rx_snr     = rx_snr;
     ev.mode       = mode;          /* the carrier: an answer goes back on it */
+    ev.tx_mfsk    = tx_mfsk;       /* the peer can only transmit MFSK */
     if (is_accept)
     {
         /* The callee's callsign is not on the air, only its CRC: the FSM
@@ -1421,6 +1434,12 @@ void arq_set_retry_stagger_ms(int ms)
     if (ms > ARQ_RETRY_STAGGER_MS_MAX) ms = ARQ_RETRY_STAGGER_MS_MAX;
     atomic_store(&arq_retry_stagger_ms, ms);
     HLOGI(LOG_COMP, "retry_stagger_ms = %d", atomic_load(&arq_retry_stagger_ms));
+}
+
+void arq_set_tx_mfsk_only(bool on)
+{
+    atomic_store(&arq_tx_mfsk_only, on ? 1 : 0);
+    HLOGI(LOG_COMP, "MFSK-only transmit %s", on ? "enabled" : "disabled");
 }
 
 void reset_arq_info(arq_info *conn)
