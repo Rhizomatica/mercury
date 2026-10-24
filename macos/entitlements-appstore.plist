@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Mac App Store build (make fyne-ui-macos-appstore-pkg): the App
+         Sandbox, which the store requires, and what Mercury needs inside it.
+         The application and team identifiers are added from the provisioning
+         profile at signing time.  The Developer ID build keeps
+         entitlements.plist. -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- The radio's receive audio. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- CM108 USB HID PTT (hidapi) and Hamlib's user-space USB serial. -->
+    <key>com.apple.security.device.usb</key>
+    <true/>
+
+    <!-- Hamlib CAT and PTT over a serial port (/dev/cu.*). -->
+    <key>com.apple.security.device.serial</key>
+    <true/>
+
+    <!-- The TNC ports (8300/8301) and the other ports applications
+         connect to. -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- rigctld/flrig over the network. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>
