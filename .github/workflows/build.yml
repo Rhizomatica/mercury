@@ -8,6 +8,7 @@
 # Builds:
 #   - Linux amd64 (native, Debian 13)
 #   - Linux arm64 (cross-compile, Debian 13)
+#   - Linux arm64 Fyne UI (native, Debian 13)
 #   - Linux armhf (cross-compile, Debian 13)
 #   - Windows x64 (cross-compile via MinGW, Debian 13)
 #   - macOS arm64 (native, Apple Silicon runner)
@@ -48,7 +49,11 @@ on:
         type: boolean
         default: true
       build_fyne_ui_linux:
-        description: 'Build Fyne UI (native Linux)'
+        description: 'Build Fyne UI (native Linux amd64)'
+        type: boolean
+        default: true
+      build_fyne_ui_linux_arm64:
+        description: 'Build Fyne UI (native Linux arm64)'
         type: boolean
         default: true
       build_fyne_ui_windows:
@@ -413,6 +418,62 @@ jobs:
           [ -f mercury-ui ] || { echo "::error::no mercury-ui binary produced"; exit 1; }
           file mercury-ui
           echo "OK: native Fyne UI build"
+
+  build-fyne-ui-linux-arm64:
+    name: Build Fyne UI (Linux arm64, Debian 13)
+    runs-on: ubuntu-24.04-arm
+    container: debian:trixie
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      github.event.inputs.build_fyne_ui_linux_arm64 == 'true'
+    timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: go1.26.9
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            build-essential \
+            file \
+            git \
+            golang-go \
+            pkg-config \
+            libpulse-dev \
+            libasound2-dev \
+            libhamlib-dev \
+            libssl-dev \
+            libhidapi-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            xorg-dev \
+            libwayland-dev \
+            libxkbcommon-dev
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Build Mercury Fyne UI (Linux arm64)
+        run: make fyne-ui
+
+      - name: Verify the binary
+        run: |
+          set -eu
+          [ -f mercury-ui ] || { echo "::error::no mercury-ui binary produced"; exit 1; }
+          file mercury-ui
+          file mercury-ui | grep -q -E 'ARM aarch64|aarch64' || {
+            echo "::error::binary is not arm64"; exit 1;
+          }
+          echo "OK: native Fyne UI arm64 build"
 
   # Cross-compiled Fyne UI for Windows (`windows-installer/mercury-ui.exe`).
   # Same CGo single-binary GUI as the native job, but linked against
