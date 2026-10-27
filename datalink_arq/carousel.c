@@ -306,7 +306,7 @@ static uint64_t level_air(const car_t *c, int lv) { return mode_air(lmode(c, lv)
  * DATAC17 rounds were all lost moved its control to MFSK while the peer was
  * answering every poll (sim, nvis bidir: 3813 s median, trunk 3451; at 150 s
  * 3347, and the floor 155 s after step:10:-12, where 90 s took 100). */
-#define SILENT_MS 150000
+#define SILENT_MS ((uint64_t)atomic_load(&arq_silence_fallback_s) * 1000)
 #define CTL_DEAF_ON_DB   (ARQ_SNR_MIN_DATAC15_DB - 0.5f)
 #define CTL_DEAF_OFF_DB  (ARQ_SNR_MIN_DATAC15_DB + 1.0f)
 /* How the peer hears me now: its last reading of me, moved by as much as my
@@ -1573,7 +1573,7 @@ static int poll_k(const car_t *c, int lv, int n) { return n > 1 && lv == 0 && c-
  * from 453 s on).  So after S_FALLBACK_MS with nothing decoded from M, S
  * listens at the floor, where M's floor rounds and MFSK control both come
  * through.  Listening only: it costs nothing to safety. */
-#define S_FALLBACK_MS 90000
+#define S_FALLBACK_MS (SILENT_MS * 3 / 5)
 /* Idle, M asks whether S has data -- first soon after the last traffic,
  * since the callee's application answers what it just got (UUCP's request
  * and reply), then backing off.  At 10 s and doubling across idle spells,
@@ -3188,7 +3188,7 @@ void car_on_time(car_t *c, uint64_t now)
             }
         }
         else if (c->rx_level != 0) {
-            car_trace(c, "rx: nothing from the peer in %d s -- listening at the floor", S_FALLBACK_MS / 1000);
+            car_trace(c, "rx: nothing from the peer in %d s -- listening at the floor", (int)(S_FALLBACK_MS / 1000));
             bind_rx(c, 0);
         }
     }

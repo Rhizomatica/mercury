@@ -68,6 +68,7 @@
 #define CFG_KEY_TNC_KEEPALIVE_S     "tnc:keepalive_s"
 #define CFG_KEY_TNC_BUFFER_REPORT_MS "tnc:buffer_report_ms"
 #define CFG_KEY_ARQ_RETRY_STAGGER_MS          "arq:retry_stagger_ms"
+#define CFG_KEY_ARQ_SILENCE_FALLBACK_S        "arq:silence_fallback_s"
 #define CFG_KEY_ARQ_MFSK_TX_ONLY              "arq:mfsk_tx_only"
 #define CFG_KEY_BUSY_DETECT                   "channel:busy_detect"
 #define CFG_KEY_BUSY_THRESHOLD_DB             "channel:busy_threshold_db"
@@ -114,6 +115,9 @@ typedef struct {
     int      retry_stagger_ms;          /* ARQ: deterministic per-node retry
                                          * offset. 0 disables. Default 2000,
                                          * clamped 0..5000.                  */
+    int      silence_fallback_s;        /* ARQ: seconds of silence before the
+                                         * control moves to the MFSK floor.
+                                         * Default 150, range 20..600.       */
     bool     mfsk_tx_only;              /* ARQ: transmit MFSK only (FSK-only
                                          * radios).  Default false.          */
     float    tx_gain_db;            /* Linear-equivalent gain on the modulator
