@@ -17,6 +17,7 @@
 
 /* Runtime-configurable retry counts, initialised from compile-time defaults */
 _Atomic int arq_call_retry_slots       = ARQ_CALL_RETRY_SLOTS_DEFAULT;
+_Atomic int arq_call_fast_slots        = ARQ_CALL_FAST_SLOTS_DEFAULT;
 _Atomic int arq_accept_retry_slots     = ARQ_ACCEPT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_silence_fallback_s    = ARQ_SILENCE_FALLBACK_S_DEFAULT;
@@ -139,6 +140,14 @@ void arq_protocol_set_silence_fallback_s(int seconds)
     if (seconds < ARQ_SILENCE_FALLBACK_S_MIN || seconds > ARQ_SILENCE_FALLBACK_S_MAX)
         seconds = ARQ_SILENCE_FALLBACK_S_DEFAULT;
     atomic_store(&arq_silence_fallback_s, seconds);
+}
+
+void arq_protocol_set_call_fast_slots(int retries)
+{
+    int fast = retries / 2;
+    if (retries <= 0 || fast < ARQ_CALL_FAST_SLOTS_DEFAULT)
+        fast = ARQ_CALL_FAST_SLOTS_DEFAULT;
+    atomic_store(&arq_call_fast_slots, fast);
 }
 
 int arq_floor_mode(int bw_hz)

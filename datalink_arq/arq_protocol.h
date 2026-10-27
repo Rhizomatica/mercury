@@ -163,7 +163,14 @@ typedef struct
  * fading an MFSK CALL is no surer than a DATAC16 one at -9..-11 dB, and all-
  * MFSK lost connects DATAC16 made; MFSK is what connects at -13 dB).  A good
  * link connects exactly as quickly as before. */
-#define ARQ_CALL_FAST_SLOTS                2
+#define ARQ_CALL_FAST_SLOTS_DEFAULT        2
+/* Runtime value: RETRIES N above the default raises it to N/2, so a long
+ * retry count buys more fast CALLs (what a scanning BBS hears while it dwells
+ * on the channel), not only more slow MFSK steps (#442). */
+extern _Atomic int arq_call_fast_slots;
+#define ARQ_CALL_FAST_SLOTS                atomic_load(&arq_call_fast_slots)
+/* Derive the fast CALL count from a RETRIES value (<= 0: the default). */
+void arq_protocol_set_call_fast_slots(int retries);
 /* After an ACCEPT on MFSK the callee listens this long for the caller's first
  * round: the caller decodes the ACCEPT ~4 s after it ends, keys one ISS guard
  * later, and a floor round is a 13.5 s frame the callee decodes ~4 s after. */
