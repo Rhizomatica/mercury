@@ -40,6 +40,12 @@ void arq_timing_record_car_rx(arq_timing_ctx_t *ctx, int bytes);
 /** @brief Record session connected; logs [TMG] connect. */
 void arq_timing_record_connect(arq_timing_ctx_t *ctx, int mode);
 
+/** @brief A keydown is handed to the radio: the time since the last frame
+ *  decoded from the peer and since our own last transmission ended (-1: none
+ *  yet).  logs [TMG] turn.  Diagnostics for the receive-to-transmit lag (#442);
+ *  the PTT ON line of the radio log follows it. */
+void arq_timing_record_turn(int frames, int64_t since_rx_ms, int64_t since_tx_end_ms);
+
 /** @brief Record session disconnected; logs [TMG] disconnect and session totals. */
 void arq_timing_record_disconnect(arq_timing_ctx_t *ctx, const char *reason);
 
