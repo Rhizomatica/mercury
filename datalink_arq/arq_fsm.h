@@ -197,6 +197,8 @@ typedef struct
     bool     tx_active;                /* we are keyed (TX_STARTED seen, no
                                         * TX_COMPLETE yet)                   */
     uint64_t last_tx_end_ms;           /* when our last transmission ended  */
+    uint64_t disc_req_ms;              /* when the application asked to hang up
+                                        * (diagnostics only, #442)            */
     bool     host_released;            /* the application ended this session
                                         * (DISCONNECT/ABORT): nothing more is
                                         * delivered to it until a new one.

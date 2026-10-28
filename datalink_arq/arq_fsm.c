@@ -495,6 +495,7 @@ static int decoder_hears_frame(const arq_session_t *sess)
  * always returns to where it was before the call rather than getting stuck. */
 static void enter_idle_after_call(arq_session_t *sess)
 {
+    sess->disc_req_ms = 0;
     sess_enter(sess,
                sess->listen_enabled ? ARQ_CONN_LISTENING : ARQ_CONN_DISCONNECTED,
                UINT64_MAX, ARQ_EV_TIMER_RETRY);
@@ -594,7 +595,14 @@ static void car_io_keydown(void *ctx, const car_frame_t *fr, int n)
     }
     if (g_cbs.send_keydown)
         g_cbs.send_keydown(&kd);
-    if (g_timing) g_timing->frames_tx += (uint64_t)kd.n;
+    if (g_timing)
+    {
+        uint64_t now = time_now_ms();
+        g_timing->frames_tx += (uint64_t)kd.n;
+        arq_timing_record_turn(kd.n,
+                               sess->car_last_rx_ms ? (int64_t)(now - sess->car_last_rx_ms) : -1,
+                               sess->last_tx_end_ms ? (int64_t)(now - sess->last_tx_end_ms) : -1);
+    }
 }
 
 static void car_io_bind_rx(void *ctx, int mode) { ((arq_session_t *)ctx)->peer_tx_mode = mode; }
@@ -810,6 +818,9 @@ static bool car_fail_closed(arq_session_t *sess, uint64_t now)
 #define ARQ_CAR_END_WAIT_MS 180000
 static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
 {
+    HLOGI(LOG_COMP, "Teardown starts (%s), %llu ms after the host's DISCONNECT",
+          car_is_master(sess->car) ? "caller" : "callee",
+          (unsigned long long)(sess->disc_req_ms ? now - sess->disc_req_ms : 0));
     sess->teardown_deadline_ms = 0;
     bool quiet = car_peer_quiet(sess, now);
     sess->tx_retries_left = quiet ? 0 : ARQ_DISCONNECT_RETRY_SLOTS;
@@ -1627,6 +1638,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         car_on_time(sess->car, now);
         break;
     case ARQ_EV_APP_DISCONNECT:
+        sess->disc_req_ms = now;
         if (call_queued(sess))
         {
             HLOGI(LOG_COMP, "Deferred CONNECT to %s cancelled", sess->pending_connect_call);
@@ -1649,11 +1661,12 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             if (car_budget > budget) budget = car_budget;
             sess->teardown = ARQ_TD_DRAINING;
             sess->teardown_deadline_ms = now + budget;
-            HLOGD(LOG_COMP, "DISCONNECT deferred until delivered (up to %llu s)",
+            HLOGI(LOG_COMP, "DISCONNECT deferred until delivered (up to %llu s)",
                   (unsigned long long)(budget / 1000));
             car_wish_end(sess->car);      /* the callee's polls say so: M_END */
             break;
         }
+        HLOGI(LOG_COMP, "DISCONNECT: nothing left to deliver, ending now");
         car_begin_disconnect(sess, now);
         return true;
     case ARQ_EV_RX_ACCEPT:
@@ -1758,6 +1771,9 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          * DISCONNECT decoded 186 ms before the peer's TX_COMPLETE -- and a
          * reply keyed at once (40 ms) clipped it. */
         if (g_timing) arq_timing_record_disconnect(g_timing, "rx_disconnect");
+        if (sess->disc_req_ms)
+            HLOGI(LOG_COMP, "Peer's DISCONNECT received %llu ms after the host's",
+                  (unsigned long long)(time_now_ms() - sess->disc_req_ms));
         /* What of ours the peer never got is dropped, not drained: its
          * DISCONNECT means its application hung up (from then on its end
          * delivers nothing: host_released) or its carousel stopped trusting
