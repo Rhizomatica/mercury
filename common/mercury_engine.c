@@ -20,6 +20,7 @@
 
 #include "freedv_api.h"
 #include "arq.h"
+#include "arq_protocol.h"
 #include "modem.h"
 #include "broadcast.h"
 #include "defines_modem.h"
