@@ -179,7 +179,8 @@ static void write_entry_file(const hermes_log_entry_t *entry)
         time_t sec = entry->ts.tv_sec;
         long   ms  = entry->ts.tv_nsec / 1000000L;
         localtime_r(&sec, &tmv);
-        snprintf(tsbuf, sizeof(tsbuf), "%02d:%02d:%02d.%03ld",
+        snprintf(tsbuf, sizeof(tsbuf), "%04d-%02d-%02d %02d:%02d:%02d.%03ld",
+                 tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
                  tmv.tm_hour, tmv.tm_min, tmv.tm_sec, ms);
         snprintf(upbuf, sizeof(upbuf), "[+%u.%03us]",
                  entry->uptime_ms / 1000, entry->uptime_ms % 1000);
@@ -203,7 +204,8 @@ static void print_entry(const hermes_log_entry_t *entry)
         time_t sec = entry->ts.tv_sec;
         long   ms  = entry->ts.tv_nsec / 1000000L;
         localtime_r(&sec, &tmv);
-        snprintf(tsbuf, sizeof(tsbuf), "%02d:%02d:%02d.%03ld",
+        snprintf(tsbuf, sizeof(tsbuf), "%04d-%02d-%02d %02d:%02d:%02d.%03ld",
+                 tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
                  tmv.tm_hour, tmv.tm_min, tmv.tm_sec, ms);
         snprintf(upbuf, sizeof(upbuf), "[+%u.%03us]",
                  entry->uptime_ms / 1000, entry->uptime_ms % 1000);
