@@ -2356,6 +2356,20 @@ static bool offer_both(car_t *c, uint64_t now)
     return true;
 }
 
+/* My last round went out on a rung S had not had my rounds on yet, and
+ * nothing came back: S, hearing nothing, went back to listening on the last
+ * one it had.  Go there once, before anything else is asked or sent.  True
+ * when tx_level moved. */
+static bool fall_back_unconfirmed(car_t *c)
+{
+    if ((c->m_kind != KD_ROUND && c->m_kind != KD_BOTH) || c->ok_lv < 0 || c->last_lv == c->ok_lv || c->fell_back)
+        return false;
+    car_trace(c, "tx: no answer on lv=%d -- back to lv=%d", c->last_lv, c->ok_lv);
+    c->fell_back = true;
+    c->tx_level = c->ok_lv; c->tx_n = 1;
+    return true;
+}
+
 static void m_decide_send(car_t *c, uint64_t now)
 {
     bool answered = c->s_answered;
@@ -2377,10 +2391,7 @@ static void m_decide_send(car_t *c, uint64_t now)
         /* A round on a rung S had not had my rounds on yet: S, hearing
          * nothing, went back to listening on the last one it had.  Go there
          * once before asking. */
-        if ((c->m_kind == KD_ROUND || c->m_kind == KD_BOTH) && c->ok_lv >= 0 && c->last_lv != c->ok_lv && !c->fell_back) {
-            car_trace(c, "tx: no answer on lv=%d -- back to lv=%d", c->last_lv, c->ok_lv);
-            c->fell_back = true;
-            c->tx_level = c->ok_lv; c->tx_n = 1;
+        if (fall_back_unconfirmed(c)) {
             m_plan(c, KD_ROUND, 0, 0);
             return;
         }
@@ -2461,6 +2472,10 @@ static void m_decide_recv(car_t *c, uint64_t now)
         if (c->tx_level < 0) { c->tx_level = c->peer_snr_level; c->tx_n = 1; }
         if (done && offer_both(c, now)) return;
         car_trace(c, "turn: mine (%s)", done ? "peer done" : "quantum");
+        /* A probe chained to my poll that drew nothing: the poll that moved S
+         * off the rung may be the one I did not hear (the Oct 27 K7EK-VE4KLM
+         * log: DATAC4 keyed at a peer already back on MFSK). */
+        if (!c->m_heard) fall_back_unconfirmed(c);
         m_enter(c, PH_SEND, now);
         m_plan(c, KD_ROUND, 0, 0);
         return;
