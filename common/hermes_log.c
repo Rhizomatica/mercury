@@ -9,8 +9,8 @@
 #include "hermes_log.h"
 
 #ifdef _WIN32
-/* Windows localtime_s has reversed argument order from POSIX localtime_r */
-#define localtime_r(timep, result) localtime_s((result), (timep))
+/* Windows gmtime_s has reversed argument order from POSIX gmtime_r */
+#define gmtime_r(timep, result) gmtime_s((result), (timep))
 #endif
 
 #include <errno.h>
@@ -178,8 +178,8 @@ static void write_entry_file(const hermes_log_entry_t *entry)
         char upbuf[20];
         time_t sec = entry->ts.tv_sec;
         long   ms  = entry->ts.tv_nsec / 1000000L;
-        localtime_r(&sec, &tmv);
-        snprintf(tsbuf, sizeof(tsbuf), "%04d-%02d-%02d %02d:%02d:%02d.%03ld",
+        gmtime_r(&sec, &tmv);   /* UTC, as BPQ32 and most station logs keep it */
+        snprintf(tsbuf, sizeof(tsbuf), "%04d-%02d-%02d %02d:%02d:%02d.%03ldZ",
                  tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
                  tmv.tm_hour, tmv.tm_min, tmv.tm_sec, ms);
         snprintf(upbuf, sizeof(upbuf), "[+%u.%03us]",
@@ -203,8 +203,8 @@ static void print_entry(const hermes_log_entry_t *entry)
         char upbuf[20];
         time_t sec = entry->ts.tv_sec;
         long   ms  = entry->ts.tv_nsec / 1000000L;
-        localtime_r(&sec, &tmv);
-        snprintf(tsbuf, sizeof(tsbuf), "%04d-%02d-%02d %02d:%02d:%02d.%03ld",
+        gmtime_r(&sec, &tmv);   /* UTC, as BPQ32 and most station logs keep it */
+        snprintf(tsbuf, sizeof(tsbuf), "%04d-%02d-%02d %02d:%02d:%02d.%03ldZ",
                  tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
                  tmv.tm_hour, tmv.tm_min, tmv.tm_sec, ms);
         snprintf(upbuf, sizeof(upbuf), "[+%u.%03us]",

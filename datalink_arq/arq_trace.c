@@ -92,9 +92,9 @@ void arq_trace_dump(const char *why)
         time_t    sec = (time_t)(w / 1000);
         struct tm tmv;
         char      hhmmss[16];
-        localtime_r(&sec, &tmv);
+        gmtime_r(&sec, &tmv);   /* UTC, as the log's own timestamps */
         strftime(hhmmss, sizeof(hhmmss), "%H:%M:%S", &tmv);
-        HLOGI("arq-trace", "TRACE %s.%03d %8.3f %s a=%3u b=%3u x=%u",
+        HLOGI("arq-trace", "TRACE %s.%03dZ %8.3f %s a=%3u b=%3u x=%u",
               hhmmss, (int)(w % 1000),
               (double)(g_tr[i].t_ms - g_tr_t0) / 1000.0,
               kind_name(g_tr[i].kind), g_tr[i].a, g_tr[i].b, g_tr[i].extra);
