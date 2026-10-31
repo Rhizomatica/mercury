@@ -14,6 +14,14 @@
 (*   rung sets it to that one.  After that, silence means a REQ, on the   *)
 (*   control mode, which S always decodes.                                *)
 (*                                                                         *)
+(*   M's keydown may carry a poll with the round (KD_BOTH: the round on a *)
+(*   rung M has no answer on yet, a probe).  S, decoding the poll but not *)
+(*   the round, answers with a sized poll.  If that answer is lost, M's   *)
+(*   next decision is made in the receive phase, where the turn passes to *)
+(*   M (m_decide_recv, "turn: mine"): it too goes back to ok_lv once, if  *)
+(*   nothing was heard and the round was on another rung               *)
+(*   (fall_back_unconfirmed, #448).                                       *)
+(*                                                                         *)
 (*   S, the callee, binds its decoder where it says it will listen: the   *)
 (*   rung of its sized poll, or the rung its ack names (send_poll_ex).    *)
 (*   An ack that names no new rung names the one S listens on now; one    *)
@@ -53,6 +61,9 @@ CONSTANTS Rungs,   \* the rungs above the floor (1..3 is enough)
                    \*             merged): a repeat of a lost one leaves M behind
                    \*   "prevr":  naming a rung leaves s_prev_lv on the round's rung
                    \*             (as #386 was merged): the two fallbacks part
+                   \*   "norecvfb": the turn passing to M after a KD_BOTH that drew
+                   \*             nothing sends on the same rung, without the fall-back
+                   \*             (the code before #448)
 
 None == 0
 ASSUME None \notin Rungs /\ N \in Nat \ {0} /\ L \in Nat /\ W \in Nat /\ OkOnReq \in BOOLEAN
@@ -62,7 +73,7 @@ VARIABLES
     okLv,      \* M: ok_lv (-1: none yet)
     lastLv,    \* M: the rung its last round went on (last_lv)
     fellBack,  \* M: it went back to ok_lv once already
-    lastKind,  \* M: its last keydown, "round" or "req"
+    lastKind,  \* M: its last keydown, "round", "both" (poll and round) or "req"
     mSent,     \* M: the message its rounds carry now
     mDone,     \* M: S has it, as M heard
     mHeard,    \* M: S answered M's last keydown
@@ -100,17 +111,34 @@ Init ==
     /\ sPrev = -1 /\ sHave = 0 /\ wArmed = FALSE /\ lossM = 0 /\ lossS = 0 /\ wasted = 0
 
 \* M sends message k on rung r (fb: this is the one fall-back to ok_lv), and
-\* S answers in its slot if it decoded the round.
-Round(k, r, fb, clean) ==
-    /\ lastLv' = r /\ lastKind' = "round" /\ mSent' = k
+\* S answers in its slot if it decoded the round.  kind "both": a poll rides
+\* with the round, and S, decoding the poll alone, answers with a sized poll.
+Round(k, r, fb, kind, clean) ==
+    /\ lastLv' = r /\ lastKind' = kind /\ mSent' = k
     /\ \E lostM \in Lossy(lossM, clean) :
         LET decoded == sBind = r /\ ~lostM
+            pollOnly == kind = "both" /\ ~lostM /\ ~decoded
         IN
         /\ lossM' = IF lostM THEN lossM + 1 ELSE 0
         /\ wasted' = IF decoded THEN 0
                      ELSE IF sBind # r THEN (IF wasted < Cap THEN wasted + 1 ELSE Cap)
                      ELSE wasted
-        /\ IF ~decoded THEN
+        /\ IF pollOnly THEN
+              \* S missed the round, heard the poll: a sized poll for it on rung l
+              /\ UNCHANGED <<sHave, sPrev>>
+              /\ \E l \in Rungs, lostS \in Lossy(lossS, clean) :
+                   /\ sBind' = l
+                   /\ wArmed' = (sPrev # -1 /\ l # sPrev)
+                   /\ lossS' = IF lostS THEN lossS + 1 ELSE 0
+                   /\ mDone' = FALSE
+                   /\ IF lostS THEN
+                         /\ mHeard' = FALSE
+                         /\ mTx' = r /\ fellBack' = fb /\ okLv' = okLv
+                      ELSE
+                         /\ mHeard' = TRUE /\ fellBack' = FALSE
+                         /\ okLv' = IF OkOnReq THEN r ELSE okLv
+                         /\ mTx' = l
+           ELSE IF ~decoded THEN
               \* S decoded nothing of M: the fallback, if armed, fires
               /\ sBind' = IF wArmed THEN sPrev ELSE sBind
               /\ wArmed' = FALSE
@@ -173,16 +201,31 @@ Req(clean) ==
                          /\ okLv' = IF OkOnReq THEN lastLv ELSE okLv
                          /\ mTx' = l
 
-\* M's decision, as m_decide_send makes it.
+\* The keydowns M may make for a round on rung r: a poll rides with it where r
+\* is not yet the rung M has an answer on (a probe).
+Kinds(r) == IF r # okLv THEN {"round", "both"} ELSE {"round"}
+
+\* M can go back to ok_lv: its last round was on another rung, unanswered.
+CanFallBack == okLv # -1 /\ lastLv # okLv /\ ~fellBack
+
+\* The turn passes to M after a keydown of poll and round that drew nothing:
+\* m_decide_recv, not m_decide_send.  With #448 it too goes back to ok_lv once.
+TurnMine(clean) ==
+    IF Mutant # "norecvfb" /\ CanFallBack
+    THEN Round(mSent, okLv, TRUE, "round", clean)
+    ELSE Round(mSent, mTx, fellBack, "round", clean)
+
+\* M's decision, as m_decide_send and m_decide_recv make it.
 MStep(clean) ==
     \/ /\ mDone /\ mSent < N                    \* the next message
-       /\ Round(mSent + 1, mTx, fellBack, clean)
+       /\ \E kd \in Kinds(mTx) : Round(mSent + 1, mTx, fellBack, kd, clean)
     \/ /\ ~mDone /\ mHeard                      \* S polled for it: send it there
-       /\ Round(mSent, mTx, fellBack, clean)
+       /\ \E kd \in Kinds(mTx) : Round(mSent, mTx, fellBack, kd, clean)
     \/ /\ ~mDone /\ ~mHeard                     \* silence
-       /\ IF Mutant = "noreq" THEN Round(mSent, mTx, fellBack, clean)
-          ELSE IF lastKind = "round" /\ okLv # -1 /\ lastLv # okLv /\ ~fellBack
-          THEN Round(mSent, okLv, TRUE, clean)
+       /\ IF Mutant = "noreq" THEN Round(mSent, mTx, fellBack, "round", clean)
+          ELSE IF lastKind = "both" THEN (Req(clean) \/ TurnMine(clean))
+          ELSE IF lastKind = "round" /\ CanFallBack
+          THEN Round(mSent, okLv, TRUE, "round", clean)
           ELSE Req(clean)
 MNext == MStep(FALSE)
 
@@ -202,7 +245,7 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(MNext)
 
 \* ---- properties ----
 TypeOK ==
-    /\ mTx \in Rungs /\ sBind \in Rungs
+    /\ mTx \in Rungs /\ sBind \in Rungs /\ lastKind \in {"none", "round", "both", "req"}
     /\ okLv \in Rungs \cup {-1} /\ lastLv \in Rungs \cup {-1} /\ sPrev \in Rungs \cup {-1}
     /\ mSent \in 0 .. N /\ sHave \in 0 .. N /\ lossM \in 0 .. L /\ lossS \in 0 .. L
     /\ wasted \in 0 .. Cap

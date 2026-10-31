@@ -21,20 +21,31 @@ Properties:
 Results:
 
 - `RungAgreement.cfg`: the code's rules.  `Agree` and `Delivered` hold:
-  no error, 1458 distinct states.  4 rungs, 4 messages and `L = 3` give
-  5592 states, also no error.
+  no error, 4659 distinct states.  4 rungs, 4 messages and `L = 3` give
+  26264 states, also no error.  (1458 and 5592 before the `KD_BOTH`
+  keydown below was modelled.)
 - `Wasted_Code.cfg`: the code's `ok_lv` rule (`OkOnReq`).  A poll answering
   a REQ sets `ok_lv` to the rung of a round the callee may have missed.
   `Wasted` is violated: a lost round after it can go once more where the
   callee is not listening, again and again.
 - `Wasted_Strict.cfg`: `ok_lv` taken only from answers to rounds.
-  `Wasted` holds with `W = 1`, and fails with `W = 0`.  In the sim this rule
+  `Wasted` holds with `W = 1` (1602 states; 828 before `KD_BOTH`), and fails
+  with `W = 0`.  In the sim this rule
   cost more than it saved: on `nvis`, chat was 5 % faster and a UUCP-like
   mix 9 % slower over 60 seeds.  The code keeps `OkOnReq`.
 - `Mut_*.cfg`: one rule broken each, all with `OkOnReq = FALSE`.
   - `noreq`: violates `Wasted`, and `Delivered` too with `Wasted` dropped.
     Without the REQ, a mismatch is for ever.
   - `nobind`, `deaf`: violate `Agree`.
+  - `norecvfb` (`Mut_norecvfb.cfg`, `OkOnReq = FALSE`, `W = 1`): the turn
+    passing to the caller after a `KD_BOTH` keydown (its poll with a round on
+    a rung it has no answer on yet) that drew nothing, in `m_decide_recv`,
+    sends on the same rung with no fall-back: the code before #448.
+    Violates `Wasted`: the probe's rung is used twice in a row while the
+    callee has moved (the 2026-10-27 K7EK-VE4KLM log: a DATAC4 round keyed at
+    a peer back on MFSK).  `Mut_norecvfb_Delivered.cfg` (`Agree`,
+    `Delivered`): no error, 2310 states -- the silence's fall-back recovers
+    one round later, as on air (the data arrived, 30-40 s late).
   - The two rules as #386 was merged, both since fixed:
     - `unnamed`: violates `Agree`.  An ack that names nothing, repeating
       one that was lost, left the caller on a rung the callee had left.
