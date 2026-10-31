@@ -351,6 +351,36 @@ static void test_carousel_mfsk_tx_only(void)
         }
 }
 
+/* A station whose rounds are held short (arq:max_keydown_s): vARIM aborts a
+ * transfer when PTT stays on for about 20 s, and a full DATAC3 round is 30 s
+ * (#445).  Held to 16 s at either end alone -- the peer may be a release
+ * without the setting -- every keydown both ways stays under it, and
+ * everything arrives.  Without it, the rounds are as long as before. */
+static void test_carousel_max_keydown(void)
+{
+    static const char *CHAN[] = { "cliff:10", "fade:25:1" };
+    static const char *WHO[] = { "CAR_KEYDOWN_A", "CAR_KEYDOWN_B" };
+    for (int k = 0; k < 2; k++) {
+        car_sim_result_t r;
+        carousel_sim_run(1, CHAN[k], false, LIMIT_MS, &r);
+        TEST_ASSERT_GREATER_THAN_UINT64(20000, r.max_kd_ms[0]);
+        for (int w = 0; w < 2; w++)
+            for (int bidir = 0; bidir < 2; bidir++) {
+                setenv(WHO[w], "16000", 1);
+                carousel_sim_run(1, CHAN[k], bidir, LIMIT_MS, &r);
+                unsetenv(WHO[w]);
+                char msg[64];
+                snprintf(msg, sizeof(msg), "%s %s %s", WHO[w], CHAN[k], bidir ? "bidir" : "oneway");
+                TEST_ASSERT_TRUE_MESSAGE(r.intact, msg);
+                TEST_ASSERT_NOT_EQUAL_MESSAGE(0, r.done_ms, msg);
+                TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.collisions, msg);
+                TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.overruns, msg);
+                for (int i = 0; i < 2; i++)
+                    TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(16500, r.max_kd_ms[i], msg);
+            }
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -366,6 +396,7 @@ int main(void)
     RUN_TEST(test_carousel_bandwidth_max_level);
     RUN_TEST(test_carousel_bw500_floor);
     RUN_TEST(test_carousel_mfsk_tx_only);
+    RUN_TEST(test_carousel_max_keydown);
     RUN_TEST(test_carousel_request_response_completes);
     RUN_TEST(test_carousel_drop_below_control_mode);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);

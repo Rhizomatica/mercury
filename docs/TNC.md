@@ -526,6 +526,11 @@ Mercury returns to the idle/listening state.
 Mercury also sends `CANCELPENDING\r` when an outgoing `CQFRAME` transmission
 finishes, which matches the lifecycle expected by VARA clients such as varim.
 
+varim also sends `ABORT` when `PTT ON` lasts about 20 s with no `PTT OFF`,
+whatever else the TNC says meanwhile (#445).  A carousel round can be one
+keydown of 25-30 s; set `[arq] max_keydown_s = 16` on a station that runs
+varim.
+
 ### CONNECTED
 
 Sent when a session is successfully established (either outgoing CONNECT

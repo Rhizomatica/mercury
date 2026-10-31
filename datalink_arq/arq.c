@@ -1446,6 +1446,13 @@ void arq_set_tx_mfsk_only(bool on)
     HLOGI(LOG_COMP, "MFSK-only transmit %s", on ? "enabled" : "disabled");
 }
 
+void arq_set_max_keydown_s(int s)
+{
+    car_set_max_keydown_ms(s > 0 ? (uint32_t)s * 1000u : 0);
+    if (s > 0)
+        HLOGI(LOG_COMP, "Carousel rounds held to %d s of airtime", s);
+}
+
 void reset_arq_info(arq_info *conn)
 {
     if (!conn) return;
