@@ -96,6 +96,7 @@ typedef struct {
     bool     nav_ok, nav_sent;
     uint64_t nav_from;
     uint64_t air_ms;               /* on the air, all keydowns */
+    uint64_t max_kd_ms;   /* longest keydown, PTT on to off */
     uint64_t heard_at, silent_ms;  /* the peer last heard (frame or pattern); the longest gap */
 } station_t;
 
@@ -285,6 +286,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     }
     s->tx_end = t + TAIL_MS;
     s->air_ms += s->tx_end - s->tx_start;
+    if (s->tx_end - s->tx_start > s->max_kd_ms) s->max_kd_ms = s->tx_end - s->tx_start;
     if (trace) printf("  until %.1f\n", s->tx_end / 1000.0);
     check_slot(s);
     event_t e = { .t = s->tx_end, .type = EV_TXEND, .st = s->id };
@@ -649,6 +651,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             car_set_floor_mode(&s->car, arq_floor_mode(bw));
         }
         if (getenv("CAR_FLOOR")) car_set_floor_mode(&s->car, atoi(getenv("CAR_FLOOR")));   /* A/B */
+        /* CAR_KEYDOWN_A, CAR_KEYDOWN_B: that station's rounds held to so many
+         * ms of airtime (arq:max_keydown_s), its peer's not unless set too */
+        const char *kd = getenv(i ? "CAR_KEYDOWN_B" : "CAR_KEYDOWN_A");
+        if (kd) car_set_session_max_keydown_ms(&s->car, (uint32_t)atoi(kd));
         s->rx_mode = -1;
     }
     for (int i = 0; i < CAR_SIM_BYTES; i++) {
@@ -745,6 +751,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                   !memcmp(S[0].rx, S[1].tx, S[0].rx_len < S[1].tx_len ? S[0].rx_len : S[1].tx_len);
     res->done_ms = done_ms;
     res->air_ms[0] = S[0].air_ms; res->air_ms[1] = S[1].air_ms;
+    res->max_kd_ms[0] = S[0].max_kd_ms; res->max_kd_ms[1] = S[1].max_kd_ms;
     now_ms = done_ms ? done_ms : limit_ms;              /* ...and the silence still running */
     for (int i = 0; i < 2; i++) { heard(&S[i]); res->silent_ms[i] = S[i].silent_ms; }
     res->msgs = script ? sc_n : 0;

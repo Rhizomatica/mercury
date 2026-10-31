@@ -73,7 +73,21 @@
 #ifndef TURN_CAP_MS
 #define TURN_CAP_MS      45000
 #endif
+#ifndef MAX_KEYDOWN_MS
 #define MAX_KEYDOWN_MS   30000    /* airtime cap per round                  */
+#endif
+/* A station may hold its own rounds shorter (arq:max_keydown_s): what it asks
+ * for and what it sends.  vARIM aborts a transfer when PTT stays on for about
+ * 20 s, and a 7-frame DATAC3 round is 25 s (#445).  What it accepts, and how
+ * long it waits for a peer's round, stay at MAX_KEYDOWN_MS: the peer may not
+ * hold its rounds short.  A receiver learns a round's length from its frames
+ * (rx_frame: m->left), so a round shorter than asked is not counted as loss.
+ * Each session takes the station's at car_init (c->max_keydown_ms). */
+static uint32_t g_max_keydown_ms = MAX_KEYDOWN_MS;
+void car_set_max_keydown_ms(uint32_t ms)
+{
+    g_max_keydown_ms = ms && ms < MAX_KEYDOWN_MS ? ms : MAX_KEYDOWN_MS;
+}
 /* NAV headers (car_set_nav_ms) are not sent inside a session: the turn rules
  * (docs/CAROUSEL-TURNS.md) keep the two ends off each other without carrier
  * sense, and a header was 0.7 s of air on every keydown below 0 dB, and a
@@ -378,6 +392,7 @@ static uint64_t round_air(const car_t *c, int lv, int n)
  * the floor, where a round alone is 28 s, a 30 s turn changed direction
  * every round (sim, fade:-5 both ways: 132 changes, a poll each). */
 static int keydown_cap(const car_t *c, int lv);
+static int peer_keydown_cap(const car_t *c, int lv);
 static int round_n(const car_t *c);
 static bool both_ok(const car_t *c, int lv);
 static bool offer_both(car_t *c, uint64_t now);
@@ -507,7 +522,7 @@ static bool decode_ctl(const car_t *c, const uint8_t *b, size_t len, msg_t *m)
     /* ...and so do more frames than a keydown on the rung can hold: a poll
      * read with its size flipped had S key five MFSK frames, 72 s, into a
      * slot for one DATAC4 frame (explorer, corrupt byte 7 of an inline poll). */
-    if (m->n > keydown_cap(c, m->level) || m->h_n > keydown_cap(c, m->h_level)) return false;
+    if (m->n > peer_keydown_cap(c, m->level) || m->h_n > peer_keydown_cap(c, m->h_level)) return false;
     /* Out-of-range fields mean a corrupt frame that passed its CRC: drop it
      * rather than act on it (spec risk R19). */
     for (int o = 0; o < CAR_WIN; o++)
@@ -1094,13 +1109,20 @@ void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *f
     if (overhead_ms) *overhead_ms = lv == 0 && floor_patterns ? FLOOR_OVERHEAD_MS : ROUND_OVERHEAD_MS;
 }
 
-static int keydown_cap(const car_t *c, int lv)
+static int keydown_cap_ms(const car_t *c, int lv, uint32_t max_ms)
 {
-    int cap = (int)(MAX_KEYDOWN_MS / level_air(c, lv));
+    int cap = (int)(max_ms / level_air(c, lv));
     bool slow = LADDER[lv] == FREEDV_MODE_DATAC15 || LADDER[lv] == FREEDV_MODE_DATAC4;
     if (slow && cap > SLOW_RUNG_FRAMES) cap = SLOW_RUNG_FRAMES;
     return cap > 15 ? 15 : cap < 1 ? 1 : cap;                          /* 4 bits */
 }
+/* The rounds I ask for and send... */
+static int keydown_cap(const car_t *c, int lv)
+{
+    return keydown_cap_ms(c, lv, c->max_keydown_ms ? c->max_keydown_ms : MAX_KEYDOWN_MS);
+}
+/* ...and the longest a peer's may be. */
+static int peer_keydown_cap(const car_t *c, int lv) { return keydown_cap_ms(c, lv, MAX_KEYDOWN_MS); }
 static double air_fraction(const car_t *c, int lv, int frames)
 {
     double air = (double)round_air(c, lv, frames);
@@ -1608,7 +1630,7 @@ static uint32_t r_cap_ms(const car_t *c)
 {
     uint32_t m = 0;
     for (int lv = 0; lv < CAR_NLEVELS; lv++)
-        if (s_round_ms(c, lv, keydown_cap(c, lv)) > m) m = s_round_ms(c, lv, keydown_cap(c, lv));
+        if (s_round_ms(c, lv, peer_keydown_cap(c, lv)) > m) m = s_round_ms(c, lv, peer_keydown_cap(c, lv));
     return m;
 }
 static uint32_t d_of_mode(int mode) { return mercury_mode_is_mfsk(mode) ? D_MFSK_MS : D_OFDM_MS; }
@@ -1622,7 +1644,7 @@ static uint32_t slot_period(const car_t *c, uint32_t d, uint32_t r)
 {
     return r + d + (c->io.pattern ? D_MFSK_MS : D_OFDM_MS) + 2 * TURN_G_MS + s_ctl_ms(c);
 }
-static uint32_t r_floor_ms(const car_t *c) { return s_round_ms(c, 0, keydown_cap(c, 0)); }
+static uint32_t r_floor_ms(const car_t *c) { return s_round_ms(c, 0, peer_keydown_cap(c, 0)); }
 
 /* ---- M: where S may be ---- */
 static uint64_t mslot_lo(const car_t *c, const car_mlog_t *l, int i)
@@ -1834,7 +1856,9 @@ static void send_status(car_t *c, uint8_t id)
 static int round_n(const car_t *c)
 {
     int n = c->tx_n;
-    if (!c->master || c->tx_level <= 0 || n >= keydown_cap(c, c->tx_level)) return n;
+    int cap = keydown_cap(c, c->tx_level > 0 ? c->tx_level : 0);
+    if (n > cap) return cap;          /* a peer that asked for more: my own cap */
+    if (!c->master || c->tx_level <= 0 || n >= cap) return n;
     double margin = c->tx_loss * 1.3 + 0.05;
     int pieces = 0;
     for (int b = 0; b < c->nsb; b++) pieces += (int)ceil(c->sb[b].need * (1.0 + margin));
@@ -2854,6 +2878,12 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->rx_data_lv = -1;
     c->max_level = CAR_NLEVELS - 1;
     c->floor_mode = MERCURY_MODE_MFSK;
+    c->max_keydown_ms = g_max_keydown_ms;
+}
+
+void car_set_session_max_keydown_ms(car_t *c, uint32_t ms)
+{
+    c->max_keydown_ms = ms && ms < MAX_KEYDOWN_MS ? ms : MAX_KEYDOWN_MS;
 }
 
 void car_set_floor_mode(car_t *c, int mode)
@@ -3053,7 +3083,7 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     }
     int lv = level_of_mode(mode);
     if (lv < 0 || !decode_data(bytes, len, &m, piece_of(c))) return false;
-    if (m.left >= keydown_cap(c, lv)) return false;   /* corrupt: no keydown on the rung is that long */
+    if (m.left >= peer_keydown_cap(c, lv)) return false;   /* corrupt: no keydown on the rung is that long */
     c->heard_ms = now;
     note_peer_ctl_deaf(c, m.ctl_deaf);
     msg_t k;
@@ -3217,7 +3247,7 @@ uint64_t car_drain_budget_ms(const car_t *c)
 {
     int lv = c->tx_level >= 0 ? c->tx_level : 0;
     if (c->poll_level < lv) lv = c->poll_level;          /* the slower way */
-    uint64_t exchange = (uint64_t)s_round_ms(c, lv, keydown_cap(c, lv)) + s_ctl_ms(c) + 2 * TG_MS +
+    uint64_t exchange = (uint64_t)s_round_ms(c, lv, peer_keydown_cap(c, lv)) + s_ctl_ms(c) + 2 * TG_MS +
                         D_MFSK_MS + 2 * TURN_G_MS;
     return 3 * exchange;
 }

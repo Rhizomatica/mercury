@@ -146,6 +146,7 @@ typedef struct {
     bool     idle;                  /* nothing in flight either way */
     int      rx_level;              /* what the payload decoder is bound to */
     int      snr_level;             /* where the SNR measured here starts the peer */
+    uint32_t max_keydown_ms;        /* my rounds' airtime cap (car_set_max_keydown_ms) */
     int      max_level;             /* the highest rung the session's bandwidth
                                      * allows (car_set_max_level) */
     int      floor_mode;            /* rung 0's mode (car_set_floor_mode) */
@@ -373,6 +374,11 @@ bool car_slot_reserved(const car_t *m, uint64_t start, uint64_t end);
  * car_wants_nav() says the peer may not sense it otherwise (car_set_nav_below_db). */
 void car_set_nav_ms(uint32_t ms);
 void car_set_short_rung(bool on);   /* small backlogs on the shortest rung (default on) */
+/* The longest round this station asks for or sends, in ms (0: the protocol's
+ * 30 s); rounds it accepts stay at 30 s (arq:max_keydown_s, #445). */
+void car_set_max_keydown_ms(uint32_t ms);
+/* ...for one session only (the sim's two ends; 0: the protocol's). */
+void car_set_session_max_keydown_ms(car_t *c, uint32_t ms);
 void car_set_nav_below_db(float db);
 void car_set_nav_loss(double loss);   /* ...or at this loss estimate (default 0.3) */
 bool car_wants_nav(const car_t *c);
