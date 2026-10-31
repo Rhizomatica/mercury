@@ -286,9 +286,36 @@ static void explore_sensing(int k)
  *   replay <bidir> i...            one loss set (CAR_EXPLORE_CHAN, CAR_TRACE=1)
  *   csreplay <bidir> <chan> kd...  one sensing-failure set
  *   brkreplay <bidir> <chan> kd... one spurious-BREAK set */
+/* The 2026-10-27 K7EK-VE4KLM shape (#448): a probe round chained to the
+ * caller's poll (KD_BOTH), the callee decoding the poll but not the round,
+ * and its answer lost too.  The turn then passes to the caller with nothing
+ * heard, and it must go back to the rung it has an answer on (m_decide_recv)
+ * instead of keying the unconfirmed one again.  Frames 0, 3 and 6 of the
+ * 600-byte bidirectional session on cliff:-5 reach that branch; the indices
+ * hold only for that size. */
+static void oct27_recv_fallback(void)
+{
+#if CAR_SIM_BYTES == 600
+    static const int idx[] = { 0, 3, 6 };    /* kept by carousel_sim_force_losses */
+    car_sim_result_t r;
+    carousel_sim_force_losses(idx, 3);
+    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &r);
+    runs++;
+    if (!r.intact || !r.done_ms || r.recv_fallbacks < 1) {
+        failures++;
+        printf("FAIL oct27: cliff:-5 bidir lost {0,3,6}: intact=%d done=%llu recv_fallbacks=%d (want >= 1)\n",
+               r.intact, (unsigned long long)r.done_ms, r.recv_fallbacks);
+        printf("  If the frame order changed and the fall-back still works, pick a new set: run\n"
+               "  CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 test_car_explore replay 1 <i> <j> <k> on sets from\n"
+               "  `test_car_explore 1 3` until \"back to\" follows \"turn: mine\" at once; use it above.\n");
+    }
+#endif
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 1) {
+        oct27_recv_fallback();
         explore_losses(-1, 3);
         explore_sensing(3);
         explore_spurious(1);
@@ -322,6 +349,11 @@ int main(int argc, char **argv)
         printf("collisions=%d overlapping keydowns=%d (over a sensed one %d) intact=%d done=%llu\n",
                r.collisions, r.kd_overlaps, r.kd_unexplained, r.intact, (unsigned long long)r.done_ms);
         return 0;
+    }
+    if (!strcmp(argv[1], "oct27")) {
+        oct27_recv_fallback();
+        printf("%s\n", failures ? "FAILED" : "ok");
+        return failures != 0;
     }
     if (!strcmp(argv[1], "bad")) {
         explore_corrupt(argc > 2 ? atoi(argv[2]) : 1);

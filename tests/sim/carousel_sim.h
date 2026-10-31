@@ -28,6 +28,8 @@ typedef struct {
                                      (control included; CAR_MFSK_TX) */
     int      keydowns;            /* keydowns, both stations */
     int      kd_overlaps;         /* keydowns that started while the peer was on the air */
+    int      recv_fallbacks;      /* falls back to ok_lv as the turn passed to a station that heard
+                                     nothing (fall_back_unconfirmed in m_decide_recv, #448) */
     int      kd_unexplained;      /* ... over a keydown of the peer that could be sensed */
     const char *failed;           /* a station failed the session (car_failed), or NULL */
     uint64_t air_ms[2];           /* each station on the air */

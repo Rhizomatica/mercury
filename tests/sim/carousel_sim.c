@@ -90,6 +90,7 @@ typedef struct {
     struct { uint64_t start; int mode; bool sync; } kd[CAR_KEYDOWN_MAX];
     int      kd_n;
     int      kd_no;               /* this keydown's index, for carousel_sim_force_unsensed */
+    bool     turn_mine;           /* the last trace line was "turn: mine" (recv_fallbacks) */
     /* CAR_NAV: the keydown's header pattern, heard by the peer or not, and
      * when the peer's detector reports it. */
     bool     nav_ok, nav_sent;
@@ -295,8 +296,14 @@ static void io_bind_rx(void *ctx, int mode)
     station_t *s = ctx;
     if (mode != s->rx_mode) { s->rx_mode = mode; s->bound_at = now_ms; }
 }
+static int recv_fallbacks;
 static void io_trace(void *ctx, const char *line)
 {
+    station_t *s = ctx;
+    /* the fall-back to ok_lv taken as the turn passes (m_decide_recv, #448) is
+     * traced right after "turn: mine"; m_decide_send's is not */
+    if (s->turn_mine && !strncmp(line, "tx: no answer on lv=", 20) && strstr(line, "back to")) recv_fallbacks++;
+    s->turn_mine = !strncmp(line, "turn: mine", 10);
     if (trace) printf("%9.1f %c   %s\n", now_ms / 1000.0, 'A' + ((station_t *)ctx)->id, line);
 }
 
@@ -600,6 +607,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     snr_offset = getenv("CAR_SNR_OFFSET") ? atof(getenv("CAR_SNR_OFFSET")) : 0.0;
     nev = 0;
     collisions = 0;
+    recv_fallbacks = 0;
     bad_frames = 0;
     slot_breaches = 0;
     frame_no = 0;
@@ -747,6 +755,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->non_mfsk[0] = non_mfsk[0]; res->non_mfsk[1] = non_mfsk[1];
     res->keydowns = keydown_no;
     res->kd_overlaps = kd_overlaps;
+    res->recv_fallbacks = recv_fallbacks;
     res->kd_unexplained = kd_unexplained;
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;

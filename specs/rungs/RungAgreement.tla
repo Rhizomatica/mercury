@@ -47,7 +47,7 @@
 (*                                                                         *)
 (* Not modelled: the MFSK floor (patterns, S_FALLBACK_MS), REQs after     *)
 (* which M gives up (the lost-peer watchdog ends the session), and rounds *)
-(* lost in part (a KD_BOTH's round, apart from its poll, aside).                                                        *)
+(* lost in part (a KD_BOTH's round, apart from its poll, aside).         *)
 (*                                                                         *)
 (* Properties:                                                            *)
 (*   Delivered  every message gets through, and M knows it (liveness);    *)
