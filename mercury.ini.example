@@ -176,7 +176,7 @@ disconnect_drain_timeout_s = 30
 retry_stagger_ms = 2000
 
 ; Seconds of hearing nothing from the peer before the control moves to the
-; MFSK floor (default 150, range 20..600); the receiver's own wait for the
+; MFSK floor (default 150, range 110..600); the receiver's own wait for the
 ; floor is 60 % of it.  Lower values react faster to heavy QRM but can move a
 ; multipath link to the slow floor it did not need.  Tune with care (#442).
 silence_fallback_s = 150

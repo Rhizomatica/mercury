@@ -105,9 +105,11 @@ void test_decode_snr_zero_is_unknown(void)
 
 void test_silence_fallback_setter_clamps_to_default(void)
 {
-    arq_protocol_set_silence_fallback_s(60);
-    TEST_ASSERT_EQUAL_INT(60, atomic_load(&arq_silence_fallback_s));
-    arq_protocol_set_silence_fallback_s(5);      /* below the minimum */
+    arq_protocol_set_silence_fallback_s(120);
+    TEST_ASSERT_EQUAL_INT(120, atomic_load(&arq_silence_fallback_s));
+    arq_protocol_set_silence_fallback_s(ARQ_SILENCE_FALLBACK_S_MIN);   /* the minimum itself */
+    TEST_ASSERT_EQUAL_INT(ARQ_SILENCE_FALLBACK_S_MIN, atomic_load(&arq_silence_fallback_s));
+    arq_protocol_set_silence_fallback_s(60);     /* below: shorter than one exchange */
     TEST_ASSERT_EQUAL_INT(ARQ_SILENCE_FALLBACK_S_DEFAULT, atomic_load(&arq_silence_fallback_s));
     arq_protocol_set_silence_fallback_s(100000); /* above the maximum */
     TEST_ASSERT_EQUAL_INT(ARQ_SILENCE_FALLBACK_S_DEFAULT, atomic_load(&arq_silence_fallback_s));
