@@ -113,6 +113,29 @@ Results:
 - `ConnectCarrier.cfg` (every path "any"): no error, 405606 distinct states.
 - `ConnectCarrier_early.cfg`: no error, 23876.
 - `ConnectCarrier_floor.cfg` (`Sense` "any"): no error, 355346.
+- `F`, the fast CALLs before the floor (`ARQ_CALL_FAST_SLOTS`): 2 by
+  default, `min(max(2, RETRIES/2), 4)` after a host's `RETRIES` (#442),
+  so the `F` = 4 configs are the code's highest case.  Every
+  config above has `F` = 2 (and the counts are unchanged).  The caller
+  still listens on the floor from its second CALL whatever `F` is.
+  - `F` = 4, `R` = 8 (`ConnectCarrier_f4*.cfg`): `NoOverlap` holds, 449131
+    states (every path "any"); `Early`, 23876; MFSK-only callee
+    (`_f4_emfsk`), `NoOverlap` and `FloorOnly`, 430194; MFSK-only caller
+    (`_f4_cmfsk_floor`), `Connects`, 291289 (its CALLs are all on the
+    floor, so `F` does not apply).
+  - `F` = 10, `R` = 20 (`ConnectCarrier_f10*.cfg`, `RETRIES 20` without
+    the cap; kept as the record of why the cap is there):
+    `NoOverlap` holds, 2364589 states; `Early`, 42686; `_f10_emfsk`,
+    2026816.
+  - `Connects` needs a later horizon as `F` grows: with only the floor
+    delivering, the first floor CALL comes after `F` fast ones, each 47
+    steps (a CALL and its interval).  The earliest horizon it holds from:
+    `F` = 2, 450 (112 s; `ConnectCarrier_floor.cfg` checks 520); `F` = 4,
+    ~540 (134 s; `_f4_floor` and `_f4_emfsk_floor` check 560: 346036 and
+    301462 states); `F` = 10, 820 (205 s; `_f10_floor` and
+    `_f10_emfsk_floor` check 850: 683736 and 548691).  The same for an
+    MFSK-only callee.  That is the cost of more fast CALLs on a path only
+    the floor carries: ~23 s per two of them.
 - `Mut_old.cfg`, the code before (no floor answer, no floor listening, no
   hold): violates `Early` (a third CALL, the floor one, 22 s later).
 - `Mut_nohold.cfg`: the CALL goes when due.  Violates `NoOverlap`: it keys

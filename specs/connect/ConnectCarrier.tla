@@ -6,8 +6,10 @@
 (* discrete time.                                                          *)
 (*                                                                         *)
 (*   C, the caller, keys CALL i on the control mode ("fast", DATAC16) for  *)
-(*   i <= 2, then on the floor (MFSK) and fast in turn, each the call      *)
+(*   i <= F, then on the floor (MFSK) and fast in turn, each the call      *)
 (*   interval of its carrier after the last one ended (IvFast, IvFloor).   *)
+(*   F is ARQ_CALL_FAST_SLOTS: 2 by default, min(max(2, RETRIES/2), 4)     *)
+(*   after a host's RETRIES (#442); the floor listening below keeps i >= 2.*)
 (*   From a repeat (i >= 2) on, or a floor CALL, it also listens on the    *)
 (*   floor.  A CALL that comes due while one of C's decoders is on a     *)
 (*   frame arriving waits (decoder_hears_frame: not the energy busy       *)
@@ -61,6 +63,7 @@
 EXTENDS Integers
 
 CONSTANTS LF, LM, TG, DF, DM, DW, SA, IvFast, IvFloor, R, H,
+          F,      \* fast CALLs before the floor (ARQ_CALL_FAST_SLOTS), >= 2
           FwdFast, RetFast, FwdFloor, RetFloor,  \* "always", "never" or "any"
           Sense,  \* "always" or "any": is a decoder of C's on an ACCEPT arriving?
           MfskTx, \* "none", "C", "E" or "CE": who transmits only MFSK
@@ -104,9 +107,9 @@ EM == MfskTx \in {"E", "CE"}
 Len(car) == IF car = "fast" THEN LF ELSE LM
 Dec(car) == IF car = "fast" THEN DF ELSE DM
 
-\* arq_call_carrier: CALLs 1 and 2 fast, then the floor and fast in turn.
+\* arq_call_carrier: CALLs 1 .. F fast, then the floor and fast in turn.
 CallCar(i) == IF CM THEN "floor"
-              ELSE IF i <= 2 THEN "fast" ELSE IF (i - 3) % 2 = 0 THEN "floor" ELSE "fast"
+              ELSE IF i <= F THEN "fast" ELSE IF (i - F - 1) % 2 = 0 THEN "floor" ELSE "fast"
 Wait(i)    == IF i = 1 /\ CM /\ Mutant = "firstiv" THEN 0
               ELSE IF CallCar(i) = "floor" THEN IvFloor ELSE IvFast
 \* call_answer_carrier, as send_call_accept binds the payload decoder to it.

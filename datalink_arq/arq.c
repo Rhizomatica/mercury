@@ -1412,18 +1412,22 @@ void arq_set_retry_slots(int slots)
     if (slots <= 0)
     {
         atomic_store(&arq_call_retry_slots,       ARQ_CALL_RETRY_SLOTS_DEFAULT);
+        arq_protocol_set_call_fast_slots(0);
         atomic_store(&arq_accept_retry_slots,     ARQ_ACCEPT_RETRY_SLOTS_DEFAULT);
         atomic_store(&arq_disconnect_retry_slots, ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT);
     }
     else
     {
         atomic_store(&arq_call_retry_slots,   slots);
+        /* More retries mean more fast CALLs first (#442), never fewer than
+         * the default. */
+        arq_protocol_set_call_fast_slots(slots);
         atomic_store(&arq_accept_retry_slots, slots);
         /* Leave disconnect retries at default — no benefit to long teardown */
         atomic_store(&arq_disconnect_retry_slots, ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT);
     }
-    HLOGI(LOG_COMP, "Retry slots: call=%d accept=%d disconnect=%d",
-          atomic_load(&arq_call_retry_slots), atomic_load(&arq_accept_retry_slots),
+    HLOGI(LOG_COMP, "Retry slots: call=%d (fast=%d) accept=%d disconnect=%d",
+          atomic_load(&arq_call_retry_slots), atomic_load(&arq_call_fast_slots), atomic_load(&arq_accept_retry_slots),
           atomic_load(&arq_disconnect_retry_slots));
 }
 

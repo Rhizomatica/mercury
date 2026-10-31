@@ -360,6 +360,21 @@ void test_default_call_accept_slots_are_short(void)
     TEST_ASSERT_TRUE(ARQ_ACCEPT_RETRY_SLOTS <= 4);
 }
 
+/* RETRIES N raises the fast CALL count to N/2 (#442); 0 restores defaults. */
+void test_retries_scale_fast_call_slots(void)
+{
+    TEST_ASSERT_EQUAL_INT(ARQ_CALL_FAST_SLOTS_DEFAULT, ARQ_CALL_FAST_SLOTS);
+    arq_protocol_set_call_fast_slots(8);
+    TEST_ASSERT_EQUAL_INT(4, ARQ_CALL_FAST_SLOTS);
+    arq_protocol_set_call_fast_slots(20);   /* capped: the floor CALL comes no later */
+    TEST_ASSERT_EQUAL_INT(ARQ_CALL_FAST_SLOTS_MAX, ARQ_CALL_FAST_SLOTS);
+    TEST_ASSERT_EQUAL_INT(4, ARQ_CALL_FAST_SLOTS);
+    arq_protocol_set_call_fast_slots(3);
+    TEST_ASSERT_EQUAL_INT(ARQ_CALL_FAST_SLOTS_DEFAULT, ARQ_CALL_FAST_SLOTS);
+    arq_protocol_set_call_fast_slots(0);
+    TEST_ASSERT_EQUAL_INT(ARQ_CALL_FAST_SLOTS_DEFAULT, ARQ_CALL_FAST_SLOTS);
+}
+
 /* RX_ACCEPT from CALLING transitions to CONNECTED */
 void test_accept_transitions_to_connected(void)
 {
@@ -1654,6 +1669,7 @@ int main(void)
     RUN_TEST(test_ended_session_is_not_resurrected_by_a_late_frame);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
     RUN_TEST(test_default_call_accept_slots_are_short);
+    RUN_TEST(test_retries_scale_fast_call_slots);
     RUN_TEST(test_stop_listen);
     RUN_TEST(test_timeout_ms_idle);
     RUN_TEST(test_accept_is_only_sent_in_answer_to_a_heard_call);
