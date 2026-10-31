@@ -1123,6 +1123,20 @@ static int keydown_cap(const car_t *c, int lv)
 }
 /* ...and the longest a peer's may be. */
 static int peer_keydown_cap(const car_t *c, int lv) { return keydown_cap_ms(c, lv, MAX_KEYDOWN_MS); }
+/* The frames of mine that fit behind my control frame in one keydown under my
+ * cap (0: not one).  The cap is on the keydown, not the round: a poll of
+ * 3.7 s and a 15 s round under a 16 s cap keyed for 19.2 s, and vARIM aborts
+ * at 20.3 (#449 review: sim, fade:15:1 both ways, seeds 2 and 4).  Uncapped,
+ * n as it is. */
+static int behind_ctl_n(const car_t *c, int lv, int n)
+{
+    uint32_t cap = c->io.max_keydown_ms;
+    if (!cap || cap >= MAX_KEYDOWN_MS || n <= 0) return n;
+    int64_t room = (int64_t)cap - (int64_t)(ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) -
+                   CHAIN_GAP_MS;
+    while (n > 0 && (int64_t)round_air(c, lv, n) > room) n--;
+    return n;
+}
 static double air_fraction(const car_t *c, int lv, int frames)
 {
     double air = (double)round_air(c, lv, frames);
@@ -1790,8 +1804,10 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
      * that I polled -- nor told me to leave the dead rung (sim, cliff:5 both
      * ways: 326 -> 614 s). */
     bool inl = with_round && inline_poll(c);
-    if (with_round && c->tx_level >= 0) {
-        nd = build_round(c, c->tx_level, round_n(c), id, inl ? fr : fr + 1, inl ? INLINE_CTL : 0);
+    int rn = with_round && c->tx_level >= 0 ? round_n(c) : 0;
+    if (!inl) rn = behind_ctl_n(c, c->tx_level, rn);   /* none fits: the poll alone, my round its own keydown */
+    if (rn > 0) {
+        nd = build_round(c, c->tx_level, rn, id, inl ? fr : fr + 1, inl ? INLINE_CTL : 0);
         if (nd) {
             if (!inl) fr[1].gap_ms = CHAIN_GAP_MS;
             c->last_lv = c->tx_level; c->last_nf = nd; c->last_mk = id;
@@ -2109,7 +2125,8 @@ static uint64_t kind_len(const car_t *c, int kind)
     case KD_BOTH:          if (inline_poll(c))
                                return head + round_air(c, c->tx_level, round_n(c)) + TAIL_MS;
                            return head + (ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) +
-                                  CHAIN_GAP_MS + round_air(c, c->tx_level, round_n(c)) + TAIL_MS;
+                                  CHAIN_GAP_MS + round_air(c, c->tx_level, behind_ctl_n(c, c->tx_level, round_n(c))) +
+                                  TAIL_MS;
     case KD_PATTERN_ACK:
     case KD_PATTERN_BREAK: return 110 + PATTERN_AIR_MS + TAIL_MS;
     default:               return head + (ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) + TAIL_MS;
@@ -2292,7 +2309,8 @@ static bool both_ok(const car_t *c, int lv)
     /* ...and on a link that loses little: a lost exchange loses both ways
      * (sim, nvis both ways 3696 -> 4179 s). */
     return lv > 0 && c->tx_level > 0 && !ctl_on_floor(c) && !peer_ctl_on_floor(c) &&
-           c->loss_est < 0.3 && c->tx_loss < 0.3;
+           c->loss_est < 0.3 && c->tx_loss < 0.3 &&
+           (inline_poll(c) || behind_ctl_n(c, c->tx_level, 1) > 0);   /* ...under my cap */
 }
 
 /* What M expects S to send, for the rung of a poll: the backlog S last said
