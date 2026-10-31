@@ -631,6 +631,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                         .tx_read = io_tx_read, .tx_pending = io_tx_pending, .deliver = io_deliver,
                         .pattern = getenv("CAR_NOPATTERN") ? NULL : io_pattern,
                         .trace = io_trace, .ctx = s };
+        /* CAR_KEYDOWN_A, CAR_KEYDOWN_B: that station's keydowns held to so
+         * many ms (arq:max_keydown_s), its peer's not unless set too */
+        const char *kd = getenv(i ? "CAR_KEYDOWN_B" : "CAR_KEYDOWN_A");
+        if (kd) io.max_keydown_ms = (uint32_t)atoi(kd);
         /* What each end hears, and what its peer hears of it. */
         double hears = asym ? snr_dir[i ^ 1] : snr_db, heard = asym ? snr_dir[i] : snr_db;
         hears += snr_offset; heard += snr_offset;   /* the connect estimate reads off too */
@@ -651,10 +655,6 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             car_set_floor_mode(&s->car, arq_floor_mode(bw));
         }
         if (getenv("CAR_FLOOR")) car_set_floor_mode(&s->car, atoi(getenv("CAR_FLOOR")));   /* A/B */
-        /* CAR_KEYDOWN_A, CAR_KEYDOWN_B: that station's rounds held to so many
-         * ms of airtime (arq:max_keydown_s), its peer's not unless set too */
-        const char *kd = getenv(i ? "CAR_KEYDOWN_B" : "CAR_KEYDOWN_A");
-        if (kd) car_set_session_max_keydown_ms(&s->car, (uint32_t)atoi(kd));
         s->rx_mode = -1;
     }
     for (int i = 0; i < CAR_SIM_BYTES; i++) {

@@ -82,12 +82,12 @@
  * long it waits for a peer's round, stay at MAX_KEYDOWN_MS: the peer may not
  * hold its rounds short.  A receiver learns a round's length from its frames
  * (rx_frame: m->left), so a round shorter than asked is not counted as loss.
- * Each session takes the station's at car_init (c->max_keydown_ms). */
+ * The cap is on the whole keydown: a round behind a control frame is held
+ * shorter by the control frame (behind_ctl_n).  Each session takes the
+ * station's at car_init, unless its car_io_t names one (c->io.max_keydown_ms). */
+static uint32_t clamp_keydown_ms(uint32_t ms) { return ms && ms < MAX_KEYDOWN_MS ? ms : MAX_KEYDOWN_MS; }
 static uint32_t g_max_keydown_ms = MAX_KEYDOWN_MS;
-void car_set_max_keydown_ms(uint32_t ms)
-{
-    g_max_keydown_ms = ms && ms < MAX_KEYDOWN_MS ? ms : MAX_KEYDOWN_MS;
-}
+void car_set_max_keydown_ms(uint32_t ms) { g_max_keydown_ms = clamp_keydown_ms(ms); }
 /* NAV headers (car_set_nav_ms) are not sent inside a session: the turn rules
  * (docs/CAROUSEL-TURNS.md) keep the two ends off each other without carrier
  * sense, and a header was 0.7 s of air on every keydown below 0 dB, and a
@@ -1119,7 +1119,7 @@ static int keydown_cap_ms(const car_t *c, int lv, uint32_t max_ms)
 /* The rounds I ask for and send... */
 static int keydown_cap(const car_t *c, int lv)
 {
-    return keydown_cap_ms(c, lv, c->max_keydown_ms ? c->max_keydown_ms : MAX_KEYDOWN_MS);
+    return keydown_cap_ms(c, lv, c->io.max_keydown_ms ? c->io.max_keydown_ms : MAX_KEYDOWN_MS);
 }
 /* ...and the longest a peer's may be. */
 static int peer_keydown_cap(const car_t *c, int lv) { return keydown_cap_ms(c, lv, MAX_KEYDOWN_MS); }
@@ -2878,12 +2878,7 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->rx_data_lv = -1;
     c->max_level = CAR_NLEVELS - 1;
     c->floor_mode = MERCURY_MODE_MFSK;
-    c->max_keydown_ms = g_max_keydown_ms;
-}
-
-void car_set_session_max_keydown_ms(car_t *c, uint32_t ms)
-{
-    c->max_keydown_ms = ms && ms < MAX_KEYDOWN_MS ? ms : MAX_KEYDOWN_MS;
+    c->io.max_keydown_ms = io->max_keydown_ms ? clamp_keydown_ms(io->max_keydown_ms) : g_max_keydown_ms;
 }
 
 void car_set_floor_mode(car_t *c, int mode)
