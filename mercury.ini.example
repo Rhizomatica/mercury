@@ -78,6 +78,11 @@ verbose = false
 ; calling whom on the channel.
 trace = false
 
+; Log timestamps in UTC, with a Z suffix (default: false, local time).
+; Handy for matching Mercury's log with BPQ32's or another station's, which
+; are usually in UTC.
+log_utc = false
+
 ; FreeDV modem verbosity level, 0 to 3 (default: 0)
 freedv_verbosity = 0
 

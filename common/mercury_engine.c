@@ -219,6 +219,7 @@ int mercury_engine_init(const mercury_config *cfg,
     g_engine_owns_log = (log_rc == 0);
     if (log_rc == 0)
     {
+        hermes_log_set_utc(cfg->log_utc);
         hermes_log_level_t min_level = cfg->trace ? HERMES_LOG_LEVEL_TRACE
                                       : verbose ? HERMES_LOG_LEVEL_DEBUG
                                                 : HERMES_LOG_LEVEL_INFO;

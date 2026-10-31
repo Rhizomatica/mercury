@@ -135,6 +135,42 @@ void test_set_file_records_entries(void)
                                  "the file does not record its own location");
 }
 
+/* Log a line with main:log_utc as given and return the file's contents. */
+static void log_one_line(bool utc, char *buf, size_t len)
+{
+    char tmpl[] = "/tmp/mercury_log_XXXXXX";
+    int fd = mkstemp(tmpl);
+    TEST_ASSERT_TRUE(fd >= 0);
+    close(fd);
+    hermes_log_set_utc(utc);
+    TEST_ASSERT_EQUAL_INT(0, hermes_log_init(64));
+    TEST_ASSERT_EQUAL_INT(0, hermes_log_set_file(tmpl, HERMES_LOG_LEVEL_DEBUG, false));
+    hermes_log_set_level(HERMES_LOG_LEVEL_ERROR);
+    HLOGI("test", "stamp-check");
+    hermes_log_shutdown();
+    hermes_log_set_utc(false);
+    FILE *fp = fopen(tmpl, "r");
+    TEST_ASSERT_NOT_NULL(fp);
+    size_t n = fread(buf, 1, len - 1, fp);
+    buf[n] = '\0';
+    fclose(fp);
+    unlink(tmpl);
+}
+
+/* Local time by default (no Z); UTC with a Z when main:log_utc is set.  The
+ * stamp is followed by a space and the uptime, as utils/onair_logs.py reads it. */
+void test_timestamps_local_by_default_utc_with_z(void)
+{
+    char buf[2048];
+    log_one_line(false, buf, sizeof buf);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "stamp-check"));
+    TEST_ASSERT_NULL_MESSAGE(strstr(buf, "Z [+"), "a local-time stamp carries a Z");
+
+    log_one_line(true, buf, sizeof buf);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "stamp-check"));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(buf, "Z [+"), "a UTC stamp has no Z before the uptime");
+}
+
 /* The daemon sets the same path twice (main() then engine init); that must not
  * duplicate the "writing log to" header. */
 void test_set_file_same_path_announced_once(void)
@@ -185,5 +221,6 @@ int main(void)
     RUN_TEST(test_set_file_unopenable_path_warns_on_stderr);
     RUN_TEST(test_set_file_records_entries);
     RUN_TEST(test_set_file_same_path_announced_once);
+    RUN_TEST(test_timestamps_local_by_default_utc_with_z);
     return UNITY_END();
 }
