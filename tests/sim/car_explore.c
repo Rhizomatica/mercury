@@ -296,7 +296,7 @@ static void explore_sensing(int k)
 static void oct27_recv_fallback(void)
 {
 #if CAR_SIM_BYTES == 600
-    const int idx[] = { 0, 3, 6 };
+    static const int idx[] = { 0, 3, 6 };    /* kept by carousel_sim_force_losses */
     car_sim_result_t r;
     carousel_sim_force_losses(idx, 3);
     carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &r);
@@ -305,6 +305,9 @@ static void oct27_recv_fallback(void)
         failures++;
         printf("FAIL oct27: cliff:-5 bidir lost {0,3,6}: intact=%d done=%llu recv_fallbacks=%d (want >= 1)\n",
                r.intact, (unsigned long long)r.done_ms, r.recv_fallbacks);
+        printf("  If the frame order changed and the fall-back still works, pick a new set: run\n"
+               "  CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 test_car_explore replay 1 <i> <j> <k> on sets from\n"
+               "  `test_car_explore 1 3` until \"back to\" follows \"turn: mine\" at once; use it above.\n");
     }
 #endif
 }
