@@ -78,6 +78,13 @@ fallback) does not take a fallen-back S off the floor.
     mutants still fail at `FM` = 62, `FS` = 37 (`nosilence`, `nostay`,
     `noread`: `Delivered`; `lagread`: `FloorHolds`), so the large counts do
     not make the properties hold vacuously.
+  - Every pair is checked, not only `FS` = 60 % of `FM`, so the check also
+    covers two stations configured differently: M's `SILENT_MS` comes from
+    its own ini, S's `S_FALLBACK_MS` from its own.
+  - Not modelled: M's shortcut after two unanswered REQs
+    (`car_on_tx_done`: `reqs >= 2 ? S_FALLBACK_MS : SILENT_MS`), which takes
+    M to the floor after its own `S_FALLBACK_MS`.  It only moves M there
+    earlier, a smaller `FM`, which is inside the checked range.
 - `Mut_fs_nosilence.cfg`: M never takes the control mode to be out.
   Violates `Delivered`: down for good, M's DATAC16 control is never heard.
 - `Mut_fs_nostay.cfg`: the round timer takes S off the floor it fell back

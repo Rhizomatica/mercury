@@ -117,7 +117,7 @@ typedef struct {
                                          * clamped 0..5000.                  */
     int      silence_fallback_s;        /* ARQ: seconds of silence before the
                                          * control moves to the MFSK floor.
-                                         * Default 150, range 20..600.       */
+                                         * Default 150, range 110..600.      */
     bool     mfsk_tx_only;              /* ARQ: transmit MFSK only (FSK-only
                                          * radios).  Default false.          */
     float    tx_gain_db;            /* Linear-equivalent gain on the modulator
