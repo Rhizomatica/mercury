@@ -68,6 +68,20 @@ Results (`KD_BOTH` on any rung, and its round lost alone, are modelled):
       rung left the callee's fallback (`s_prev_lv`) apart from the caller's
       (`ok_lv`).
 
+A gap, on the floor: `RungAgreement` has no floor rung, so `WastedF` does not
+bound what happens when the fall-back (#448's, or the older one in
+`m_decide_send`) goes onto the MFSK floor by mistake.  After a silent
+`KD_BOTH` the caller cannot tell its round lost from the callee's answer
+lost.  If it was the answer, and the poll naming the callee's rung was lost
+too (`ok_lv` stale at 0), the fall-back lands on the floor and
+`FLOOR_SILENT_MAX` (6) keeps the caller sending blind instead of asking: in
+the sim (`cliff:-5` bidirectional, frames 0, 7 and 11 lost) 3 blind MFSK
+rounds, 52-68 s.  A possible fix: after an unconfirmed fall-back onto the
+floor, ask (REQ) instead of continuing blind.  It needs `FloorSilence` and
+`RungAgreement` combined.  `test_car_explore oct27` (`cliff:-5` bidirectional,
+frames 0, 3 and 6 lost) is the regression test for the case the fall-back
+gets right.
+
 ## FloorSilence
 
 What keeps a session alive when the channel falls below every mode but the

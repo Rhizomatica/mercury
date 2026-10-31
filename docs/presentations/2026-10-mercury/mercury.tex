@@ -526,7 +526,7 @@
     \textbf{Liveness} & Completes: every block is delivered, under a lossy adversary & 2.58 M states, 14.2 h \\
     \textbf{CarouselProofs} & Spec $\Rightarrow$ $\Box$Safety for any number of blocks & \hl{TLAPS: 823 obligations} (Z3, Zenon) \\
     \textbf{CarouselTurns} (timed) & NoOverlap: the two stations never key together; MNotShutOut & 18.5 M states; MFSK config 27.1 M \\
-    \textbf{RungAgreement} & Agree, Wasted, Delivered: both ends agree on the rung & 1458 states; 5592 at 4 rungs \\
+    \textbf{RungAgreement} & Agree, WastedF, FallbacksAgree, Delivered: both ends agree on the rung & 3234 states; 17168 at 4 rungs \\
     \bottomrule
   \end{tabular}
   \src{Source: specs/carousel, specs/turns, specs/rungs (README files)}
