@@ -98,6 +98,11 @@ void radio_io_report_frequency(uint64_t frequency_hz)
     (void) frequency_hz;            /* the host owns the radio's frequency */
 }
 
+void radio_io_set_usb_fd(const char *device, int fd)
+{
+    (void) device; (void) fd;       /* the Android app's; the bridge calls it */
+}
+
 /* ---- the rest of radio_io.h: nothing for Mercury to configure ---- */
 
 void radio_io_list_models(void)

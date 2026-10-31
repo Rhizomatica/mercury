@@ -214,6 +214,11 @@ void audioio_hl2_get(audioio_hl2_settings *s)
     memset(s, 0, sizeof(*s));
 }
 
+void audioio_set_android_devices(const char *list)
+{
+    (void) list;                    /* the Android app's; the bridge calls it */
+}
+
 void list_soundcards(int audio_system)
 {
     (void) audio_system;
