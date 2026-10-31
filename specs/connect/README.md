@@ -114,7 +114,8 @@ Results:
 - `ConnectCarrier_early.cfg`: no error, 23876.
 - `ConnectCarrier_floor.cfg` (`Sense` "any"): no error, 355346.
 - `F`, the fast CALLs before the floor (`ARQ_CALL_FAST_SLOTS`): 2 by
-  default, `max(2, RETRIES/2)` after a host's `RETRIES` (#442).  Every
+  default, `min(max(2, RETRIES/2), 4)` after a host's `RETRIES` (#442),
+  so the `F` = 4 configs are the code's highest case.  Every
   config above has `F` = 2 (and the counts are unchanged).  The caller
   still listens on the floor from its second CALL whatever `F` is.
   - `F` = 4, `R` = 8 (`ConnectCarrier_f4*.cfg`): `NoOverlap` holds, 449131
@@ -122,7 +123,8 @@ Results:
     (`_f4_emfsk`), `NoOverlap` and `FloorOnly`, 430194; MFSK-only caller
     (`_f4_cmfsk_floor`), `Connects`, 291289 (its CALLs are all on the
     floor, so `F` does not apply).
-  - `F` = 10, `R` = 20 (`ConnectCarrier_f10*.cfg`, `RETRIES 20`):
+  - `F` = 10, `R` = 20 (`ConnectCarrier_f10*.cfg`, `RETRIES 20` without
+    the cap; kept as the record of why the cap is there):
     `NoOverlap` holds, 2364589 states; `Early`, 42686; `_f10_emfsk`,
     2026816.
   - `Connects` needs a later horizon as `F` grows: with only the floor

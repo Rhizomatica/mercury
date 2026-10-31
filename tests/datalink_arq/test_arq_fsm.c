@@ -364,8 +364,11 @@ void test_default_call_accept_slots_are_short(void)
 void test_retries_scale_fast_call_slots(void)
 {
     TEST_ASSERT_EQUAL_INT(ARQ_CALL_FAST_SLOTS_DEFAULT, ARQ_CALL_FAST_SLOTS);
-    arq_protocol_set_call_fast_slots(20);
-    TEST_ASSERT_EQUAL_INT(10, ARQ_CALL_FAST_SLOTS);
+    arq_protocol_set_call_fast_slots(8);
+    TEST_ASSERT_EQUAL_INT(4, ARQ_CALL_FAST_SLOTS);
+    arq_protocol_set_call_fast_slots(20);   /* capped: the floor CALL comes no later */
+    TEST_ASSERT_EQUAL_INT(ARQ_CALL_FAST_SLOTS_MAX, ARQ_CALL_FAST_SLOTS);
+    TEST_ASSERT_EQUAL_INT(4, ARQ_CALL_FAST_SLOTS);
     arq_protocol_set_call_fast_slots(3);
     TEST_ASSERT_EQUAL_INT(ARQ_CALL_FAST_SLOTS_DEFAULT, ARQ_CALL_FAST_SLOTS);
     arq_protocol_set_call_fast_slots(0);

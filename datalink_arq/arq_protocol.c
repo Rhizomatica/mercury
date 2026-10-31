@@ -147,6 +147,8 @@ void arq_protocol_set_call_fast_slots(int retries)
     int fast = retries / 2;
     if (retries <= 0 || fast < ARQ_CALL_FAST_SLOTS_DEFAULT)
         fast = ARQ_CALL_FAST_SLOTS_DEFAULT;
+    if (fast > ARQ_CALL_FAST_SLOTS_MAX)
+        fast = ARQ_CALL_FAST_SLOTS_MAX;
     atomic_store(&arq_call_fast_slots, fast);
 }
 

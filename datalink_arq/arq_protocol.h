@@ -164,9 +164,15 @@ typedef struct
  * MFSK lost connects DATAC16 made; MFSK is what connects at -13 dB).  A good
  * link connects exactly as quickly as before. */
 #define ARQ_CALL_FAST_SLOTS_DEFAULT        2
-/* Runtime value: RETRIES N above the default raises it to N/2, so a long
- * retry count buys more fast CALLs (what a scanning BBS hears while it dwells
- * on the channel), not only more slow MFSK steps (#442). */
+/* ...and at most this many, whatever RETRIES says: each fast CALL puts the
+ * first MFSK CALL ~12 s later, and a path only the floor carries connects
+ * that much later (specs/connect: 112 s at 2, ~134 s at 4, 205 s at 10, where
+ * BPQ32 gave up after ~87 s, #442). */
+#define ARQ_CALL_FAST_SLOTS_MAX            4
+/* Runtime value: RETRIES N above the default raises it to N/2, capped at
+ * ARQ_CALL_FAST_SLOTS_MAX, so a long retry count buys more fast CALLs (what a
+ * scanning BBS hears while it dwells on the channel; at any bandwidth), not
+ * only more slow MFSK steps (#442). */
 extern _Atomic int arq_call_fast_slots;
 #define ARQ_CALL_FAST_SLOTS                atomic_load(&arq_call_fast_slots)
 /* Derive the fast CALL count from a RETRIES value (<= 0: the default). */
