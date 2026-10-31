@@ -1117,9 +1117,18 @@ static int keydown_cap_ms(const car_t *c, int lv, uint32_t max_ms)
     return cap > 15 ? 15 : cap < 1 ? 1 : cap;                          /* 4 bits */
 }
 /* The rounds I ask for and send... */
+/* What a keydown holds besides its frames and the gaps between them: the
+ * lead before the first and the tail after the last (kind_len's). */
+static uint32_t kd_frame_extra(const car_t *c) { return 110 + nav_lead(c) + TAIL_MS; }
+static bool capped(const car_t *c) { return c->io.max_keydown_ms && c->io.max_keydown_ms < MAX_KEYDOWN_MS; }
 static int keydown_cap(const car_t *c, int lv)
 {
-    return keydown_cap_ms(c, lv, c->io.max_keydown_ms ? c->io.max_keydown_ms : MAX_KEYDOWN_MS);
+    if (!capped(c)) return keydown_cap_ms(c, lv, MAX_KEYDOWN_MS);
+    /* Held short, the whole keydown fits: its gaps, lead and tail too (a
+     * cap of 16 s keyed 16.05 s, sim cliff:-5 seed 8, #449 review). */
+    int n = keydown_cap_ms(c, lv, c->io.max_keydown_ms);
+    while (n > 1 && round_air(c, lv, n) + kd_frame_extra(c) > c->io.max_keydown_ms) n--;
+    return n;
 }
 /* ...and the longest a peer's may be. */
 static int peer_keydown_cap(const car_t *c, int lv) { return keydown_cap_ms(c, lv, MAX_KEYDOWN_MS); }
@@ -1130,10 +1139,9 @@ static int peer_keydown_cap(const car_t *c, int lv) { return keydown_cap_ms(c, l
  * n as it is. */
 static int behind_ctl_n(const car_t *c, int lv, int n)
 {
-    uint32_t cap = c->io.max_keydown_ms;
-    if (!cap || cap >= MAX_KEYDOWN_MS || n <= 0) return n;
-    int64_t room = (int64_t)cap - (int64_t)(ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) -
-                   CHAIN_GAP_MS;
+    if (!capped(c) || n <= 0) return n;
+    int64_t room = (int64_t)c->io.max_keydown_ms - (int64_t)kd_frame_extra(c) -
+                   (int64_t)(ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) - CHAIN_GAP_MS;
     while (n > 0 && (int64_t)round_air(c, lv, n) > room) n--;
     return n;
 }
