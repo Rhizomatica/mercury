@@ -133,20 +133,23 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
                 cim += t_im * r_re - t_re * r_im;
                 erx += r_re * r_re + r_im * r_im;
             }
-            /* A symbol with no energy scores 0 and fails the floor like any
-             * weak one.  Skipped instead, exact zeros (a muted or dead input)
-             * ruled out no position: every one ran all the symbols and went
-             * to the top K at metric 0 for phase 2, on every hypothesis and
-             * look -- a whole core per listener, and on a Pi 4 the other
-             * listener fell behind and dropped audio (#451).  Any input with
-             * energy searches exactly as before. */
             double denom = sym_energy[k] * erx;
-            double sm = denom > 1e-30 ? (cr * cr + cim * cim) / denom : 0.0;
-            if (sm < per_sym_floor) { rejected = 1; break; }
-            total += sm; valid++;
+            if (denom > 1e-30)
+            {
+                double sm = (cr * cr + cim * cim) / denom;
+                if (sm < per_sym_floor) { rejected = 1; break; }
+                total += sm; valid++;
+            }
         }
-        if (rejected) continue;
-        double metric = (valid > 0) ? total / valid : 0.0;
+        /* No symbol with energy: nothing here to correlate.  Exact digital
+         * zeros (a muted input) made every position such a candidate at
+         * metric 0, filling the top-K, and the refinement below then ran on
+         * all of them, every look and every hypothesis: a whole core per
+         * listener (#451).  A position with any symbol of energy is searched
+         * as before, so a dropout that zero-fills part of a preamble (RTP and
+         * HL2 fill lost packets with zeros) is still found on the rest. */
+        if (rejected || valid == 0) continue;
+        double metric = total / valid;
 
         /* insert into descending top-K */
         if (n_cand < P1_TOP_K || metric > cand[n_cand - 1].metric)
