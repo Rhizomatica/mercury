@@ -34,10 +34,10 @@ int main(int argc, char **argv)
     /* CAR_LIMIT_S: a longer run than the default (the deep fringe is slow). */
     uint64_t limit = getenv("CAR_LIMIT_S") ? (uint64_t)atoll(getenv("CAR_LIMIT_S")) * 1000 : LIMIT_MS;
     carousel_sim_run(seed, argv[2], bidir, limit, &r);
-    printf("seed=%llu chan=%s %s a2b=%zu b2a=%zu integrity=%s done_ms=%llu collisions=%d overruns=%d%s\n",
+    printf("seed=%llu chan=%s %s a2b=%zu b2a=%zu integrity=%s done_ms=%llu collisions=%d overruns=%d kd_max=%.1f/%.1f%s\n",
            (unsigned long long)seed, argv[2], bidir ? "bidir" : "oneway", r.a2b, r.b2a,
            r.intact ? "OK" : "CORRUPT", (unsigned long long)r.done_ms, r.collisions, r.overruns,
-           r.stalled ? " STALLED" : "");
+           r.max_kd_ms[0] / 1000.0, r.max_kd_ms[1] / 1000.0, r.stalled ? " STALLED" : "");
     if (r.msgs) {
         /* delays in order, mean, the slowest, and the air both stations used */
         uint64_t d[CAR_SIM_MSGS], sum = 0;

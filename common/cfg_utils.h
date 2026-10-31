@@ -71,6 +71,7 @@
 #define CFG_KEY_ARQ_RETRY_STAGGER_MS          "arq:retry_stagger_ms"
 #define CFG_KEY_ARQ_SILENCE_FALLBACK_S        "arq:silence_fallback_s"
 #define CFG_KEY_ARQ_MFSK_TX_ONLY              "arq:mfsk_tx_only"
+#define CFG_KEY_ARQ_MAX_KEYDOWN_S             "arq:max_keydown_s"
 #define CFG_KEY_BUSY_DETECT                   "channel:busy_detect"
 #define CFG_KEY_BUSY_THRESHOLD_DB             "channel:busy_threshold_db"
 #define CFG_KEY_BUSY_HYSTERESIS_DB            "channel:busy_hysteresis_db"
@@ -122,6 +123,9 @@ typedef struct {
                                          * Default 150, range 110..600.      */
     bool     mfsk_tx_only;              /* ARQ: transmit MFSK only (FSK-only
                                          * radios).  Default false.          */
+    int      max_keydown_s;             /* ARQ: longest carousel round asked
+                                         * for or sent, in s.  0 (default):
+                                         * the protocol's 30 s; else 5..30.  */
     float    tx_gain_db;            /* Linear-equivalent gain on the modulator
                                     * TX samples, in dB. 0.0 = no change.
                                     * Range -20.0 .. +20.0 (clamped). */

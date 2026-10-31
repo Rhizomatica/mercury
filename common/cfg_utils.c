@@ -70,6 +70,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->silence_fallback_s          = ARQ_SILENCE_FALLBACK_S_DEFAULT;
     cfg->removed_keys                = 0;
     cfg->mfsk_tx_only                = false;
+    cfg->max_keydown_s               = 0;
     cfg->busy_detect                 = false;
     cfg->busy_threshold_db           = 10;
     cfg->busy_hysteresis_db          = 3;
@@ -423,6 +424,9 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     cfg->mfsk_tx_only = (bool) iniparser_getboolean(ini, CFG_KEY_ARQ_MFSK_TX_ONLY,
                                                     cfg->mfsk_tx_only ? 1 : 0);
 
+    i = iniparser_getint(ini, CFG_KEY_ARQ_MAX_KEYDOWN_S, cfg->max_keydown_s);
+    if (i == 0 || (i >= 5 && i <= 30)) cfg->max_keydown_s = i;
+
     cfg->busy_detect = (bool) iniparser_getboolean(ini, CFG_KEY_BUSY_DETECT,
                                                    cfg->busy_detect ? 1 : 0);
 
@@ -572,6 +576,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "retry_stagger_ms = %d\n", cfg->retry_stagger_ms);
     fprintf(f, "silence_fallback_s = %d\n", cfg->silence_fallback_s);
     fprintf(f, "mfsk_tx_only = %s\n", cfg->mfsk_tx_only ? "true" : "false");
+    fprintf(f, "max_keydown_s = %d\n", cfg->max_keydown_s);
 
     fprintf(f, "\n[channel]\n");
     fprintf(f, "busy_detect = %s\n", cfg->busy_detect ? "true" : "false");
