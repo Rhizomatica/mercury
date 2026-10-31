@@ -306,7 +306,7 @@ jobs:
   # want covered.
   build-macos-arm64:
     name: Build macOS arm64 (Apple Silicon)
-    runs-on: macos-14
+    runs-on: macos-15   # arm64; GitHub retires the macos-14 image on 2026-11-02
     if: >-
       github.event_name == 'pull_request' ||
       github.event_name == 'push' ||
