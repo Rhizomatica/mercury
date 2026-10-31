@@ -318,6 +318,13 @@ on a connect.  Setting to 0 reverts to the defaults in
 datalink_arq/arq_protocol.h.  (A connected session's own limits are the
 carousel's; this does not change them.)
 
+It also sets how many CALLs go on the fast control mode (DATAC16) before
+the first MFSK CALL: `RETRIES/2`, at least 2 (the default) and at most 4.
+DATAC16 CALLs are short, so a scanning station is more likely to catch one
+while it is on the frequency, and any listener decodes them whatever its
+bandwidth.  The cap keeps the first MFSK CALL, which a weak path needs, at
+about 47 s (#442).
+
 ```
 RETRIES 10\r
 ```
