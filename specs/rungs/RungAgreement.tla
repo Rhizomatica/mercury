@@ -14,9 +14,10 @@
 (*   rung sets it to that one.  After that, silence means a REQ, on the   *)
 (*   control mode, which S always decodes.                                *)
 (*                                                                         *)
-(*   M's keydown may carry a poll with the round (KD_BOTH: the round on a *)
-(*   rung M has no answer on yet, a probe).  S, decoding the poll but not *)
-(*   the round, answers with a sized poll.  If that answer is lost, M's   *)
+(*   M's keydown may carry a poll with the round (KD_BOTH, on any rung:   *)
+(*   the two-way exchange on tx_level).  The round part may be lost alone, *)
+(*   the poll decoded: S, decoding the poll but not the round, answers    *)
+(*   with a sized poll.  If that answer is lost, M's                      *)
 (*   next decision is made in the receive phase, where the turn passes to *)
 (*   M (m_decide_recv, "turn: mine"): it too goes back to ok_lv once, if  *)
 (*   nothing was heard and the round was on another rung               *)
@@ -37,21 +38,32 @@
 (* each way (a link dead one way is the lost-peer watchdog's: 240 s); a  *)
 (* round on a rung S is not bound to is never decoded.                    *)
 (*                                                                         *)
+(* Why not "rounds in a row": once a round can be lost alone, losses     *)
+(* alone make S miss, ask for the same rung, and M fall back while S      *)
+(* waits above: waste the channel caused, summed over separate losses.    *)
+(* No protocol bounds that, and a reset on any round sent to S's rung    *)
+(* would hide the older faults (prevr).  wf resets at a loss and at a     *)
+(* decoded round.                                                         *)
+(*                                                                         *)
 (* Not modelled: the MFSK floor (patterns, S_FALLBACK_MS), REQs after     *)
 (* which M gives up (the lost-peer watchdog ends the session), and rounds *)
-(* lost in part.                                                          *)
+(* lost in part (a KD_BOTH's round, apart from its poll, aside).                                                        *)
 (*                                                                         *)
 (* Properties:                                                            *)
 (*   Delivered  every message gets through, and M knows it (liveness);    *)
 (*   Agree      whenever M has just heard S, they are on the same rung;   *)
-(*   Wasted     rounds sent where S does not listen, in a row, at most W. *)
+(*   WastedF    rounds sent where S does not listen, since the last loss  *)
+(*              (the channel's), at most W: S re-aligns within W rounds    *)
+(*              once the channel stops losing;                             *)
+(*   FallbacksAgree  M's fall-back rung (ok_lv) is S's (s_prev_lv) while   *)
+(*              S's fall-back is armed.                                    *)
 (***************************************************************************)
 EXTENDS Integers
 
 CONSTANTS Rungs,   \* the rungs above the floor (1..3 is enough)
           N,       \* messages M sends
           L,       \* most keydowns the channel loses in a row
-          W,       \* the bound Wasted checks
+          W,       \* the bound WastedF checks
           OkOnReq, \* TRUE: a poll answering a REQ sets ok_lv too (the code)
           Mutant   \* "none", or one rule broken (to show the model can fail):
                    \*   "noreq":  silence means sending the round again, never a REQ
@@ -64,6 +76,8 @@ CONSTANTS Rungs,   \* the rungs above the floor (1..3 is enough)
                    \*   "norecvfb": the turn passing to M after a KD_BOTH that drew
                    \*             nothing sends on the same rung, without the fall-back
                    \*             (the code before #448)
+                   \*   "reqonly": not a fault, a comparison: after silence, always a REQ,
+                   \*             never a blind round (no waste, one control round trip)
 
 None == 0
 ASSUME None \notin Rungs /\ N \in Nat \ {0} /\ L \in Nat /\ W \in Nat /\ OkOnReq \in BOOLEAN
@@ -83,12 +97,12 @@ VARIABLES
     wArmed,    \* S: the fallback to sPrev is armed
     lossM,     \* the channel: M's keydowns lost in a row
     lossS,     \* ...and S's
-    wasted     \* ghost: rounds in a row on a rung S was not bound to
+    wf         \* ghost: rounds on a rung S was not bound to, since the last loss
 
 vars == <<mTx, okLv, lastLv, fellBack, lastKind, mSent, mDone, mHeard,
-          sBind, sPrev, sHave, wArmed, lossM, lossS, wasted>>
+          sBind, sPrev, sHave, wArmed, lossM, lossS, wf>>
 
-Cap == W + 1                                  \* wasted saturates: a finite model
+Cap == W + 1                                  \* wf saturates: a finite model
 \* clean: a step in which the channel loses nothing (strong fairness below)
 Lossy(lr, clean) == IF clean \/ lr >= L THEN {FALSE} ELSE BOOLEAN
 Max(a, b) == IF a > b THEN a ELSE b
@@ -108,21 +122,24 @@ Init ==
     /\ mTx \in Rungs /\ sBind = mTx
     /\ okLv = -1 /\ lastLv = -1 /\ fellBack = FALSE /\ lastKind = "none"
     /\ mSent = 0 /\ mDone = TRUE /\ mHeard = TRUE
-    /\ sPrev = -1 /\ sHave = 0 /\ wArmed = FALSE /\ lossM = 0 /\ lossS = 0 /\ wasted = 0
+    /\ sPrev = -1 /\ sHave = 0 /\ wArmed = FALSE /\ lossM = 0 /\ lossS = 0 /\ wf = 0
 
 \* M sends message k on rung r (fb: this is the one fall-back to ok_lv), and
 \* S answers in its slot if it decoded the round.  kind "both": a poll rides
 \* with the round, and S, decoding the poll alone, answers with a sized poll.
 Round(k, r, fb, kind, clean) ==
     /\ lastLv' = r /\ lastKind' = kind /\ mSent' = k
-    /\ \E lostM \in Lossy(lossM, clean) :
-        LET decoded == sBind = r /\ ~lostM
+    /\ \E lostM \in Lossy(lossM, clean),
+         lostR \in (IF kind = "both" THEN Lossy(lossM, clean) ELSE {FALSE}) :
+        \* lostM: the keydown (the poll of a "both") lost whole; lostR: the round
+        \* part of a "both" lost alone, the poll decoded
+        LET decoded == sBind = r /\ ~lostM /\ ~lostR
             pollOnly == kind = "both" /\ ~lostM /\ ~decoded
+            \* wf after this round, if S's answer (if any) is not lost
+            Bw == IF lostM \/ lostR \/ decoded THEN 0
+                  ELSE IF sBind # r THEN (IF wf < Cap THEN wf + 1 ELSE Cap) ELSE wf
         IN
-        /\ lossM' = IF lostM THEN lossM + 1 ELSE 0
-        /\ wasted' = IF decoded THEN 0
-                     ELSE IF sBind # r THEN (IF wasted < Cap THEN wasted + 1 ELSE Cap)
-                     ELSE wasted
+        /\ lossM' = IF lostM \/ lostR THEN lossM + 1 ELSE 0
         /\ IF pollOnly THEN
               \* S missed the round, heard the poll: a sized poll for it on rung l
               /\ UNCHANGED <<sHave, sPrev>>
@@ -132,17 +149,17 @@ Round(k, r, fb, kind, clean) ==
                    /\ lossS' = IF lostS THEN lossS + 1 ELSE 0
                    /\ mDone' = FALSE
                    /\ IF lostS THEN
-                         /\ mHeard' = FALSE
+                         /\ wf' = 0 /\ mHeard' = FALSE
                          /\ mTx' = r /\ fellBack' = fb /\ okLv' = okLv
                       ELSE
-                         /\ mHeard' = TRUE /\ fellBack' = FALSE
+                         /\ wf' = Bw /\ mHeard' = TRUE /\ fellBack' = FALSE
                          /\ okLv' = IF OkOnReq THEN r ELSE okLv
                          /\ mTx' = l
            ELSE IF ~decoded THEN
               \* S decoded nothing of M: the fallback, if armed, fires
               /\ sBind' = IF wArmed THEN sPrev ELSE sBind
               /\ wArmed' = FALSE
-              /\ mDone' = FALSE /\ mHeard' = FALSE
+              /\ mDone' = FALSE /\ mHeard' = FALSE /\ wf' = Bw
               /\ lossS' = lossS
               /\ mTx' = r /\ fellBack' = fb
               /\ UNCHANGED <<okLv, sPrev, sHave>>
@@ -153,23 +170,23 @@ Round(k, r, fb, kind, clean) ==
                    /\ sBind' = BindAck(n) /\ sPrev' = PrevAck(n, r)
                    /\ lossS' = IF lostS THEN lossS + 1 ELSE 0
                    /\ IF lostS THEN
-                         /\ mDone' = FALSE /\ mHeard' = FALSE
+                         /\ wf' = 0 /\ mDone' = FALSE /\ mHeard' = FALSE
                          /\ mTx' = r /\ fellBack' = fb /\ okLv' = okLv
                       ELSE
-                         /\ mDone' = TRUE /\ mHeard' = TRUE /\ fellBack' = FALSE
+                         /\ wf' = Bw /\ mDone' = TRUE /\ mHeard' = TRUE /\ fellBack' = FALSE
                          /\ okLv' = IF Takes(n) THEN AckLv(n) ELSE r
                          /\ mTx' = IF Takes(n) THEN AckLv(n) ELSE r
 
 \* M asks S where it stands about message mSent: a control frame, which S
 \* decodes on any rung.
 Req(clean) ==
-    /\ lastKind' = "req" /\ wasted' = wasted
+    /\ lastKind' = "req"
     /\ UNCHANGED <<lastLv, mSent>>
     /\ \E lostM \in Lossy(lossM, clean) :
         IF lostM THEN
            /\ sBind' = IF wArmed THEN sPrev ELSE sBind
            /\ wArmed' = FALSE
-           /\ mHeard' = FALSE /\ lossM' = lossM + 1
+           /\ mHeard' = FALSE /\ lossM' = lossM + 1 /\ wf' = 0
            /\ UNCHANGED <<mTx, okLv, fellBack, mDone, sPrev, sHave, lossS>>
         ELSE
            /\ UNCHANGED sHave /\ lossM' = 0
@@ -179,10 +196,10 @@ Req(clean) ==
                    /\ sBind' = BindAck(n) /\ sPrev' = PrevAck(n, sPrev) /\ wArmed' = FALSE
                    /\ lossS' = IF lostS THEN lossS + 1 ELSE 0
                    /\ IF lostS THEN
-                         /\ mHeard' = FALSE
+                         /\ wf' = 0 /\ mHeard' = FALSE
                          /\ UNCHANGED <<mTx, okLv, fellBack, mDone>>
                       ELSE
-                         /\ mDone' = TRUE /\ mHeard' = TRUE /\ fellBack' = FALSE
+                         /\ wf' = wf /\ mDone' = TRUE /\ mHeard' = TRUE /\ fellBack' = FALSE
                          /\ okLv' = IF Takes(n) THEN AckLv(n)
                                     ELSE IF OkOnReq THEN lastLv ELSE okLv
                          /\ mTx' = IF Takes(n) THEN AckLv(n) ELSE mTx
@@ -194,16 +211,16 @@ Req(clean) ==
                    /\ lossS' = IF lostS THEN lossS + 1 ELSE 0
                    /\ mDone' = FALSE
                    /\ IF lostS THEN
-                         /\ mHeard' = FALSE
+                         /\ wf' = 0 /\ mHeard' = FALSE
                          /\ UNCHANGED <<mTx, okLv, fellBack>>
                       ELSE
-                         /\ mHeard' = TRUE /\ fellBack' = FALSE
+                         /\ wf' = wf /\ mHeard' = TRUE /\ fellBack' = FALSE
                          /\ okLv' = IF OkOnReq THEN lastLv ELSE okLv
                          /\ mTx' = l
 
-\* The keydowns M may make for a round on rung r: a poll rides with it where r
-\* is not yet the rung M has an answer on (a probe).
-Kinds(r) == IF r # okLv THEN {"round", "both"} ELSE {"round"}
+\* The keydowns M may make for a round: with a poll riding on it (KD_BOTH, the
+\* two-way exchange on tx_level: offer_both, m_start_recv, rx_next), on any rung.
+Kinds == {"round", "both"}
 
 \* M can go back to ok_lv: its last round was on another rung, unanswered.
 CanFallBack == okLv # -1 /\ lastLv # okLv /\ ~fellBack
@@ -211,20 +228,21 @@ CanFallBack == okLv # -1 /\ lastLv # okLv /\ ~fellBack
 \* The turn passes to M after a keydown of poll and round that drew nothing:
 \* m_decide_recv, not m_decide_send.  With #448 it too goes back to ok_lv once.
 TurnMine(clean) ==
-    IF Mutant # "norecvfb" /\ CanFallBack
+    IF Mutant = "reqonly" THEN Req(clean)
+    ELSE IF Mutant # "norecvfb" /\ CanFallBack
     THEN Round(mSent, okLv, TRUE, "round", clean)
     ELSE Round(mSent, mTx, fellBack, "round", clean)
 
 \* M's decision, as m_decide_send and m_decide_recv make it.
 MStep(clean) ==
     \/ /\ mDone /\ mSent < N                    \* the next message
-       /\ \E kd \in Kinds(mTx) : Round(mSent + 1, mTx, fellBack, kd, clean)
+       /\ \E kd \in Kinds : Round(mSent + 1, mTx, fellBack, kd, clean)
     \/ /\ ~mDone /\ mHeard                      \* S polled for it: send it there
-       /\ \E kd \in Kinds(mTx) : Round(mSent, mTx, fellBack, kd, clean)
+       /\ \E kd \in Kinds : Round(mSent, mTx, fellBack, kd, clean)
     \/ /\ ~mDone /\ ~mHeard                     \* silence
        /\ IF Mutant = "noreq" THEN Round(mSent, mTx, fellBack, "round", clean)
           ELSE IF lastKind = "both" THEN (Req(clean) \/ TurnMine(clean))
-          ELSE IF lastKind = "round" /\ CanFallBack
+          ELSE IF lastKind = "round" /\ CanFallBack /\ Mutant # "reqonly"
           THEN Round(mSent, okLv, TRUE, "round", clean)
           ELSE Req(clean)
 MNext == MStep(FALSE)
@@ -248,10 +266,12 @@ TypeOK ==
     /\ mTx \in Rungs /\ sBind \in Rungs /\ lastKind \in {"none", "round", "both", "req"}
     /\ okLv \in Rungs \cup {-1} /\ lastLv \in Rungs \cup {-1} /\ sPrev \in Rungs \cup {-1}
     /\ mSent \in 0 .. N /\ sHave \in 0 .. N /\ lossM \in 0 .. L /\ lossS \in 0 .. L
-    /\ wasted \in 0 .. Cap
+    /\ wf \in 0 .. Cap
 Delivered == <>Finished
 Agree == mHeard => mTx = sBind
-Wasted == wasted <= W
-\* the finite model: wasted saturates at Cap (TLC needs a bound for liveness)
-Bounded == wasted <= Cap
+\* Bounded recovery: once the channel stops losing, M's rounds go where S
+\* listens within W of them.
+WastedF == wf <= W
+\* M's fall-back (ok_lv) and S's (s_prev_lv) name the same rung.
+FallbacksAgree == (wArmed /\ okLv # -1) => sPrev = okLv
 =============================================================================
