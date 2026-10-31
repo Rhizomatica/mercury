@@ -9,8 +9,9 @@
 #include "hermes_log.h"
 
 #ifdef _WIN32
-/* Windows gmtime_s has reversed argument order from POSIX gmtime_r */
+/* Windows gmtime_s/localtime_s have reversed argument order from POSIX */
 #define gmtime_r(timep, result) gmtime_s((result), (timep))
+#define localtime_r(timep, result) localtime_s((result), (timep))
 #endif
 
 #include <errno.h>
@@ -87,6 +88,27 @@ static hermes_log_state_t g_log = {
     .min_level     = HERMES_LOG_LEVEL_INFO,
     .effective_min = HERMES_LOG_LEVEL_INFO,
 };
+
+/* Text timestamps in UTC (with a Z) or local time (the default): main:log_utc. */
+static atomic_bool g_log_utc = false;
+
+void hermes_log_set_utc(bool utc) { atomic_store(&g_log_utc, utc); }
+bool hermes_log_utc(void) { return atomic_load(&g_log_utc); }
+
+/* "YYYY-MM-DD hh:mm:ss.mmm", and a Z when UTC. */
+static void format_stamp(char *buf, size_t len, const struct timespec *ts)
+{
+    struct tm tmv;
+    time_t sec = ts->tv_sec;
+    bool utc = hermes_log_utc();
+    if (utc)
+        gmtime_r(&sec, &tmv);
+    else
+        localtime_r(&sec, &tmv);
+    snprintf(buf, len, "%04d-%02d-%02d %02d:%02d:%02d.%03ld%s",
+             tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+             tmv.tm_hour, tmv.tm_min, tmv.tm_sec, ts->tv_nsec / 1000000L, utc ? "Z" : "");
+}
 
 /* ---- internal helpers ---- */
 
@@ -173,15 +195,9 @@ static void write_entry_file(const hermes_log_entry_t *entry)
     }
     else
     {
-        struct tm tmv;
-        char tsbuf[32];
+        char tsbuf[96];   /* room for the widest the format can produce */
         char upbuf[20];
-        time_t sec = entry->ts.tv_sec;
-        long   ms  = entry->ts.tv_nsec / 1000000L;
-        gmtime_r(&sec, &tmv);   /* UTC, as BPQ32 and most station logs keep it */
-        snprintf(tsbuf, sizeof(tsbuf), "%04d-%02d-%02d %02d:%02d:%02d.%03ldZ",
-                 tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
-                 tmv.tm_hour, tmv.tm_min, tmv.tm_sec, ms);
+        format_stamp(tsbuf, sizeof(tsbuf), &entry->ts);
         snprintf(upbuf, sizeof(upbuf), "[+%u.%03us]",
                  entry->uptime_ms / 1000, entry->uptime_ms % 1000);
         fprintf(fp, "%s %s [%s] [%s] %s\n",
@@ -198,15 +214,9 @@ static void print_entry(const hermes_log_entry_t *entry)
 
     if (entry->to_stderr)
     {
-        struct tm tmv;
-        char tsbuf[32];
+        char tsbuf[96];   /* room for the widest the format can produce */
         char upbuf[20];
-        time_t sec = entry->ts.tv_sec;
-        long   ms  = entry->ts.tv_nsec / 1000000L;
-        gmtime_r(&sec, &tmv);   /* UTC, as BPQ32 and most station logs keep it */
-        snprintf(tsbuf, sizeof(tsbuf), "%04d-%02d-%02d %02d:%02d:%02d.%03ldZ",
-                 tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
-                 tmv.tm_hour, tmv.tm_min, tmv.tm_sec, ms);
+        format_stamp(tsbuf, sizeof(tsbuf), &entry->ts);
         snprintf(upbuf, sizeof(upbuf), "[+%u.%03us]",
                  entry->uptime_ms / 1000, entry->uptime_ms % 1000);
 

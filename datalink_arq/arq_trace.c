@@ -92,10 +92,14 @@ void arq_trace_dump(const char *why)
         time_t    sec = (time_t)(w / 1000);
         struct tm tmv;
         char      hhmmss[16];
-        gmtime_r(&sec, &tmv);   /* UTC, as the log's own timestamps */
+        bool utc = hermes_log_utc();   /* as the log's own timestamps */
+        if (utc)
+            gmtime_r(&sec, &tmv);
+        else
+            localtime_r(&sec, &tmv);
         strftime(hhmmss, sizeof(hhmmss), "%H:%M:%S", &tmv);
-        HLOGI("arq-trace", "TRACE %s.%03dZ %8.3f %s a=%3u b=%3u x=%u",
-              hhmmss, (int)(w % 1000),
+        HLOGI("arq-trace", "TRACE %s.%03d%s %8.3f %s a=%3u b=%3u x=%u",
+              hhmmss, (int)(w % 1000), utc ? "Z" : "",
               (double)(g_tr[i].t_ms - g_tr_t0) / 1000.0,
               kind_name(g_tr[i].kind), g_tr[i].a, g_tr[i].b, g_tr[i].extra);
     }

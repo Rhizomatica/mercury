@@ -29,6 +29,9 @@ typedef enum
 int  hermes_log_init(size_t capacity);
 void hermes_log_shutdown(void);
 void hermes_log_set_level(hermes_log_level_t level);
+/* Text log timestamps in UTC, with a Z suffix (default: local time). */
+void hermes_log_set_utc(bool utc);
+bool hermes_log_utc(void);
 void hermes_log_set_component_level(const char *component, hermes_log_level_t level);
 
 /**

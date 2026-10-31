@@ -529,6 +529,7 @@ int mercury_cli_run_ptt_test(const mercury_cli_t *cli)
     if (!cli || cli->action != MERCURY_CLI_TEST_PTT)
         return -1;
 
+    hermes_log_set_utc(cli->cfg.log_utc);
     bool log_ready = (hermes_log_init(256) == 0);
     if (log_ready)
         hermes_log_set_level(cli->cfg.trace ? HERMES_LOG_LEVEL_TRACE
