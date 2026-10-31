@@ -36,6 +36,31 @@ func TestMercuryARQDisconnectReachesFloorPeer(t *testing.T) {
 	TestMercuryARQTransfer(t)
 }
 
+// A caller and a callee at different bandwidths find each other on the MFSK
+// CALL: B listens only after A's fast DATAC16 CALLs, so the connect has to go
+// on A's MFSK CALL -- the floor of A's bandwidth, which B decodes only if it
+// listens on both floors (#442: K7EK at BW2750 calling KG9NI at BW500, whose
+// four MFSK CALLs went unheard).  B answers on the CALL's carrier.
+func TestMercuryARQConnectWideCallerNarrowCallee(t *testing.T) {
+	t.Setenv("MERCURY_TEST_BW_A", "2750")
+	t.Setenv("MERCURY_TEST_BW_B", "500")
+	t.Setenv("MERCURY_TEST_LISTEN_DELAY_S", "18")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "64")
+	t.Setenv("MERCURY_TEST_EXPECT_LOG_B", "ACCEPT on the MFSK floor")
+	TestMercuryARQTransfer(t)
+}
+
+// The other way round: a BW500 caller's MFSK CALL is the 500 Hz floor, which
+// a BW2300 listener decodes only if it listens on both floors.
+func TestMercuryARQConnectNarrowCallerWideCallee(t *testing.T) {
+	t.Setenv("MERCURY_TEST_BW_A", "500")
+	t.Setenv("MERCURY_TEST_BW_B", "2300")
+	t.Setenv("MERCURY_TEST_LISTEN_DELAY_S", "18")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "64")
+	t.Setenv("MERCURY_TEST_EXPECT_LOG_B", "ACCEPT on the MFSK floor")
+	TestMercuryARQTransfer(t)
+}
+
 func TestMercuryARQTransfer(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
@@ -240,6 +265,15 @@ func TestMercuryARQTransfer(t *testing.T) {
 	if bw := os.Getenv("MERCURY_TEST_BW"); bw != "" {
 		setup = append(setup, setupCmd{connA, rwA, "BW" + bw, ""}, setupCmd{connB, rwB, "BW" + bw, ""})
 	}
+	// MERCURY_TEST_BW_A / MERCURY_TEST_BW_B: one station's bandwidth, over
+	// MERCURY_TEST_BW -- stations configured differently, as on air (#442:
+	// a BW2750 caller, a BW500 callee).
+	if bw := os.Getenv("MERCURY_TEST_BW_A"); bw != "" {
+		setup = append(setup, setupCmd{connA, rwA, "BW" + bw, ""})
+	}
+	if bw := os.Getenv("MERCURY_TEST_BW_B"); bw != "" {
+		setup = append(setup, setupCmd{connB, rwB, "BW" + bw, ""})
+	}
 	// MERCURY_TEST_LISTEN_DELAY_S=<s>: B starts listening that long after A's
 	// CONNECT, so A's fast CALLs go unheard and the connect goes on MFSK on a
 	// channel where the control mode works (a busy or late callee).
@@ -341,6 +375,19 @@ func TestMercuryARQTransfer(t *testing.T) {
 		failWithLogs("no CONNECTED notification within deadline")
 	}
 	t.Logf("CONNECTED after %.1f s", time.Since(tConnect).Seconds())
+	// MERCURY_TEST_EXPECT_LOG_B=<text>: B's log must say it (how the connect
+	// went, e.g. on which carrier B answered).  The async logger writes it
+	// within a moment of the event.
+	if want := os.Getenv("MERCURY_TEST_EXPECT_LOG_B"); want != "" {
+		found := false
+		for end := time.Now().Add(2 * time.Second); time.Now().Before(end) && !found; time.Sleep(100 * time.Millisecond) {
+			b, _ := os.ReadFile(timingLogs["B"])
+			found = strings.Contains(string(b), want)
+		}
+		if !found {
+			failWithLogs("B's log never said %q", want)
+		}
+	}
 	_ = connA.SetReadDeadline(time.Time{})
 	if err := <-listenErr; err != nil {
 		failWithLogs("B's delayed LISTEN ON: %v", err)

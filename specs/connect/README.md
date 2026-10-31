@@ -83,6 +83,12 @@ Results:
 
 ## ConnectCarrier
 
+The floor is one carrier here: the callee decodes the caller's floor CALLs
+whatever their bandwidths (as `ConnectHandshake` takes any CALL, its
+bandwidth folded into `Bws`).  The code matches that since the MFSK call
+listener decodes both floors (#442); before, a BW500 listener missed a wider
+caller's MFSK CALLs, and only its DATAC16 ones reached it.
+
     java -cp /opt/TLA+Toolbox/tla2tools.jar tlc2.TLC -workers 4 -deadlock \
         -metadir /tmp/tlc-carrier -config ConnectCarrier.cfg ConnectCarrier.tla
 
