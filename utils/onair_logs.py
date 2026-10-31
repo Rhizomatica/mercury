@@ -18,7 +18,7 @@ import re
 import statistics
 import sys
 
-STAMP = re.compile(r'(\d\d):(\d\d):(\d\d\.\d+) \[\+[0-9.]+s\] \[(\w+)\] \[([\w-]+)\] (.*)')
+STAMP = re.compile(r'(\d\d):(\d\d):(\d\d\.\d+)Z? \[\+[0-9.]+s\] \[(\w+)\] \[([\w-]+)\] (.*)')
 
 
 def lines(path):

@@ -50,6 +50,7 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_EQUAL_INT(1500, c.busy_hang_ms);
     TEST_ASSERT_FALSE(c.verbose);
     TEST_ASSERT_FALSE(c.trace);
+    TEST_ASSERT_FALSE(c.log_utc);   /* local time unless asked */
 }
 
 /* Set non-default values, write, read back, assert preserved. */
@@ -482,9 +483,23 @@ void test_trace_roundtrips(void)
     TEST_ASSERT_TRUE(r.verbose);
 }
 
+/* main:log_utc round-trips through the INI. */
+void test_log_utc_roundtrips(void)
+{
+    mercury_config w, r;
+    cfg_set_defaults(&w);
+    w.log_utc = true;
+    TEST_ASSERT_TRUE(cfg_write(&w, TMP));
+
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_TRUE(r.log_utc);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_log_utc_roundtrips);
     RUN_TEST(test_defaults_match_constants);
     RUN_TEST(test_tls_cert_paths_default_to_the_system_locations);
     RUN_TEST(test_tls_settings_roundtrip);

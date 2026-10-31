@@ -286,6 +286,7 @@ int main(int argc, char *argv[])
 
     /* Bring up the logger before engine init so the banner/printf context and
      * the engine's own startup logs share one destination. */
+    hermes_log_set_utc(cli.cfg.log_utc);
     if (hermes_log_init(1024) == 0)
     {
         hermes_log_level_t min_level = cli.cfg.trace ? HERMES_LOG_LEVEL_TRACE

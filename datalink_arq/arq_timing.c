@@ -58,6 +58,12 @@ void arq_timing_record_connect(arq_timing_ctx_t *ctx, int mode)
     HLOGT(LOG_COMP, "connect mode=%s", mode_name(mode));
 }
 
+void arq_timing_record_turn(int frames, int64_t since_rx_ms, int64_t since_tx_end_ms)
+{
+    HLOGT(LOG_COMP, "turn frames=%d since_rx=%lldms since_tx_end=%lldms",
+          frames, (long long)since_rx_ms, (long long)since_tx_end_ms);
+}
+
 void arq_timing_record_disconnect(arq_timing_ctx_t *ctx, const char *reason)
 {
     HLOGT(LOG_COMP,
