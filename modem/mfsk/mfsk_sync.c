@@ -133,13 +133,17 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
                 cim += t_im * r_re - t_re * r_im;
                 erx += r_re * r_re + r_im * r_im;
             }
+            /* A symbol with no energy scores 0 and fails the floor like any
+             * weak one.  Skipped instead, exact zeros (a muted or dead input)
+             * ruled out no position: every one ran all the symbols and went
+             * to the top K at metric 0 for phase 2, on every hypothesis and
+             * look -- a whole core per listener, and on a Pi 4 the other
+             * listener fell behind and dropped audio (#451).  Any input with
+             * energy searches exactly as before. */
             double denom = sym_energy[k] * erx;
-            if (denom > 1e-30)
-            {
-                double sm = (cr * cr + cim * cim) / denom;
-                if (sm < per_sym_floor) { rejected = 1; break; }
-                total += sm; valid++;
-            }
+            double sm = denom > 1e-30 ? (cr * cr + cim * cim) / denom : 0.0;
+            if (sm < per_sym_floor) { rejected = 1; break; }
+            total += sm; valid++;
         }
         if (rejected) continue;
         double metric = (valid > 0) ? total / valid : 0.0;
