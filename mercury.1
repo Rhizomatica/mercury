@@ -386,6 +386,7 @@ ptt:hamlib_serial_speed	0	Serial baud rate (0=Hamlib default)
 ptt:hamlib_log_level	0	Hamlib debug level (0\-6)
 arq:disconnect_drain_timeout_s	45	Cap on draining after DISCONNECT
 arq:retry_stagger_ms	2000	Retry offset between the two peers
+arq:silence_fallback_s	150	Silence before control drops to the MFSK floor (110\-600); lower is faster when a channel drops, slower on multipath
 audio:tx_gain_db	0.0	Modulator gain
 audio:tx_delay_ms	10	Delay from PTT on to audio
 channel:busy_detect	false	Channel-busy (BUSY ON/OFF) detector

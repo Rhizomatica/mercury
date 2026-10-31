@@ -98,6 +98,34 @@ fallback) does not take a fallen-back S off the floor.
 - `FloorSilence.cfg`: the code's rules.  `Delivered` and `FloorHolds`
   hold: no error, 696 distinct states; also for every `FM`, `FS` in 1..3
   (436-1184 states).
+- `arq:silence_fallback_s` (#442) sets `SILENT_MS`, 110..600 s, and
+  `S_FALLBACK_MS` follows at 60 %.  The model counts both in exchanges, so
+  the range has to map to whole exchanges:
+  - **Low end.**  An exchange, as S sees it, is the gap between two keydowns
+    of M's it decodes.  The longest on a working link is ~61 s: BW500 at the
+    floor, S's answer a full floor round (27.6 s), then M's MFSK500 control
+    (27.6 s), the guards (0.9 s, 0.7 s) and MFSK's decode (4.5 s).  Above the
+    floor it is shorter (a 31.6 s round answered by a 4 s control).  So
+    `S_FALLBACK_MS` >= 61 s, `SILENT_MS` >= 102 s: the minimum is 110 s
+    (S 66 s), and both timers are at least one exchange (`FM`, `FS` >= 1).
+    Below that S fell back between the exchanges of a link that was
+    answering, which an exchange-counted model cannot express; the timed
+    model (`specs/turns`) would be needed to say what that costs.
+  - **High end.**  The shortest exchange is DATAC16 both ways: two 4 s
+    control keydowns and the guards, ~9.7 s (on air ~10 s, #442).  600 s is
+    then at most `FM` = 62 and `FS` (360 s) = 37.
+  - Checked: `Delivered` and `FloorHolds` hold for **every** `FM` in 1..62
+    and `FS` in 1..37 (2294 runs, 436-31415 distinct states).  The four
+    mutants still fail at `FM` = 62, `FS` = 37 (`nosilence`, `nostay`,
+    `noread`: `Delivered`; `lagread`: `FloorHolds`), so the large counts do
+    not make the properties hold vacuously.
+  - Every pair is checked, not only `FS` = 60 % of `FM`, so the check also
+    covers two stations configured differently: M's `SILENT_MS` comes from
+    its own ini, S's `S_FALLBACK_MS` from its own.
+  - Not modelled: M's shortcut after two unanswered REQs
+    (`car_on_tx_done`: `reqs >= 2 ? S_FALLBACK_MS : SILENT_MS`), which takes
+    M to the floor after its own `S_FALLBACK_MS`.  It only moves M there
+    earlier, a smaller `FM`, which is inside the checked range.
 - `Mut_fs_nosilence.cfg`: M never takes the control mode to be out.
   Violates `Delivered`: down for good, M's DATAC16 control is never heard.
 - `Mut_fs_nostay.cfg`: the round timer takes S off the floor it fell back

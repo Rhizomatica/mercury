@@ -67,6 +67,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->tx_gain_db            = 0.0f;
     cfg->tx_delay_ms           = 10;
     cfg->retry_stagger_ms            = ARQ_RETRY_STAGGER_MS_DEFAULT;
+    cfg->silence_fallback_s          = ARQ_SILENCE_FALLBACK_S_DEFAULT;
     cfg->removed_keys                = 0;
     cfg->mfsk_tx_only                = false;
     cfg->busy_detect                 = false;
@@ -415,6 +416,10 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_ARQ_RETRY_STAGGER_MS, cfg->retry_stagger_ms);
     if (i >= 0 && i <= ARQ_RETRY_STAGGER_MS_MAX) cfg->retry_stagger_ms = i;
 
+    i = iniparser_getint(ini, CFG_KEY_ARQ_SILENCE_FALLBACK_S, cfg->silence_fallback_s);
+    if (i >= ARQ_SILENCE_FALLBACK_S_MIN && i <= ARQ_SILENCE_FALLBACK_S_MAX)
+        cfg->silence_fallback_s = i;
+
     cfg->mfsk_tx_only = (bool) iniparser_getboolean(ini, CFG_KEY_ARQ_MFSK_TX_ONLY,
                                                     cfg->mfsk_tx_only ? 1 : 0);
 
@@ -565,6 +570,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "\n[arq]\n");
     fprintf(f, "disconnect_drain_timeout_s = %d\n", cfg->disconnect_drain_timeout_s);
     fprintf(f, "retry_stagger_ms = %d\n", cfg->retry_stagger_ms);
+    fprintf(f, "silence_fallback_s = %d\n", cfg->silence_fallback_s);
     fprintf(f, "mfsk_tx_only = %s\n", cfg->mfsk_tx_only ? "true" : "false");
 
     fprintf(f, "\n[channel]\n");

@@ -4,6 +4,7 @@
  *   carousel_bench <seed> <channel> [bidir]      (channel as in ab_bench)
  *
  *   CAR_TRACE=1  print every keydown
+ *   SILENCE_S=n  arq:silence_fallback_s (default 150)
  *   SIM_STATS=1  frames and airtime per mode
  *   CAR_CHAT, CAR_SCRIPT, CAR_KBD, CAR_PACE   application traffic (carousel_sim.c);
  *                each message's delay, written to delivered, is reported
@@ -12,6 +13,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "carousel_sim.h"
+#include "arq_protocol.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +29,8 @@ int main(int argc, char **argv)
     uint64_t seed = (uint64_t)atoll(argv[1]);
     bool bidir = argc > 3 && !strcmp(argv[3], "bidir");
     car_sim_result_t r;
+    /* SILENCE_S: arq:silence_fallback_s for this run (#442). */
+    if (getenv("SILENCE_S")) arq_protocol_set_silence_fallback_s(atoi(getenv("SILENCE_S")));
     /* CAR_LIMIT_S: a longer run than the default (the deep fringe is slow). */
     uint64_t limit = getenv("CAR_LIMIT_S") ? (uint64_t)atoll(getenv("CAR_LIMIT_S")) * 1000 : LIMIT_MS;
     carousel_sim_run(seed, argv[2], bidir, limit, &r);

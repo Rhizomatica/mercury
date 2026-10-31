@@ -20,6 +20,7 @@
 
 #include "freedv_api.h"
 #include "arq.h"
+#include "arq_protocol.h"
 #include "modem.h"
 #include "broadcast.h"
 #include "defines_modem.h"
@@ -186,6 +187,7 @@ int mercury_engine_init(const mercury_config *cfg,
     /* ---- ARQ tuning ---- */
     arq_set_disconnect_drain_timeout_s(cfg->disconnect_drain_timeout_s);
     arq_set_retry_stagger_ms(cfg->retry_stagger_ms);
+    arq_protocol_set_silence_fallback_s(cfg->silence_fallback_s);
     arq_set_tx_mfsk_only(cfg->mfsk_tx_only);
     modem_set_tx_gain(powf(10.0f, cfg->tx_gain_db / 20.0f));
     modem_set_tx_delay_ms(cfg->tx_delay_ms);

@@ -199,6 +199,25 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_RETRY_STAGGER_MS_MAX     5000
 extern _Atomic int arq_retry_stagger_ms;
 
+/* How long a session hears nothing before its control moves to the MFSK floor
+ * (the carousel's SILENT_MS), in seconds.  The receiver's own wait for the
+ * floor (S_FALLBACK_MS) is 60 % of it.  Default 150 (so 90), range 110..600.
+ * Shorter reacts faster to QRM but moved multipath links to a floor they did
+ * not need in the sim (#442); see carousel.c.
+ *
+ * The minimum keeps each timer at least one exchange long, which is what
+ * specs/rungs/FloorSilence.tla counts them in (specs/rungs/README.md): the
+ * longest gap between two keydowns of M's that S decodes, on a working link,
+ * is ~61 s (BW500 at the floor: S's 27.6 s round, M's 27.6 s MFSK control,
+ * the guards and MFSK's 4.5 s decode), so S_FALLBACK_MS >= 61 s and
+ * SILENT_MS >= 102 s; 110 leaves a margin.  Shorter, S fell back between the
+ * exchanges of a link that was answering. */
+#define ARQ_SILENCE_FALLBACK_S_DEFAULT 150
+#define ARQ_SILENCE_FALLBACK_S_MIN     110
+#define ARQ_SILENCE_FALLBACK_S_MAX     600
+extern _Atomic int arq_silence_fallback_s;
+void arq_protocol_set_silence_fallback_s(int seconds);
+
 /* Deterministic per-node retry rank from the exchanged callsign pair.
  * strcmp() is antisymmetric, so the two peers always disagree: one returns 0
  * (send first) and the other 1 (defer).  Returns -1 when the pair is
