@@ -528,8 +528,11 @@ finishes, which matches the lifecycle expected by VARA clients such as varim.
 
 varim also sends `ABORT` when `PTT ON` lasts about 20 s with no `PTT OFF`,
 whatever else the TNC says meanwhile (#445).  A carousel round can be one
-keydown of 25-30 s; set `[arq] max_keydown_s = 16` on a station that runs
-varim.
+keydown of 25-30 s; set `[arq] max_keydown_s = 16` on every station that
+runs varim.  It holds each of that station's keydowns, a poll before a round
+included, to 16 s; a peer without it can still key longer.  The BW500
+floor's single MFSK frame is 27 s and is never split, so varim may still
+abort a BW500 session that falls to its floor.
 
 ### CONNECTED
 
