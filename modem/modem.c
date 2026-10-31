@@ -2891,8 +2891,9 @@ void *rx_thread(void *g_modem)
      * after its fast DATAC16 CALLs (ARQ_CALL_FAST_SLOTS); without these a
      * station that was only listening could not decode those CALLs at all --
      * its payload decoder sits on the listen (-m) mode and its control decoder
-     * on DATAC16.  They cost two more decoders while idle, nothing during a
-     * session.
+     * on DATAC16.  They cost two more decoders while listening; during a
+     * session they are not fed, but each still takes ~0.6 % of a Pi 4 core
+     * (as the one listener did alone).
      *
      * One decodes the floor of the station's own bandwidth (the 500 Hz one at
      * BW500), the other the other floor: a caller escalates to the floor of
