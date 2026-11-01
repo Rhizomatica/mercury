@@ -66,14 +66,18 @@ Everything at the floor follows the session's floor: data rounds, control
 to a control-deaf peer, the session's DISCONNECT, ACK/BREAK patterns and
 NAV headers (`arq_floor_mode`, `car_set_floor_mode`,
 `mfsk_pattern_set_geometry`).  A caller escalates its CALLs to the floor of
-its own bandwidth, and the MFSK call listener decodes the floor of the
-station's own: a BW500 station hears a 2300 caller's MFSK CALLs only through
-a filter wide enough for them, which is the point.  A floor keydown holds
-one frame (`MAX_KEYDOWN_MS` 30 s).  The narrow floor's decoder searches at
-2 kHz and reads the payload at 8 kHz, so a listening station spends less
-than on the 1 kHz floor (0.34 % against 0.5-0.6 % of an x86 core) and a
-decode about 0.25 s longer on a Pi 4 (0.4 s against 0.16 s), inside the
-floor's 4.5 s decode allowance.
+its own bandwidth, and a listening station decodes both floors, its own and
+the other: stations are configured apart (on air, #442: a BW2750 caller and
+a BW500 listener; its four MFSK CALLs went unheard, and the session came up
+on a DATAC16 CALL 217 s in).  The callee answers on the CALL's floor, where
+the caller listens, and the session then runs at the lower bandwidth, on
+its floor.  A BW500 station still hears a 2300 caller's 1 kHz CALLs only
+through a filter wide enough for them; the narrow CALL passes any filter.
+A floor keydown holds one frame (`MAX_KEYDOWN_MS` 30 s).  The narrow floor's
+decoder searches at 2 kHz and reads the payload at 8 kHz, so it costs less
+than the 1 kHz one (0.34 % against 0.5-0.6 % of an x86 core; a listening
+station runs both) and a decode about 0.25 s longer on a Pi 4 (0.4 s
+against 0.16 s), inside the floor's 4.5 s decode allowance.
 
 **The turn.**  The receiver takes it with a HANDOVER poll that announces its
 own first round, sent in the same keydown; the peer's control decoder reads

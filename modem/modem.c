@@ -2849,7 +2849,7 @@ void *rx_thread(void *g_modem)
     /* One worker per plane.  rx_thread keeps ownership of reading
      * capture_buffer, the flush policy and the spectrum/busy work; the workers
      * only decode. */
-    static rx_worker_t w_ctrl, w_pay, w_listen;
+    static rx_worker_t w_ctrl, w_pay, w_listen, w_listen_alt;
     int ctrl_was_sync = 0, pay_was_sync = 0;   /* for preamble edges (arq_note_rx_preamble) */
     /* Pattern-ACK window, and whether an ACK was due on the previous chunk
      * (its rising edge resets the window; see the detector below). */
@@ -2860,9 +2860,11 @@ void *rx_thread(void *g_modem)
     memset(&w_ctrl, 0, sizeof(w_ctrl));
     memset(&w_pay,  0, sizeof(w_pay));
     memset(&w_listen, 0, sizeof(w_listen));
+    memset(&w_listen_alt, 0, sizeof(w_listen_alt));
     pthread_mutex_init(&w_ctrl.mlock, NULL);
     pthread_mutex_init(&w_pay.mlock,  NULL);
     pthread_mutex_init(&w_listen.mlock, NULL);
+    pthread_mutex_init(&w_listen_alt.mlock, NULL);
     w_pay.takes_payload_resync = true;
     /* Two seconds of 8 kHz int16 per plane: the same order as the capture
      * backlog cap, so a stalled worker is bounded by its own ring rather than
@@ -2871,7 +2873,8 @@ void *rx_thread(void *g_modem)
     w_ctrl.ring = circular_buf_init((uint8_t *)malloc(ring_bytes), ring_bytes);
     w_pay.ring  = circular_buf_init((uint8_t *)malloc(ring_bytes), ring_bytes);
     w_listen.ring = circular_buf_init((uint8_t *)malloc(ring_bytes), ring_bytes);
-    if (!w_ctrl.ring || !w_pay.ring || !w_listen.ring)
+    w_listen_alt.ring = circular_buf_init((uint8_t *)malloc(ring_bytes), ring_bytes);
+    if (!w_ctrl.ring || !w_pay.ring || !w_listen.ring || !w_listen_alt.ring)
     {
         HLOGE("modem-rx", "could not allocate decoder rings; RX disabled");
         return NULL;
@@ -2883,16 +2886,28 @@ void *rx_thread(void *g_modem)
     pthread_create(&w_ctrl.tid, NULL, rx_worker_thread, &w_ctrl);
     pthread_create(&w_pay.tid,  NULL, rx_worker_thread, &w_pay);
 
-    /* Third worker: MFSK, fed only while LISTENING with the payload plane on
-     * another mode.  A caller escalates to the MFSK floor after its fast
-     * DATAC16 CALLs (ARQ_CALL_FAST_SLOTS); without this a station that was
-     * only listening could not decode those CALLs at all -- its payload
-     * decoder sits on the listen (-m) mode and its control decoder on DATAC16.
-     * It costs one more decoder while idle, nothing during a session.  It
-     * decodes the floor of the station's own bandwidth (the 500 Hz one at
-     * BW500), which is what a caller at that bandwidth escalates to; both
-     * instances are open, one is fed. */
+    /* Third and fourth workers: MFSK, fed only while LISTENING with the
+     * payload plane on another mode.  A caller escalates to the MFSK floor
+     * after its fast DATAC16 CALLs (ARQ_CALL_FAST_SLOTS); without these a
+     * station that was only listening could not decode those CALLs at all --
+     * its payload decoder sits on the listen (-m) mode and its control decoder
+     * on DATAC16.  They cost two more decoders while listening; during a
+     * session they are not fed, but each still takes ~0.6 % of a Pi 4 core
+     * (as the one listener did alone).
+     *
+     * One decodes the floor of the station's own bandwidth (the 500 Hz one at
+     * BW500), the other the other floor: a caller escalates to the floor of
+     * ITS bandwidth, which need not be ours.  With only our own, a BW500
+     * listener never heard a BW2750 caller's MFSK CALLs, nor a BW2300 one a
+     * BW500 caller's (#442: K7EK at 2750 calling KG9NI at 500, four MFSK
+     * CALLs unheard; the session was found on a DATAC16 one).  The callee
+     * answers on the CALL's own carrier (accept_carrier), which the caller
+     * listens on, and the session then runs at the lower bandwidth.  Each
+     * worker has both instances open; its mode picks the one it feeds. */
+    rx_worker_t *listeners[2] = { &w_listen, &w_listen_alt };
+    for (int l = 0; l < 2; l++)
     {
+        rx_worker_t *w = listeners[l];
         const modem_backend_t *be = backend_for_mode(MERCURY_MODE_MFSK);
         void *ctx = be ? be->open(MERCURY_MODE_MFSK) : NULL;
         void *nctx = ctx ? be->open(MERCURY_MODE_MFSK_N32) : NULL;
@@ -2900,24 +2915,25 @@ void *rx_thread(void *g_modem)
         {
             if (be->configure)
                 be->configure(nctx, 1, 0);
-            w_listen.own_narrow.be  = be;
-            w_listen.own_narrow.ctx = nctx;
+            w->own_narrow.be  = be;
+            w->own_narrow.ctx = nctx;
         }
         if (ctx)
         {
             if (be->configure)
                 be->configure(ctx, 1, 0);
-            w_listen.own_codec.be  = be;
-            w_listen.own_codec.ctx = ctx;
-            atomic_store(&w_listen.mode, MERCURY_MODE_MFSK);
-            atomic_store(&w_listen.running, true);
-            pthread_create(&w_listen.tid, NULL, rx_worker_thread, &w_listen);
+            w->own_codec.be  = be;
+            w->own_codec.ctx = ctx;
+            atomic_store(&w->mode, l == 0 ? MERCURY_MODE_MFSK : MERCURY_MODE_MFSK_N32);
+            atomic_store(&w->running, true);
+            pthread_create(&w->tid, NULL, rx_worker_thread, w);
         }
         else
-            HLOGW("modem-rx", "could not open the MFSK call listener; "
-                  "MFSK CALLs will be heard only during a session");
+            HLOGW("modem-rx", "could not open the MFSK call listener (%s floor); "
+                  "MFSK CALLs on it will be heard only during a session",
+                  l == 0 ? "own" : "other");
     }
-    bool listen_fed = false;
+    bool listen_fed = false, listen_alt_fed = false;
     /* Monitor mode: per-mode passive decoders, started on the MONITOR-ON
      * transition and stopped on OFF. */
     rx_worker_t monitor_workers[MONITOR_MODE_COUNT];
@@ -3007,6 +3023,7 @@ void *rx_thread(void *g_modem)
             atomic_store(&w_pay.flush_req, true);
             busy_holdoff_until_ms = monotonic_ms() + BUSY_TX_HOLDOFF_MS;
             atomic_store(&w_listen.flush_req, true);
+            atomic_store(&w_listen_alt.flush_req, true);
             for (int t = 0; t < monitor_count; t++)
                 atomic_store(&monitor_workers[t].flush_req, true);
             /* the pattern ring holds audio from before the keydown */
@@ -3046,6 +3063,7 @@ void *rx_thread(void *g_modem)
             atomic_store(&w_ctrl.flush_req, true);
             atomic_store(&w_pay.flush_req, true);
             atomic_store(&w_listen.flush_req, true);
+            atomic_store(&w_listen_alt.flush_req, true);
             for (int t = 0; t < monitor_count; t++)
                 atomic_store(&monitor_workers[t].flush_req, true);
         }
@@ -3054,6 +3072,7 @@ void *rx_thread(void *g_modem)
         atomic_store(&w_ctrl.policy_ready, arq_policy_ready);
         atomic_store(&w_pay.policy_ready,  arq_policy_ready);
         atomic_store(&w_listen.policy_ready, arq_policy_ready);
+        atomic_store(&w_listen_alt.policy_ready, arq_policy_ready);
 
         /* The MFSK call listener only runs while a CALL can arrive on MFSK and
          * nothing else would decode it.  Leaving that state drops what it
@@ -3073,6 +3092,19 @@ void *rx_thread(void *g_modem)
         if (listen_fed && !feed_listen)
             atomic_store(&w_listen.flush_req, true);
         listen_fed = feed_listen;
+        /* ...and the other floor, for a caller at the other bandwidth */
+        int alt_mode = listen_mode == MERCURY_MODE_MFSK_N32 ? MERCURY_MODE_MFSK : MERCURY_MODE_MFSK_N32;
+        bool feed_listen_alt = modem_codec_valid(&w_listen_alt.own_codec) &&
+                               arq_policy_ready && arq_snapshot.listening_for_calls &&
+                               payload_mode != alt_mode;
+        if (alt_mode != atomic_load(&w_listen_alt.mode))
+        {
+            atomic_store(&w_listen_alt.mode, alt_mode);
+            atomic_store(&w_listen_alt.flush_req, true);
+        }
+        if (listen_alt_fed && !feed_listen_alt)
+            atomic_store(&w_listen_alt.flush_req, true);
+        listen_alt_fed = feed_listen_alt;
 
         /* Monitor-mode transitions: start/stop the per-mode passive decoders
          * when the host toggles MONITOR. */
@@ -3148,8 +3180,13 @@ void *rx_thread(void *g_modem)
          * dispatcher (that would let a slow payload decoder starve control,
          * which is the failure this whole split exists to avoid). */
         size_t tee_bytes = sizeof(int16_t) * (size_t)chunk_samples;
-        rx_worker_t *tee[3] = { &w_ctrl, &w_pay, &w_listen };
-        for (int t = 0; t < (feed_listen ? 3 : 2); t++)
+        rx_worker_t *tee[4] = { &w_ctrl, &w_pay, NULL, NULL };
+        int ntee = 2;
+        if (feed_listen)
+            tee[ntee++] = &w_listen;
+        if (feed_listen_alt)
+            tee[ntee++] = &w_listen_alt;
+        for (int t = 0; t < ntee; t++)
         {
             if (circular_buf_free_size(tee[t]->ring) < tee_bytes)
             {
@@ -3267,6 +3304,7 @@ void *rx_thread(void *g_modem)
              * idle.  Drain its metrics so they do not accumulate. */
             rx_metrics_accum_t ignored = {0};
             rx_worker_take_metrics(&w_listen, &ignored);
+            rx_worker_take_metrics(&w_listen_alt, &ignored);
         }
         {
             /* The monitor decoders are also not a link-quality source: their
@@ -3415,20 +3453,28 @@ void *rx_thread(void *g_modem)
      * order is not cosmetic here: freeing a ring under a live worker is the
      * use-after-free class this project has hit before. */
     bool listen_started = atomic_load(&w_listen.running);
+    bool listen_alt_started = atomic_load(&w_listen_alt.running);
     atomic_store(&w_ctrl.running, false);
     atomic_store(&w_pay.running,  false);
     atomic_store(&w_listen.running, false);
+    atomic_store(&w_listen_alt.running, false);
     pthread_join(w_ctrl.tid, NULL);
     pthread_join(w_pay.tid,  NULL);
     if (listen_started)
         pthread_join(w_listen.tid, NULL);
+    if (listen_alt_started)
+        pthread_join(w_listen_alt.tid, NULL);
     rx_decoder_dispose(&w_ctrl.state);
     rx_decoder_dispose(&w_pay.state);
-    rx_decoder_dispose(&w_listen.state);
-    if (modem_codec_valid(&w_listen.own_codec))
-        w_listen.own_codec.be->close(w_listen.own_codec.ctx);
-    if (modem_codec_valid(&w_listen.own_narrow))
-        w_listen.own_narrow.be->close(w_listen.own_narrow.ctx);
+    for (int l = 0; l < 2; l++)
+    {
+        rx_worker_t *w = l == 0 ? &w_listen : &w_listen_alt;
+        rx_decoder_dispose(&w->state);
+        if (modem_codec_valid(&w->own_codec))
+            w->own_codec.be->close(w->own_codec.ctx);
+        if (modem_codec_valid(&w->own_narrow))
+            w->own_narrow.be->close(w->own_narrow.ctx);
+    }
     if (monitor_active)
     {
         monitor_workers_stop(monitor_workers, monitor_count);
@@ -3438,9 +3484,11 @@ void *rx_thread(void *g_modem)
     if (w_ctrl.ring) { free(w_ctrl.ring->buffer); circular_buf_free(w_ctrl.ring); }
     if (w_pay.ring)  { free(w_pay.ring->buffer);  circular_buf_free(w_pay.ring);  }
     if (w_listen.ring) { free(w_listen.ring->buffer); circular_buf_free(w_listen.ring); }
+    if (w_listen_alt.ring) { free(w_listen_alt.ring->buffer); circular_buf_free(w_listen_alt.ring); }
     pthread_mutex_destroy(&w_ctrl.mlock);
     pthread_mutex_destroy(&w_pay.mlock);
     pthread_mutex_destroy(&w_listen.mlock);
+    pthread_mutex_destroy(&w_listen_alt.mlock);
 
     free(capture_i32);
     free(capture_i16);

@@ -141,8 +141,15 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
                 total += sm; valid++;
             }
         }
-        if (rejected) continue;
-        double metric = (valid > 0) ? total / valid : 0.0;
+        /* No symbol with energy: nothing here to correlate.  Exact digital
+         * zeros (a muted input) made every position such a candidate at
+         * metric 0, filling the top-K, and the refinement below then ran on
+         * all of them, every look and every hypothesis: a whole core per
+         * listener (#451).  A position with any symbol of energy is searched
+         * as before, so a dropout that zero-fills part of a preamble (RTP and
+         * HL2 fill lost packets with zeros) is still found on the rest. */
+        if (rejected || valid == 0) continue;
+        double metric = total / valid;
 
         /* insert into descending top-K */
         if (n_cand < P1_TOP_K || metric > cand[n_cand - 1].metric)
