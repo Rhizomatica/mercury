@@ -269,6 +269,12 @@ unsigned short freedv_gen_crc16(unsigned char *bytes, int nbytes);
  * timing/frequency search (default enabled).  Both paths select the same
  * argmax; exposed so the two can be compared and so a station can fall back. */
 void freedv_set_acq_fft_enable(struct freedv *freedv, bool val);
+/* Acquisition tuning knobs for bench sweeps (utils/acq_tuning_sweep.c):
+ * the preamble-correlation acceptance threshold and the unique-word error
+ * budget.  Per-mode defaults are in ofdm_mode.c; changing them at runtime
+ * changes acquisition behaviour only, not the on-air frame format. */
+void freedv_set_timing_mx_thresh(struct freedv *freedv, float val);
+void freedv_set_bad_uw_errors(struct freedv *freedv, int val);
 void freedv_pack(unsigned char *bytes, unsigned char *bits, int nbits);
 void freedv_unpack(unsigned char *bits, unsigned char *bytes, int nbits);
 unsigned short freedv_crc16_unpacked(unsigned char *bits, int nbits);
