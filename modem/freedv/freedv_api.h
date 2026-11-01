@@ -279,6 +279,12 @@ void freedv_set_timing_mx_thresh(struct freedv *freedv, float val);
 void freedv_set_bad_uw_errors(struct freedv *freedv, int val);
 float freedv_get_timing_mx_thresh(struct freedv *freedv);
 int freedv_get_bad_uw_errors(struct freedv *freedv);
+/* TX peak config for the OFDM Hilbert clipper, as one call (the four
+ * parameters only make sense together).  Changes the transmitted
+ * waveform's PAPR only; the receiver is untouched.  Bench-facing, for
+ * utils/qam16_papr_sweep.c. */
+void freedv_set_tx_clip_config(struct freedv *freedv, bool clip_en,
+                               float gain1, float gain2, float amp_scale);
 void freedv_pack(unsigned char *bytes, unsigned char *bits, int nbits);
 void freedv_unpack(unsigned char *bits, unsigned char *bytes, int nbits);
 unsigned short freedv_crc16_unpacked(unsigned char *bits, int nbits);

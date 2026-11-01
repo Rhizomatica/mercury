@@ -1186,6 +1186,15 @@ float ofdm_get_timing_mx_thresh(struct OFDM *ofdm) {
 
 int ofdm_get_bad_uw_errors(struct OFDM *ofdm) { return ofdm->bad_uw_errors; }
 
+void ofdm_set_tx_clip_config(struct OFDM *ofdm, bool clip_en, float gain1,
+                             float gain2, float amp_scale) {
+  if (clip_en && ofdm->tx_bpf_en && ofdm->tx_bpf == NULL)
+    allocate_tx_bpf(ofdm); /* the clipper asserts on a missing BPF */
+  ofdm->clip_en = clip_en;
+  ofdm->clip_gain1 = gain1;
+  ofdm->clip_gain2 = gain2;
+  ofdm->amp_scale = amp_scale;
+}
 void ofdm_set_off_est_hz(struct OFDM *ofdm, float val) {
   ofdm->foff_est_hz = val;
 }

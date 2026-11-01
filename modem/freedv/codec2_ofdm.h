@@ -108,6 +108,16 @@ void ofdm_set_timing_mx_thresh(struct OFDM *, float);
 void ofdm_set_bad_uw_errors(struct OFDM *, int);
 float ofdm_get_timing_mx_thresh(struct OFDM *);
 int ofdm_get_bad_uw_errors(struct OFDM *);
+/* Bench access to the four-parameter TX peak config the Hilbert clipper
+ * consumes (ofdm_hilbert_clipper): whether the clipper runs at all, its
+ * drive (gain1, sets PAPR), the post-BPF peak-restore gain, and the input
+ * scale.  Per-mode defaults live in ofdm_mode.c; changing these changes the
+ * transmitted waveform's PAPR only -- the receiver is untouched, so a
+ * clipped TX interoperates with a stock one.  Enabling the clipper
+ * allocates the TX BPF if the mode runs one and it is missing, since the
+ * clipper requires it.  See utils/qam16_papr_sweep.c. */
+void ofdm_set_tx_clip_config(struct OFDM *, bool clip_en, float gain1,
+                             float gain2, float amp_scale);
 void ofdm_set_sync(struct OFDM *, int);
 void ofdm_set_tx_bpf(struct OFDM *, bool);
 void ofdm_set_dpsk(struct OFDM *ofdm, bool val);
