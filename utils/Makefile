@@ -26,7 +26,7 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
-OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode acq_tuning_sweep resync_gap_probe burst_train_probe
+ OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode acq_tuning_sweep qam16_papr_sweep resync_gap_probe burst_train_probe
 
 # CPU-cost instruments.  Linux/macOS only: they time with
 # clock_gettime(CLOCK_PROCESS_CPUTIME_ID), which mingw-w64 does not provide
@@ -82,6 +82,14 @@ acquire_vs_decode: acquire_vs_decode.c bench_common.c chanutil.c ../common/watte
 # false-sync control per row.  The companion to the findings doc: below the
 # fringe, acquisition is the floor, and this is where its tuning lives.
 acq_tuning_sweep: acq_tuning_sweep.c bench_common.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# QAM16C2 under the peak-limited-radio model: TX clip variants generated
+# in-chain via freedv_set_tx_clip_config, compared at EQUAL PEAK with the
+# stock (unclipped) waveform and DATAC17.  Measures PAPR, delivery,
+# acquisition and the modem SNR estimate per variant.  Companion to the
+# findings doc; see its header for the question.
+qam16_papr_sweep: qam16_papr_sweep.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Does the payload decoder hear a data burst that follows a control burst, and
