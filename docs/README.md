@@ -60,6 +60,7 @@ them for reasoning, not for current behaviour.
 |---|---|
 | [CAROUSEL-REPORT.md](CAROUSEL-REPORT.md) | Was the carousel with the MFSK floor ready to replace stop-and-wait? On-air and simulator results, what broke on the way, and the deep-fade collisions still open. |
 | [HARQ-FINDINGS.md](HARQ-FINDINGS.md) | Does soft-combining repeated frames actually rescue a link at the fading cliff? (Yes — roughly half the frames, where single-shot delivers none.) |
+| [ACQ-TUNING-FINDINGS.md](ACQ-TUNING-FINDINGS.md) | Can the DATAC15/16 acquisition knee be moved by tuning knobs? (Yes — `timing_mx_thresh` 0.45 -> 0.40, ~1.5-2 dB at ~0-2% noise-only false syncs; the UW budget buys nothing; plus a high-SNR frequency-offset acquisition loss the lower threshold repairs.) |
 | [FADE-CLIFF-DECISION.md](FADE-CLIFF-DECISION.md) | Should the S1 fade-cliff fix be merged? Simulation evidence behind the decision. |
 | [SPEED-REGRESSION-FINDINGS.md](SPEED-REGRESSION-FINDINGS.md) | Why a pre-2.0 build was slower than v1.9.9 on the bench — FEC under fading and gear-shift oscillation, not the guard intervals everyone suspected. |
 | [OTA-PHASE-A-SNR-CALIB.md](OTA-PHASE-A-SNR-CALIB.md) | Why the mode ladder stuck at the bottom: per-mode SNR estimation bias. |

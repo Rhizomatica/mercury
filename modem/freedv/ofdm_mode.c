@@ -326,7 +326,11 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->txtbits = 0;
     config->state_machine = "data";
     config->ftwindowwidth = 80;
-    config->timing_mx_thresh = 0.45;
+    /* 0.40, down from the inherited 0.45: buys ~1.5 dB of preamble
+       acquisition at ~0-1% noise-only false syncs, and most of the
+       acquisition lost to frequency offset.  Measured, with the false-sync
+       control and the 0.35/0.30 knee: docs/ACQ-TUNING-FINDINGS.md. */
+    config->timing_mx_thresh = 0.40;
     config->codename = "H_256_768_22";
     config->amp_est_mode = 1;
     config->nuwbits = 48;
@@ -356,7 +360,11 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->txtbits = 0;
     config->state_machine = "data";
     config->ftwindowwidth = 80;
-    config->timing_mx_thresh = 0.45;
+    /* 0.40, down from the inherited 0.45: buys ~1.5 dB of preamble
+       acquisition at ~0-1% noise-only false syncs, and most of the
+       acquisition lost to frequency offset.  Measured, with the false-sync
+       control and the 0.35/0.30 knee: docs/ACQ-TUNING-FINDINGS.md. */
+    config->timing_mx_thresh = 0.40;
     config->codename = "H_256_768_22";
     config->amp_est_mode = 1;
     config->nuwbits = 32;

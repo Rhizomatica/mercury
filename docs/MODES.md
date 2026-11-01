@@ -163,8 +163,10 @@ Operational consequences, reflected in the ARQ design
   delivers roughly twice as many frames; on fading the deep-fringe difference
   is small.  See the control-mode comparison table below.
 - Acquisition (preamble/UW detection) is the dominant loss for both new modes
-  above −5 dB MPP — a future tuning candidate (`timing_mx_thresh`, UW length)
-  independent of the FEC design.  It is also what sets the *fringe* floor, which
+  above −5 dB MPP — a tuning candidate (`timing_mx_thresh`, UW length),
+  measured on the AWGN bench in
+  [ACQ-TUNING-FINDINGS.md](ACQ-TUNING-FINDINGS.md) (threshold lowered for
+  datac15/16; the UW budget buys nothing).  It is also what sets the *fringe* floor, which
   is measurable rather than inferred (`utils/acquire_vs_decode DATAC16 100 -13 -8`,
   AWGN, 0 % clipped):
 

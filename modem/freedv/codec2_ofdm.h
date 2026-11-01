@@ -101,6 +101,11 @@ void ofdm_set_off_est_hz(struct OFDM *, float);
  * the two can be compared directly, and so a station can fall back if the
  * fast path is ever suspected.  See est_timing_and_freq_fft() in ofdm.c. */
 void ofdm_set_acq_fft_enable(struct OFDM *, bool);
+/* Acquisition tuning: the preamble-correlation acceptance threshold and the
+ * unique-word error budget.  Per-mode defaults live in ofdm_mode.c; these
+ * exist so bench tools can sweep them (see utils/acq_tuning_sweep.c). */
+void ofdm_set_timing_mx_thresh(struct OFDM *, float);
+void ofdm_set_bad_uw_errors(struct OFDM *, int);
 void ofdm_set_sync(struct OFDM *, int);
 void ofdm_set_tx_bpf(struct OFDM *, bool);
 void ofdm_set_dpsk(struct OFDM *ofdm, bool val);
