@@ -1170,6 +1170,14 @@ void ofdm_set_acq_fft_enable(struct OFDM *ofdm, bool val) {
   ofdm->acq_fft_en = val;
 }
 
+void ofdm_set_timing_mx_thresh(struct OFDM *ofdm, float val) {
+  ofdm->timing_mx_thresh = val;
+}
+
+void ofdm_set_bad_uw_errors(struct OFDM *ofdm, int val) {
+  ofdm->bad_uw_errors = val;
+}
+
 void ofdm_set_off_est_hz(struct OFDM *ofdm, float val) {
   ofdm->foff_est_hz = val;
 }

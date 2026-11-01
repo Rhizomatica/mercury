@@ -1722,3 +1722,11 @@ float freedv_get_modem_bandwidth_hz(struct freedv *freedv) {
 void freedv_set_acq_fft_enable(struct freedv *f, bool val) {
   if (f != NULL && f->ofdm != NULL) ofdm_set_acq_fft_enable(f->ofdm, val);
 }
+
+void freedv_set_timing_mx_thresh(struct freedv *f, float val) {
+  if (f != NULL && f->ofdm != NULL) ofdm_set_timing_mx_thresh(f->ofdm, val);
+}
+
+void freedv_set_bad_uw_errors(struct freedv *f, int val) {
+  if (f != NULL && f->ofdm != NULL) ofdm_set_bad_uw_errors(f->ofdm, val);
+}
