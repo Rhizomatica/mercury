@@ -73,7 +73,21 @@
 #ifndef TURN_CAP_MS
 #define TURN_CAP_MS      45000
 #endif
+#ifndef MAX_KEYDOWN_MS
 #define MAX_KEYDOWN_MS   30000    /* airtime cap per round                  */
+#endif
+/* A station may hold its own rounds shorter (arq:max_keydown_s): what it asks
+ * for and what it sends.  vARIM aborts a transfer when PTT stays on for about
+ * 20 s, and a 7-frame DATAC3 round is 25 s (#445).  What it accepts, and how
+ * long it waits for a peer's round, stay at MAX_KEYDOWN_MS: the peer may not
+ * hold its rounds short.  A receiver learns a round's length from its frames
+ * (rx_frame: m->left), so a round shorter than asked is not counted as loss.
+ * The cap is on the whole keydown: a round behind a control frame is held
+ * shorter by the control frame (behind_ctl_n).  Each session takes the
+ * station's at car_init, unless its car_io_t names one (c->io.max_keydown_ms). */
+static uint32_t clamp_keydown_ms(uint32_t ms) { return ms && ms < MAX_KEYDOWN_MS ? ms : MAX_KEYDOWN_MS; }
+static uint32_t g_max_keydown_ms = MAX_KEYDOWN_MS;
+void car_set_max_keydown_ms(uint32_t ms) { g_max_keydown_ms = clamp_keydown_ms(ms); }
 /* NAV headers (car_set_nav_ms) are not sent inside a session: the turn rules
  * (docs/CAROUSEL-TURNS.md) keep the two ends off each other without carrier
  * sense, and a header was 0.7 s of air on every keydown below 0 dB, and a
@@ -378,6 +392,7 @@ static uint64_t round_air(const car_t *c, int lv, int n)
  * the floor, where a round alone is 28 s, a 30 s turn changed direction
  * every round (sim, fade:-5 both ways: 132 changes, a poll each). */
 static int keydown_cap(const car_t *c, int lv);
+static int peer_keydown_cap(const car_t *c, int lv);
 static int round_n(const car_t *c);
 static bool both_ok(const car_t *c, int lv);
 static bool offer_both(car_t *c, uint64_t now);
@@ -507,7 +522,7 @@ static bool decode_ctl(const car_t *c, const uint8_t *b, size_t len, msg_t *m)
     /* ...and so do more frames than a keydown on the rung can hold: a poll
      * read with its size flipped had S key five MFSK frames, 72 s, into a
      * slot for one DATAC4 frame (explorer, corrupt byte 7 of an inline poll). */
-    if (m->n > keydown_cap(c, m->level) || m->h_n > keydown_cap(c, m->h_level)) return false;
+    if (m->n > peer_keydown_cap(c, m->level) || m->h_n > peer_keydown_cap(c, m->h_level)) return false;
     /* Out-of-range fields mean a corrupt frame that passed its CRC: drop it
      * rather than act on it (spec risk R19). */
     for (int o = 0; o < CAR_WIN; o++)
@@ -1094,12 +1109,41 @@ void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *f
     if (overhead_ms) *overhead_ms = lv == 0 && floor_patterns ? FLOOR_OVERHEAD_MS : ROUND_OVERHEAD_MS;
 }
 
-static int keydown_cap(const car_t *c, int lv)
+static int keydown_cap_ms(const car_t *c, int lv, uint32_t max_ms)
 {
-    int cap = (int)(MAX_KEYDOWN_MS / level_air(c, lv));
+    int cap = (int)(max_ms / level_air(c, lv));
     bool slow = LADDER[lv] == FREEDV_MODE_DATAC15 || LADDER[lv] == FREEDV_MODE_DATAC4;
     if (slow && cap > SLOW_RUNG_FRAMES) cap = SLOW_RUNG_FRAMES;
     return cap > 15 ? 15 : cap < 1 ? 1 : cap;                          /* 4 bits */
+}
+/* The rounds I ask for and send... */
+/* What a keydown holds besides its frames and the gaps between them: the
+ * lead before the first and the tail after the last (kind_len's). */
+static uint32_t kd_frame_extra(const car_t *c) { return 110 + nav_lead(c) + TAIL_MS; }
+static bool capped(const car_t *c) { return c->io.max_keydown_ms && c->io.max_keydown_ms < MAX_KEYDOWN_MS; }
+static int keydown_cap(const car_t *c, int lv)
+{
+    if (!capped(c)) return keydown_cap_ms(c, lv, MAX_KEYDOWN_MS);
+    /* Held short, the whole keydown fits: its gaps, lead and tail too (a
+     * cap of 16 s keyed 16.05 s, sim cliff:-5 seed 8, #449 review). */
+    int n = keydown_cap_ms(c, lv, c->io.max_keydown_ms);
+    while (n > 1 && round_air(c, lv, n) + kd_frame_extra(c) > c->io.max_keydown_ms) n--;
+    return n;
+}
+/* ...and the longest a peer's may be. */
+static int peer_keydown_cap(const car_t *c, int lv) { return keydown_cap_ms(c, lv, MAX_KEYDOWN_MS); }
+/* The frames of mine that fit behind my control frame in one keydown under my
+ * cap (0: not one).  The cap is on the keydown, not the round: a poll of
+ * 3.7 s and a 15 s round under a 16 s cap keyed for 19.2 s, and vARIM aborts
+ * at 20.3 (#449 review: sim, fade:15:1 both ways, seeds 2 and 4).  Uncapped,
+ * n as it is. */
+static int behind_ctl_n(const car_t *c, int lv, int n)
+{
+    if (!capped(c) || n <= 0) return n;
+    int64_t room = (int64_t)c->io.max_keydown_ms - (int64_t)kd_frame_extra(c) -
+                   (int64_t)(ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) - CHAIN_GAP_MS;
+    while (n > 0 && (int64_t)round_air(c, lv, n) > room) n--;
+    return n;
 }
 static double air_fraction(const car_t *c, int lv, int frames)
 {
@@ -1608,7 +1652,7 @@ static uint32_t r_cap_ms(const car_t *c)
 {
     uint32_t m = 0;
     for (int lv = 0; lv < CAR_NLEVELS; lv++)
-        if (s_round_ms(c, lv, keydown_cap(c, lv)) > m) m = s_round_ms(c, lv, keydown_cap(c, lv));
+        if (s_round_ms(c, lv, peer_keydown_cap(c, lv)) > m) m = s_round_ms(c, lv, peer_keydown_cap(c, lv));
     return m;
 }
 static uint32_t d_of_mode(int mode) { return mercury_mode_is_mfsk(mode) ? D_MFSK_MS : D_OFDM_MS; }
@@ -1622,7 +1666,7 @@ static uint32_t slot_period(const car_t *c, uint32_t d, uint32_t r)
 {
     return r + d + (c->io.pattern ? D_MFSK_MS : D_OFDM_MS) + 2 * TURN_G_MS + s_ctl_ms(c);
 }
-static uint32_t r_floor_ms(const car_t *c) { return s_round_ms(c, 0, keydown_cap(c, 0)); }
+static uint32_t r_floor_ms(const car_t *c) { return s_round_ms(c, 0, peer_keydown_cap(c, 0)); }
 
 /* ---- M: where S may be ---- */
 static uint64_t mslot_lo(const car_t *c, const car_mlog_t *l, int i)
@@ -1768,8 +1812,10 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
      * that I polled -- nor told me to leave the dead rung (sim, cliff:5 both
      * ways: 326 -> 614 s). */
     bool inl = with_round && inline_poll(c);
-    if (with_round && c->tx_level >= 0) {
-        nd = build_round(c, c->tx_level, round_n(c), id, inl ? fr : fr + 1, inl ? INLINE_CTL : 0);
+    int rn = with_round && c->tx_level >= 0 ? round_n(c) : 0;
+    if (!inl) rn = behind_ctl_n(c, c->tx_level, rn);   /* none fits: the poll alone, my round its own keydown */
+    if (rn > 0) {
+        nd = build_round(c, c->tx_level, rn, id, inl ? fr : fr + 1, inl ? INLINE_CTL : 0);
         if (nd) {
             if (!inl) fr[1].gap_ms = CHAIN_GAP_MS;
             c->last_lv = c->tx_level; c->last_nf = nd; c->last_mk = id;
@@ -1834,7 +1880,9 @@ static void send_status(car_t *c, uint8_t id)
 static int round_n(const car_t *c)
 {
     int n = c->tx_n;
-    if (!c->master || c->tx_level <= 0 || n >= keydown_cap(c, c->tx_level)) return n;
+    int cap = keydown_cap(c, c->tx_level > 0 ? c->tx_level : 0);
+    if (n > cap) return cap;          /* a peer that asked for more: my own cap */
+    if (!c->master || c->tx_level <= 0 || n >= cap) return n;
     double margin = c->tx_loss * 1.3 + 0.05;
     int pieces = 0;
     for (int b = 0; b < c->nsb; b++) pieces += (int)ceil(c->sb[b].need * (1.0 + margin));
@@ -2085,7 +2133,8 @@ static uint64_t kind_len(const car_t *c, int kind)
     case KD_BOTH:          if (inline_poll(c))
                                return head + round_air(c, c->tx_level, round_n(c)) + TAIL_MS;
                            return head + (ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) +
-                                  CHAIN_GAP_MS + round_air(c, c->tx_level, round_n(c)) + TAIL_MS;
+                                  CHAIN_GAP_MS + round_air(c, c->tx_level, behind_ctl_n(c, c->tx_level, round_n(c))) +
+                                  TAIL_MS;
     case KD_PATTERN_ACK:
     case KD_PATTERN_BREAK: return 110 + PATTERN_AIR_MS + TAIL_MS;
     default:               return head + (ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) + TAIL_MS;
@@ -2268,7 +2317,8 @@ static bool both_ok(const car_t *c, int lv)
     /* ...and on a link that loses little: a lost exchange loses both ways
      * (sim, nvis both ways 3696 -> 4179 s). */
     return lv > 0 && c->tx_level > 0 && !ctl_on_floor(c) && !peer_ctl_on_floor(c) &&
-           c->loss_est < 0.3 && c->tx_loss < 0.3;
+           c->loss_est < 0.3 && c->tx_loss < 0.3 &&
+           (inline_poll(c) || behind_ctl_n(c, c->tx_level, 1) > 0);   /* ...under my cap */
 }
 
 /* What M expects S to send, for the rung of a poll: the backlog S last said
@@ -2854,6 +2904,7 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->rx_data_lv = -1;
     c->max_level = CAR_NLEVELS - 1;
     c->floor_mode = MERCURY_MODE_MFSK;
+    c->io.max_keydown_ms = io->max_keydown_ms ? clamp_keydown_ms(io->max_keydown_ms) : g_max_keydown_ms;
 }
 
 void car_set_floor_mode(car_t *c, int mode)
@@ -3053,7 +3104,7 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     }
     int lv = level_of_mode(mode);
     if (lv < 0 || !decode_data(bytes, len, &m, piece_of(c))) return false;
-    if (m.left >= keydown_cap(c, lv)) return false;   /* corrupt: no keydown on the rung is that long */
+    if (m.left >= peer_keydown_cap(c, lv)) return false;   /* corrupt: no keydown on the rung is that long */
     c->heard_ms = now;
     note_peer_ctl_deaf(c, m.ctl_deaf);
     msg_t k;
@@ -3217,7 +3268,7 @@ uint64_t car_drain_budget_ms(const car_t *c)
 {
     int lv = c->tx_level >= 0 ? c->tx_level : 0;
     if (c->poll_level < lv) lv = c->poll_level;          /* the slower way */
-    uint64_t exchange = (uint64_t)s_round_ms(c, lv, keydown_cap(c, lv)) + s_ctl_ms(c) + 2 * TG_MS +
+    uint64_t exchange = (uint64_t)s_round_ms(c, lv, peer_keydown_cap(c, lv)) + s_ctl_ms(c) + 2 * TG_MS +
                         D_MFSK_MS + 2 * TURN_G_MS;
     return 3 * exchange;
 }

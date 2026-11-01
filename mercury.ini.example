@@ -202,6 +202,17 @@ silence_fallback_s = 150
 ; Stations without it keep talking to 1.9.20.
 mfsk_tx_only = false
 
+; The longest transmission of this station, in seconds (default 0: the
+; protocol's 30 s round; else 5..30).  For TCP clients that abort when PTT
+; stays on too long: vARIM sends ABORT after about 20 s keyed, and a full
+; carousel round is 25-30 s, so set 16 on every station that runs vARIM
+; (#445).  It holds each of this station's keydowns, a poll before a round
+; included, and asks the peer for short rounds; a peer without it can still
+; key longer.  The MFSK floor's single frame is never split (27 s on the BW500
+; floor).  The cost is throughput: in the simulator, about 0-6 % on fast
+; channels and 13-30 % on slow ones and at BW500.
+max_keydown_s = 0
+
 [channel]
 ; Channel-busy (occupancy) detector.  Mercury classifies the HF channel as
 ; busy/clear from the RX spectrum and reports transitions to the host with

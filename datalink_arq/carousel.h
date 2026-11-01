@@ -101,6 +101,10 @@ typedef struct {
     /* Keys each block's check (the session's CRC seed): a block rebuilt from
      * another session's pieces fails it. */
     uint32_t block_key;
+    /* The longest keydown this end keys, ms (arq:max_keydown_s, #445); 0:
+     * the station's (car_set_max_keydown_ms).  Per end, so the sim can set
+     * one. */
+    uint32_t max_keydown_ms;
 } car_io_t;
 
 enum { CAR_PATTERN_ACK = 0, CAR_PATTERN_BREAK = 1 };
@@ -373,6 +377,10 @@ bool car_slot_reserved(const car_t *m, uint64_t start, uint64_t end);
  * car_wants_nav() says the peer may not sense it otherwise (car_set_nav_below_db). */
 void car_set_nav_ms(uint32_t ms);
 void car_set_short_rung(bool on);   /* small backlogs on the shortest rung (default on) */
+/* The longest keydown this station keys, in ms (0: the protocol's 30 s
+ * round); rounds it accepts stay at 30 s (arq:max_keydown_s, #445).  A
+ * session takes it at car_init unless its car_io_t sets one. */
+void car_set_max_keydown_ms(uint32_t ms);
 void car_set_nav_below_db(float db);
 void car_set_nav_loss(double loss);   /* ...or at this loss estimate (default 0.3) */
 bool car_wants_nav(const car_t *c);

@@ -396,6 +396,11 @@ void arq_set_retry_stagger_ms(int ms);
  * and its peers keep its transmit direction there. */
 void arq_set_tx_mfsk_only(bool on);
 
+/* The longest carousel round this station asks for or sends, in seconds (0:
+ * the protocol's 30 s).  For clients that abort on a long PTT: vARIM gives up
+ * after about 20 s keyed (#445). */
+void arq_set_max_keydown_s(int s);
+
 /**
  * @brief Trigger outgoing call attempt using current ARQ addresses.
  */

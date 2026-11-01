@@ -351,6 +351,51 @@ static void test_carousel_mfsk_tx_only(void)
         }
 }
 
+/* A station whose keydowns are held short (arq:max_keydown_s): vARIM aborts
+ * a transfer when PTT stays on for about 20 s, and a full DATAC3 round is
+ * 30 s (#445).  Held to 16 s at one end -- the peer may be a release without
+ * the setting -- every keydown of that end stays under it, and everything
+ * arrives.  Held at both, every keydown both ways does, a poll and a round in
+ * one keydown included: fade:15:1 both ways, seeds 2 and 4, keyed a 3.7 s
+ * poll before a 15 s round for 19.2 s (#449 review).  The whole keydown,
+ * lead and tail included, stays at or under the cap.  Without it, the rounds
+ * are as long as before. */
+static void kd_check(const char *chan, int seed, bool bidir, const char *who, int ends, bool done)
+{
+    car_sim_result_t r;
+    if (who) setenv(who, "16000", 1);
+    else { setenv("CAR_KEYDOWN_A", "16000", 1); setenv("CAR_KEYDOWN_B", "16000", 1); }
+    carousel_sim_run(seed, chan, bidir, LIMIT_MS, &r);
+    unsetenv("CAR_KEYDOWN_A"); unsetenv("CAR_KEYDOWN_B");
+    char msg[80];
+    snprintf(msg, sizeof(msg), "%s %s seed %d %s", who ? who : "both", chan, seed, bidir ? "bidir" : "oneway");
+    TEST_ASSERT_TRUE_MESSAGE(r.intact, msg);
+    if (done) TEST_ASSERT_NOT_EQUAL_MESSAGE(0, r.done_ms, msg);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.collisions, msg);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.overruns, msg);
+    for (int i = 0; i < 2; i++)
+        if (ends & (1 << i)) TEST_ASSERT_LESS_OR_EQUAL_UINT64_MESSAGE(16000, r.max_kd_ms[i], msg);
+}
+static void test_carousel_max_keydown(void)
+{
+    static const char *CHAN[] = { "cliff:10", "fade:25:1" };
+    for (int k = 0; k < 2; k++) {
+        car_sim_result_t r;
+        carousel_sim_run(1, CHAN[k], false, LIMIT_MS, &r);
+        TEST_ASSERT_GREATER_THAN_UINT64(20000, r.max_kd_ms[0]);
+        for (int bidir = 0; bidir < 2; bidir++) {
+            kd_check(CHAN[k], 1, bidir, "CAR_KEYDOWN_A", 1, true);
+            kd_check(CHAN[k], 1, bidir, "CAR_KEYDOWN_B", 2, true);
+            kd_check(CHAN[k], 1, bidir, NULL, 3, true);
+        }
+    }
+    kd_check("fade:15:1", 2, true, NULL, 3, true);
+    kd_check("fade:15:1", 4, true, NULL, 3, true);
+    /* The lead and tail count too: a poll and two DATAC4 frames under 16 s
+     * keyed 16.05 s with them (#449 re-review).  Slow: it need not finish. */
+    kd_check("cliff:-5", 8, true, "CAR_KEYDOWN_A", 1, false);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -366,6 +411,7 @@ int main(void)
     RUN_TEST(test_carousel_bandwidth_max_level);
     RUN_TEST(test_carousel_bw500_floor);
     RUN_TEST(test_carousel_mfsk_tx_only);
+    RUN_TEST(test_carousel_max_keydown);
     RUN_TEST(test_carousel_request_response_completes);
     RUN_TEST(test_carousel_drop_below_control_mode);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);

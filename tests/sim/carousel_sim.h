@@ -33,6 +33,7 @@ typedef struct {
     int      kd_unexplained;      /* ... over a keydown of the peer that could be sensed */
     const char *failed;           /* a station failed the session (car_failed), or NULL */
     uint64_t air_ms[2];           /* each station on the air */
+    uint64_t max_kd_ms[2];        /* each station's longest keydown */
     uint64_t silent_ms[2];        /* each station's longest time hearing nothing of its peer, frame
                                      or pattern, to the end of the run: what the FSM's lost-peer
                                      watchdog counts (240 s ends a session) */

@@ -96,6 +96,7 @@ typedef struct {
     bool     nav_ok, nav_sent;
     uint64_t nav_from;
     uint64_t air_ms;               /* on the air, all keydowns */
+    uint64_t max_kd_ms;   /* longest keydown, PTT on to off */
     uint64_t heard_at, silent_ms;  /* the peer last heard (frame or pattern); the longest gap */
 } station_t;
 
@@ -285,6 +286,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     }
     s->tx_end = t + TAIL_MS;
     s->air_ms += s->tx_end - s->tx_start;
+    if (s->tx_end - s->tx_start > s->max_kd_ms) s->max_kd_ms = s->tx_end - s->tx_start;
     if (trace) printf("  until %.1f\n", s->tx_end / 1000.0);
     check_slot(s);
     event_t e = { .t = s->tx_end, .type = EV_TXEND, .st = s->id };
@@ -629,6 +631,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                         .tx_read = io_tx_read, .tx_pending = io_tx_pending, .deliver = io_deliver,
                         .pattern = getenv("CAR_NOPATTERN") ? NULL : io_pattern,
                         .trace = io_trace, .ctx = s };
+        /* CAR_KEYDOWN_A, CAR_KEYDOWN_B: that station's keydowns held to so
+         * many ms (arq:max_keydown_s), its peer's not unless set too */
+        const char *kd = getenv(i ? "CAR_KEYDOWN_B" : "CAR_KEYDOWN_A");
+        if (kd) io.max_keydown_ms = (uint32_t)atoi(kd);
         /* What each end hears, and what its peer hears of it. */
         double hears = asym ? snr_dir[i ^ 1] : snr_db, heard = asym ? snr_dir[i] : snr_db;
         hears += snr_offset; heard += snr_offset;   /* the connect estimate reads off too */
@@ -745,6 +751,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                   !memcmp(S[0].rx, S[1].tx, S[0].rx_len < S[1].tx_len ? S[0].rx_len : S[1].tx_len);
     res->done_ms = done_ms;
     res->air_ms[0] = S[0].air_ms; res->air_ms[1] = S[1].air_ms;
+    res->max_kd_ms[0] = S[0].max_kd_ms; res->max_kd_ms[1] = S[1].max_kd_ms;
     now_ms = done_ms ? done_ms : limit_ms;              /* ...and the silence still running */
     for (int i = 0; i < 2; i++) { heard(&S[i]); res->silent_ms[i] = S[i].silent_ms; }
     res->msgs = script ? sc_n : 0;
