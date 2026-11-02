@@ -133,7 +133,7 @@ static void run_one(int mode, bool fft_en, double snr_db, unsigned seed,
     while (pos < k + n) {
         int nin = freedv_nin(rx);
         short chunk[8192];
-        if (nin <= 0 || nin > (int)(sizeof(chunk) / sizeof(chunk[0]))) break;
+        if (nin < 0 || nin > (int)(sizeof(chunk) / sizeof(chunk[0]))) break;
         for (int i = 0; i < nin; i++)
             chunk[i] = pos + i < k ? burst[pos + i] : noise_sample(sigma);
         pos += nin;
@@ -218,7 +218,7 @@ static int stale_then_burst(int mode, unsigned seed, bool unsync, int gap)
             rebound = true;
         }
         int nin = freedv_nin(rx);
-        if (nin <= 0 || pos + nin > total) break;
+        if (nin < 0 || pos + nin > total) break;
         int nb = (int)freedv_rawdatarx(rx, out, audio + pos);
         pos += nin;
         if (pos > cut + gap && nb > 0 && !(freedv_get_rx_status(rx) & FREEDV_RX_BIT_ERRORS))
@@ -246,10 +246,79 @@ void test_unsync_after_a_stale_sync_finds_the_next_burst(void)
     TEST_ASSERT_TRUE_MESSAGE(lost_without > 0, "a stale sync never lost the burst: the test proves nothing");
 }
 
+/* A postamble sync backs rxbufst up to the start of its packet, np frames
+ * into the past.  An UNSYNC then (the modem does one on rebind, and one on the
+ * payload decoder after every control frame, #223) used to leave it there:
+ * the search went on over audio ~4 s old, and the next postamble backed it up
+ * again, below rxbuf -- the SIGSEGV PR #455's sweep hit at threshold 0.25.
+ *
+ * Burst A without its preamble, so only its postamble can find it; UNSYNC as
+ * soon as that sync holds; then burst B after `gap` of noise.  B must come out
+ * within a second of its end. */
+static int postamble_unsync_then_burst(int mode, unsigned seed, int gap, int *held_seen)
+{
+    struct freedv *rx = freedv_open(mode);
+    TEST_ASSERT_NOT_NULL(rx);
+    freedv_set_frames_per_burst(rx, 1);
+    short *a, *b;
+    double sa, sb;
+    int ka = make_burst(mode, 10.0, seed, &a, &sa);
+    int kb = make_burst(mode, 10.0, seed + 1, &b, &sb);
+    int skip = freedv_get_n_tx_preamble_modem_samples(rx);
+    int la = ka - skip, tail = FS * 6;
+    int total = la + gap + kb + tail;
+    short *audio = malloc(sizeof(short) * (size_t)total);
+    TEST_ASSERT_NOT_NULL(audio);
+    for (int i = 0; i < total; i++) {
+        int j = i - la - gap;
+        audio[i] = i < la ? a[skip + i] : j >= 0 && j < kb ? b[j] : noise_sample(sb);
+    }
+    unsigned char *out = malloc((size_t)freedv_get_bits_per_modem_frame(rx) / 8 + 8);
+    int pos = 0, got_at = -1;
+    bool unsynced = false;
+    *held_seen = 0;
+    while (pos < total) {
+        int nin = freedv_nin(rx);
+        if (nin < 0 || pos + nin > total) break;  /* a postamble sync asks for 0 */
+        int nb = (int)freedv_rawdatarx(rx, out, audio + pos);
+        pos += nin;
+        int st = freedv_get_rx_status(rx);
+        if (!unsynced && (st & (FREEDV_RX_TRIAL_SYNC | FREEDV_RX_SYNC))) {
+            *held_seen = 1;
+            freedv_set_sync(rx, FREEDV_SYNC_UNSYNC);
+            unsynced = true;
+            continue;
+        }
+        if (unsynced && got_at < 0 && pos > la + gap && nb > 0 && !(st & FREEDV_RX_BIT_ERRORS))
+            got_at = pos;
+    }
+    free(a); free(b); free(audio); free(out);
+    freedv_close(rx);
+    return got_at >= 0 && got_at <= la + gap + kb + FS;
+}
+
+void test_unsync_after_a_postamble_sync_finds_the_next_burst(void)
+{
+    const int modes[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC3 };
+    const int gaps[] = { FS * 8 / 10, FS * 2 };
+    for (unsigned m = 0; m < sizeof(modes) / sizeof(modes[0]); m++) {
+        for (unsigned g = 0; g < sizeof(gaps) / sizeof(gaps[0]); g++) {
+            int held;
+            char msg[96];
+            int ok = postamble_unsync_then_burst(modes[m], 0x9057 + g * 131u + m * 17u, gaps[g], &held);
+            snprintf(msg, sizeof(msg), "mode idx %u, gap %d: the postamble never synced", m, gaps[g]);
+            TEST_ASSERT_TRUE_MESSAGE(held, msg);
+            snprintf(msg, sizeof(msg), "mode idx %u, gap %d: next burst late or lost", m, gaps[g]);
+            TEST_ASSERT_TRUE_MESSAGE(ok, msg);
+        }
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_acq_fft_matches_brute_force);
     RUN_TEST(test_unsync_after_a_stale_sync_finds_the_next_burst);
+    RUN_TEST(test_unsync_after_a_postamble_sync_finds_the_next_burst);
     return UNITY_END();
 }
