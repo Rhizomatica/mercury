@@ -2472,6 +2472,10 @@ void ofdm_set_sync(struct OFDM *ofdm, int sync_cmd) {
       /* force manual unsync, which will cause sync state machine to
          have re-attempt sync */
       ofdm->sync_state = search;
+      /* and search from where the state machine does: a postamble sync
+         backed rxbufst up np frames, and the next one would take it below
+         rxbuf (the SIGSEGV of PR #455's sweep) */
+      ofdm->rxbufst = ofdm->nrxbufhistory;
       /* clear rxbuf so we don't try to sync on any existing OFDM signals
          in buffer */
       for (int i = 0; i < ofdm->nrxbuf; i++) ofdm->rxbuf[i] = 0.0f;
