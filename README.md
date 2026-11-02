@@ -384,6 +384,100 @@ ID, and with a free Apple ID the app has to be refreshed every 7 days.
 
 How a version is published to AltStore PAL: ios/ALTSTORE.md.
 
+### Install on Sailfish OS (technology preview)
+
+You need a 64-bit ARM (aarch64) phone with Sailfish OS 5.  The package was
+built and its `make test` passed on a Jolla phone with Sailfish OS 5.2.0.18;
+it has not been used with a radio there yet (see below).  It is the
+command-line modem only: there is no GUI app on the phone, but `-G` serves
+the WebSocket UI as on Linux.
+
+1. Turn on **Developer mode** (Settings → Developer tools), open
+   **Terminal**, and become root with `devel-su`.
+2. Add the HERMES repository and install Mercury:
+
+    ```bash
+    ssu ar hermes http://debian.hermes.radio/sailfish/aarch64/
+    pkcon refresh
+    pkcon install mercury
+    ```
+
+    This also installs HERMES's Hamlib 5, which can drive a radio's USB
+    serial chip without a kernel driver.  alsa-lib, pulseaudio-libs and
+    openssl come from the Jolla repositories.  The repository is plain HTTP
+    and its packages are not signed: their checksums are in
+    `http://debian.hermes.radio/sailfish/SHA256SUMS`.  To check one, download
+    it, compare `sha256sum`, and install it with `pkcon install-local`
+    (Hamlib still has to come from the repository).
+3. Copy the example configuration and edit it:
+
+    ```bash
+    mkdir -p ~/.config/mercury
+    cp /usr/share/doc/mercury/mercury.ini.example ~/.config/mercury/mercury.ini
+    ```
+
+    Mercury also reads `./mercury.ini` and `/etc/mercury/mercury.ini` (see
+    `-C`).  The package installs `/usr/bin/mercury` and its man page, but no
+    service: start it yourself.
+
+**Using it with a radio (untested with Mercury).**  These are the settings
+the HERMES radio daemon uses on the same phone:
+- **Audio:** ALSA (`sound_system = alsa`).  For a radio's USB codec,
+  `input_device = hw:CARD=Device,DEV=0`, but
+  `output_device = plughw:CARD=Device,DEV=0`, because the codec only plays
+  stereo.  `mercury -z` lists the cards.
+- **CAT and PTT:** the Jolla kernel has no CP210x driver, so use Hamlib's
+  user-space USB path as the device, and run Mercury as root:
+  `[ptt] method = hamlib`, then `hamlib_model = 3070` with
+  `device = "usb:10c4:ea60:<serial>"` for an IC-7100 (its CI-V port is the
+  serial ending in `A`, e.g. `"usb:10c4:ea60:IC-7100 02010347 A"`: quote it,
+  it has spaces), or `hamlib_model = 1049`,
+  `device = "usb:10c4:ea70:<serial>"` and `hamlib_serial_speed = 38400` (the
+  radio's CAT RATE) for an FT-710.  The phone has no udev rule for USB
+  devices, so only root can open them.
+- **Sleep:** Sailfish suspends the phone when the screen is off, and that
+  breaks USB audio.  Hold a wake lock while Mercury runs
+  (`echo mercury > /sys/power/wake_lock`, as root) and release it after
+  (`echo mercury > /sys/power/wake_unlock`).
+
+**Building the package yourself.**  It builds on the phone itself with
+`rpmbuild`; no Sailfish SDK is needed.  The spec is
+`packaging/sailfish/specs/mercury.spec` in
+[hermes-radio-daemon](https://github.com/Rhizomatica/hermes-radio-daemon)
+(branch `sailfish/mercury-webrtc` until its PR #80 is merged).  It builds the
+release tag's source archive with `make MERCURY_HOST=standalone` and runs
+`make test` (about 4 minutes on the phone).  It was built on a phone that
+already had the tools for the other HERMES packages, so the list below may
+miss something on a fresh one.  With the HERMES repository added (step 2),
+install the build dependencies as root:
+
+```bash
+# hamlib-devel comes from the HERMES repository, the rest from Jolla's
+pkcon install rpm-build gcc-c++ make hamlib-devel alsa-lib-devel pulseaudio-devel openssl-devel
+```
+
+Then leave `devel-su` and build as the normal user, in `packaging/sailfish`
+of a hermes-radio-daemon checkout (only `rpmmacros` and `specs/mercury.spec`
+are used, so copying those two files is enough):
+
+```bash
+# Sailfish's busybox xargs breaks a default rpm step: this file leaves it out
+cp rpmmacros ~/.rpmmacros
+mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS
+cp specs/mercury.spec ~/rpmbuild/SPECS/
+v=$(sed -n 's/^Version: *//p' specs/mercury.spec)
+curl -fsSL -o ~/rpmbuild/SOURCES/mercury-$v.tar.gz \
+    https://github.com/Rhizomatica/mercury/archive/refs/tags/v$v.tar.gz
+rpmbuild -ba ~/rpmbuild/SPECS/mercury.spec
+# -> ~/rpmbuild/RPMS/aarch64/mercury-<version>-1.aarch64.rpm
+```
+
+Install that file as root with `pkcon install-local`.
+
+Its `README.md` builds the whole HERMES set the same way
+(`fetch-sources.sh`, `build-all.sh`).  Source RPMs are in
+`http://debian.hermes.radio/sailfish/source/`.
+
 ## Configuration File
 
 Mercury reads an INI-format configuration file at startup. Command-line arguments take priority over values from the file.
