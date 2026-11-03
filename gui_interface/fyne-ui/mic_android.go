@@ -66,21 +66,36 @@ func micPermission(ask bool) int {
 
 // ensureMicPermission asks for the microphone and waits up to two minutes
 // for the operator's answer.  Without it the engine still runs (it can
-// transmit), so a refusal is reported, not fatal.
-func ensureMicPermission(logf func(string)) {
+// transmit), so a refusal is reported, not fatal.  It reports false when the
+// answer did not come: see whenMicGranted.
+func ensureMicPermission(logf func(string)) bool {
 	switch micPermission(true) {
 	case 0:
-		return
+		return true
 	case -1:
 		logf("Could not ask Android for the microphone\n")
-		return
+		return true
 	}
 	logf("Waiting for microphone permission...\n")
 	for i := 0; i < 240; i++ {
 		time.Sleep(500 * time.Millisecond)
 		if micPermission(false) == 0 {
-			return
+			return true
 		}
 	}
 	logf("No microphone permission: Mercury cannot hear the radio (Android Settings > Apps > Mercury > Permissions)\n")
+	return false
+}
+
+// whenMicGranted calls fn once the microphone is granted after
+// ensureMicPermission gave up.  The prompt can wait behind a locked screen
+// for longer than two minutes, and the engine then opened its audio without
+// the microphone; fn restarts it.
+func whenMicGranted(fn func()) {
+	go func() {
+		for micPermission(false) != 0 {
+			time.Sleep(time.Second)
+		}
+		fn()
+	}()
 }
