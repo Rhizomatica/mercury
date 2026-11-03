@@ -244,12 +244,14 @@ ss_wait_form_ready() {
 # Everything after the click into the e-mail box is keyboard: Tab to the code,
 # Enter to submit -- no second position to keep calibrated.
 #
-# SS_EMAIL_PCT: where the e-mail box sits, in % of the window height.  45 on the
-# form served since October 2026 (the box at 480-498 px of a 510 px window, the
-# heading wrapped onto three lines).  The old 39 % lands on that heading, the
-# typing goes nowhere and the form stays empty (the 1.9.18 release run).
+# SS_EMAIL_PCT: where the e-mail box sits, in % of the window height.  55 on the
+# form served since November 2026 (the box at 249-311 px of a 510 px window,
+# below a one-line "to use your SimplySign signature").  The October form's
+# 45 % now lands between that line and the box, the typing goes nowhere and the
+# form stays empty (the 1.9.22 release runs); before October it was 39 %.
+# The form is served by Certum, so it moves with the signer image pinned.
 ss_fill_login() {
-    local totp="$1" pct="${SS_EMAIL_PCT:-45}"
+    local totp="$1" pct="${SS_EMAIL_PCT:-55}"
     DISPLAY=$DISPLAY_NR xdotool windowactivate --sync "$WID" 2>/dev/null || true
     DISPLAY=$DISPLAY_NR xdotool windowraise "$WID" 2>/dev/null || true; sleep 1
     DISPLAY=$DISPLAY_NR xdotool mousemove $((BX + BW/2)) $((BY + BH*pct/100)) click 1; sleep 1
@@ -403,7 +405,7 @@ ss_login() {
     ss_log "        1. wrong e-mail, wrong/stale otpauth seed, or a clock skew > 30 s"
     ss_log "        2. the account holds no cloud certificate (right password, wrong account)"
     ss_log "        3. the login form's layout moved, so the click into the e-mail box"
-    ss_log "           (SS_EMAIL_PCT, ${SS_EMAIL_PCT:-45}% of the window) misses it"
+    ss_log "           (SS_EMAIL_PCT, ${SS_EMAIL_PCT:-55}% of the window) misses it"
     ss_log "       Compare the attempt-*.png frames: if the e-mail and the code are NOT in"
     ss_log "       their own boxes, it is the layout (3); if they are, it is (1) or (2)."
     ss_log "       Re-run with SS_DEBUG=1 to capture every step into $SS_DIAG_DIR,"
