@@ -633,7 +633,9 @@ Several of these are runtime-overridable from the `[arq]` section of the INI
 file (`mercury.ini`) rather than fixed at compile time — they are `_Atomic`
 globals seeded from the `_DEFAULT` value above and set once at startup:
 `retry_stagger_ms`, `disconnect_drain_timeout_s`, `silence_fallback_s` (the
-carousel's `SILENT_MS`, 110..600 s; #442) (each clamped to a safe range).  The stop-and-wait plane's `data_retry_slots`,
+carousel's `SILENT_MS`, 110..600 s; #442), `max_keydown_s` (the carousel's
+`MAX_KEYDOWN_MS` for this station's own keydowns, 0 or 5..30 s; #445) (each
+clamped to a safe range).  The stop-and-wait plane's `data_retry_slots`,
 `mode_hold_after_downgrade_s`, `ladder_up_successes`,
 `retry_downgrade_threshold`, `keepalive_interval_s`, `keepalive_miss_limit`,
 `peer_payload_hold_s`, `startup_max_s` and `no_progress_timeout_s` went with

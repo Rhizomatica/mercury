@@ -16,7 +16,8 @@ var searchData=
   ['deliver_5frx_5fdata_13',['deliver_rx_data',['../structarq__fsm__callbacks__t.html#ac9fcbea66140772ba5f409c77c6d4537',1,'arq_fsm_callbacks_t']]],
   ['deliver_5fseq_14',['deliver_seq',['../structcar__t.html#a87f838a9c9da2b4a44cbf2a7de780926',1,'car_t']]],
   ['delivered_15',['delivered',['../structcar__rblock__t.html#abde28f32cd89bcaccfe7b7e12925a429',1,'car_rblock_t']]],
-  ['done_16',['done',['../structcar__rblock__t.html#a242ae557497e6977a4edc99315495b6d',1,'car_rblock_t::done'],['../structcar__mlog__t.html#abd1093ad0fb565ff9b883f4b7e45aaee',1,'car_mlog_t::done']]],
-  ['done_5fin_5fround_17',['done_in_round',['../structcar__t.html#a5eb0cb867e77a5dc51ed3e760495f24f',1,'car_t']]],
-  ['dst_5faddr_18',['dst_addr',['../structarq__info.html#abd24ecb208a254859229cf631962fe90',1,'arq_info']]]
+  ['disc_5freq_5fms_16',['disc_req_ms',['../structarq__session__t.html#a98cb0ec03e82c5140d9262a70e545e79',1,'arq_session_t']]],
+  ['done_17',['done',['../structcar__rblock__t.html#a242ae557497e6977a4edc99315495b6d',1,'car_rblock_t::done'],['../structcar__mlog__t.html#abd1093ad0fb565ff9b883f4b7e45aaee',1,'car_mlog_t::done']]],
+  ['done_5fin_5fround_18',['done_in_round',['../structcar__t.html#a5eb0cb867e77a5dc51ed3e760495f24f',1,'car_t']]],
+  ['dst_5faddr_19',['dst_addr',['../structarq__info.html#abd24ecb208a254859229cf631962fe90',1,'arq_info']]]
 ];

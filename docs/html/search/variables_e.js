@@ -13,7 +13,7 @@ var searchData=
   ['payload_5flen_10',['payload_len',['../structarq__event__t.html#a25c0e8600a5f4be1284adfde663dc2ac',1,'arq_event_t']]],
   ['payload_5fmode_11',['payload_mode',['../structarq__session__t.html#ab8cefecd9fbc930f47b72c23d70e5376',1,'arq_session_t::payload_mode'],['../structarq__runtime__snapshot__t.html#a5ac045927514f07d471892cd84c60a32',1,'arq_runtime_snapshot_t::payload_mode']]],
   ['peer_5fbacklog_12',['peer_backlog',['../structcar__t.html#a4b711ebdaea95c7d172af1d32b2c0c51',1,'car_t']]],
-  ['peer_5fctl_5fdeaf_13',['peer_ctl_deaf',['../structcar__t.html#a2a280904139b14651bc113707eabcae9',1,'car_t']]],
+  ['peer_5fctl_5fdeaf_13',['peer_ctl_deaf',['../structcar__t.html#a9aab3f1a9d92233ca34653010f4ea758',1,'car_t']]],
   ['peer_5fdata_5fms_14',['peer_data_ms',['../structcar__t.html#a23705a5de1e0902d9123928db14db90a',1,'car_t']]],
   ['peer_5fhas_5fdata_15',['peer_has_data',['../structcar__t.html#ad7815b2a3a2e3cc98bbe589350a843b3',1,'car_t']]],
   ['peer_5fhi_16',['peer_hi',['../structcar__t.html#adaeaa048e153475c40e87521a82be679',1,'car_t']]],

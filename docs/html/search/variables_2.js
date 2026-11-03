@@ -10,7 +10,7 @@ var searchData=
   ['car_5factive_7',['car_active',['../structarq__session__t.html#a2050a4187f46e7cd7f9b5a40c3139fe1',1,'arq_session_t']]],
   ['car_5fcall_5fsnr_8',['car_call_snr',['../structarq__event__t.html#ae0c1e99f98798372968d293849b9aa09',1,'arq_event_t::car_call_snr'],['../structarq__session__t.html#ad93c4bc5036eb2a9502fbd2c9db0354d',1,'arq_session_t::car_call_snr']]],
   ['car_5fcalled_5fcrc_9',['car_called_crc',['../structarq__event__t.html#a0aa03cbee40a881d2a668f0dced8bdfb',1,'arq_event_t']]],
-  ['car_5fctl_5fdeaf_10',['car_ctl_deaf',['../structarq__event__t.html#ad1016326226322a16c2f80c47640c3d3',1,'arq_event_t::car_ctl_deaf'],['../structarq__session__t.html#ac9868c95190af5462fe3a0030fed481d',1,'arq_session_t::car_ctl_deaf']]],
+  ['car_5fctl_5fdeaf_10',['car_ctl_deaf',['../structarq__event__t.html#ad1016326226322a16c2f80c47640c3d3',1,'arq_event_t::car_ctl_deaf'],['../structarq__session__t.html#a50c1af58ce6f5d9201c1b8132fc007ce',1,'arq_session_t::car_ctl_deaf']]],
   ['car_5flast_5frx_5fms_11',['car_last_rx_ms',['../structarq__session__t.html#a961357b152b70e4396f700fdbee8eb3e',1,'arq_session_t']]],
   ['car_5flevel_12',['car_level',['../structarq__event__t.html#ac56f77b140f2ac40cb307ab6910fec49',1,'arq_event_t']]],
   ['car_5fmy_5fsnr_13',['car_my_snr',['../structarq__session__t.html#a4e3d3b393939a99359e9caccb649bcbc',1,'arq_session_t']]],
