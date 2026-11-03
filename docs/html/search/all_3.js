@@ -14,7 +14,7 @@ var searchData=
   ['dead_5fp_11',['DEAD_P',['../carousel_8c.html#a8b38b51fc61c0c5b8b0ebf168ce629e5',1,'carousel.c']]],
   ['dead_5fprobe_5fmax_5fms_12',['DEAD_PROBE_MAX_MS',['../carousel_8c.html#a2cd3d946a4921ad3bdaae9281550f0fa',1,'carousel.c']]],
   ['dead_5fprobe_5fms_13',['DEAD_PROBE_MS',['../carousel_8c.html#abac33eb095e406d4dacc4af43605a341',1,'carousel.c']]],
-  ['dead_5frun_14',['dead_run',['../carousel_8c.html#ae8303ee9c851b06508f287cf664b8f3f',1,'DEAD_RUN:&#160;carousel.c'],['../structcar__t.html#a2e4969f79335f06513c4caf1b7215e00',1,'car_t::dead_run']]],
+  ['dead_5frun_14',['dead_run',['../structcar__t.html#a2e4969f79335f06513c4caf1b7215e00',1,'car_t::dead_run'],['../carousel_8c.html#ae8303ee9c851b06508f287cf664b8f3f',1,'DEAD_RUN:&#160;carousel.c']]],
   ['deadline_15',['deadline',['../structcar__t.html#a703007c147d792c3aa1aea42a068ef4c',1,'car_t']]],
   ['deadline_5fevent_16',['deadline_event',['../structarq__session__t.html#ac4af3c9a7025182b1ee25999ab15a129',1,'arq_session_t']]],
   ['deadline_5ffrom_5fs_17',['deadline_from_s',['../arq__fsm_8c.html#a407877d1086141c03f8ac6e98f15fd37',1,'arq_fsm.c']]],
@@ -34,10 +34,11 @@ var searchData=
   ['deliver_5frx_5fdata_31',['deliver_rx_data',['../structarq__fsm__callbacks__t.html#ac9fcbea66140772ba5f409c77c6d4537',1,'arq_fsm_callbacks_t']]],
   ['deliver_5fseq_32',['deliver_seq',['../structcar__t.html#a87f838a9c9da2b4a44cbf2a7de780926',1,'car_t']]],
   ['delivered_33',['delivered',['../structcar__rblock__t.html#abde28f32cd89bcaccfe7b7e12925a429',1,'car_rblock_t']]],
-  ['disconnect_5fanswered_34',['disconnect_answered',['../arq__fsm_8c.html#a2cb25138eb12f5ce55525cc8f58aa7de',1,'arq_fsm.c']]],
-  ['disconnect_5fmust_5fwait_35',['disconnect_must_wait',['../arq__fsm_8c.html#a171711bfe96eba132e7dbcbd2b5ca7cd',1,'arq_fsm.c']]],
-  ['documentation_36',['Documentation',['../index.html#docs',1,'']]],
-  ['done_37',['done',['../structcar__rblock__t.html#a242ae557497e6977a4edc99315495b6d',1,'car_rblock_t::done'],['../structcar__mlog__t.html#abd1093ad0fb565ff9b883f4b7e45aaee',1,'car_mlog_t::done']]],
-  ['done_5fin_5fround_38',['done_in_round',['../structcar__t.html#a5eb0cb867e77a5dc51ed3e760495f24f',1,'car_t']]],
-  ['dst_5faddr_39',['dst_addr',['../structarq__info.html#abd24ecb208a254859229cf631962fe90',1,'arq_info']]]
+  ['disc_5freq_5fms_34',['disc_req_ms',['../structarq__session__t.html#a98cb0ec03e82c5140d9262a70e545e79',1,'arq_session_t']]],
+  ['disconnect_5fanswered_35',['disconnect_answered',['../arq__fsm_8c.html#a2cb25138eb12f5ce55525cc8f58aa7de',1,'arq_fsm.c']]],
+  ['disconnect_5fmust_5fwait_36',['disconnect_must_wait',['../arq__fsm_8c.html#a171711bfe96eba132e7dbcbd2b5ca7cd',1,'arq_fsm.c']]],
+  ['documentation_37',['Documentation',['../index.html#docs',1,'']]],
+  ['done_38',['done',['../structcar__rblock__t.html#a242ae557497e6977a4edc99315495b6d',1,'car_rblock_t::done'],['../structcar__mlog__t.html#abd1093ad0fb565ff9b883f4b7e45aaee',1,'car_mlog_t::done']]],
+  ['done_5fin_5fround_39',['done_in_round',['../structcar__t.html#a5eb0cb867e77a5dc51ed3e760495f24f',1,'car_t']]],
+  ['dst_5faddr_40',['dst_addr',['../structarq__info.html#abd24ecb208a254859229cf631962fe90',1,'arq_info']]]
 ];

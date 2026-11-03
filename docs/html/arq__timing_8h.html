@@ -135,6 +135,9 @@ Functions</h2></td></tr>
 <tr class="memitem:a1018512eb9ddc6de73bb7fd5a81daf8f" id="r_a1018512eb9ddc6de73bb7fd5a81daf8f"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8h.html#a1018512eb9ddc6de73bb7fd5a81daf8f">arq_timing_record_connect</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
 <tr class="memdesc:a1018512eb9ddc6de73bb7fd5a81daf8f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record session connected; logs [TMG] connect.  <br /></td></tr>
 <tr class="separator:a1018512eb9ddc6de73bb7fd5a81daf8f"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac8d59ea6b77ad787a6437435dc2464a8" id="r_ac8d59ea6b77ad787a6437435dc2464a8"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8h.html#ac8d59ea6b77ad787a6437435dc2464a8">arq_timing_record_turn</a> (int frames, int64_t since_rx_ms, int64_t since_tx_end_ms)</td></tr>
+<tr class="memdesc:ac8d59ea6b77ad787a6437435dc2464a8"><td class="mdescLeft">&#160;</td><td class="mdescRight">A keydown is handed to the radio: the time since the last frame decoded from the peer and since our own last transmission ended (-1: none yet).  <br /></td></tr>
+<tr class="separator:ac8d59ea6b77ad787a6437435dc2464a8"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ab6d43ccb2c9be64caf14364abca6f7b5" id="r_ab6d43ccb2c9be64caf14364abca6f7b5"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8h.html#ab6d43ccb2c9be64caf14364abca6f7b5">arq_timing_record_disconnect</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, const char *reason)</td></tr>
 <tr class="memdesc:ab6d43ccb2c9be64caf14364abca6f7b5"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record session disconnected; logs [TMG] disconnect and session totals.  <br /></td></tr>
 <tr class="separator:ab6d43ccb2c9be64caf14364abca6f7b5"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -275,6 +278,43 @@ Functions</h2></td></tr>
 </div><div class="memdoc">
 
 <p>Record session disconnected; logs [TMG] disconnect and session totals. </p>
+
+</div>
+</div>
+<a id="ac8d59ea6b77ad787a6437435dc2464a8" name="ac8d59ea6b77ad787a6437435dc2464a8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac8d59ea6b77ad787a6437435dc2464a8">&#9670;&#160;</a></span>arq_timing_record_turn()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_timing_record_turn </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>frames</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int64_t&#160;</td>
+          <td class="paramname"><em>since_rx_ms</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int64_t&#160;</td>
+          <td class="paramname"><em>since_tx_end_ms</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>A keydown is handed to the radio: the time since the last frame decoded from the peer and since our own last transmission ended (-1: none yet). </p>
+<p>logs [TMG] turn. Diagnostics for the receive-to-transmit lag (#442); the PTT ON line of the radio log follows it. </p>
 
 </div>
 </div>

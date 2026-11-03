@@ -557,9 +557,11 @@ Rendered HTML: https://rhizomatica.github.io/mercury/
 - Trace run (`./mercury -d`): logger runs at **TRACE** level and additionally logs the raw bytes of every decoded connect frame, so you can see who is calling whom on the channel (`[TRC]`). Implies `-v`.
 - `./mercury -v -L /tmp/session.log` — write full DEBUG+TIMING log to file.
 - `./mercury -v -L /tmp/session.log -J` — same, but in **JSONL** format for machine parsing with `jq`.
+- Text log lines start with the date and time, `2026-11-02 23:15:57.123`, in local time; `[main] log_utc = true` writes them in UTC with a `Z` (`2026-11-02 23:15:57.123Z`), to line them up with BPQ32's or another station's log.
 - TX state transitions are logged with timestamps at INFO level as:
   - `TX enabled (PTT ON)`
   - `TX disabled (PTT OFF)`
+- A session's teardown after the host's `DISCONNECT` is logged at INFO level: `DISCONNECT deferred until delivered (up to N s)` or `DISCONNECT: nothing left to deliver, ending now`, then `Teardown starts (caller|callee), N ms after the host's DISCONNECT`, and on the other end `Peer's DISCONNECT received N ms after the host's`.
 
 See [docs/CAROUSEL-ARQ.md](docs/CAROUSEL-ARQ.md) for the ARQ data link and [docs/CAROUSEL-SPEC.md](docs/CAROUSEL-SPEC.md) for its specification.
 

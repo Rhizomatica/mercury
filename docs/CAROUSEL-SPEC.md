@@ -84,7 +84,7 @@ started on or sent (invariant I-BW, section 7).
 | FRAME_HDR / SEG_HDR | 2 / 4 B | FB_UNSEEN | 255 (wire 127) |
 | RS_MAX_PIECES | 256 (rs_erasure.h:20) | SLOW_RUNG_FRAMES | 3 |
 | TURN_QUANTUM_MS | 30000 | TURN_CAP_MS | 45000 |
-| MAX_KEYDOWN_MS | 30000 | HEAD_MS (H) | 110 |
+| MAX_KEYDOWN_MS | 30000 (a station may hold its own lower: `arq:max_keydown_s`, §20) | HEAD_MS (H) | 110 |
 | TAIL_MS (T) | 200 | GUARD_MS (G) | 700 (P:211) |
 | ISS_GUARD_MS (IG) | 900 (P:222) | CHAIN_GAP_MS (CG) | 300 (P:340) |
 | RESEND_RUN | 2 | WINDOW_MARGIN_MS (WM) | 1000 |
@@ -916,3 +916,17 @@ calibration needs points above 12 dB.
 |---|---|---|
 | A drop below the control mode mid-session reaches the floor (#431, Pat stalling at `FF>`).  An MFSK frame's reading alone takes `ctl_deaf` on (a smoothed -2.7 dB after one -9 dB frame put the peer's control back on DATAC16); after two unanswered asks the caller's silence is `S_FALLBACK_MS` (90 s), not `SILENT_MS`, since the callee listens at the floor from then; at the silence the caller's rounds go to the floor with its control (`tx_level = 0`). | `car_on_frame`, `car_on_tx_done`; TLA+ `specs/rungs/FloorSilence.tla` (`FloorHolds`, mutant `Mut_fs_lagread`) | sim: the #431 exchange's 74 B 213-432 s -> 123-172 s; nvis 50 KB median +0.9 % (3 of 30 runs moved); conn_bench 4 of 660 rows |
 | `arq:mfsk_tx_only`: a station whose radio keys only FSK sends everything on the floor.  The connect extension's minor revision shrinks to 2 bits (= 1) and its bit 4 says "I transmit only MFSK"; 1.9.20 reads any minor, so stations without the option connect to 1.9.20 both ways, and a station with it ignores minor 0.  The flag is `CAR_DEAF_MFSK_TX` in `ctl_deaf` (the peer's) or `peer_ctl_deaf` (mine): it caps my rounds at the floor (`cap_tx`) and is never cleared.  Such a callee answers a CALL only where its ACCEPT goes on the floor (`accept_keys`); such a caller's first CALL waits the floor's interval; CQ goes on the floor. | `arq_protocol.[ch]`, `arq_fsm.c`, `arq.c`, `carousel.c`; TLA+ `specs/connect/ConnectCarrier.tla` (`MfskTx`, `FloorOnly`; mutants `Mut_loud`, `Mut_firstiv`) | option off: P0, nvisa, conn_bench and bidir identical; not yet keyed on a real FSK-only radio |
+
+---
+
+## 20. After 1.9.21 (#448, #449)
+
+#443 (the fast CALL count follows `RETRIES`), #444 (`arq:silence_fallback_s`)
+and #451 (the MFSK call listener decodes both floors) changed rules that are
+updated where they stand: S0 in §5.2, and the silence and BW500 floor rows of
+§17 and §18.
+
+| Change | Where | Risks |
+|---|---|---|
+| A probe round chained to my poll (`KD_BOTH`) that drew nothing falls back as an unanswered round does: when the turn then passes to me (`m_decide_recv`, "turn: mine") with nothing heard (`!m_heard`), my next round goes on `ok_lv`, the rung S last had my rounds on, once (`fell_back`), as `m_decide_send` already did for a `KD_ROUND`.  Before, that round went out again on the unconfirmed rung, at a peer that had gone back to `ok_lv` (2026-10-27, K7EK-VE4KLM on 10.143 MHz: an 11 s DATAC4 round keyed at a peer back on MFSK, ~30-40 s lost). | `fall_back_unconfirmed`, called from `m_decide_send` and `m_decide_recv`; TLA+ `specs/rungs/RungAgreement.tla` (`KD_BOTH` on any rung, its round lost alone; `WastedF` with `W = 1`, `FallbacksAgree`; mutant `Mut_norecvfb` needs `W = 2`); `tests/sim/test_carousel.c` and `car_explore` (the Oct 27 loss set) | after a silent `KD_BOTH` the caller cannot tell its round lost from the callee's answer lost; with the poll naming the callee's rung lost too (`ok_lv` stale at 0) the fall-back lands on the floor, and `FLOOR_SILENT_MAX` keeps it sending blind (sim: 4 of 360 paired runs fired it, 2 right, 2 wrong, means identical; `specs/rungs/README.md`) |
+| `arq:max_keydown_s` (0 or 5..30 s; 0 is `MAX_KEYDOWN_MS`, 30 s): a station holds its own keydowns shorter, for TCP clients that abort when PTT stays on (vARIM, about 20 s, #445).  The cap is on the whole keydown, lead and tail (`kd_frame_extra`) and a control frame before a round (`behind_ctl_n`) included: what the station asks for in its polls (`keydown_cap`, via `level_earned` and `poll_size`) and what it sends.  What it accepts, and how long it waits for a peer's round (`peer_keydown_cap`), stay at 30 s: a peer without the option keys as before, and a receiver learns a round's length from its frames, so a shorter round is not counted as loss.  No wire change.  A BW500 floor frame (27 s) is never split.  Per session from `car_set_max_keydown_ms` at `car_init`, unless `car_io_t.max_keydown_ms` names one. | `keydown_cap`, `behind_ctl_n`, `peer_keydown_cap`, `car_set_max_keydown_ms`; `arq_set_max_keydown_s` (A) | option off: identical; with 16 s at both ends, 8 KiB both ways: 0-6 % slower on fast channels, 13-30 % on slow ones and at BW500 (sim); not in any TLA+ model (it changes round sizes, not turns or rungs) |
