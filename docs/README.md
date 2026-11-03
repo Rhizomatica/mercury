@@ -13,6 +13,7 @@ having — they are not updated as the code moves on.
 
 | Document | What it covers |
 |---|---|
+| [RELEASE-1.9.22.md](RELEASE-1.9.22.md) | **1.9.22 talks to 1.9.21 and 1.9.20.** Stations on different bandwidths connect on the MFSK floor, `max_keydown_s` for vARIM, the receiver unsync fix (a crash, and a search of old audio), the unanswered-probe fall-back, `silence_fallback_s` and the fast CALL count, and log dates and UTC. |
 | [RELEASE-1.9.21.md](RELEASE-1.9.21.md) | **1.9.21 talks to 1.9.20.** The fix for a session whose link falls below the control mode (Pat stalling at `FF>`, #431), MFSK-only transmit for FSK-only radios, the Hermes-Lite 2 backend, and the Mac App Store package. |
 | [RELEASE-1.9.20.md](RELEASE-1.9.20.md) | **1.9.20 does not talk to 1.9.19 on the air.** The 2.0 architecture: a ladder that starts where the SNR says and falls back fast, quicker connect and teardown, a 500 Hz MFSK floor, high-Doppler channels, and what was tested. Android and iOS as technology previews. |
 | [RELEASE-1.9.19.md](RELEASE-1.9.19.md) | **1.9.19 does not talk to 1.9.18 on the air.** MFSK moved to the centre of the passband (1500 Hz), what an operator sees with mixed versions, and what was tested on air. |
