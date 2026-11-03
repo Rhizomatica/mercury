@@ -334,8 +334,10 @@ jobs:
 
       # Screenshots and window lists live on the runner; without this they are
       # thrown away with the container, which is exactly when they are wanted.
+      # cancelled() too: a login that never takes runs into timeout-minutes,
+      # and a timed-out job is cancelled, not failed (the first 1.9.22 run).
       - name: Upload signing diagnostics
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: signing-diagnostics
