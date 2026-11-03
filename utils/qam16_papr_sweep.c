@@ -235,6 +235,15 @@ int main(int argc, char **argv) {
          COMMON_PEAK);
 
   double papr_stock = 0.0;
+  /* Watterson noise convention (common/watterson.c, ch.c-compatible):
+   * achieved SNR3k = -No + k, where k depends on the burst's own power
+   * through the channel's unit-gain normalisation.  The stock variant's k
+   * is calibrated once from its first burst (chanutil_run at No=-30, near
+   * noiseless), and every variant is then run at No = k_stock - axis: at
+   * the same radio setting each variant's own average power sets its
+   * achieved SNR, which the channel MEASURES per burst and the rows report.
+   * Same construction as mfsk_channel_sweep.sh's No = -(SNR3k) - n. */
+  double k_stock = 0.0;
 
   for (int iv = 0; iv < nvar; iv++) {
     seed_rng(1357911131517ULL);
@@ -257,6 +266,31 @@ int main(int argc, char **argv) {
     double papr = 0, rms = 0, pk = 0;
     int n = make_burst(tx, burst, payload, nbytes, &papr, &rms, &pk);
     if (iv == 0) papr_stock = papr;
+    /* Calibrate the stock variant's k once (fading channels only): its
+     * first burst, equal-peak normalised, through the channel at No=-30
+     * (near noiseless); k = meas + 30. */
+    if (iv == 0 && chan != CHAN_AWGN) {
+      double gnorm = (pk > 0.0) ? (COMMON_PEAK / pk) : 1.0;
+      for (int i = 0; i < n; i++)
+        burst[i] = (short)lrint((double)burst[i] * gnorm);
+      chanutil_t *ck = chanutil_open(chan, -30.0f, 1234u);
+      if (!ck) {
+        fprintf(stderr, "chanutil_open failed (calibration)\n");
+        return 1;
+      }
+      float m0 = 0.0f;
+      chanutil_run(ck, burst, n, &m0);
+      chanutil_close(ck);
+      /* measured SNR = A - No, so the burst's level constant is
+       * A = meas0 + No_ref = meas0 - 30; the axis then maps to
+       * No = A - axis.  chanutil's measurement is the true achieved SNR
+       * (it verifies to 0.01 dB against direct AWGN), so the mapping is
+       * exact for this burst and papr-correct for the others at equal
+       * peak. */
+      k_stock = (double)m0 - 30.0;
+      printf("   noise calibration: A = %.1f dB (axis -> No = A - axis)\n",
+             k_stock);
+    }
     /* Peak-limited-radio noise model: at the same radio peak the
      * environment adds the SAME noise to every variant, so the clipped
      * variant's higher average power RAISES its achieved SNR.  The axis is
@@ -270,10 +304,10 @@ int main(int argc, char **argv) {
     for (double snr = snr_lo; snr <= snr_hi + 0.001; snr += step) {
       chanutil_t *ch = NULL;
       if (chan != CHAN_AWGN) {
-        /* The channel takes noise density No.  Same radio setting as the
-         * stock axis means the variant runs papr_gain_db hotter, so ask the
-         * channel for No = axis - papr_gain_db. */
-        ch = chanutil_open(chan, (float)(snr - papr_gain_db), 1234u);
+        /* No = k_stock - axis: every variant sees the same channel noise at
+         * the same radio setting; its own average power decides its
+         * achieved SNR, which chanutil measures and the row reports. */
+        ch = chanutil_open(chan, (float)(k_stock - snr), 1234u);
         if (!ch) {
           fprintf(stderr, "chanutil_open failed\n");
           return 1;
@@ -313,9 +347,10 @@ int main(int argc, char **argv) {
             noisy[i] = (short)lrint(v);
           }
         } else {
-          /* chanutil takes noise density No; achieving the same radio
-           * setting means asking the channel for No = axis - papr_gain_db
-           * (the variant runs papr_gain_db hotter at the same peak). */
+          /* chanutil adds noise inside the channel at No = k_stock - axis;
+           * each variant's higher/lower average power moves its measured
+           * SNR by its own papr gain.  The tail after the burst uses the
+           * SNR the channel reports for THIS burst. */
           float m = 0.0f;
           chanutil_run(ch, burst, n, &m);
           meas_sum += m;
@@ -339,8 +374,8 @@ int main(int argc, char **argv) {
                snr, snr + papr_gain_db, delivered, trials, acquired, trials,
                snr_est_n ? snr_est_sum / snr_est_n : 0.0, snr_est_n);
       } else {
-        printf("   No %+5.1f   (radio setting; achieved = measured)  %3d/%-3d    %3d/%-3d     %6.1f (%d synced)  meas %5.1f\n",
-               snr - papr_gain_db, delivered, trials, acquired, trials,
+        printf("   axis %+5.1f (achieved = meas below)   %3d/%-3d    %3d/%-3d     %6.1f (%d synced)  meas %+6.1f\n",
+               snr, delivered, trials, acquired, trials,
                snr_est_n ? snr_est_sum / snr_est_n : 0.0, snr_est_n,
                meas_n ? meas_sum / meas_n : 0.0);
       }
