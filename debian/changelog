@@ -1,3 +1,26 @@
+mercury (1.9.22-1) unstable; urgency=medium
+
+  * Release 1.9.22.
+  * gui: drop the Embedded client master-switch checkbox.
+  * CI: build Fyne UI for Linux arm64.
+  * arq: log turn timing and teardown steps (#442).
+  * log: include date in text log timestamps.
+  * log: optional UTC timestamps (main:log_utc) (#442).
+  * carousel: fall back from an unconfirmed rung when the turn passes to me.
+  * Follow-ups to #448: regression test for the fall-back, floor gap noted.
+  * arq: configurable silence fallback timeout (#442).
+  * arq: scale fast CALL count with RETRIES (#442).
+  * host: no-op Android stubs for the daemon build.
+  * ci: build macOS arm64 on macos-15.
+  * arq: max_keydown_s holds carousel rounds short, for vARIM (#445).
+  * modem: listen for MFSK CALLs on both floors (#442).
+  * docs: install on Sailfish OS (technology preview).
+  * ofdm: UNSYNC must reset rxbufst (stale search, and the #455 SIGSEGV).
+  * docs: what the changes since 1.9.21 left undocumented.
+  * docs: 1.9.22 release notes.
+
+ -- Rafael Diniz <rafael@riseup.net>  Tue, 03 Nov 2026 17:17:32 +0000
+
 mercury (1.9.21-1) unstable; urgency=medium
 
   * Release 1.9.21.
