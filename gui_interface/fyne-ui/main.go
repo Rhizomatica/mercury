@@ -1822,7 +1822,7 @@ func main() {
 		defaultConfig := filepath.Join(getBaseDir(), "mercury.ini")
 
 		logPath := filepath.Join(getLogDir(), "mercury_engine.log")
-		ensureMicPermission(appendLog)
+		micGranted := ensureMicPermission(appendLog)
 		ensureUSBRadio(defaultConfig, appendLog)
 		refreshAndroidAudioDevices()
 		appendLog("Starting Mercury engine...\n")
@@ -1839,6 +1839,21 @@ func main() {
 		}
 		engineReady.Store(true)
 		connectLink()
+		if !micGranted {
+			whenMicGranted(func() {
+				// Empty devices keep the engine's; the channel is the one shown.
+				channel := "left"
+				fyne.DoAndWait(func() {
+					if c := bindings.channelSelect.Selected; c != "" {
+						channel = c
+					}
+				})
+				appendLog("Microphone permission granted: restarting audio\n")
+				if err := sendWSCommand("set_audio_config", "", "", channel, "", "", "", ""); err != nil {
+					appendLog(fmt.Sprintf("Failed to restart audio: %v\n", err))
+				}
+			})
+		}
 	}()
 
 	myWindow.ShowAndRun()
