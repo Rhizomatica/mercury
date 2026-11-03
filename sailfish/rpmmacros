@@ -1,0 +1,8 @@
+# Sailfish OS: brp-strip-static-archive needs GNU xargs (-d), and busybox's
+# has no -d; these packages ship no static archives, so leave it out
+%__os_install_post \
+    /usr/lib/rpm/brp-compress %{?_prefix} \
+    /usr/lib/rpm/brp-strip %{__strip} \
+    /usr/lib/rpm/brp-strip-comment-note %{__strip} %{__objdump} \
+    /usr/lib/rpm/brp-remove-la-files \
+%{nil}

@@ -1,0 +1,2 @@
+# GitHub writes the commit into the spec of each release archive (%{commit})
+sailfish/mercury.spec export-subst
