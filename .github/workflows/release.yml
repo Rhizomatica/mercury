@@ -102,12 +102,13 @@ jobs:
           sed -i 's/#define MERCURY_VERSION "[^"]*"/#define MERCURY_VERSION "'"$V"'"/' common/mercury_version.h
           sed -i 's/"Mercury [0-9]*\.[0-9]*\.[0-9]*"/"Mercury '"$V"'"/' mercury.1
           sed -i 's/#define MyAppVersion "[^"]*"/#define MyAppVersion "'"$V"'"/' windows-installer/installer.iss
+          sed -i 's/^Version: .*/Version:        '"$V"'/; s/^Release: .*/Release:        1/' sailfish/mercury.spec
 
       - name: Commit and push
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: |
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-          git add debian/changelog main.c common/mercury_version.h mercury.1 windows-installer/installer.iss
+          git add debian/changelog main.c common/mercury_version.h mercury.1 windows-installer/installer.iss sailfish/mercury.spec
           # Idempotent: a re-run after a later job failed finds the bump already
           # committed, and `git commit` with nothing staged exits non-zero and
           # would fail the whole release for no reason.

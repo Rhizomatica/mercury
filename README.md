@@ -443,10 +443,9 @@ the HERMES radio daemon uses on the same phone:
 
 **Building the package yourself.**  It builds on the phone itself with
 `rpmbuild`; no Sailfish SDK is needed.  The spec is
-`packaging/sailfish/specs/mercury.spec` in
-[hermes-radio-daemon](https://github.com/Rhizomatica/hermes-radio-daemon)
-(branch `sailfish/mercury-webrtc` until its PR #80 is merged).  It builds the
-release tag's source archive with `make MERCURY_HOST=standalone` and runs
+[`sailfish/mercury.spec`](sailfish/mercury.spec), and every release's
+source archive carries its own copy, with that release's version and commit
+filled in.  It builds with `make MERCURY_HOST=standalone` and runs
 `make test` (about 4 minutes on the phone).  It was built on a phone that
 already had the tools for the other HERMES packages, so the list below may
 miss something on a fresh one.  With the HERMES repository added (step 2),
@@ -457,25 +456,26 @@ install the build dependencies as root:
 pkcon install rpm-build gcc-c++ make hamlib-devel alsa-lib-devel pulseaudio-devel openssl-devel
 ```
 
-Then leave `devel-su` and build as the normal user, in `packaging/sailfish`
-of a hermes-radio-daemon checkout (only `rpmmacros` and `specs/mercury.spec`
-are used, so copying those two files is enough):
+Then leave `devel-su` and build as the normal user:
 
 ```bash
-# Sailfish's busybox xargs breaks a default rpm step: this file leaves it out
-cp rpmmacros ~/.rpmmacros
+v=1.9.23    # the release to build (1.9.22 and older have no sailfish/)
 mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS
-cp specs/mercury.spec ~/rpmbuild/SPECS/
-v=$(sed -n 's/^Version: *//p' specs/mercury.spec)
 curl -fsSL -o ~/rpmbuild/SOURCES/mercury-$v.tar.gz \
     https://github.com/Rhizomatica/mercury/archive/refs/tags/v$v.tar.gz
-rpmbuild -ba ~/rpmbuild/SPECS/mercury.spec
+cd ~/rpmbuild/SOURCES
+tar -xzf mercury-$v.tar.gz -O mercury-$v/sailfish/mercury.spec > ../SPECS/mercury.spec
+# Sailfish's busybox xargs breaks a default rpm step: this file leaves it out
+tar -xzf mercury-$v.tar.gz -O mercury-$v/sailfish/rpmmacros > ~/.rpmmacros
+rpmbuild -ba ../SPECS/mercury.spec
 # -> ~/rpmbuild/RPMS/aarch64/mercury-<version>-1.aarch64.rpm
 ```
 
 Install that file as root with `pkcon install-local`.
 
-Its `README.md` builds the whole HERMES set the same way
+The other HERMES packages (radiod and the libraries it needs) are built the
+same way from `packaging/sailfish` in
+[hermes-radio-daemon](https://github.com/Rhizomatica/hermes-radio-daemon)
 (`fetch-sources.sh`, `build-all.sh`).  Source RPMs are in
 `http://debian.hermes.radio/sailfish/source/`.
 
