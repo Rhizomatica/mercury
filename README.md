@@ -466,7 +466,9 @@ curl -fsSL -o ~/rpmbuild/SOURCES/mercury-$v.tar.gz \
 cd ~/rpmbuild/SOURCES
 tar -xzf mercury-$v.tar.gz -O mercury-$v/sailfish/mercury.spec > ../SPECS/mercury.spec
 # Sailfish's busybox xargs breaks a default rpm step: this file leaves it out
-tar -xzf mercury-$v.tar.gz -O mercury-$v/sailfish/rpmmacros > ~/.rpmmacros
+# (radiod's build installs the same one; an existing file is kept)
+[ -f ~/.rpmmacros ] ||
+    tar -xzf mercury-$v.tar.gz -O mercury-$v/sailfish/rpmmacros > ~/.rpmmacros
 rpmbuild -ba ../SPECS/mercury.spec
 # -> ~/rpmbuild/RPMS/aarch64/mercury-<version>-1.aarch64.rpm
 ```
