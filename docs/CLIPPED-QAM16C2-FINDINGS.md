@@ -168,6 +168,11 @@ re-litigated here.)
 
 ## Caveats
 
+- The finals tables were re-confirmed on the corrected instrument
+  (`utils/bench_common.h`, 2026-11-03, v1.9.22) during the PR #455 review:
+  the ccir-poor stock and (2.0, 1.0) rows reproduced within run noise
+  (stock 6/17/30/47/69/86 at +8..+14; (2.0,1.0) 18/30/50/65/81/90 at
+  +6..+12) and the tables stand as printed.
 - One fading preset (ccir-poor) and one frequency-offset value (none) were
   run. Fading is where clip damage shows, so a second regime (e.g. itur-mdv
   NVIS or flutter) is the natural extension; the coarse AWGN/ccir-poor pair
