@@ -523,13 +523,20 @@ libmercury_core_w64.a: $(HIDAPI_W64_OBJ)
 # has an OpenSSL backend is decided by pkg-config in config.mk, so only the
 # Makefile knows whether ws_tls.o carries SSL_* references.  It is empty on
 # Windows and macOS, which build without TLS.
+#
+# FYNE_UI_TAGS: build tags added to mercury_embedded.  Sailfish OS has no X11
+# and no libGL, and runs the GPU driver through libhybris:
+#   make fyne-ui FYNE_UI_TAGS=wayland,gles2,egl,hybris EXTRA_CFLAGS="-g -O2 -fPIE"
+# (sailfish/build-mercury-ui.sh does the rest of the setup).
+FYNE_UI_TAGS ?=
+comma := ,
 fyne-ui: libmercury_core.a
 	@echo "Building Mercury UI (native: Linux or macOS)..."
 	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 \
 		CGO_CPPFLAGS="$(EXTRA_CPPFLAGS)" \
 		CGO_CFLAGS="$(or $(strip $(EXTRA_CFLAGS)),-g -O2)" \
 		CGO_LDFLAGS="$(COMMON_LDFLAGS) $(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS)" \
-		go build -buildmode=pie -tags mercury_embedded \
+		go build -buildmode=pie -tags mercury_embedded$(if $(FYNE_UI_TAGS),$(comma)$(FYNE_UI_TAGS)) \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
 		-o $(abspath mercury-ui) .
 	@echo "  -> mercury-ui"

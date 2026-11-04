@@ -115,3 +115,6 @@ Mercury-*.ipa
 # Android build
 gui_interface/fyne-ui/AndroidManifest.xml
 Mercury-*.apk
+
+# sailfish/build-mercury-ui.sh: development links and pkg-config files
+sailfish/.gl/
