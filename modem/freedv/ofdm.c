@@ -1172,11 +1172,19 @@ void ofdm_set_acq_fft_enable(struct OFDM *ofdm, bool val) {
 
 void ofdm_set_timing_mx_thresh(struct OFDM *ofdm, float val) {
   ofdm->timing_mx_thresh = val;
+  ofdm->config.timing_mx_thresh = val;
 }
 
 void ofdm_set_bad_uw_errors(struct OFDM *ofdm, int val) {
   ofdm->bad_uw_errors = val;
+  ofdm->config.bad_uw_errors = val;
 }
+
+float ofdm_get_timing_mx_thresh(struct OFDM *ofdm) {
+  return ofdm->timing_mx_thresh;
+}
+
+int ofdm_get_bad_uw_errors(struct OFDM *ofdm) { return ofdm->bad_uw_errors; }
 
 void ofdm_set_off_est_hz(struct OFDM *ofdm, float val) {
   ofdm->foff_est_hz = val;

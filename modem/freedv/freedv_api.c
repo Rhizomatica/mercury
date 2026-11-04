@@ -1730,3 +1730,12 @@ void freedv_set_timing_mx_thresh(struct freedv *f, float val) {
 void freedv_set_bad_uw_errors(struct freedv *f, int val) {
   if (f != NULL && f->ofdm != NULL) ofdm_set_bad_uw_errors(f->ofdm, val);
 }
+
+float freedv_get_timing_mx_thresh(struct freedv *f) {
+  return (f != NULL && f->ofdm != NULL) ? ofdm_get_timing_mx_thresh(f->ofdm)
+                                        : 0.0f;
+}
+
+int freedv_get_bad_uw_errors(struct freedv *f) {
+  return (f != NULL && f->ofdm != NULL) ? ofdm_get_bad_uw_errors(f->ofdm) : 0;
+}

@@ -106,6 +106,8 @@ void ofdm_set_acq_fft_enable(struct OFDM *, bool);
  * exist so bench tools can sweep them (see utils/acq_tuning_sweep.c). */
 void ofdm_set_timing_mx_thresh(struct OFDM *, float);
 void ofdm_set_bad_uw_errors(struct OFDM *, int);
+float ofdm_get_timing_mx_thresh(struct OFDM *);
+int ofdm_get_bad_uw_errors(struct OFDM *);
 void ofdm_set_sync(struct OFDM *, int);
 void ofdm_set_tx_bpf(struct OFDM *, bool);
 void ofdm_set_dpsk(struct OFDM *ofdm, bool val);
