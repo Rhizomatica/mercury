@@ -166,7 +166,9 @@ Operational consequences, reflected in the ARQ design
   above −5 dB MPP — a tuning candidate (`timing_mx_thresh`, UW length),
   measured on the AWGN bench in
   [ACQ-TUNING-FINDINGS.md](ACQ-TUNING-FINDINGS.md) (threshold lowered for
-  datac15/16; the UW budget buys nothing).  It is also what sets the *fringe* floor, which
+  datac15/16; the UW budget buys nothing).  Note that the acquisition table
+  below and the reproduce command were recorded at the stock 0.45 threshold;
+  after that change lands they describe history, not the current build.  It is also what sets the *fringe* floor, which
   is measurable rather than inferred (`utils/acquire_vs_decode DATAC16 100 -13 -8`,
   AWGN, 0 % clipped):
 

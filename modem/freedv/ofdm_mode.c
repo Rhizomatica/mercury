@@ -326,10 +326,11 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->txtbits = 0;
     config->state_machine = "data";
     config->ftwindowwidth = 80;
-    /* 0.40, down from the inherited 0.45: buys ~1.5 dB of preamble
-       acquisition at ~0-1% noise-only false syncs, and most of the
-       acquisition lost to frequency offset.  Measured, with the false-sync
-       control and the 0.35/0.30 knee: docs/ACQ-TUNING-FINDINGS.md. */
+    /* 0.40, down from the inherited 0.45: buys ~1.5-2 dB of preamble
+       acquisition and delivered frames at ~0% noise-only false syncs.
+       Measured on v1.9.22 with the corrected instrument (see
+       docs/ACQ-TUNING-FINDINGS.md for the tables, the 0.35/0.30 knee, and
+       the offset negative result). */
     config->timing_mx_thresh = 0.40;
     config->codename = "H_256_768_22";
     config->amp_est_mode = 1;
@@ -360,10 +361,11 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->txtbits = 0;
     config->state_machine = "data";
     config->ftwindowwidth = 80;
-    /* 0.40, down from the inherited 0.45: buys ~1.5 dB of preamble
-       acquisition at ~0-1% noise-only false syncs, and most of the
-       acquisition lost to frequency offset.  Measured, with the false-sync
-       control and the 0.35/0.30 knee: docs/ACQ-TUNING-FINDINGS.md. */
+    /* 0.40, down from the inherited 0.45: buys ~1.5-2 dB of preamble
+       acquisition and delivered frames at ~0% noise-only false syncs.
+       Measured on v1.9.22 with the corrected instrument (see
+       docs/ACQ-TUNING-FINDINGS.md for the tables, the 0.35/0.30 knee, and
+       the offset negative result). */
     config->timing_mx_thresh = 0.40;
     config->codename = "H_256_768_22";
     config->amp_est_mode = 1;
