@@ -273,6 +273,7 @@ typedef struct {
     int      name_lv;               /* S: the rung my next ack says I listen on (0: none) */
     size_t   rx_run;                /* bytes delivered since the peer's direction last completed */
     size_t   peer_last_msg;         /* ...and that size, the last time it did */
+    size_t   peer_prev_msg;         /* ...and the time before */
     uint8_t  peer_hi;
     uint8_t  polled_base;           /* the window base my last poll reported */
     bool     round_fresh;           /* this round carried a block I do not have yet */

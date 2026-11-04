@@ -1498,12 +1498,17 @@ static int short_rung(const car_t *c, int lv, size_t bytes, int *pn)
     if (best != lv) *pn = best_n;
     return best;
 }
-/* The peer's next message, before it says: as long as its last one -- a
- * request/response application's messages run to a size -- or, none yet,
- * a short one.  0 (no guess) past what a short rung carries. */
+/* The peer's next message, before it says: as long as the shorter of its
+ * last two -- a request/response application's messages run to a size --
+ * or, none yet, a short one.  0 (no guess) past what a short rung carries.
+ * The shorter, not the last: B2F answers a long message with a short one
+ * from the same end (the proposal, the message, then FF or FQ), and sized
+ * by the message alone the FQ went in a 7.3 s DATAC17 frame where one
+ * DATAC3 frame, 3.8 s, holds it (KG9NI-K7EK, 2026-11-04 19:07Z). */
 static size_t peer_next_guess(const car_t *c)
 {
     size_t b = c->peer_last_msg ? c->peer_last_msg : BL_SMALL_BYTES;
+    if (c->peer_prev_msg && c->peer_prev_msg < b) b = c->peer_prev_msg;
     return b <= BL_MEDIUM_BYTES ? b : 0;
 }
 /* The peer's backlog as it last said, in bytes: 0 when unknown or large. */
@@ -2033,7 +2038,7 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
 {
     if (peer_direction_done(c)) {
         car_trace(c, "rx -> done");
-        if (c->rx_run) { c->peer_last_msg = c->rx_run; c->rx_run = 0; }
+        if (c->rx_run) { c->peer_prev_msg = c->peer_last_msg; c->peer_last_msg = c->rx_run; c->rx_run = 0; }
         return KD_DONE;
     }
     bool floor = c->poll_level == 0 && c->io.pattern;

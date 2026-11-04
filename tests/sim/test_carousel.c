@@ -214,6 +214,23 @@ static void test_carousel_idle_keeps_hearing_the_peer(void)
         }
 }
 
+/* A B2F forward (KG9NI-K7EK, 30 m, 2026-11-04 19:05Z): the callee's banner,
+ * the caller's proposal, FS Y, the message, FF, then the caller's FQ.  The
+ * FQ is 3 bytes; sized by the message before it, the ack had named DATAC17
+ * for it, 7.3 s, where one DATAC3 frame carries it in 3.8 s. */
+static void test_carousel_short_reply_after_long_message(void)
+{
+    setenv("CAR_SCRIPT", "B85,A92,B5,A757,B3,A3", 1);
+    car_sim_result_t r;
+    carousel_sim_run(1, "cliff:10", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_NOT_EQUAL(0, r.done_ms);
+    TEST_ASSERT_EQUAL_INT(0, r.collisions);
+    TEST_ASSERT_EQUAL_INT(0, r.overruns);
+    TEST_ASSERT_EQUAL_INT(6, r.msgs);
+    TEST_ASSERT_LESS_THAN_UINT64(6000, r.msg_delay_ms[5]);
+}
+
 /* A Winlink exchange whose client -> RMS path falls below the control mode
  * mid-session (#431: the RMS's banner, the client's 74 bytes, the RMS's
  * answer).  Each message must get through within the lost-peer watchdog's
@@ -414,6 +431,7 @@ int main(void)
     RUN_TEST(test_carousel_max_keydown);
     RUN_TEST(test_carousel_request_response_completes);
     RUN_TEST(test_carousel_drop_below_control_mode);
+    RUN_TEST(test_carousel_short_reply_after_long_message);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }
