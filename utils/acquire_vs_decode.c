@@ -213,7 +213,7 @@ int main(int argc, char **argv)
                  * comes from the tool's global stream via the callback, in the
                  * same draw order as the original inline loop. */
                 bench_run_burst(rx, burst, n, tail, sigma, out, tail_noise,
-                                NULL, &saw_sync, &got);
+                                NULL, &saw_sync, &got, NULL, NULL);
                 tot_samp += n;
                 if (saw_sync) acquired++;
                 if (got)      delivered++;

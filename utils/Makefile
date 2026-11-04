@@ -89,7 +89,7 @@ acq_tuning_sweep: acq_tuning_sweep.c bench_common.c ../modem/freedv/libfreedvdat
 # stock (unclipped) waveform and DATAC17.  Measures PAPR, delivery,
 # acquisition and the modem SNR estimate per variant.  Companion to the
 # findings doc; see its header for the question.
-qam16_papr_sweep: qam16_papr_sweep.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
+qam16_papr_sweep: qam16_papr_sweep.c bench_common.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Does the payload decoder hear a data burst that follows a control burst, and

@@ -45,6 +45,7 @@
 
 #include "freedv_api.h"
 #include "chanutil.h"
+#include "bench_common.h"
 
 #define FS 8000.0
 /* Common peak every variant is normalised to before noise is added. */
@@ -62,20 +63,12 @@ static const struct mode_def modes[] = {
     {NULL, 0, 0.0f},
 };
 
-static unsigned long long rng = 1357911131517ULL;
+/* Payload and in-burst noise: stream A.  Tails: stream B via bench_seq,
+ * fixed draws per trial -- see bench_common.h for why. */
+static bench_rng rngA = {1357911131517ULL};
+static bench_rng rngB = {1357911131517ULL + 1};
 
-static void seed_rng(unsigned long long s) { rng = s; }
-
-static double urand(void) {
-  rng = rng * 6364136223846793005ULL + 1442695040888963407ULL;
-  return (double)((rng >> 11) & 0x1FFFFFFFFFFFFFULL) / (double)0x20000000000000ULL;
-}
-
-static double gauss(void) {
-  double u1 = urand(), u2 = urand();
-  if (u1 < 1e-300) u1 = 1e-300;
-  return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
-}
+static double seq_noise(void *ctx) { return bench_seq_next((bench_seq *)ctx); }
 
 static const struct mode_def *mode_from_name(const char *s) {
   for (const struct mode_def *m = modes; m->name; m++)
@@ -83,74 +76,24 @@ static const struct mode_def *mode_from_name(const char *s) {
   return NULL;
 }
 
-/* Generate one transmit burst (preamble + packet + postamble) with the tx
- * handle's current clip config, and report its raw PAPR statistics.  Payload
- * carries a caller-supplied CRC as modem.c does.  Returns the burst length. */
+/* Generate one transmit burst from stream A and report its raw PAPR
+ * statistics.  Payload carries a caller-supplied CRC as modem.c does. */
 static int make_burst(struct freedv *tx, short *burst, unsigned char *payload,
                       int nbytes, double *papr_db, double *rms, double *pk_out) {
-  for (int i = 0; i < nbytes - 2; i++) payload[i] = (unsigned char)(urand() * 256.0);
-  unsigned short crc16 = freedv_gen_crc16(payload, nbytes - 2);
-  payload[nbytes - 2] = (unsigned char)(crc16 >> 8);
-  payload[nbytes - 1] = (unsigned char)(crc16 & 0xff);
-
-  int n = 0;
-  n += freedv_rawdatapreambletx(tx, burst + n);
-  freedv_rawdatatx(tx, burst + n, payload);
-  n += freedv_get_n_tx_modem_samples(tx);
-  n += freedv_rawdatapostambletx(tx, burst + n);
+  bench_fill_payload(payload, nbytes, &rngA);
+  int n = bench_make_burst(tx, burst, payload);
 
   double ps = 0.0, pk = 0.0;
   for (int i = 0; i < n; i++) {
-    double s = (double)burst[i];
-    ps += s * s;
-    if (fabs(s) > pk) pk = fabs(s);
+    double v = (double)burst[i];
+    ps += v * v;
+    if (fabs(v) > pk) pk = fabs(v);
   }
   ps /= n;
   *pk_out = pk;
   *rms = sqrt(ps);
   *papr_db = (ps > 0.0) ? 10.0 * log10(pk * pk / ps) : 0.0;
   return n;
-}
-
-/* One burst through the receiver; full-sync and CRC-ok counted as in
- * acquire_vs_decode.  snr_est is collected only on synced trials. */
-static void run_burst(struct freedv *rx, const short *samples, int n, int tail,
-                      double sigma, unsigned char *out, int *saw_sync,
-                      int *got_frame, float *snr_est_sum, int *snr_est_n) {
-  freedv_set_sync(rx, FREEDV_SYNC_UNSYNC);
-  int pos = 0;
-  *saw_sync = 0;
-  *got_frame = 0;
-  while (pos < n + tail) {
-    int nin = freedv_nin(rx);
-    short chunk[8192];
-    if (nin > (int)(sizeof(chunk) / sizeof(chunk[0]))) break;
-    for (int i = 0; i < nin; i++) {
-      if (pos + i < n) {
-        chunk[i] = samples[pos + i];
-      } else {
-        double v = sigma * gauss();
-        if (v > 32767.0) v = 32767.0;
-        if (v < -32768.0) v = -32768.0;
-        chunk[i] = (short)lrint(v);
-      }
-    }
-    pos += nin;
-
-    int nb = (int)freedv_rawdatarx(rx, out, chunk);
-    int st = freedv_get_rx_status(rx);
-    if (st & FREEDV_RX_SYNC) {
-      *saw_sync = 1;
-      if (snr_est_sum && snr_est_n) {
-        int sync_i = 0;
-        float se = 0.0f;
-        freedv_get_modem_stats(rx, &sync_i, &se);
-        *snr_est_sum += se;
-        (*snr_est_n)++;
-      }
-    }
-    if (nb > 0 && !(st & FREEDV_RX_BIT_ERRORS)) *got_frame = 1;
-  }
 }
 
 int main(int argc, char **argv) {
@@ -246,7 +189,8 @@ int main(int argc, char **argv) {
   double k_stock = 0.0;
 
   for (int iv = 0; iv < nvar; iv++) {
-    seed_rng(1357911131517ULL);
+    bench_rng_seed(&rngA, 1357911131517ULL);
+    bench_rng_seed(&rngB, 1357911131517ULL + 1);
 
     if (iv == 0) {
       printf("== %s stock (tx config untouched)\n", modename);
@@ -321,6 +265,7 @@ int main(int argc, char **argv) {
       int meas_n = 0;
       short *noisy = malloc(sizeof(short) * (size_t)(n + 4));
       if (!noisy) return 1;
+      bench_seq tailseq = {0};
 
       for (int t = 0; t < trials; t++) {
         double papr_t, rms_t, pk_t;
@@ -341,7 +286,7 @@ int main(int argc, char **argv) {
           sigma = sqrt(ps / (pow(10.0, (snr + papr_gain_db) / 10.0) *
                              (3000.0 / (FS / 2.0))));
           for (int i = 0; i < n; i++) {
-            double v = burst[i] + sigma * gauss();
+            double v = burst[i] + sigma * bench_rng_gauss(&rngA);
             if (v > 32767.0) v = 32767.0;
             if (v < -32768.0) v = -32768.0;
             noisy[i] = (short)lrint(v);
@@ -359,9 +304,11 @@ int main(int argc, char **argv) {
           sigma = sqrt(ps / (pow(10.0, m / 10.0) * (3000.0 / (FS / 2.0))));
         }
 
+        bench_seq_init(&tailseq, &rngB, tail + 8192);
         int saw, got;
-        run_burst(rx, noisy, n, tail, sigma, out, &saw, &got, &snr_est_sum,
-                  &snr_est_n);
+        bench_run_burst(rx, noisy, n, tail, sigma, out, seq_noise, &tailseq,
+                        &saw, &got, &snr_est_sum, &snr_est_n);
+        bench_seq_free(&tailseq);
         if (saw) acquired++;
         if (got) delivered++;
       }

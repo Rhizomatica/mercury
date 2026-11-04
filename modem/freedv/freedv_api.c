@@ -1745,4 +1745,3 @@ void freedv_set_tx_clip_config(struct freedv *f, bool clip_en, float gain1,
   if (f != NULL && f->ofdm != NULL)
     ofdm_set_tx_clip_config(f->ofdm, clip_en, gain1, gain2, amp_scale);
 }
-}
