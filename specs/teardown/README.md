@@ -60,6 +60,8 @@ Properties:
   last word the caller has not got.
 - `NoInherited`: the callee holds a DISCONNECT back only for the session
   whose application hung up.  No teardown step outlives its session.
+- `Confirmed`: on a lossless channel the caller never leaves a session
+  with its last word unacknowledged.
 
 M_END (2026-10-18): a callee whose application hangs up while its
 DISCONNECT waits for its data to drain says so in its answers (poll type 3,
@@ -90,20 +92,35 @@ whose reply had not gone out.  They are one field now
 had it so: a CALL taken resets `wish`, and `reply` ends only with `Reply`.
 `Mut_staleteardown.cfg` and `Mut_skipreply.cfg` have the old code's rules.
 
+The ack the callee owes (2026-11-05): the caller's last word (B2F's FQ)
+reaches the callee, whose application hangs up on it at once with nothing
+of its own to send.  Its DISCONNECT went in the slot where the answer
+acknowledging the FQ would have gone, so the caller never heard the FQ
+arrive, and logged it as undelivered at the end of every clean B2F forward
+(KG9NI-K7EK, 2026-11-04).  Now a callee owing that answer
+(`car_owes_ack`) takes the M_END path: it answers with an M_END, and the
+caller, with the ack and the hang-up, ends the session.  In the model:
+`mw` (the caller's last word: owed, acked, confirmed), `MWord`, `SAck`, the
+guard on `SAppDisc`, and `SDrained` waiting for the ack to be keyed.  An
+M_END that the caller does not act on (the callee still holds a word of
+its own) still acknowledges the caller's word, as the poll does in the
+code.  `Mut_ackless.cfg` has the old rule.
+
 Results:
 
 - `SessionTeardown.cfg`: the code's rules, lossless, 2 sessions, 2 caller
-  callsigns.  No error, 10 645 distinct states (4 957 before the last
-  word, 2 069 before M_END).
+  callsigns.  No error, 21 317 distinct states (10 645 before the
+  callee's owed ack, 4 957 before the last word, 2 069 before M_END).
 - `SessionTeardown_lossy.cfg`: the same with any frame lost.  No error,
-  264 149 distinct states (124 141 before the last word, 52 041 before
-  M_END).  `Clean` does not apply
+  599 881 distinct states (264 149 before the owed ack, 124 141 before
+  the last word, 52 041 before M_END).  `Clean` does not apply
   here.
 - `Mut_ignorepattern.cfg`: the end waiting for the answer to its
   DISCONNECT does not take the pattern.  It violates `Clean`: it retries
   and times out.
 - `ForeignPattern.cfg`: the code's rules, lossy, with another station's
-  patterns heard (`FPAT`).  No error, 1 655 453 distinct states: keyed by the
+  patterns heard (`FPAT`).  No error, 3 621 957 distinct states (1 655 453
+  before the owed ack): keyed by the
   session, none is taken.  Safety only: unbounded foreign traffic keeps the
   queue full for ever, and `Mutual` fails on that, not on a rule.
 - `Mut_unkeyed.cfg`: the same, with a pattern taken whatever session keyed
@@ -111,20 +128,25 @@ Results:
   end cleared its seed before the reply went out, and in the harness the
   peer, still in the session, never detected it (3 runs of 3).
 - `ForeignEnd.cfg`: the code's rules, lossy, with another station's M_END
-  frames heard (`FEND`).  No error, 1 370 595 distinct states: seeded by its
+  frames heard (`FEND`).  No error, 2 956 247 distinct states (1 370 595
+  before the owed ack): seeded by its
   session, none is taken.  Safety only, as `ForeignPattern.cfg`.
 - `Mut_unkeyedend.cfg`: the same, with an M_END taken whatever session sent
   it.  It violates `NoUnasked`.
 - `Mut_endheld.cfg`: lossless, an M_END taken while the callee holds a last
   word the caller has not got (the rule as first merged).  It violates
   `NoLostWord`.
+- `Mut_ackless.cfg`: lossless, the callee's application hangs up owing
+  the ack of the caller's last word, and its DISCONNECT goes in that ack's
+  slot (the rule before `car_owes_ack`).  It violates `Confirmed`: the
+  caller replies to the DISCONNECT with its word unacknowledged.
 - `Mut_staleteardown.cfg`: lossless, a CALL taken keeps the DISCONNECT the
   last session held back to drain.  It violates `NoInherited`.
 - `Mut_skipreply.cfg`: lossless, an end owing the reply to its peer's
   DISCONNECT goes idle without keying it.  It violates `Clean`: the peer
   retries and times out.
 - `Mut_anypattern.cfg`: a pattern ends an end in any state, not only one
-  whose DISCONNECT is out.  No error, the same 264 149 states: as with the
+  whose DISCONNECT is out.  No error, the same 599 881 states: as with the
   session-id check below, frames in order and timers longer than an
   exchange mean no pattern reaches an end that is not waiting for one.
   In the code the rule keeps the carousel's own patterns (not modelled
