@@ -74,11 +74,28 @@ and of delivered frames** (46 -> 77 at −11, 16 -> 45 at −12). 0.40 delivers
 most of the acquisition gain (51 vs 19 at −12) at a false-sync rate of zero.
 No regression at the top: −9 delivered 95-97 everywhere.
 
-## DATAC15, the fringe payload rung
+## DATAC15, the fringe payload rung (100 trials, 100 noise-only, AWGN, v1.9.22)
 
-Same geometry and stock threshold as DATAC16; re-measure on this mode before
-its constant moves. The DATAC16 result carries the control plane, which is
-what the session pays for.
+Re-measured on this mode before its half of the constant moves; same window
+as DATAC16, stock UW 18/48 read from the modem. Calibration: the stock row
+delivers 92% at −9 against the published AWGN 90% floor of ≈ −9.5 dB.
+
+| thresh | −13 | −12 | −11 | −10 | −9 |
+|---|---|---|---|---|---|
+| **0.45 (stock)** | 5/0/0 | 29/0/0 | 59/29/0 | 91/82/0 | 95/92/0 |
+| 0.40 | 25/0/0 | 62/2/0 | 85/43/0 | 99/85/0 | 100/97/1 |
+| 0.35 | 63/0/5 | 94/5/1 | 98/45/5 | 100/87/2 | 100/96/4 |
+
+The 0.40 verdict carries over: +1.5-2 dB of acquisition (29 -> 62 at −12,
+59 -> 85 at −11) at ~0 false syncs, and delivered frames up where the mode
+is not decode-limited (+14 points at −11, +3-5 at −10/−9). Two honest
+nuances. First, DATAC15 is decode-limited below ≈ −11.5 (94 acquire at −12
+with 0.35, 5 deliver), so its acquisition gain converts to fewer delivered
+frames than DATAC16's — but the rung above the floor starts moving ~2 dB
+earlier, which is what the ladder probes. Second, the collapse check on
+this mode mirrors DATAC16 exactly (40/60 trials: 0.35 false 1-3/60, 0.30
+false 19-25/60), so the knee is a property of the shared search geometry,
+not of one mode's constant.
 
 ## The collapse below 0.35 (40 trials, 60 noise-only, v1.9.22)
 
