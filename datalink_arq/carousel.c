@@ -218,6 +218,13 @@ size_t car_tx_inflight(const car_t *c)
     for (int b = 0; b < c->nsb; b++) n += (size_t)c->sb[b].app_len;
     return n;
 }
+size_t car_tx_unacked_sent(const car_t *c)
+{
+    size_t n = 0;
+    for (int b = 0; b < c->nsb; b++)
+        if (c->sb[b].sent >= c->sb[b].K) n += (size_t)c->sb[b].app_len;
+    return n;
+}
 
 const char *car_failed(const car_t *c) { return c->failed; }
 /* Every block heard of has decoded and passed its check.  Data pieces reach

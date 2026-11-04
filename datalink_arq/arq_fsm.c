@@ -1778,12 +1778,21 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          * DISCONNECT means its application hung up (from then on its end
          * delivers nothing: host_released) or its carousel stopped trusting
          * the session (car_fail_closed).  Said here, so a log of the end that
-         * did not hang up tells which one lost data (#392). */
+         * did not hang up tells which one lost data (#392).  Bytes that went
+         * on the air whole are most often delivered: a peer's application
+         * hangs up on the last thing it got (B2F's FQ), and its DISCONNECT
+         * carries no ack, so they read as unacknowledged at every normal
+         * end (KG9NI-K7EK, 2026-11-04: all five sessions).  Only bytes never
+         * sent in full are known lost. */
         {
-            size_t left = (sess->car_active ? car_tx_inflight(sess->car) : 0) +
-                          (size_t)session_tx_backlog(sess);
-            if (left)
-                HLOGW(LOG_COMP, "Peer ended the session: %zu bytes of ours undelivered", left);
+            size_t inflight = sess->car_active ? car_tx_inflight(sess->car) : 0;
+            size_t on_air = sess->car_active ? car_tx_unacked_sent(sess->car) : 0;
+            size_t unsent = inflight - on_air + (size_t)session_tx_backlog(sess);
+            if (on_air)
+                HLOGI(LOG_COMP, "Peer ended the session: %zu bytes of ours sent, their ack not heard "
+                      "(a DISCONNECT carries none)", on_air);
+            if (unsent)
+                HLOGW(LOG_COMP, "Peer ended the session: %zu bytes of ours never sent, dropped", unsent);
         }
         /* It supersedes a DISCONNECT of ours held to drain.  The host hears
          * DISCONNECTED once the reply is out (ARQ_TD_NOTIFYING), so

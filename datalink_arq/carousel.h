@@ -412,5 +412,8 @@ void     car_wish_end(car_t *c);
 uint64_t car_drain_budget_ms(const car_t *c);
 /* Bytes taken from the application that the peer has not confirmed yet. */
 size_t car_tx_inflight(const car_t *c);
+/* ...of them, the bytes whose blocks have all gone on the air at least once:
+ * sent, the ack not heard.  The rest has not been sent in full. */
+size_t car_tx_unacked_sent(const car_t *c);
 
 #endif

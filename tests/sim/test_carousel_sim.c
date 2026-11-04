@@ -18,6 +18,7 @@
 #include "sim_core.h"
 
 #include "arq_fsm.h"
+#include "carousel.h"
 #include "arq.h"
 #include "arq_timing.h"
 #include "freedv_api.h"
@@ -258,6 +259,35 @@ void test_car_disconnect_after_reply_is_prompt(void)
     sim_run_until_idle(s, 20000);
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_DISCONNECTING, state(sim_a(s)));
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
+    TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+    sim_destroy(s);
+}
+
+/* B2F's tail: the caller's FQ reaches the callee, whose application hangs up
+ * on it, so the callee's DISCONNECT is the only answer the FQ gets.  The FQ
+ * went on the air whole: it reads as sent and unacknowledged, not as bytes
+ * never sent (KG9NI-K7EK, 2026-11-04: "3 bytes of ours undelivered" at the
+ * end of every session, each FQ delivered). */
+void test_car_peer_hangup_on_last_bytes_reads_sent(void)
+{
+    sim_t *s = idle_session(3, 10.0);
+    uint8_t fq[3] = { 'F', 'Q', '\r' };
+    static uint8_t rx[64];
+    queue(s, sim_a(s), fq, sizeof(fq));
+    const car_t *car = sim_endpoint_session(sim_a(s))->car;
+    for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)) < sizeof(fq); i++) {
+        TEST_ASSERT_TRUE(car_tx_unacked_sent(car) <= car_tx_inflight(car));
+        sim_run_until_idle(s, 100);
+    }
+    TEST_ASSERT_EQUAL_size_t(sizeof(fq), sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)));
+    /* The callee has it; the caller has not heard the ack yet. */
+    TEST_ASSERT_EQUAL_size_t(sizeof(fq), car_tx_inflight(car));
+    TEST_ASSERT_EQUAL_size_t(sizeof(fq), car_tx_unacked_sent(car));
+    arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+    sim_inject(s, sim_b(s), &disc);
+    sim_run_until_idle(s, 60000);
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
     TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
     sim_destroy(s);
@@ -661,6 +691,7 @@ int main(void)
     RUN_TEST(test_car_disconnect_quiet_peer_one_try);
     RUN_TEST(test_car_disconnect_after_reply_is_prompt);
     RUN_TEST(test_car_winlink_tail_ends_cleanly);
+    RUN_TEST(test_car_peer_hangup_on_last_bytes_reads_sent);
     RUN_TEST(test_car_callee_hangup_is_ended_by_the_caller);
     RUN_TEST(test_car_callee_last_word_then_hangup);
     RUN_TEST(test_car_disconnect_after_transfer);
