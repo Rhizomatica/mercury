@@ -38,6 +38,7 @@
 
 #include "freedv_api.h"
 #include "chanutil.h"
+#include "bench_common.h"
 
 #define FS 8000.0
 
@@ -45,34 +46,21 @@
  * the int16 range as noise headroom.  ~18 dB below full scale. */
 #define HEADROOM_PEAK 4000.0
 
-static unsigned long long rng = 1357911131517ULL;
+/* The tool's original global stream, now a bench_rng so the RX loop can
+ * come from bench_common while the draw sequence stays sample-for-sample
+ * identical: same algorithm, same seed, same call order. */
+static bench_rng rng = {1357911131517ULL};
 
-static double urand(void)
-{
-    rng = rng * 6364136223846793005ULL + 1442695040888963407ULL;
-    return (double)((rng >> 11) & 0x1FFFFFFFFFFFFFULL) / (double)0x20000000000000ULL;
+static double gauss(void) { return bench_rng_gauss(&rng); }
+
+/* Tail-noise callback for bench_run_burst: one unit-sigma draw from the
+ * global stream, exactly where the inline loop used to draw it. */
+static double tail_noise(void *ctx) {
+  (void)ctx;
+  return gauss();
 }
 
-static double gauss(void)
-{
-    double u1 = urand(), u2 = urand();
-    if (u1 < 1e-300) u1 = 1e-300;
-    return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
-}
-
-static int mode_from_name(const char *s)
-{
-    if (!strcmp(s, "DATAC16")) return FREEDV_MODE_DATAC16;
-    if (!strcmp(s, "DATAC15")) return FREEDV_MODE_DATAC15;
-    if (!strcmp(s, "DATAC13")) return FREEDV_MODE_DATAC13;
-    if (!strcmp(s, "DATAC4"))  return FREEDV_MODE_DATAC4;
-    if (!strcmp(s, "DATAC3"))  return FREEDV_MODE_DATAC3;
-    if (!strcmp(s, "DATAC1"))  return FREEDV_MODE_DATAC1;
-    if (!strcmp(s, "DATAC0"))  return FREEDV_MODE_DATAC0;
-    if (!strcmp(s, "DATAC17")) return FREEDV_MODE_DATAC17;
-    if (!strcmp(s, "QAM16C2")) return FREEDV_MODE_QAM16C2;
-    return -1;
-}
+static int mode_from_name(const char *s) { return bench_mode_from_name(s); }
 
 int main(int argc, char **argv)
 {
@@ -152,17 +140,9 @@ int main(int argc, char **argv)
              * last two bytes of the frame, exactly as modem.c does.  Without
              * this every burst decodes and every burst is then rejected, which
              * looks precisely like a mode that never delivers. */
-            for (int i = 0; i < nbytes - 2; i++)
-                payload[i] = (unsigned char)(urand() * 256.0);
-            unsigned short crc16 = freedv_gen_crc16(payload, nbytes - 2);
-            payload[nbytes - 2] = (unsigned char)(crc16 >> 8);
-            payload[nbytes - 1] = (unsigned char)(crc16 & 0xff);
+            bench_fill_payload(payload, nbytes, &rng);
 
-            int n = 0;
-            n += freedv_rawdatapreambletx(tx, burst + n);
-            freedv_rawdatatx(tx, burst + n, payload);
-            n += ntx;
-            n += freedv_rawdatapostambletx(tx, burst + n);
+            int n = bench_make_burst(tx, burst, payload);
 
             /* Signal power over the burst, then the noise sigma that puts the
              * 3 kHz-referenced SNR where we want it. */
@@ -224,38 +204,20 @@ int main(int argc, char **argv)
             }
 
             /* Feed the burst plus a tail of pure noise, honouring nin. */
-            freedv_set_sync(rx, FREEDV_SYNC_UNSYNC);
-            int pos = 0, saw_sync = 0, got = 0;
-            int tail = nburst;                 /* let sync/decode complete */
-            while (pos < n + tail)
             {
-                int nin = freedv_nin(rx);
-                short chunk[8192];
-                if (nin > (int)(sizeof(chunk) / sizeof(chunk[0]))) break;
-                for (int i = 0; i < nin; i++)
-                {
-                    if (pos + i < n) chunk[i] = burst[pos + i];
-                    else {
-                        double v = sigma * gauss();
-                        if (v >  32767.0) v =  32767.0;
-                        if (v < -32768.0) v = -32768.0;
-                        chunk[i] = (short)lrint(v);
-                    }
-                }
-                pos += nin;
-
-                int nb = (int)freedv_rawdatarx(rx, out, chunk);
-                int st = freedv_get_rx_status(rx);
+                int saw_sync = 0, got = 0;
+                int tail = nburst;             /* let sync/decode complete */
                 /* Full sync only.  TRIAL_SYNC fires on noise at deep SNR, so
                  * counting it reports false alarms as acquisitions and makes
-                 * the mode look acquisition-limited when it is not. */
-                if (st & FREEDV_RX_SYNC) saw_sync = 1;
-                if (nb > 0 && !(st & FREEDV_RX_BIT_ERRORS)) got = 1;
+                 * the mode look acquisition-limited when it is not.  The tail
+                 * comes from the tool's global stream via the callback, in the
+                 * same draw order as the original inline loop. */
+                bench_run_burst(rx, burst, n, tail, sigma, out, tail_noise,
+                                NULL, &saw_sync, &got);
+                tot_samp += n;
+                if (saw_sync) acquired++;
+                if (got)      delivered++;
             }
-
-            tot_samp += n;
-            if (saw_sync) acquired++;
-            if (got)      delivered++;
         }
 
         if (ch) chanutil_close(ch);

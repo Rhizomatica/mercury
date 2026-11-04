@@ -74,14 +74,14 @@ run: broadcast_test
 # Drives the real freedv OFDM modems (not a model) to separate acquisition
 # failures from decode failures.  chanutil puts it on the project's own
 # Watterson channel so its numbers are comparable with other instruments'.
-acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
+acquire_vs_decode: acquire_vs_decode.c bench_common.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Sweeps the acquisition knobs (timing_mx_thresh, bad_uw_errors) around the
 # ofdm_mode.c defaults and reports acq/del per SNR with a noise-only
 # false-sync control per row.  The companion to the findings doc: below the
 # fringe, acquisition is the floor, and this is where its tuning lives.
-acq_tuning_sweep: acq_tuning_sweep.c ../modem/freedv/libfreedvdata.a
+acq_tuning_sweep: acq_tuning_sweep.c bench_common.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Does the payload decoder hear a data burst that follows a control burst, and
