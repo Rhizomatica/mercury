@@ -81,7 +81,8 @@ int bench_make_burst(struct freedv *tx, short *burst,
 
 void bench_run_burst(struct freedv *rx, const short *samples, int n, int tail,
                      double sigma, unsigned char *out, bench_noise_fn noise,
-                     void *noise_ctx, int *saw_sync, int *got_frame) {
+                     void *noise_ctx, int *saw_sync, int *got_frame,
+                     float *snr_est_sum, int *snr_est_n) {
   freedv_set_sync(rx, FREEDV_SYNC_UNSYNC);
   int pos = 0;
   *saw_sync = 0;
@@ -104,7 +105,16 @@ void bench_run_burst(struct freedv *rx, const short *samples, int n, int tail,
 
     int nb = (int)freedv_rawdatarx(rx, out, chunk);
     int st = freedv_get_rx_status(rx);
-    if (st & FREEDV_RX_SYNC) *saw_sync = 1;
+    if (st & FREEDV_RX_SYNC) {
+      *saw_sync = 1;
+      if (snr_est_sum && snr_est_n) {
+        int sync_i = 0;
+        float se = 0.0f;
+        freedv_get_modem_stats(rx, &sync_i, &se);
+        *snr_est_sum += se;
+        (*snr_est_n)++;
+      }
+    }
     if (nb > 0 && !(st & FREEDV_RX_BIT_ERRORS)) *got_frame = 1;
   }
 }

@@ -80,7 +80,11 @@ int bench_make_burst(struct freedv *tx, short *burst,
 
 void bench_run_burst(struct freedv *rx, const short *samples, int n, int tail,
                      double sigma, unsigned char *out, bench_noise_fn noise,
-                     void *noise_ctx, int *saw_sync, int *got_frame);
+                     void *noise_ctx, int *saw_sync, int *got_frame,
+                     float *snr_est_sum, int *snr_est_n);
+/* snr_est_sum/snr_est_n: optional (NULL to skip).  When the decoder reaches
+ * full sync, the modem's SNR estimate is read once and accumulated -- what
+ * the rung ladder reads, so the tools check it for knob-induced bias. */
 
 /* Pure-noise control: feeds exactly n + tail samples of noise from `seq`
  * (clamped) and counts full RX_SYNC -- any sync here is a false alarm.  The

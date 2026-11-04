@@ -1739,3 +1739,9 @@ float freedv_get_timing_mx_thresh(struct freedv *f) {
 int freedv_get_bad_uw_errors(struct freedv *f) {
   return (f != NULL && f->ofdm != NULL) ? ofdm_get_bad_uw_errors(f->ofdm) : 0;
 }
+
+void freedv_set_tx_clip_config(struct freedv *f, bool clip_en, float gain1,
+                               float gain2, float amp_scale) {
+  if (f != NULL && f->ofdm != NULL)
+    ofdm_set_tx_clip_config(f->ofdm, clip_en, gain1, gain2, amp_scale);
+}

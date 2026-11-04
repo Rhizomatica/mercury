@@ -265,7 +265,7 @@ int main(int argc, char **argv) {
           bench_seq_init(&tailseq, &rngB, tail + TAIL_SLACK);
           int saw, got;
           bench_run_burst(rx, burst, n, tail, sigma, out, seq_noise, &tailseq,
-                          &saw, &got);
+                          &saw, &got, NULL, NULL);
           bench_seq_free(&tailseq);
           if (saw) acquired++;
           if (got) delivered++;
