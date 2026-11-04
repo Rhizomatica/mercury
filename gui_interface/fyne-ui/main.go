@@ -1743,7 +1743,7 @@ func main() {
 		openExternalURL("https://lists.riseup.net/www/info/hermes-general")
 	})
 	submitIssueItem := fyne.NewMenuItem("Submit issue", func() {
-		openExternalURL("https://github.com/Rhizomatica/mercury/issues/new")
+		openExternalURL("https://github.com/Rhizomatica/mercury/issues")
 	})
 	helpMenu := fyne.NewMenu("Help", versionItem, supportItem, mailingItem, submitIssueItem)
 
