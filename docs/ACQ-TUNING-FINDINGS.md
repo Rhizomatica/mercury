@@ -148,8 +148,15 @@ for exactly this class of radio-to-radio spread.)
    touch; it needs its own investigation of the search stages.
 4. datac13/datac14 keep 0.45: same geometry, not measured here, no longer on
    the ARQ ladder.
-5. Idle CPU on a Pi 4 remains to be measured (the false-sync decode cost);
-   x86 numbers land with the PR.
+5. **Idle CPU measured on x86** (`utils/idle_cpu_probe`, 600 s of noise per
+   setting, DATAC16): idle listen cost is flat ~3% of a core at every
+   threshold — 0.45: 3.1%, 0.40: 3.4%, 0.35: 2.6% — because 0.40 and stock
+   record **zero false syncs in 600 s of audio** (0.35: 6/h, 0.30: 276/h,
+   0.25: 2142/h, each sync a wasted decode attempt). The setting proposed
+   here costs nothing measurable while listening; the decode storm belongs
+   to the thresholds the collapse table already rejects. The same command
+   run on the Pi 4 bench is the number that matters; per audio-second
+   reporting makes the two directly comparable.
 
 ## Caveats
 

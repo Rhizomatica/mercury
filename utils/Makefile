@@ -34,7 +34,7 @@ OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_
 # for profiling the RX path, so there is nothing to gain from porting them to
 # the Windows build -- just exclude them and keep the cross-compile green.
 ifneq ($(OS),Windows_NT)
-OUT += resampler_bench rxcost_bench
+OUT += resampler_bench rxcost_bench idle_cpu_probe
 
 # bcast_file_tool talks to Mercury's broadcast port with BSD sockets
 # (<arpa/inet.h>, <netinet/tcp.h>, unistd read/write), which mingw-w64 does not
@@ -99,6 +99,12 @@ resampler_bench: resampler_bench.c ../audioio/resampler.c
 	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 rxcost_bench: rxcost_bench.c
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# Idle-listen CPU per acquisition threshold (PR #455 merge condition): noise
+# in, CPU seconds / false syncs / decode attempts out, per audio second so a
+# Pi 4 and a desktop make directly comparable tables.
+idle_cpu_probe: idle_cpu_probe.c bench_common.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 .PHONY: all clean run
