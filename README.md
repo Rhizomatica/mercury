@@ -358,6 +358,11 @@ same key.  A build signed with another key has to be uninstalled first.
 
 ### Install on iOS (technology preview)
 
+**From the App Store.**  Install
+[Mercury HF Modem](https://apps.apple.com/app/mercury-hf-modem/id6822504870)
+on the iPhone or iPad.  It is free, in every App Store country except
+mainland China, and updates arrive through the App Store.
+
 **With AltStore PAL (EU, Brazil and Japan).**  Mercury is notarized by
 Apple and published as an AltStore PAL source.  Updates arrive through
 AltStore.
