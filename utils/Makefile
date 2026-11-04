@@ -26,7 +26,7 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
-OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode resync_gap_probe burst_train_probe
+OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode acq_tuning_sweep resync_gap_probe burst_train_probe
 
 # CPU-cost instruments.  Linux/macOS only: they time with
 # clock_gettime(CLOCK_PROCESS_CPUTIME_ID), which mingw-w64 does not provide
@@ -34,7 +34,7 @@ OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_
 # for profiling the RX path, so there is nothing to gain from porting them to
 # the Windows build -- just exclude them and keep the cross-compile green.
 ifneq ($(OS),Windows_NT)
-OUT += resampler_bench rxcost_bench
+OUT += resampler_bench rxcost_bench idle_cpu_probe
 
 # bcast_file_tool talks to Mercury's broadcast port with BSD sockets
 # (<arpa/inet.h>, <netinet/tcp.h>, unistd read/write), which mingw-w64 does not
@@ -74,7 +74,14 @@ run: broadcast_test
 # Drives the real freedv OFDM modems (not a model) to separate acquisition
 # failures from decode failures.  chanutil puts it on the project's own
 # Watterson channel so its numbers are comparable with other instruments'.
-acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
+acquire_vs_decode: acquire_vs_decode.c bench_common.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# Sweeps the acquisition knobs (timing_mx_thresh, bad_uw_errors) around the
+# ofdm_mode.c defaults and reports acq/del per SNR with a noise-only
+# false-sync control per row.  The companion to the findings doc: below the
+# fringe, acquisition is the floor, and this is where its tuning lives.
+acq_tuning_sweep: acq_tuning_sweep.c bench_common.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Does the payload decoder hear a data burst that follows a control burst, and
@@ -92,6 +99,12 @@ resampler_bench: resampler_bench.c ../audioio/resampler.c
 	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 rxcost_bench: rxcost_bench.c
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# Idle-listen CPU per acquisition threshold (PR #455 merge condition): noise
+# in, CPU seconds / false syncs / decode attempts out, per audio second so a
+# Pi 4 and a desktop make directly comparable tables.
+idle_cpu_probe: idle_cpu_probe.c bench_common.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 .PHONY: all clean run
