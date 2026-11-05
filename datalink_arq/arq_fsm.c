@@ -579,6 +579,20 @@ static bool car_peer_quiet(const arq_session_t *sess, uint64_t now)
     return sess->car_session && now - sess->car_last_rx_ms >= ARQ_CAR_PEER_QUIET_MS;
 }
 
+/* Silence after which a callee that has said its application hung up (M_END)
+ * is gone.  Its last bytes, still to come, get the drain budget: three
+ * exchanges at the rung, enough for a lost round to be asked about and
+ * answered (car_drain_budget_ms) -- at most ARQ_CAR_PEER_QUIET_MS, past which
+ * a DISCONNECT is not worth repeating either.  It used to be the lost-peer
+ * watchdog, 240 s, nothing else to deliver on a session both applications
+ * had left (on air, N3JXB -> KG9NI-1, 1.9.22: the M_END at 14:36:03, nine
+ * polls unanswered, dropped at 14:40:03). */
+static uint64_t car_peer_end_wait_ms(const arq_session_t *sess)
+{
+    uint64_t w = car_drain_budget_ms(sess->car);
+    return w < ARQ_CAR_PEER_QUIET_MS ? w : ARQ_CAR_PEER_QUIET_MS;
+}
+
 static void car_io_keydown(void *ctx, const car_frame_t *fr, int n)
 {
     arq_session_t *sess = ctx;
@@ -1641,6 +1655,20 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             enter_idle_after_call(sess);
             return true;
         }
+        if (car_peer_ending(sess->car) && now - sess->car_last_rx_ms >= car_peer_end_wait_ms(sess))
+        {
+            /* The callee has all of ours (it says M_END only then) and its
+             * application has hung up: what it still holds is its last word,
+             * lost now as it was at the watchdog, only later.  One DISCONNECT
+             * tells it, in case it still hears us; no retries to a peer this
+             * quiet. */
+            HLOGW(LOG_COMP, "carousel: the peer hung up and has been silent %llu s -- "
+                  "ending the session, its last data not received",
+                  (unsigned long long)((now - sess->car_last_rx_ms) / 1000));
+            car_begin_disconnect(sess, now);
+            sess->tx_retries_left = 0;
+            return true;
+        }
         car_on_time(sess->car, now);
         break;
     case ARQ_EV_APP_DISCONNECT:
@@ -1972,6 +2000,8 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
         uint64_t d = car_next_deadline(sess->car);
         if (sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS < d)
             d = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
+        if (car_peer_ending(sess->car) && sess->car_last_rx_ms + car_peer_end_wait_ms(sess) < d)
+            d = sess->car_last_rx_ms + car_peer_end_wait_ms(sess);
         if (sess->teardown == ARQ_TD_DRAINING && sess->teardown_deadline_ms < d)
             d = sess->teardown_deadline_ms;
         if (sess->teardown == ARQ_TD_DRAINING && sess->car_last_rx_ms + ARQ_CAR_PEER_QUIET_MS < d)
