@@ -3297,6 +3297,11 @@ void car_wish_end(car_t *c)
     car_trace(c, "ending: my application has hung up -- my polls say so");
 }
 
+bool car_owes_ack(const car_t *c)
+{
+    return !c->master && c->deliver_seq != c->seq_at_ask;
+}
+
 void car_request_end(car_t *c)
 {
     if (c->master) return;

@@ -405,6 +405,10 @@ void     car_request_end(car_t *c);
  * callee's, then ends the session itself (car_on_frame returns true). */
 enum { CAR_END_NONE, CAR_END_WISH, CAR_END_SLOT };
 void     car_wish_end(car_t *c);
+/* The callee has delivered data of the caller's that no answer of its own
+ * has acknowledged yet: a DISCONNECT keyed now would take that answer's
+ * slot, and the caller would never hear that its last bytes arrived. */
+bool     car_owes_ack(const car_t *c);
 
 /* How long delivering what is left may take on the rung the session is on:
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds

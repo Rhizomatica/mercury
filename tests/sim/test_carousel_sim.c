@@ -18,6 +18,8 @@
 #include "sim_core.h"
 
 #include "arq_fsm.h"
+#include "carousel.h"
+#include "carousel.h"
 #include "arq.h"
 #include "arq_timing.h"
 #include "freedv_api.h"
@@ -261,6 +263,49 @@ void test_car_disconnect_after_reply_is_prompt(void)
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
     TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
     sim_destroy(s);
+}
+
+/* B2F's tail: the caller's FQ reaches the callee, whose application hangs up
+ * on it with nothing of its own left to send.  Its DISCONNECT took the slot
+ * of the ack it owed, so the caller never heard the FQ arrive ("3 bytes of
+ * ours undelivered" at every end, KG9NI-K7EK, 2026-11-04).  Now the callee
+ * answers first, saying it has hung up (M_END): the caller has the ack, and
+ * ends the session itself. */
+void test_car_callee_hangup_acks_last_bytes(void)
+{
+    for (uint64_t seed = 1; seed <= 8; seed++) {
+        sim_t *s = idle_session(seed, 10.0);
+        uint8_t fq[3] = { 'F', 'Q', '\r' };
+        static uint8_t rx[64];
+        queue(s, sim_a(s), fq, sizeof(fq));
+        for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)) < sizeof(fq); i++)
+            sim_run_until_idle(s, 100);
+        TEST_ASSERT_EQUAL_size_t(sizeof(fq), sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)));
+        arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+        sim_inject(s, sim_b(s), &disc);
+
+        const car_t *car = sim_endpoint_session(sim_a(s))->car;
+        size_t inflight = car_tx_inflight(car);
+        bool caller_ended;
+        /* ...read as the caller leaves CONNECTED, on the frame that took it out */
+        for (int i = 0; i < 6000 && state(sim_a(s)) == ARQ_CONN_CONNECTED; i++) {
+            sim_run_until_idle(s, 100);
+            inflight = car_tx_inflight(car);
+        }
+        caller_ended = state(sim_a(s)) == ARQ_CONN_DISCONNECTING;
+        sim_run_until_idle(s, 60000);
+
+        TEST_ASSERT_EQUAL_size_t_MESSAGE(0, inflight, "the caller left with its FQ unconfirmed");
+        TEST_ASSERT_TRUE_MESSAGE(caller_ended, "the caller did not end the session on the M_END");
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_DISCONNECTING, state(sim_a(s)));
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_DISCONNECTING, state(sim_b(s)));
+        TEST_ASSERT_EQUAL_UINT16(0, sim_endpoint_crc_seed(sim_a(s)));
+        TEST_ASSERT_EQUAL_UINT16(0, sim_endpoint_crc_seed(sim_b(s)));
+        TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+        sim_destroy(s);
+    }
 }
 
 /* #392: the Winlink tail.  The RMS (callee) hangs up as its FQ is on the
@@ -661,6 +706,7 @@ int main(void)
     RUN_TEST(test_car_disconnect_quiet_peer_one_try);
     RUN_TEST(test_car_disconnect_after_reply_is_prompt);
     RUN_TEST(test_car_winlink_tail_ends_cleanly);
+    RUN_TEST(test_car_callee_hangup_acks_last_bytes);
     RUN_TEST(test_car_callee_hangup_is_ended_by_the_caller);
     RUN_TEST(test_car_callee_last_word_then_hangup);
     RUN_TEST(test_car_disconnect_after_transfer);

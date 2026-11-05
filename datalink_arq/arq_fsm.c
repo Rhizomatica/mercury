@@ -1652,7 +1652,14 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             HLOGI(LOG_COMP, "ABORT: dropping what the carousel has not delivered");
         else if (car_peer_quiet(sess, now) && !car_drained(sess))
             HLOGI(LOG_COMP, "DISCONNECT: the peer is silent, not waiting to deliver");
-        else if (!car_drained(sess) || sess->tx_active)
+        /* A callee that owes the caller an ack (its application hung up on
+         * the caller's last bytes, as B2F's FQ) answers first, its answer
+         * saying it has hung up (M_END): the caller then has the ack and the
+         * hang-up, and ends the session itself.  Its DISCONNECT keyed at once
+         * took that answer's slot, and the caller never heard that its last
+         * bytes arrived (KG9NI-K7EK, 2026-11-04: "3 bytes of ours
+         * undelivered" at every end, each FQ delivered). */
+        else if (!car_drained(sess) || sess->tx_active || car_owes_ack(sess->car))
         {
             /* The configured drain is the least it gets; the carousel's
              * budget for its rung stretches it where an exchange is slow. */
@@ -1661,8 +1668,12 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             if (car_budget > budget) budget = car_budget;
             sess->teardown = ARQ_TD_DRAINING;
             sess->teardown_deadline_ms = now + budget;
-            HLOGI(LOG_COMP, "DISCONNECT deferred until delivered (up to %llu s)",
-                  (unsigned long long)(budget / 1000));
+            if (car_drained(sess) && !sess->tx_active)
+                HLOGI(LOG_COMP, "DISCONNECT deferred until the peer's last data is acknowledged (up to %llu s)",
+                      (unsigned long long)(budget / 1000));
+            else
+                HLOGI(LOG_COMP, "DISCONNECT deferred until delivered (up to %llu s)",
+                      (unsigned long long)(budget / 1000));
             car_wish_end(sess->car);      /* the callee's polls say so: M_END */
             break;
         }
@@ -1675,7 +1686,8 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         return false;
     }
     /* A deferred DISCONNECT goes once everything has been delivered. */
-    if (sess->teardown == ARQ_TD_DRAINING && car_drained(sess) && !sess->tx_active)
+    if (sess->teardown == ARQ_TD_DRAINING && car_drained(sess) && !sess->tx_active &&
+        !car_owes_ack(sess->car))
         car_begin_disconnect(sess, now);
     /* The callee's application has hung up (M_END), and everything is
      * delivered both ways: the caller ends the session now, its DISCONNECT
@@ -1783,7 +1795,8 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
             size_t left = (sess->car_active ? car_tx_inflight(sess->car) : 0) +
                           (size_t)session_tx_backlog(sess);
             if (left)
-                HLOGW(LOG_COMP, "Peer ended the session: %zu bytes of ours undelivered", left);
+                HLOGW(LOG_COMP, "Peer ended the session: %zu bytes of ours unconfirmed: "
+                      "the peer hung up before acknowledging them", left);
         }
         /* It supersedes a DISCONNECT of ours held to drain.  The host hears
          * DISCONNECTED once the reply is out (ARQ_TD_NOTIFYING), so

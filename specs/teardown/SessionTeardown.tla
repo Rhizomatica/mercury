@@ -15,7 +15,9 @@
 (*   has hung up (M_END, poll type 3); M, connected, hearing one of its   *)
 (*   session and holding all S has, ends the session as if its own       *)
 (*   application had asked.  S may hang up with a last word not yet with  *)
-(*   M; it reaches M while both are in the session.                       *)
+(*   M; it reaches M while both are in the session.  M's last word (B2F's *)
+(*   FQ) reaches S, which owes an answer acknowledging it; S hanging up   *)
+(*   owing it answers first, saying so (M_END), not with its DISCONNECT. *)
 (*   Either end, hearing the peer's DISCONNECT: connected, it replies one *)
 (*   guard later and ends; ending, it ends -- replying first if its own   *)
 (*   had not gone out yet (the crossed case).  Hearing its peer CALL     *)
@@ -47,6 +49,8 @@
 (*   NoInherited -- S holds a DISCONNECT back only for the session whose  *)
 (*              application hung up: no teardown step outlives its        *)
 (*              session (sess_enter resets arq_session_t.teardown).       *)
+(*   Confirmed -- on a lossless channel M never leaves a session with its *)
+(*              last word unacknowledged (car_owes_ack, 2026-11-05).      *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -79,6 +83,10 @@ CONSTANTS NS,      \* sessions the caller may place
                    \*   "skipreply":     an end owing the reply to its peer's
                    \*                    DISCONNECT goes idle without keying it
                    \*                    (another transmission's TX_COMPLETE)
+                   \*   "ackless":       S's application hangs up owing the ack
+                   \*                    of M's last word, and S's DISCONNECT
+                   \*                    takes that ack's slot (before
+                   \*                    car_owes_ack, KG9NI-K7EK 2026-11-04)
 
 E == {"M", "S"}
 Other(e) == IF e = "M" THEN "S" ELSE "M"
@@ -102,9 +110,12 @@ VARIABLES
     unasked, \* ghost: M began ending on another session's M_END
     word,    \* S's last word: "none", "held" (written before the hang-up, not
              \*   yet with M) or "got" (M has it)
-    lostword \* ghost: M began ending on an M_END while S held its word
+    lostword, \* ghost: M began ending on an M_END while S held its word
+    mw       \* M's last word this session: "none"; "owed" (S has it, its ack
+             \*   not yet keyed: car_owes_ack); "acked" (S's ack is out);
+             \*   "conf" (M heard it)
 
-vars == <<st, gen, sid, sent, tries, slot, q, placed, mcall, scall, how, dropped, wish, unasked, word, lostword>>
+vars == <<st, gen, sid, sent, tries, slot, q, placed, mcall, scall, how, dropped, wish, unasked, word, lostword, mw>>
 
 Frame(k, s, g) == [k |-> k, sid |-> s, g |-> g, c |-> mcall]
 \* The reply to a DISCONNECT is an ACK pattern (send_disconnect_reply): no
@@ -121,7 +132,7 @@ Init == /\ st = [e \in E |-> "idle"] /\ gen = [e \in E |-> 0] /\ sid = [e \in E 
         /\ sent = [e \in E |-> FALSE] /\ tries = 0 /\ slot = FALSE
         /\ q = [e \in E |-> <<>>] /\ placed = 0 /\ how = {}
         /\ mcall = (CHOOSE c \in CALLS : TRUE) /\ scall = mcall /\ dropped = FALSE
-        /\ wish = 0 /\ unasked = FALSE /\ word = "none" /\ lostword = FALSE
+        /\ wish = 0 /\ unasked = FALSE /\ word = "none" /\ lostword = FALSE /\ mw = "none"
 
 \* Something more will come to e from its peer, or is already on its way:
 \* a peer in the same session talks while connected (M polls at least every
@@ -144,73 +155,90 @@ Call == /\ st["M"] = "idle" /\ placed < NS
              /\ st' = [st EXCEPT !["M"] = "calling"] /\ gen' = [gen EXCEPT !["M"] = placed + 1]
              /\ sid' = [sid EXCEPT !["M"] = s] /\ sent' = [sent EXCEPT !["M"] = FALSE]
              /\ Send("S", CallFrame(s, placed + 1, c))
+        /\ mw' = "none"
         /\ UNCHANGED <<tries, slot, scall, how, dropped, wish, unasked, word, lostword>>
 CallFails == /\ st["M"] = "calling" /\ TimerOK("M")
              /\ st' = [st EXCEPT !["M"] = "idle"] /\ End("M", "nocall")
-             /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword>>
+             /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 Poll == /\ st["M"] = "conn"
         /\ Send("S", Frame("poll", sid["M"], gen["M"]))
-        /\ UNCHANGED <<st, gen, sid, sent, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
-MAppDisc == /\ st["M"] = "conn"
+        /\ UNCHANGED <<st, gen, sid, sent, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
+MAppDisc == /\ st["M"] = "conn" /\ mw \notin {"owed", "acked"}   \* its drain (DirDone), abstracted
             /\ st' = [st EXCEPT !["M"] = "ending"] /\ sent' = [sent EXCEPT !["M"] = FALSE]
             /\ tries' = R
-            /\ UNCHANGED <<gen, sid, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
+            /\ UNCHANGED <<gen, sid, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 MDisc == /\ st["M"] = "ending" /\ ~sent["M"]
          /\ sent' = [sent EXCEPT !["M"] = TRUE]
          /\ Send("S", Frame("disc", sid["M"], gen["M"]))
-         /\ UNCHANGED <<st, gen, sid, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
+         /\ UNCHANGED <<st, gen, sid, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 MRetry == /\ st["M"] = "ending" /\ sent["M"] /\ tries > 0 /\ TimerOK("M")
           /\ tries' = tries - 1
           /\ Send("S", Frame("disc", sid["M"], gen["M"]))
-          /\ UNCHANGED <<st, gen, sid, sent, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
+          /\ UNCHANGED <<st, gen, sid, sent, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 MGiveUp == /\ st["M"] = "ending" /\ sent["M"] /\ tries = 0 /\ TimerOK("M")
            /\ st' = [st EXCEPT !["M"] = "idle"] /\ End("M", "timeout")
-           /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword>>
+           /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
+
+\* M's last word reaches S's application (rounds and their repair,
+\* abstracted): S now owes an answer acknowledging it.
+MWord == /\ mw = "none" /\ st["M"] = "conn" /\ st["S"] = "conn" /\ gen["M"] = gen["S"] /\ wish = 0
+         /\ mw' = "owed"
+         /\ UNCHANGED <<st, gen, sid, sent, tries, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
 
 \* ---- the callee ----
-SAppDisc == /\ st["S"] = "conn"
+\* The application hangs up with nothing owed either way: the DISCONNECT goes
+\* in the next slot.
+SAppDisc == /\ st["S"] = "conn" /\ (mw # "owed" \/ Mutant = "ackless")
             /\ st' = [st EXCEPT !["S"] = "ending"] /\ sent' = [sent EXCEPT !["S"] = FALSE]
-            /\ UNCHANGED <<gen, sid, tries, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
-\* The application hangs up with data of S's not yet acknowledged: the
-\* DISCONNECT waits for the drain (ARQ_TD_DRAINING, car_wish_end), and
-\* S's answers say so; the drain then completes (or its deadline passes).
+            /\ UNCHANGED <<gen, sid, tries, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
+\* The application hangs up with data of S's not yet acknowledged, or owing
+\* the ack of M's last word (car_owes_ack): the DISCONNECT waits
+\* (ARQ_TD_DRAINING, car_wish_end), and S's answers say so; the drain then
+\* completes (or its deadline passes).
 SWish == /\ st["S"] = "conn" /\ wish = 0
          /\ wish' = gen["S"] /\ word' \in {"none", "held"}
-         /\ UNCHANGED <<st, gen, sid, sent, tries, slot, q, placed, how, mcall, scall, dropped, unasked, lostword>>
+         /\ UNCHANGED <<st, gen, sid, sent, tries, slot, q, placed, how, mcall, scall, dropped, unasked, lostword, mw>>
 \* S's last word reaches M: rounds and their repair, abstracted (any loss
 \* only delays it while both are in the session).
 SDeliver == /\ word = "held" /\ st["S"] = "conn" /\ st["M"] = "conn" /\ gen["M"] = gen["S"]
             /\ word' = "got"
-            /\ UNCHANGED <<st, gen, sid, sent, tries, slot, q, placed, how, mcall, scall, dropped, wish, unasked, lostword>>
+            /\ UNCHANGED <<st, gen, sid, sent, tries, slot, q, placed, how, mcall, scall, dropped, wish, unasked, lostword, mw>>
+\* S's answer in its slot acknowledges what it has of M's: an M_END while
+\* its application is hanging up, an ordinary ack otherwise.
+SAck == /\ st["S"] = "conn" /\ wish = 0 /\ mw = "owed" /\ slot
+        /\ slot' = FALSE /\ mw' = "acked"
+        /\ Send("M", Frame("ack", sid["S"], gen["S"]))
+        /\ UNCHANGED <<st, gen, sid, sent, tries, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
 SEndPoll == /\ st["S"] = "conn" /\ wish # 0 /\ slot
-            /\ slot' = FALSE
+            /\ slot' = FALSE /\ mw' = (IF mw = "owed" THEN "acked" ELSE mw)
             /\ Send("M", Frame("end", sid["S"], gen["S"]))
             /\ UNCHANGED <<st, gen, sid, sent, tries, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
-SDrained == /\ st["S"] = "conn" /\ wish # 0 /\ word # "held"
+\* ...and once nothing is owed either way, its DISCONNECT goes in its next slot.
+SDrained == /\ st["S"] = "conn" /\ wish # 0 /\ word # "held" /\ mw # "owed"
             /\ st' = [st EXCEPT !["S"] = "ending"] /\ sent' = [sent EXCEPT !["S"] = FALSE]
-            /\ UNCHANGED <<gen, sid, tries, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
+            /\ UNCHANGED <<gen, sid, tries, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 SSlotDisc == /\ st["S"] = "ending" /\ slot
              /\ slot' = FALSE /\ sent' = [sent EXCEPT !["S"] = TRUE]
              /\ Send("M", Frame("disc", sid["S"], gen["S"]))
-             /\ UNCHANGED <<st, gen, sid, tries, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
+             /\ UNCHANGED <<st, gen, sid, tries, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 SGiveUp == /\ st["S"] = "ending" /\ TimerOK("S")
            /\ st' = [st EXCEPT !["S"] = "idle"] /\ End("S", "timeout")
-           /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword>>
+           /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 
 \* ---- either end ----
 Lost(e) == /\ st[e] = "conn" /\ TimerOK(e)
            /\ st' = [st EXCEPT ![e] = "idle"] /\ End(e, "lost")
-           /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword>>
+           /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 Reply(e) == /\ st[e] = "reply"
             /\ st' = [st EXCEPT ![e] = "idle"]
             /\ Send(Other(e), Pattern(gen[e]))
-            /\ UNCHANGED <<gen, sid, sent, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
+            /\ UNCHANGED <<gen, sid, sent, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 \* The end of another transmission while the reply is owed (TX_COMPLETE):
 \* only the reply's own ends the teardown (ARQ_TD_REPLYING), so only under
 \* the mutant.
 SkipReply(e) == /\ Mutant = "skipreply" /\ st[e] = "reply"
                 /\ st' = [st EXCEPT ![e] = "idle"]
-                /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
+                /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 
 \* S takes a CALL when idle; ending (fsm_disconnecting: RX_CALL), from its
 \* caller's callsign -- or from any once its DISCONNECT is out and it only
@@ -228,7 +256,7 @@ HearDisc(e, f) ==
        IF st[e] = "ending" /\ (sent[e] \/ Mutant = "crossedsilent")
        THEN st' = [st EXCEPT ![e] = "idle"] /\ End(e, why)
        ELSE st' = [st EXCEPT ![e] = "reply"] /\ End(e, why)
-    /\ UNCHANGED <<gen, sid, sent, tries, slot, placed, mcall, scall, dropped, wish, unasked, word, lostword>>
+    /\ UNCHANGED <<gen, sid, sent, tries, slot, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 \* A pattern ends only an end whose DISCONNECT is out and that waits for the
 \* answer (fsm_disconnecting: RX_PATTERN; the caller's, or the callee's in
 \* its ending carousel); anywhere else it is the carousel's, not modelled.
@@ -239,7 +267,7 @@ HearPat(e, f) ==
     /\ f.k = "pat" /\ TakesPat(e) /\ (Mine(e, f) \/ Mutant = "unkeyed")
     /\ st' = [st EXCEPT ![e] = "idle"]
     /\ End(e, IF f.g = gen[e] THEN "peer" ELSE IF f.g = 0 THEN "foreign" ELSE "stale")
-    /\ UNCHANGED <<gen, sid, sent, tries, slot, placed, mcall, scall, dropped, wish, unasked, word, lostword>>
+    /\ UNCHANGED <<gen, sid, sent, tries, slot, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 \* An M_END is a carousel control frame: seeded, so only its session's.
 \* M takes it holding all S has: the poll names S's latest block and whether
 \* bytes wait unopened, and M knows which it holds (peer_ended).
@@ -253,7 +281,7 @@ Receive(e) ==
        \* S answers a CALL when idle, or when ending and its peer calls again
        \/ /\ e = "S" /\ f.k = "call" /\ Takes(f)
           /\ st' = [st EXCEPT !["S"] = "conn"] /\ gen' = [gen EXCEPT !["S"] = f.g]
-          /\ scall' = f.c /\ wish' = (IF Mutant = "staleteardown" THEN wish ELSE 0) /\ word' = "none" /\ UNCHANGED <<dropped, unasked, lostword>>
+          /\ scall' = f.c /\ wish' = (IF Mutant = "staleteardown" THEN wish ELSE 0) /\ word' = "none" /\ UNCHANGED <<dropped, unasked, lostword, mw>>
           /\ sid' = [sid EXCEPT !["S"] = f.sid] /\ sent' = [sent EXCEPT !["S"] = FALSE]
           /\ slot' = FALSE
           /\ IF st["S"] = "ending" THEN End("S", "recall") ELSE UNCHANGED how
@@ -262,16 +290,22 @@ Receive(e) ==
           /\ UNCHANGED <<tries, placed, mcall>>
        \/ /\ e = "M" /\ f.k = "accept" /\ st["M"] = "calling" /\ Mine("M", f)
           /\ st' = [st EXCEPT !["M"] = "conn"] /\ Pop("M")
-          /\ UNCHANGED <<gen, sid, sent, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
+          /\ UNCHANGED <<gen, sid, sent, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
        \* M, connected, hears S's M_END: it ends the session as for its application
+       \* (the M_END acknowledges what S has of M's)
        \/ /\ e = "M" /\ TakesEnd(f)
           /\ st' = [st EXCEPT !["M"] = "ending"] /\ sent' = [sent EXCEPT !["M"] = FALSE]
           /\ tries' = R /\ unasked' = (unasked \/ f.g # gen["M"]) /\ Pop("M")
           /\ lostword' = (lostword \/ (word = "held" /\ gen["S"] = gen["M"]))
+          /\ mw' = (IF Mine("M", f) /\ mw = "acked" THEN "conf" ELSE mw)
           /\ UNCHANGED <<gen, sid, slot, placed, how, mcall, scall, dropped, wish, word>>
+       \* M, connected, hears S's ack of its session
+       \/ /\ e = "M" /\ f.k = "ack" /\ st["M"] = "conn" /\ Mine("M", f)
+          /\ mw' = (IF mw = "acked" THEN "conf" ELSE mw) /\ Pop("M")
+          /\ UNCHANGED <<st, gen, sid, sent, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
        \/ /\ e = "S" /\ f.k = "poll" /\ st["S"] \in {"conn", "ending"} /\ Mine("S", f)
           /\ slot' = TRUE /\ Pop("S")
-          /\ UNCHANGED <<st, gen, sid, sent, tries, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
+          /\ UNCHANGED <<st, gen, sid, sent, tries, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
        \* anything else: not for it, or not in its state -- dropped
        \/ /\ ~(f.k = "disc" /\ st[e] \in {"conn", "ending"} /\ f.sid = sid[e])
           /\ ~(f.k = "pat" /\ TakesPat(e) /\ (Mine(e, f) \/ Mutant = "unkeyed"))
@@ -279,37 +313,42 @@ Receive(e) ==
           /\ ~(e = "M" /\ f.k = "accept" /\ st["M"] = "calling" /\ Mine("M", f))
           /\ ~(e = "S" /\ f.k = "poll" /\ st["S"] \in {"conn", "ending"} /\ Mine("S", f))
           /\ ~(e = "M" /\ TakesEnd(f))
+          /\ ~(e = "M" /\ f.k = "ack" /\ st["M"] = "conn" /\ Mine("M", f))
           /\ Pop(e)
           /\ dropped' = (dropped \/ (e = "S" /\ f.k = "call" /\ (st["S"] = "idle" \/ Waiting)))
+          \* an M_END M does not act on still acknowledges what S has of M's
+          /\ mw' = (IF e = "M" /\ f.k = "end" /\ st["M"] = "conn" /\ Mine("M", f) /\ mw = "acked"
+                    THEN "conf" ELSE mw)
           /\ UNCHANGED <<wish, unasked, word, lostword>>
           /\ UNCHANGED <<st, gen, sid, sent, tries, slot, placed, mcall, scall, how>>
 
 \* ---- the channel ----
-Lose(e) == LOSS /\ q[e] # <<>> /\ Pop(e) /\ UNCHANGED <<st, gen, sid, sent, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
+Lose(e) == LOSS /\ q[e] # <<>> /\ Pop(e) /\ UNCHANGED <<st, gen, sid, sent, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 Foreign(e) == /\ \/ FOREIGN /\ \E s \in SIDS : Send(e, Frame("disc", s, 0))
                  \/ FEND /\ e = "M" /\ \E s \in SIDS : Send(e, Frame("end", s, 0))
                  \/ FPAT /\ Send(e, Pattern(0))
-              /\ UNCHANGED <<st, gen, sid, sent, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword>>
+              /\ UNCHANGED <<st, gen, sid, sent, tries, slot, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw>>
 
 \* All sessions placed and over: TLC stops here.
 Done == placed = NS /\ \A e \in E : st[e] = "idle" /\ q[e] = <<>>
         /\ UNCHANGED vars
 
 Next == \/ Done \/ Call \/ CallFails \/ Poll \/ MAppDisc \/ MDisc \/ MRetry \/ MGiveUp
-        \/ SAppDisc \/ SWish \/ SDeliver \/ SEndPoll \/ SDrained \/ SSlotDisc \/ SGiveUp
+        \/ MWord \/ SAppDisc \/ SWish \/ SDeliver \/ SAck \/ SEndPoll \/ SDrained \/ SSlotDisc \/ SGiveUp
         \/ \E e \in E : Lost(e) \/ Reply(e) \/ SkipReply(e) \/ Receive(e) \/ Lose(e) \/ Foreign(e)
 
 \* Progress is fair; the application, the channel's losses and other
 \* stations are not.
 Fair == /\ WF_vars(MDisc) /\ WF_vars(MRetry) /\ WF_vars(MGiveUp) /\ WF_vars(CallFails)
         /\ WF_vars(SSlotDisc) /\ WF_vars(SGiveUp) /\ WF_vars(Poll)
-        /\ WF_vars(SEndPoll) /\ WF_vars(SDrained) /\ WF_vars(SDeliver)
+        /\ WF_vars(SEndPoll) /\ WF_vars(SDrained) /\ WF_vars(SDeliver) /\ WF_vars(SAck)
         /\ \A e \in E : WF_vars(Reply(e)) /\ WF_vars(Receive(e)) /\ WF_vars(Lost(e))
 Spec == Init /\ [][Next]_vars /\ Fair
 
 \* ---- properties ----
 TypeOK == /\ st \in [E -> {"idle", "calling", "conn", "ending", "reply"}]
           /\ tries \in 0 .. R /\ placed \in 0 .. NS /\ wish \in 0 .. NS
+          /\ mw \in {"none", "owed", "acked", "conf"}
 NoKill == \A h \in how : h.why # "killed"
 \* No end leaves on the answer to an earlier session's DISCONNECT, nor on
 \* another station's pattern.
@@ -320,6 +359,9 @@ NoUnasked == ~unasked
 NoLostWord == ~lostword
 NoInherited == wish # 0 => wish = gen["S"]
 Clean == ~LOSS => \A h \in how : h.why \in {"peer", "recall"}
+\* M out of the session (or replying to S's DISCONNECT) with its last word
+\* of the session unacknowledged.  An ack may be lost: lossless only.
+Confirmed == ~LOSS => ~(st["M"] \in {"idle", "reply"} /\ mw \in {"owed", "acked"})
 In(e, g) == gen[e] = g /\ st[e] \in {"calling", "conn", "ending", "reply"}
 Mutual == \A g \in 1 .. NS :
             (\E h \in how : h.g = g /\ h.why # "nocall") ~> ~(\E e \in E : In(e, g))
