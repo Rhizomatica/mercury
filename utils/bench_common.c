@@ -83,10 +83,26 @@ void bench_run_burst(struct freedv *rx, const short *samples, int n, int tail,
                      double sigma, unsigned char *out, bench_noise_fn noise,
                      void *noise_ctx, int *saw_sync, int *got_frame,
                      float *snr_est_sum, int *snr_est_n) {
+  bench_run_burst_ex(rx, samples, n, tail, sigma, out, noise, noise_ctx,
+                     saw_sync, got_frame, snr_est_sum, snr_est_n, NULL);
+}
+
+void bench_run_burst_ex(struct freedv *rx, const short *samples, int n, int tail,
+                        double sigma, unsigned char *out, bench_noise_fn noise,
+                        void *noise_ctx, int *saw_sync, int *got_frame,
+                        float *snr_est_sum, int *snr_est_n,
+                        bench_sync_info *info) {
   freedv_set_sync(rx, FREEDV_SYNC_UNSYNC);
   int pos = 0;
   *saw_sync = 0;
   *got_frame = 0;
+  if (info) {
+    info->seen = 0;
+    info->timing_mx = 0.0f;
+    info->coarse_foff_hz = 0.0f;
+    info->foff_hz = 0.0f;
+    info->snr_est = 0.0f;
+  }
   while (pos < n + tail) {
     int nin = freedv_nin(rx);
     short chunk[8192];
@@ -113,6 +129,16 @@ void bench_run_burst(struct freedv *rx, const short *samples, int n, int tail,
         freedv_get_modem_stats(rx, &sync_i, &se);
         *snr_est_sum += se;
         (*snr_est_n)++;
+      }
+      /* The first sync is the acquisition decision: its metric and its
+       * frequency estimate are the ones the sweep is about. */
+      if (info && !info->seen) {
+        int sync_i = 0;
+        info->seen = 1;
+        info->timing_mx = freedv_get_timing_mx(rx);
+        info->coarse_foff_hz = freedv_get_coarse_foff_est(rx);
+        info->foff_hz = freedv_get_foff_est(rx);
+        freedv_get_modem_stats(rx, &sync_i, &info->snr_est);
       }
     }
     if (nb > 0 && !(st & FREEDV_RX_BIT_ERRORS)) *got_frame = 1;
@@ -145,13 +171,31 @@ void bench_run_noise_only(struct freedv *rx, double sigma, int n, int tail,
 
 #define SHIFT_GUARD 4096
 
-void bench_freq_shift_real(short *buf, int n, double foff_hz, double fs) {
-  if (foff_hz == 0.0 || n <= 0) return;
-
+/* The transform length the shift uses for a buffer of n samples.  Shared with
+ * bench_freq_shift_applied_hz so the reported offset is the one the shift
+ * really applied, not the one that was asked for. */
+static int bench_shift_nfft(int n) {
   int nfft = SHIFT_GUARD * 2 + n;
   int p = 8;
   while ((1 << p) < nfft) p++;
-  nfft = 1 << p;
+  return 1 << p;
+}
+
+/* The offset the shift actually applies.  The shift moves whole FFT bins, so
+ * the applied offset is quantised to fs/nfft; a sweep that plots the asked
+ * offset against a quantised signal would mislabel its own x-axis by up to
+ * half a bin. */
+double bench_freq_shift_applied_hz(int n, double foff_hz, double fs) {
+  if (n <= 0 || foff_hz == 0.0) return 0.0;
+  int nfft = bench_shift_nfft(n);
+  int dk = (int)lrint(foff_hz * (double)nfft / fs);
+  return (double)dk * fs / (double)nfft;
+}
+
+void bench_freq_shift_real(short *buf, int n, double foff_hz, double fs) {
+  if (foff_hz == 0.0 || n <= 0) return;
+
+  int nfft = bench_shift_nfft(n);
 
   /* Cache the plan: bursts within one tool run share a length, and the
    * allocation dominates at these sizes. */
@@ -179,6 +223,7 @@ void bench_freq_shift_real(short *buf, int n, double foff_hz, double fs) {
 
   kiss_fft_cpx *a = bufs, *A = bufs + nfft, *w = A + nfft;
   memset(a, 0, sizeof(kiss_fft_cpx) * (size_t)nfft);
+  memset(w, 0, sizeof(kiss_fft_cpx) * (size_t)nfft);
   for (int i = 0; i < n; i++) {
     a[SHIFT_GUARD + i].r = (float)buf[i];
     a[SHIFT_GUARD + i].i = 0.0f;
@@ -186,8 +231,19 @@ void bench_freq_shift_real(short *buf, int n, double foff_hz, double fs) {
 
   kiss_fft(fwd, a, A);
 
-  /* Analytic signal: zero the negative-frequency bins. */
+  /* Analytic signal: zero the negative-frequency bins and double the
+   * positive half.  The doubling is not optional -- the analytic signal of
+   * a real tone has the tone's amplitude, while the positive half of the
+   * DFT has half of it, so without the factor of two the "shift" comes out
+   * 6 dB down.  A sweep that calibrates its noise before the shift then
+   * measures its offset rows 6 dB below their labelled SNR, which is
+   * enough to turn a 20 Hz offset into an acquisition failure (the
+   * shift_selftest tool checks this against a closed-form tone). */
   memset(&A[nfft / 2 + 1], 0, sizeof(kiss_fft_cpx) * (size_t)(nfft / 2 - 1));
+  for (int k = 1; k < nfft / 2; k++) {
+    A[k].r *= 2.0f;
+    A[k].i *= 2.0f;
+  }
 
   /* Circular shift by foff: delta bins = f * nfft / fs.  Shifted energy
    * that would wrap past DC lands in the zeroed negative half -- the zero
@@ -205,9 +261,20 @@ void bench_freq_shift_real(short *buf, int n, double foff_hz, double fs) {
 
   kiss_fft(inv, w, a);
 
+  /* The modulation's phase reference is the padded buffer's origin, which is
+   * SHIFT_GUARD samples before the signal.  Rotate it back so the shift's
+   * phase reference is the first sample of the buffer, as the closed form
+   * says it should be.  The rotation uses the bin count the shift actually
+   * applied, not the offset that was asked for: they differ by up to half a
+   * bin, and half a bin over the padding is a visible phase error. */
+  double corr = -2.0 * M_PI * (double)dk * (double)SHIFT_GUARD / (double)nfft;
+  double cr = cos(corr), ci = sin(corr);
+
   double inv_scale = 1.0 / (double)nfft;
   for (int i = 0; i < n; i++) {
-    double v = (double)a[SHIFT_GUARD + i].r * inv_scale;
+    double re = (double)a[SHIFT_GUARD + i].r;
+    double im = (double)a[SHIFT_GUARD + i].i;
+    double v = (re * cr - im * ci) * inv_scale;
     if (v > 32767.0) v = 32767.0;
     if (v < -32768.0) v = -32768.0;
     buf[i] = (short)lrint(v);

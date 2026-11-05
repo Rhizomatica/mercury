@@ -82,6 +82,25 @@ void bench_run_burst(struct freedv *rx, const short *samples, int n, int tail,
                      double sigma, unsigned char *out, bench_noise_fn noise,
                      void *noise_ctx, int *saw_sync, int *got_frame,
                      float *snr_est_sum, int *snr_est_n);
+
+/* Telemetry captured at the FIRST full sync of a trial: the acquisition
+ * metric the threshold sees, the coarse frequency estimate (the grid
+ * hypothesis plus its refinement), the tracked estimate, and the modem's
+ * SNR estimate.  Read at the sync, so it is the acquisition decision's own
+ * numbers, not the decoder's later state. */
+typedef struct {
+  int seen;
+  float timing_mx;
+  float coarse_foff_hz;
+  float foff_hz;
+  float snr_est;
+} bench_sync_info;
+
+void bench_run_burst_ex(struct freedv *rx, const short *samples, int n,
+                        int tail, double sigma, unsigned char *out,
+                        bench_noise_fn noise, void *noise_ctx, int *saw_sync,
+                        int *got_frame, float *snr_est_sum, int *snr_est_n,
+                        bench_sync_info *info);
 /* snr_est_sum/snr_est_n: optional (NULL to skip).  When the decoder reaches
  * full sync, the modem's SNR estimate is read once and accumulated -- what
  * the rung ladder reads, so the tools check it for knob-induced bias. */
@@ -101,6 +120,10 @@ void bench_run_noise_only(struct freedv *rx, double sigma, int n, int tail,
  * half-amplitude images at fc +- f -- a different signal, and the reason
  * the first offset sweep had to be redone.  No-op at foff_hz == 0. */
 void bench_freq_shift_real(short *buf, int n, double foff_hz, double fs);
+
+/* The offset bench_freq_shift_real really applied for this buffer length:
+ * the shift moves whole FFT bins, so it is quantised to fs/nfft. */
+double bench_freq_shift_applied_hz(int n, double foff_hz, double fs);
 
 /* ---- Mode lookup shared by the tools ---- */
 
