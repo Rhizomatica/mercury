@@ -24,6 +24,7 @@ DEFINE_FFF_GLOBALS;
 #include "virtual_clock.h"   /* time_now_ms(), to stage a busy channel */
 #include "freedv/freedv_api.h"
 #include "modem_mfsk.h"        /* MERCURY_MODE_MFSK */
+#include "carousel.h"          /* car_drain_budget_ms */
 
 /* Provided by arq_test_stubs.c */
 extern void mock_set_uptime_ms(uint64_t ms);
@@ -1040,6 +1041,114 @@ void test_app_disconnect_defers_with_backlog(void)
 
 
 
+/* A second DISCONNECT while the first is held to drain ends the session now.
+ * It used to re-arm the drain, pushing the end out by a whole budget each time
+ * (N3JXB, 1.9.22, the MFSK floor: three DISCONNECTs over 69 s, still keyed). */
+void test_repeat_disconnect_while_draining_ends_now(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 256;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
+    uint64_t first_req = sess.disc_req_ms;
+
+    mock_set_uptime_ms(31000);
+    ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
+    /* The teardown is timed from the host's first DISCONNECT. */
+    TEST_ASSERT_EQUAL_UINT64(first_req, sess.disc_req_ms);
+}
+
+/* A CONNECT while a DISCONNECT is held to drain ends the drain: the host was
+ * already told DISCONNECTED, so for it the old session is over.  The call
+ * stays queued and is placed once the teardown completes. */
+void test_redial_while_draining_ends_the_drain(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 256;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
+
+    mock_set_uptime_ms(9000);
+    connect_to("DST2");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_STRING("DST2", sess.pending_connect_call);
+}
+
+/* The caller has heard nothing since the ACCEPT for a whole exchange: the
+ * peer is quiet, so a DISCONNECT ends the session without draining and with a
+ * single DISCONNECT frame (N3JXB -> VE4KLM: held 148 s for 2 bytes). */
+void test_disconnect_after_an_unanswered_exchange_does_not_drain(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 2;
+
+    uint64_t exchange = car_drain_budget_ms(sess.car) / 3;
+    TEST_ASSERT_TRUE(exchange < 120000);
+    mock_set_uptime_ms(sess.car_last_rx_ms + exchange + 1000);
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT(0, sess.tx_retries_left);
+}
+
+/* The same silence after the peer has been heard is a slow exchange, not a
+ * dead link: the DISCONNECT still waits to deliver. */
+void test_disconnect_after_a_heard_peer_still_drains(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 2;
+    sess.car_heard_peer = true;
+
+    uint64_t exchange = car_drain_budget_ms(sess.car) / 3;
+    mock_set_uptime_ms(sess.car_last_rx_ms + exchange + 1000);
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
+}
+
+/* With the peer quiet, the caller's DISCONNECT goes at the first chance,
+ * not after the slots a silent peer is not using. */
+void test_quiet_peer_disconnect_does_not_wait_for_slots(void)
+{
+    goto_connected();
+    sess.car_heard_peer = true;
+    /* The carousel has just keyed a round: its answer slot is still ahead. */
+    mock_set_uptime_ms(sess.car_last_rx_ms + 130000);
+    sess.car_last_rx_ms = 1000;
+    uint64_t now = time_now_ms();
+    car_log_ctl(sess.car, now, ARQ_CHANNEL_GUARD_MS);
+    sess.last_tx_end_ms = now;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+
+    RESET_FAKE(fake_send_tx_frame);
+    mock_set_uptime_ms(sess.deadline_ms);
+    ev = make_event(sess.deadline_event);
+    arq_fsm_dispatch(&sess, &ev);
+    /* disconnect_must_wait's own guard after our TX may still hold it once;
+     * past that, nothing else does. */
+    if (sess.teardown != ARQ_TD_SENT)
+    {
+        mock_set_uptime_ms(now + 3000);
+        ev = make_event(ARQ_EV_TIMER_ACK);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_SENT, sess.teardown);
+    TEST_ASSERT_TRUE(time_now_ms() < now + 5000);
+}
+
 /* A deferred APP_DISCONNECT that never drains must still tear down once the
  * drain deadline elapses — guarantees the rig is not keyed indefinitely
  * after the host disconnects (the "Mercury kept hanging on" report). */
@@ -1658,6 +1767,11 @@ int main(void)
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_rejects_zero_session_id);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
+    RUN_TEST(test_repeat_disconnect_while_draining_ends_now);
+    RUN_TEST(test_redial_while_draining_ends_the_drain);
+    RUN_TEST(test_disconnect_after_an_unanswered_exchange_does_not_drain);
+    RUN_TEST(test_disconnect_after_a_heard_peer_still_drains);
+    RUN_TEST(test_quiet_peer_disconnect_does_not_wait_for_slots);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
     RUN_TEST(test_rx_disconnect_with_backlog_ends_at_once);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
