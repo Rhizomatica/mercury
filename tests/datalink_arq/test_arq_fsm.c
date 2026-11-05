@@ -1081,34 +1081,42 @@ void test_redial_while_draining_ends_the_drain(void)
     TEST_ASSERT_EQUAL_STRING("DST2", sess.pending_connect_call);
 }
 
-/* The caller has heard nothing since the ACCEPT for a whole exchange: the
- * peer is quiet, so a DISCONNECT ends the session without draining and with a
- * single DISCONNECT frame (N3JXB -> VE4KLM: held 148 s for 2 bytes). */
-void test_disconnect_after_an_unanswered_exchange_does_not_drain(void)
+/* A DISCONNECT held to drain ends once the peer has been silent 120 s, not
+ * at the end of the budget (148 s at the floor): nothing held is going to be
+ * delivered (N3JXB -> VE4KLM, 1.9.22: nothing heard after the ACCEPT). */
+void test_drain_ends_when_the_peer_falls_silent(void)
 {
     goto_connected();
-    fake_tx_backlog_fake.return_val = 2;
+    /* nothing queued: the caller's first round awaits its answer */
 
-    uint64_t exchange = car_drain_budget_ms(sess.car) / 3;
-    TEST_ASSERT_TRUE(exchange < 120000);
-    mock_set_uptime_ms(sess.car_last_rx_ms + exchange + 1000);
-
+    mock_set_uptime_ms(sess.car_last_rx_ms + 86000);   /* as on air: 86 s in */
     arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
+    TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms <= sess.car_last_rx_ms + 120000,
+                             "the timer is armed for the silence, not the budget");
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + 119000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + 120000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
     TEST_ASSERT_EQUAL_UINT(0, sess.tx_retries_left);
 }
 
-/* The same silence after the peer has been heard is a slow exchange, not a
- * dead link: the DISCONNECT still waits to deliver. */
-void test_disconnect_after_a_heard_peer_still_drains(void)
+/* The silence of a live exchange is not a dead link: under 120 s, a
+ * DISCONNECT still waits to deliver (a lossy floor link can take over 160 s
+ * to first hear the callee). */
+void test_disconnect_during_a_slow_exchange_still_drains(void)
 {
     goto_connected();
-    fake_tx_backlog_fake.return_val = 2;
-    sess.car_heard_peer = true;
-
-    uint64_t exchange = car_drain_budget_ms(sess.car) / 3;
-    mock_set_uptime_ms(sess.car_last_rx_ms + exchange + 1000);
+    /* nothing queued: the caller's first round awaits its answer */
+    mock_set_uptime_ms(sess.car_last_rx_ms + 100000);
 
     arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
     arq_fsm_dispatch(&sess, &ev);
@@ -1121,7 +1129,6 @@ void test_disconnect_after_a_heard_peer_still_drains(void)
 void test_quiet_peer_disconnect_does_not_wait_for_slots(void)
 {
     goto_connected();
-    sess.car_heard_peer = true;
     /* The carousel has just keyed a round: its answer slot is still ahead. */
     mock_set_uptime_ms(sess.car_last_rx_ms + 130000);
     sess.car_last_rx_ms = 1000;
@@ -1769,8 +1776,8 @@ int main(void)
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_repeat_disconnect_while_draining_ends_now);
     RUN_TEST(test_redial_while_draining_ends_the_drain);
-    RUN_TEST(test_disconnect_after_an_unanswered_exchange_does_not_drain);
-    RUN_TEST(test_disconnect_after_a_heard_peer_still_drains);
+    RUN_TEST(test_drain_ends_when_the_peer_falls_silent);
+    RUN_TEST(test_disconnect_during_a_slow_exchange_still_drains);
     RUN_TEST(test_quiet_peer_disconnect_does_not_wait_for_slots);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
     RUN_TEST(test_rx_disconnect_with_backlog_ends_at_once);

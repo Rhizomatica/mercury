@@ -13,6 +13,10 @@ What it models:
 - The caller keys its DISCONNECT when its application asks, and again up to
   `R` times while nothing answers; then it gives up.  While connected it
   keeps polling, and each poll gives the callee a slot.
+- With its last word not yet confirmed, the caller holds its DISCONNECT
+  while the drain delivers it, up to the drain deadline or the peer's
+  silence.  The host was told DISCONNECTED already; a second DISCONNECT or
+  a CONNECT meanwhile ends the drain at once.
 - The callee keys nothing of its own: its DISCONNECT goes in its next slot,
   and in every slot after that while it is ending.  With no slot it gives up.
 - Either end, hearing the peer's DISCONNECT, ends.  A connected end replies
@@ -40,7 +44,9 @@ What it models:
 
 Not modelled:
 
-- The drain before a DISCONNECT (specs/carousel `DirDone`).
+- How the drain delivers (specs/carousel `DirDone`): here it only holds
+  the caller's DISCONNECT until its last word is confirmed, or until it
+  ends.
 - When the DISCONNECT may key (specs/turns `DISC`).
 - The handshake (specs/connect).
 
@@ -61,7 +67,10 @@ Properties:
 - `NoInherited`: the callee holds a DISCONNECT back only for the session
   whose application hung up.  No teardown step outlives its session.
 - `Confirmed`: on a lossless channel the caller never leaves a session
-  with its last word unacknowledged.
+  with its last word unacknowledged, unless the host had it dropped (a
+  second DISCONNECT or a redial while the caller drains).
+- `Released`: once the host has asked again while the caller drains, the
+  caller no longer holds its DISCONNECT.
 
 M_END (2026-10-18): a callee whose application hangs up while its
 DISCONNECT waits for its data to drain says so in its answers (poll type 3,
@@ -106,21 +115,38 @@ M_END that the caller does not act on (the callee still holds a word of
 its own) still acknowledges the caller's word, as the poll does in the
 code.  `Mut_ackless.cfg` has the old rule.
 
+The caller's drain (2026-11-05): the host is told DISCONNECTED when it
+hangs up (arq.c, the VARA convention), and the caller then holds its
+DISCONNECT to deliver what it has not yet confirmed (`ARQ_TD_DRAINING`), at
+the MFSK floor for up to 148 s.  On air (N3JXB -> VE4KLM, 1.9.22,
+2026-11-04) the callee went silent after the ACCEPT: the operator's
+DISCONNECT was held, the redial to K7EK queued behind it, a second
+DISCONNECT cancelled the redial and re-armed the drain, and the old session
+kept keying MFSK until the TNC was restarted.  Now a second DISCONNECT ends
+the session at once, and a CONNECT ends the drain (the call is placed once
+the teardown completes); both drop what is undelivered, as ABORT does.  The
+drain also ends once the peer has been silent `ARQ_CAR_PEER_QUIET_MS`
+(120 s): in the model, `MDrainEnd`, the drain's timer.  In the model:
+`mdrain`, `MHold`, `MDrained`, `MDrainEnd`, `MAgain`, `MRedial`, the ghosts
+`asked` and `forced`, and property `Released`.  `Mut_rearm.cfg` and
+`Mut_redialwait.cfg` have the old rules.
+
 Results:
 
 - `SessionTeardown.cfg`: the code's rules, lossless, 2 sessions, 2 caller
-  callsigns.  No error, 21 317 distinct states (10 645 before the
-  callee's owed ack, 4 957 before the last word, 2 069 before M_END).
+  callsigns.  No error, 41 421 distinct states (21 317 before the
+  caller's drain, 10 645 before the callee's owed ack, 4 957 before the
+  last word, 2 069 before M_END).
 - `SessionTeardown_lossy.cfg`: the same with any frame lost.  No error,
-  599 881 distinct states (264 149 before the owed ack, 124 141 before
-  the last word, 52 041 before M_END).  `Clean` does not apply
+  1 373 461 distinct states (599 881 before the caller's drain, 264 149
+  before the owed ack, 124 141 before the last word, 52 041 before M_END).  `Clean` does not apply
   here.
 - `Mut_ignorepattern.cfg`: the end waiting for the answer to its
   DISCONNECT does not take the pattern.  It violates `Clean`: it retries
   and times out.
 - `ForeignPattern.cfg`: the code's rules, lossy, with another station's
-  patterns heard (`FPAT`).  No error, 3 621 957 distinct states (1 655 453
-  before the owed ack): keyed by the
+  patterns heard (`FPAT`).  No error, 8 403 333 distinct states (3 621 957
+  before the caller's drain, 1 655 453 before the owed ack): keyed by the
   session, none is taken.  Safety only: unbounded foreign traffic keeps the
   queue full for ever, and `Mutual` fails on that, not on a rule.
 - `Mut_unkeyed.cfg`: the same, with a pattern taken whatever session keyed
@@ -128,8 +154,8 @@ Results:
   end cleared its seed before the reply went out, and in the harness the
   peer, still in the session, never detected it (3 runs of 3).
 - `ForeignEnd.cfg`: the code's rules, lossy, with another station's M_END
-  frames heard (`FEND`).  No error, 2 956 247 distinct states (1 370 595
-  before the owed ack): seeded by its
+  frames heard (`FEND`).  No error, 6 850 643 distinct states (2 956 247
+  before the caller's drain, 1 370 595 before the owed ack): seeded by its
   session, none is taken.  Safety only, as `ForeignPattern.cfg`.
 - `Mut_unkeyedend.cfg`: the same, with an M_END taken whatever session sent
   it.  It violates `NoUnasked`.
@@ -140,13 +166,19 @@ Results:
   the ack of the caller's last word, and its DISCONNECT goes in that ack's
   slot (the rule before `car_owes_ack`).  It violates `Confirmed`: the
   caller replies to the DISCONNECT with its word unacknowledged.
+- `Mut_rearm.cfg`: lossless, a second DISCONNECT while the caller drains
+  re-arms the drain (the rule before 2026-11-05).  It violates
+  `Released`.
+- `Mut_redialwait.cfg`: lossless, a CONNECT while the caller drains waits
+  behind the drain, the old session keying on (the rule before
+  2026-11-05).  It violates `Released`.
 - `Mut_staleteardown.cfg`: lossless, a CALL taken keeps the DISCONNECT the
   last session held back to drain.  It violates `NoInherited`.
 - `Mut_skipreply.cfg`: lossless, an end owing the reply to its peer's
   DISCONNECT goes idle without keying it.  It violates `Clean`: the peer
   retries and times out.
 - `Mut_anypattern.cfg`: a pattern ends an end in any state, not only one
-  whose DISCONNECT is out.  No error, the same 599 881 states: as with the
+  whose DISCONNECT is out.  No error, the same 1 373 461 states: as with the
   session-id check below, frames in order and timers longer than an
   exchange mean no pattern reaches an end that is not waiting for one.
   In the code the rule keeps the carousel's own patterns (not modelled

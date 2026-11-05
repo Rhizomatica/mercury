@@ -275,8 +275,6 @@ typedef struct
     int      floor_mode;              /* the session's MFSK floor (arq_floor_mode
                                        * of its bandwidth), from its seed on */
     uint64_t car_last_rx_ms;          /* last carousel frame from the peer     */
-    bool     car_heard_peer;          /* a frame or pattern from the peer since
-                                       * the session started (car_peer_quiet) */
 
     /* --- Timer mechanism --- */
     uint64_t       deadline_ms;       /* absolute monotonic deadline           */

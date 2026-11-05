@@ -574,28 +574,9 @@ static void disconnect_answered(arq_session_t *sess)
  * 61 s, for a peer gone 10 min). */
 #define ARQ_CAR_PEER_QUIET_MS 120000
 
-/* One exchange at the session's rung: a third of the drain budget, which is
- * three exchanges (car_drain_budget_ms).  About 49 s at the MFSK floor. */
-static uint64_t car_exchange_ms(const arq_session_t *sess)
-{
-    return car_drain_budget_ms(sess->car) / 3;
-}
-
-/* The peer is quiet when nothing has come from it in ARQ_CAR_PEER_QUIET_MS --
- * or, for the caller, when nothing at all has come since the ACCEPT and a
- * whole exchange has gone by.  A session the peer never answered once has
- * nothing to drain: on air (N3JXB -> VE4KLM, 1.9.22, the MFSK floor) the
- * caller heard the ACCEPT and then nothing, and a DISCONNECT 86 s in was held
- * 148 s to deliver 2 bytes, keying MFSK turns the whole time. */
 static bool car_peer_quiet(const arq_session_t *sess, uint64_t now)
 {
-    if (!sess->car_session)
-        return false;
-    uint64_t silent = now - sess->car_last_rx_ms;
-    if (silent >= ARQ_CAR_PEER_QUIET_MS)
-        return true;
-    return !sess->car_heard_peer && sess->car && car_is_master(sess->car) &&
-           silent >= car_exchange_ms(sess);
+    return sess->car_session && now - sess->car_last_rx_ms >= ARQ_CAR_PEER_QUIET_MS;
 }
 
 static void car_io_keydown(void *ctx, const car_frame_t *fr, int n)
@@ -795,7 +776,6 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     sess->car_active = true;
     sess->car_session = true;
     sess->car_last_rx_ms = now;
-    sess->car_heard_peer = false;
     if (is_caller)
         car_start_sender(sess->car, now);
     else
@@ -874,10 +854,10 @@ static bool car_disconnect_must_wait(arq_session_t *sess, const arq_event_t *ev,
 {
     if (!sess->car_session || !car_is_master(sess->car))
         return false;
-    /* A quiet peer has no slots in use to keep clear, and its one DISCONNECT
-     * has no retry to lose (car_begin_disconnect).  Waiting for them held a
-     * DISCONNECT 17 s after the host's at the floor, for a peer silent 128 s
-     * (on air, N3JXB -> VE4KLM, 1.9.22). */
+    /* A peer silent ARQ_CAR_PEER_QUIET_MS has no slots in use to keep clear,
+     * and its one DISCONNECT has no retry to lose (car_begin_disconnect).
+     * Waiting for them held a DISCONNECT 17 s after the host's at the floor,
+     * for a peer silent 128 s (on air, N3JXB -> VE4KLM, 1.9.22). */
     if (car_peer_quiet(sess, now))
         return false;
     const arq_mode_timing_t *tm = arq_protocol_mode_timing(session_ctl_mode(sess));
@@ -1635,7 +1615,6 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     {
     case ARQ_EV_RX_CAROUSEL:
         sess->car_last_rx_ms = now;
-        sess->car_heard_peer = true;
         if (g_timing) g_timing->frames_rx++;
         peer_end = car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control,
                                 ev->rx_snr, ev->rx_age_ms);
@@ -1646,7 +1625,6 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         break;
     case ARQ_EV_RX_PATTERN:
         sess->car_last_rx_ms = now;
-        sess->car_heard_peer = true;
         car_on_pattern(sess->car, now, ev->pattern_break ? CAR_PATTERN_BREAK
                                                                           : CAR_PATTERN_ACK);
         break;
@@ -1755,6 +1733,20 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         HLOGW(LOG_COMP,
               "Deferred DISCONNECT drain timeout (%ds) — forcing teardown",
               ARQ_DISCONNECT_DRAIN_TIMEOUT_S);
+        car_begin_disconnect(sess, time_now_ms());
+        return;
+    }
+    /* ...nor while the peer is silent: past ARQ_CAR_PEER_QUIET_MS nothing
+     * held is going to be delivered, and the rest of the budget only keeps
+     * the rig keying for a session the host has hung up (on air, N3JXB ->
+     * VE4KLM, 1.9.22: nothing heard after the ACCEPT, the drain up to 148 s
+     * at the floor).  car_begin_disconnect sends the one DISCONNECT a quiet
+     * peer gets.  Not on a frame of the peer's: it is not silent. */
+    if (sess->teardown == ARQ_TD_DRAINING && car_peer_quiet(sess, time_now_ms()) &&
+        ev->id != ARQ_EV_RX_CAROUSEL && ev->id != ARQ_EV_RX_PATTERN)
+    {
+        HLOGI(LOG_COMP, "Deferred DISCONNECT: nothing from the peer in %llu s, not draining on",
+              (unsigned long long)((time_now_ms() - sess->car_last_rx_ms) / 1000));
         car_begin_disconnect(sess, time_now_ms());
         return;
     }
@@ -1982,6 +1974,8 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
             d = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
         if (sess->teardown == ARQ_TD_DRAINING && sess->teardown_deadline_ms < d)
             d = sess->teardown_deadline_ms;
+        if (sess->teardown == ARQ_TD_DRAINING && sess->car_last_rx_ms + ARQ_CAR_PEER_QUIET_MS < d)
+            d = sess->car_last_rx_ms + ARQ_CAR_PEER_QUIET_MS;
         sess->deadline_ms    = d;
         sess->deadline_event = ARQ_EV_TIMER_CAROUSEL;
     }

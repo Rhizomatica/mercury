@@ -225,9 +225,8 @@ DISCONNECT\r
 convention); the air side ends after it.  Mercury first delivers what is
 still queued or unconfirmed, for up to three exchanges at the session's
 rung (minutes at the MFSK floor), then sends DISCONNECT frames to the peer.
-It does not wait to deliver when the peer is silent: nothing heard for
-120 s, or, on the calling side, nothing heard since the connect for one
-whole exchange.
+It does not wait to deliver when nothing has been heard from the peer
+for 120 s, and a delivery under way stops once that silence is reached.
 
 While that delivery is under way:
 
