@@ -445,6 +445,8 @@ struct OFDM *ofdm_create(const struct OFDM_CONFIG *config) {
 
   ofdm->fmin = -50.0f;
   ofdm->fmax = 50.0f;
+  ofdm->freq_search_step = 5.0f;
+  ofdm->freq_search_fine = 0.0f;
 
   /*
    * Unique Word symbol placement.  Note we need to group the UW
@@ -1186,6 +1188,48 @@ float ofdm_get_timing_mx_thresh(struct OFDM *ofdm) {
 
 int ofdm_get_bad_uw_errors(struct OFDM *ofdm) { return ofdm->bad_uw_errors; }
 
+/* Acquisition telemetry, for the offset study (utils/offset_acq_sweep.c):
+ * the metric the acceptance threshold sees, and the two frequency estimates
+ * the search produces -- the coarse one (the grid hypothesis plus its
+ * refinement) and the tracked one.  Read-only: no behaviour changes. */
+float ofdm_get_timing_mx(struct OFDM *ofdm) { return ofdm->timing_mx; }
+
+float ofdm_get_coarse_foff_est_hz(struct OFDM *ofdm) {
+  return ofdm->coarse_foff_est_hz;
+}
+
+float ofdm_get_foff_est_hz(struct OFDM *ofdm) { return ofdm->foff_est_hz; }
+
+/* The span of the coarse frequency search.  The stock span is +-50 Hz
+ * (ofdm_create), and it sets the window the acquisition can capture a
+ * mistuned carrier from: the coarse grid steps 5 Hz over the span, and the
+ * fine stage refines +-3 Hz around the winner, so the capture edge lands
+ * about 5 Hz outside the span.  Wider costs one correlation pass per 5 Hz
+ * of span, so this is bench-facing for the offset study
+ * (utils/offset_acq_sweep.c, utils/idle_cpu_probe.c) until the span itself
+ * is worth changing. */
+void ofdm_set_freq_search_range(struct OFDM *ofdm, float fmin, float fmax) {
+  if (fmin >= fmax) return;
+  if (fmin < -1000.0f || fmax > 1000.0f) return;
+  ofdm->fmin = fmin;
+  ofdm->fmax = fmax;
+}
+
+/* The coarse grid's step, and the fine stage's half-width.  The step sets
+ * how many correlation passes the coarse stage makes (one per hypothesis),
+ * so a wider span can be had for less CPU by stepping more coarsely -- if
+ * the fine stage's window is then wide enough to cover the coarse grid's
+ * uncertainty.  Bench-facing, with the span: utils/offset_acq_sweep.c. */
+void ofdm_set_freq_search_step(struct OFDM *ofdm, float hz) {
+  if (hz < 1.0f || hz > 40.0f) return;
+  ofdm->freq_search_step = hz;
+}
+
+void ofdm_set_freq_search_fine(struct OFDM *ofdm, float hz) {
+  if (hz < 0.0f || hz > 100.0f) return;
+  ofdm->freq_search_fine = hz;
+}
+
 void ofdm_set_tx_clip_config(struct OFDM *ofdm, bool clip_en, float gain1,
                              float gain2, float amp_scale) {
   if (clip_en && ofdm->tx_bpf_en && ofdm->tx_bpf == NULL)
@@ -1509,7 +1553,7 @@ static void burst_acquisition_detector(struct OFDM *ofdm, complex float *rx,
 
   // initial search over coarse grid
   tstep = 4;
-  fstep = 5;
+  fstep = ofdm->freq_search_step;
   fmin = ofdm->fmin;
   fmax = ofdm->fmax;
   *timing_mx = est_timing_and_freq(
@@ -1517,8 +1561,10 @@ static void burst_acquisition_detector(struct OFDM *ofdm, complex float *rx,
       ofdm->samplesperframe, tstep, fmin, fmax, fstep);
 
   // refine estimate over finer grid
-  fmin = *foff_est - ceilf(fstep / 2.0);
-  fmax = *foff_est + ceilf(fstep / 2.0);
+  float fine_hz = (ofdm->freq_search_fine > 0.0f) ? ofdm->freq_search_fine
+                                                   : ceilf(fstep / 2.0);
+  fmin = *foff_est - fine_hz;
+  fmax = *foff_est + fine_hz;
   int fine_st = n + *ct_est - tstep / 2.0;
   *timing_mx = est_timing_and_freq(
       ofdm, ct_est, foff_est, &rx[fine_st], ofdm->samplesperframe + tstep,
