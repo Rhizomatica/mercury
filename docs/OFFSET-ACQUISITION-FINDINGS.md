@@ -144,8 +144,16 @@ TX/RX with independent references — a question for them, not for us.
 
 ## The prototype: a wider span
 
-`ofdm_set_freq_search_range()` (new, bench-facing) widens the coarse grid's
-span. Everything else is stock.
+**The knob already exists.** `freedv_set_tuning_range(f, fmin, fmax)`
+(`freedv_api.c:1585`) sets `ofdm->fmin`/`fmax` for burst-mode OFDM, which is
+what Mercury runs, and nothing in Mercury calls it. Widening the window in
+production is therefore one call in `fdv_configure()`
+(`modem/modem_freedv.c`), after `freedv_set_frames_per_burst()` has put the
+modem in burst mode (the call returns 0 and does nothing before that).
+
+`ofdm_set_freq_search_range()` (new, bench-facing) does the same thing
+without the burst-mode gate, so the bench can set the span on any mode.
+Everything else is stock.
 
 | span | capture edge | idle CPU (x86, 600 s noise, 0.40) | false syncs |
 |---|---|---|---|
@@ -174,7 +182,8 @@ recover from. The stock step stays.
    `utils/shift_selftest.c`). It corrects a measurement tool, and the
    numbers it produced are in this document and in the corrected
    ACQ-TUNING-FINDINGS.md.
-2. **Decide the capture window.** ±55 Hz today. The prototype buys ±153 Hz
+2. **Decide the capture window.** ±55 Hz today, and widening it needs no
+   new code: `freedv_set_tuning_range()` is already in the tree and unused. The prototype buys ±153 Hz
    for 2.5× the idle CPU on x86 (the Pi 4 number is theirs to measure, and
    the cost is the same shape there). If their stations do not meet split
    TX/RX with independent references, there is no case for it, and the
