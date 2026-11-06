@@ -20,7 +20,9 @@
  * rate are the Gaussian's closed-form values (and that the legacy
  * Butterworth's are not), that a fading preset reports the same SNR3k as
  * AWGN alone, that a per-path frequency offset rotates at the set rate, that
- * out-of-range arguments are refused, and that a preset is byte-identical to
+ * the channel-level carrier offset rotates at the set rate and moves nothing
+ * but the signal's phase, that out-of-range arguments are refused, and that a
+ * preset is byte-identical to
  * the same channel built by hand.  Set WATTERSON_TEST_VERBOSE=1 to print the
  * measured statistics.
  */
@@ -1009,6 +1011,190 @@ void test_per_path_frequency_offset_rotates_at_the_set_rate(void)
     }
 }
 
+/* Channel-level carrier offset: the transmitter's frequency error as the
+ * receiver sees it.  DC in through one static path with the offset set, the
+ * output is exp(j 2 pi f n / fs) -- the same rotation the per-path offset
+ * gives, but applied to the input of every path, so it moves the whole
+ * signal.  The phase accumulator is carried across watterson_process()
+ * calls, so a multi-block run stays continuous: a per-block reset would
+ * break the phase at every block boundary, which a real receiver would see
+ * as a carrier phase jump in the middle of a burst.
+ *
+ * This is the offset docs/CHANNEL-MODEL.md's follow-up list asks for: the
+ * OFDM acquisition's capture window is +-55 Hz and the MFSK floor's is
+ * +-100 Hz, so a channel that can be asked for a carrier error is what
+ * turns those two numbers into a session-level answer. */
+static double carrier_offset_error(int fs, float f_hz, double secs, double *mag_err)
+{
+    watterson_t w;
+    TEST_ASSERT_EQUAL_INT(0, watterson_init(&w, fs));
+    TEST_ASSERT_EQUAL_INT(0, watterson_add_path(&w, 0.0f, 0.0f, 0.0f, 1.0f));
+    watterson_set_carrier_offset(&w, f_hz);
+    enum { BLK = 4096 };
+    COMP s[BLK];
+    long n = (long)(secs * fs), done = 0;
+    double phi = 0.0, prev = 0.0, worst = 0.0;
+    int first = 1;
+    while (done < n) {
+        int nb = (n - done < BLK) ? (int)(n - done) : BLK;
+        for (int i = 0; i < nb; i++) { s[i].real = 1.0f; s[i].imag = 0.0f; }
+        watterson_process(&w, s, nb);
+        for (int i = 0; i < nb; i++) {
+            double a = atan2((double)s[i].imag, (double)s[i].real);
+            if (!first) {
+                double d = a - prev;
+                while (d >  M_PI) d -= 2.0 * M_PI;
+                while (d < -M_PI) d += 2.0 * M_PI;
+                phi += d;
+            }
+            first = 0;
+            prev = a;
+            double mag = hypot((double)s[i].real, (double)s[i].imag);
+            if (fabs(mag - 1.0) > worst) worst = fabs(mag - 1.0);
+        }
+        done += nb;
+    }
+    watterson_dispose(&w);
+    *mag_err = worst;
+    double f_meas = phi / (2.0 * M_PI * (double)(n - 1) / fs);
+    return f_meas / (double)f_hz - 1.0;
+}
+
+void test_channel_carrier_offset_rotates_at_the_set_rate(void)
+{
+    const struct { int fs; float f; double tol; } cases[] = {
+        { 8000,   1.0f, 1e-4 }, { 8000,  50.0f, 1e-4 }, { 8000, -100.0f, 1e-4 },
+        { 48000,  1.0f, 1e-4 }, { 48000, 100.0f, 1e-4 },
+    };
+    for (unsigned k = 0; k < sizeof cases / sizeof cases[0]; k++) {
+        double mag_err;
+        double err = carrier_offset_error(cases[k].fs, cases[k].f, 20.0, &mag_err);
+        char msg[128];
+        snprintf(msg, sizeof msg, "fs=%d offset=%.1f Hz: relative error %+.3e, max | |out|-1 | = %.2e",
+                 cases[k].fs, cases[k].f, err, mag_err);
+        if (verbose()) printf("  %s\n", msg);
+        TEST_ASSERT_TRUE_MESSAGE(fabs(err) < cases[k].tol, msg);
+        TEST_ASSERT_TRUE_MESSAGE(mag_err < 1e-4, msg);
+    }
+}
+
+/* The carrier offset must move the signal and nothing else.  On a single
+ * static path with no delay and no noise, the same seed gives the same
+ * samples when the offset is set, only rotated: |out| is unchanged sample
+ * by sample and the phase difference is the linear ramp the offset asks
+ * for.  A rotation applied after the paths, or to the noise, would break
+ * this.
+ *
+ * The noise is the receiver's, so it is added after the channel and is NOT
+ * rotated: signal-plus-noise is therefore not a rotation of the same sum
+ * without the offset, which is why this test runs without noise and the
+ * SNR check below runs with it.
+ *
+ * A MULTIPATH channel is a different matter and is deliberately not tested
+ * here: the offset is applied before the paths, so each path sees the error
+ * at a different instant and the sum's magnitude changes with it.  That is
+ * the physical reason a carrier offset costs BER over a spread channel, not
+ * a defect. */
+void test_channel_carrier_offset_only_rotates_the_signal(void)
+{
+    watterson_t a, b;
+    const int fs = 8000, n = 8000;
+    COMP *sa = malloc(sizeof(COMP) * (size_t)n);
+    COMP *sb = malloc(sizeof(COMP) * (size_t)n);
+    TEST_ASSERT_NOT_NULL(sa); TEST_ASSERT_NOT_NULL(sb);
+
+    TEST_ASSERT_EQUAL_INT(0, watterson_init(&a, fs));
+    watterson_seed(&a, 1);
+    TEST_ASSERT_EQUAL_INT(0, watterson_add_path(&a, 0.0f, 0.0f, 0.0f, 1.0f));
+    for (int i = 0; i < n; i++) {
+        sa[i].real = 3000.0f * sinf(2.0f * (float)M_PI * 1500.0f * i / fs);
+        sa[i].imag = 0.0f;
+    }
+    watterson_process(&a, sa, n);
+
+    TEST_ASSERT_EQUAL_INT(0, watterson_init(&b, fs));
+    watterson_seed(&b, 1);
+    TEST_ASSERT_EQUAL_INT(0, watterson_add_path(&b, 0.0f, 0.0f, 0.0f, 1.0f));
+    for (int i = 0; i < n; i++) {
+        sb[i].real = 3000.0f * sinf(2.0f * (float)M_PI * 1500.0f * i / fs);
+        sb[i].imag = 0.0f;
+    }
+    watterson_set_carrier_offset(&b, 50.0f);
+    watterson_process(&b, sb, n);
+
+    double worst_mag = 0.0, worst_phase = 0.0;
+    for (int i = 0; i < n; i++) {
+        double ma = hypot((double)sa[i].real, (double)sa[i].imag);
+        double mb = hypot((double)sb[i].real, (double)sb[i].imag);
+        double dm = fabs(ma - mb);
+        if (dm > worst_mag) worst_mag = dm;
+
+        double pa = atan2((double)sa[i].imag, (double)sa[i].real);
+        double pb = atan2((double)sb[i].imag, (double)sb[i].real);
+        double d = pb - pa;
+        while (d >  M_PI) d -= 2.0 * M_PI;
+        while (d < -M_PI) d += 2.0 * M_PI;
+        double want = 2.0 * M_PI * 50.0 * i / fs;
+        double dp = d - want;
+        while (dp >  M_PI) dp -= 2.0 * M_PI;
+        while (dp < -M_PI) dp += 2.0 * M_PI;
+        if (fabs(dp) > worst_phase) worst_phase = fabs(dp);
+    }
+    char msg[160];
+    snprintf(msg, sizeof msg,
+             "offset 50 Hz: worst |out| difference %.3e, worst phase error %.3e rad",
+             worst_mag, worst_phase);
+    if (verbose()) printf("  %s\n", msg);
+    TEST_ASSERT_TRUE_MESSAGE(worst_mag < 1e-2, msg);
+    TEST_ASSERT_TRUE_MESSAGE(worst_phase < 1e-3, msg);
+
+    free(sa); free(sb);
+    watterson_dispose(&a); watterson_dispose(&b);
+}
+
+/* The offset moves the signal; on a channel with one static path it does not
+ * change the channel's SNR: the rotation preserves the signal's power, and
+ * the noise is the receiver's and is added after the channel either way.
+ *
+ * A MULTIPATH channel does change its measured SNR a little under an
+ * offset, and that is physics rather than a defect: the offset is applied
+ * before the paths, so each path sees the error at a different instant, the
+ * paths' relative phase drifts at 2*pi*f*delay, and the sum's power moves
+ * with it.  Over ccir-poor (2 ms) a 100 Hz offset moves the measured SNR3k
+ * by about 0.6 dB -- the same effect that puts a floor under a carrier
+ * offset over a spread channel. */
+void test_channel_carrier_offset_does_not_change_the_measured_snr(void)
+{
+    watterson_t a, b;
+    const int fs = 8000, n = 8000;
+    COMP s[8000];
+
+    for (int pass = 0; pass < 2; pass++) {
+        watterson_t *w = pass ? &b : &a;
+        TEST_ASSERT_EQUAL_INT(0, watterson_init(w, fs));
+        watterson_seed(w, 1);
+        TEST_ASSERT_EQUAL_INT(0, watterson_add_path(w, 0.0f, 0.0f, 0.0f, 1.0f));
+        for (int i = 0; i < n; i++) {
+            s[i].real = 3000.0f * sinf(2.0f * (float)M_PI * 1500.0f * i / fs);
+            s[i].imag = 0.0f;
+        }
+        watterson_set_noise(w, -20.0f);
+        watterson_reset_meas(w);
+        if (pass) watterson_set_carrier_offset(w, 100.0f);
+        watterson_process(w, s, n);
+    }
+
+    float snr_a = watterson_measured_snr3k(&a);
+    float snr_b = watterson_measured_snr3k(&b);
+    char msg[160];
+    snprintf(msg, sizeof msg, "SNR3k without offset %.4f dB, with 100 Hz offset %.4f dB",
+             (double)snr_a, (double)snr_b);
+    if (verbose()) printf("  %s\n", msg);
+    TEST_ASSERT_TRUE_MESSAGE(fabsf(snr_a - snr_b) < 0.01f, msg);
+
+    watterson_dispose(&a); watterson_dispose(&b);
+}
+
 /* One second of the 1500 Hz test tone at 8 kHz through w with No = -20 dB/Hz
  * (AWGN on, as the pinned-hash test runs).  The caller frees the result. */
 static COMP *run_tone_1s(watterson_t *w)
@@ -1102,6 +1288,9 @@ int main(void)
     RUN_TEST(test_fade_rate_matches_the_rice_closed_form);
     RUN_TEST(test_fading_preset_reports_the_same_snr3k_as_awgn_alone);
     RUN_TEST(test_per_path_frequency_offset_rotates_at_the_set_rate);
+    RUN_TEST(test_channel_carrier_offset_rotates_at_the_set_rate);
+    RUN_TEST(test_channel_carrier_offset_only_rotates_the_signal);
+    RUN_TEST(test_channel_carrier_offset_does_not_change_the_measured_snr);
     RUN_TEST(test_legacy_preset_is_byte_identical_to_the_hand_built_legacy_channel);
     RUN_TEST(test_gaussian_preset_is_byte_identical_to_the_hand_built_channel);
     return UNITY_END();
