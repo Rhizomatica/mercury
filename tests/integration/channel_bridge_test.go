@@ -330,6 +330,21 @@ func directionParams(params ChannelParams) (fwd, rev ChannelParams) {
 			rev.Fading = ""
 		}
 	}
+	// Per-direction carrier offset (Hz): the transmitter's frequency error as
+	// the receiver sees it, passed to the channel process as --freq.  A real
+	// mistuned link is asymmetric -- two radios with independent references
+	// put the offset on one direction only -- and that is the case the
+	// acquisition's capture window is about (docs/ACQUISITION-WINDOWS.md).
+	if v := os.Getenv("MERCURY_CH_FREQ_FWD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			fwd.FreqOffsetHz = f
+		}
+	}
+	if v := os.Getenv("MERCURY_CH_FREQ_REV"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			rev.FreqOffsetHz = f
+		}
+	}
 	return fwd, rev
 }
 
