@@ -1509,12 +1509,19 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         /* Stop retransmitting DISCONNECT frames: the host wants the radio
          * free, and the peer will time out without them.  That also rules
          * out a deferred call, so drop it and say so -- otherwise the client
-         * would wait for a CONNECTED that is not coming. */
-        if (call_queued(sess))
-        {
-            sess->pending_connect_call[0] = '\0';
-            notify_session_ended(sess);
-        }
+         * would wait for a CONNECTED that is not coming.
+         *
+         * The session ends here as on every other way out of DISCONNECTING:
+         * through notify_session_ended, which logs "Disconnected" and clears
+         * the connection's addresses and queue.  Called only for a queued
+         * call, it left an end with no "Disconnected" in the log at all (on
+         * air, KG9NI -> KE8CGS, 1.9.22: the DISCONNECT keyed, LISTEN OFF 2 s
+         * later, and the log just stops). */
+        HLOGI(LOG_COMP, "LISTEN OFF during the DISCONNECT exchange: releasing the radio, "
+              "the peer's ack not awaited");
+        if (g_timing) arq_timing_record_disconnect(g_timing, "listen_off");
+        sess->pending_connect_call[0] = '\0';
+        notify_session_ended(sess);
         enter_idle_after_call(sess);
         return;
 
@@ -1782,7 +1789,26 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          * times out on its own (same reasoning as a dirty ABORT).  A frame
          * already in the air finishes; truncating a keydown mid-frame only
          * leaves the peer decoding garbage, since the transmitter is keyed
-         * either way. */
+         * either way.
+         *
+         * Said in the log, with what it costs: the session ends without a
+         * word to the peer, and whatever of ours is undelivered is dropped.
+         * A host whose scanner steps after its own DISCONNECT lands here
+         * mid-drain (on air, KG9NI -> N3JXB, 1.9.22: 18 bytes dropped, the
+         * peer left to time out, nothing in the log but "Disconnected"). */
+        {
+            size_t left = (sess->car_active ? car_tx_inflight(sess->car) : 0) +
+                          (size_t)session_tx_backlog(sess);
+            const char *when = sess->teardown == ARQ_TD_DRAINING
+                             ? "while draining after the host's DISCONNECT"
+                             : "on a live link";
+            if (left)
+                HLOGW(LOG_COMP, "LISTEN OFF %s: releasing the radio, %zu bytes of ours "
+                      "dropped, no DISCONNECT sent", when, left);
+            else
+                HLOGI(LOG_COMP, "LISTEN OFF %s: releasing the radio, no DISCONNECT sent", when);
+        }
+        if (g_timing) arq_timing_record_disconnect(g_timing, "listen_off");
         sess->pending_connect_call[0] = '\0';   /* releasing the radio rules out a queued call */
         notify_session_ended(sess);
         enter_idle_after_call(sess);

@@ -1521,6 +1521,24 @@ void test_listen_off_drops_live_link_without_draining(void)
     TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
 }
 
+/* LISTEN OFF during the DISCONNECT exchange ends the session the way every
+ * other end of DISCONNECTING does: the host is told and the connection is
+ * cleared (arq.c's disconnect callback, which also logs "Disconnected").
+ * It was told only when a call was queued behind the teardown (on air, KG9NI
+ * -> KE8CGS, 1.9.22: the log stopped at the DISCONNECT). */
+void test_listen_off_in_disconnecting_ends_the_session(void)
+{
+    goto_disconnecting_caller_held();
+
+    arq_event_t ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+    /* Still no more keydowns on a channel the host asked back. */
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+}
+
 /* The CALL retry interval must be measured from PTT-OFF, not from the moment
  * the CALL was queued.
  *
@@ -1771,6 +1789,7 @@ int main(void)
     RUN_TEST(test_redial_inside_reply_guard_leaves_nothing_owed);
     RUN_TEST(test_disconnect_reply_survives_another_tx_complete);
     RUN_TEST(test_listen_off_drops_live_link_without_draining);
+    RUN_TEST(test_listen_off_in_disconnecting_ends_the_session);
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_rejects_zero_session_id);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
