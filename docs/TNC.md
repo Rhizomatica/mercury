@@ -626,6 +626,48 @@ sent until a whole connect request has decoded — 3.74 s in the DATAC16 control
 mode. A host that scans channels needs the former to hold its dwell long enough
 to receive the latter.
 
+### Scanning hosts (BPQ32)
+
+What a scanning host needs from Mercury, as seen in KG9NI's logs (LinBPQ
+scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
+
+- **BPQ32 attaches Mercury as a VARA port** and holds its scan from `PENDING`
+  until `DISCONNECTED` or `CANCELPENDING`.  In every session the scanner
+  stopped once the CALL decoded, including a 32 s connect that needed a
+  repeated CALL and a failed one it held for 43 s.
+- **Each hop is `LISTEN OFF`, `LISTEN ON` and a `BW` command.**  These only
+  set flags: they do not reset Mercury's decoders.  The dwell was 10.1-10.2 s.
+- **Only a whole CALL decoded inside one dwell starts a session.**  CALL
+  lengths on the air:
+
+  | CALL | Length | Inside a 10 s dwell |
+  |---|---|---|
+  | DATAC16 (fast) | 3.74 s | if it starts in the first ~6 s |
+  | MFSK | 13.5 s | never |
+  | MFSK, BW500 floor | 27 s | never |
+
+  All 10 sessions began with a DATAC16 CALL, decoded 5.7-8.6 s after the
+  scanner arrived.  A caller that sends `RETRIES n` gets up to 4 fast CALLs
+  before the first MFSK one (see `RETRIES`).  To catch MFSK CALLs, a scanning
+  station needs a longer dwell, or a hold that starts before the CALL
+  decodes.
+- **`BUSY ON` is the only earlier signal Mercury sends** (see above).  Whether
+  BPQ32's scanner holds on it has not been confirmed yet.
+- **After a host `DISCONNECT`, a scan hop can cut the teardown short.**
+  Mercury answers `DISCONNECTED` straight away and finishes on the air; the
+  scanner's next `LISTEN OFF` releases the radio before that is done (#473).
+
+When `LISTEN OFF` arrives with no session up while a CALL decoder has locked
+onto a frame it has not decoded yet, Mercury logs it:
+
+```
+[tcp-ctl] LISTEN OFF 2.1 s into a DATAC16 frame not yet decoded: if the host now changes frequency, that frame is lost (or it was noise)
+```
+
+A CALL cut off by a hop shows as one of these lines with no `RX_CALL` after
+it.  The lock can also be noise or another station's traffic, so read the
+line together with the caller's log.
+
 ### DISCONNECTED
 
 Sent when the session ends, either by local DISCONNECT, remote DISCONNECT,

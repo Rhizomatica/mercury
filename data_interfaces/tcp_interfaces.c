@@ -384,6 +384,18 @@ static void execute_control_command(char *buffer)
             cmd.type = ARQ_CMD_LISTEN_ON;
         if (temp[1] == 'F')
             cmd.type = ARQ_CMD_LISTEN_OFF;
+        /* A scanning host (BPQ32) sends LISTEN OFF before it changes
+         * frequency.  If a CALL is half received at that moment, it is lost
+         * and nothing else would show it: say so, with no session up (a
+         * LISTEN OFF in a session is logged by the ARQ layer). */
+        const char *inflight_mode = NULL;
+        uint64_t inflight_ms = 0;
+        if (cmd.type == ARQ_CMD_LISTEN_OFF && !arq_is_link_connected() &&
+            modem_rx_frame_in_flight(&inflight_mode, &inflight_ms))
+            HLOGI("tcp-ctl", "LISTEN OFF %.1f s into a %s frame not yet decoded: "
+                  "if the host now changes frequency, that frame is lost "
+                  "(or it was noise)",
+                  (double)inflight_ms / 1000.0, inflight_mode ? inflight_mode : "?");
         if (cmd.type != ARQ_CMD_NONE && arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else

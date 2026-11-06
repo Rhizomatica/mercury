@@ -226,8 +226,10 @@ max_keydown_s = 0
 ; it is why VARA ships with busy detection off as well.
 ;
 ; Turn it on if you scan: it is then the only early warning a host gets, since
-; everything else waits for a full frame to decode (3.7 s for a connect request)
-; and a scanning host cannot hold its dwell that long.  Expect to tune the
+; everything else waits for a full frame to decode: 3.7 s for a fast connect
+; request, 13.5 s for an MFSK one (27 s at BW500), against the ~10 s a BPQ32
+; scanner stays on a channel.  Whether BPQ32's scanner holds on BUSY has not
+; been confirmed yet (docs/TNC.md, "Scanning hosts").  Expect to tune the
 ; thresholds below per band and noise environment before trusting it.
 ;
 ; It needs a receive filter at least ~1.8 kHz wide.  It measures 300-2700 Hz
