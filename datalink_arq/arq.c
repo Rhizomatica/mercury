@@ -296,6 +296,18 @@ static void cb_notify_connected(const char *remote_call, const char *local_call)
 
 static void cb_notify_pending(const char *remote_call, const char *local_call)
 {
+    /* An incoming call makes us the callee, whatever an earlier session left
+     * behind.  cb_notify_connected takes a set src_addr to mean "we called",
+     * so addresses left over from an outgoing session that ended without
+     * cb_notify_disconnected reported the next INCOMING session to the host
+     * backwards: CONNECTED <our call> <the caller>, which BPQ does not route
+     * to the BBS.  On air, KG9NI 1.9.22: CONNECT KG9NI-1 K7EK ended by LISTEN
+     * OFF in DISCONNECTING (01:24), then K7EK called in (03:17), and the
+     * session sat silent for 2 min until K7EK hung up. */
+    pthread_mutex_lock(&g_conn_lock);
+    memset(arq_conn.src_addr, 0, sizeof(arq_conn.src_addr));
+    memset(arq_conn.dst_addr, 0, sizeof(arq_conn.dst_addr));
+    pthread_mutex_unlock(&g_conn_lock);
     arq_tnc_send_pending();
     HLOGI(LOG_COMP, "Incoming connection from %s on %s (pending)",
           remote_call, (local_call && local_call[0]) ? local_call : "(primary)");
