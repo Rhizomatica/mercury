@@ -98,6 +98,11 @@ static pthread_mutex_t g_app_tx_mtx = PTHREAD_MUTEX_INITIALIZER;
  * A separate leaf lock has no ordering relationship to maintain. */
 static pthread_mutex_t g_conn_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* The source of the host's last CONNECT, under g_conn_lock.  Kept apart from
+ * arq_conn.src_addr, which an incoming CALL resets (cb_notify_pending), so the
+ * session that CONNECT places still reports the host's source. */
+static char g_connect_src[CALLSIGN_MAX_SIZE];
+
 /* Internal event queue */
 #define ARQ_EV_QUEUE_CAP 64
 static arq_event_t     g_evq[ARQ_EV_QUEUE_CAP];
@@ -267,18 +272,18 @@ static void cb_send_keydown(const arq_keydown_t *kd)
     }
 }
 
-static void cb_notify_connected(const char *remote_call, const char *local_call)
+static void cb_notify_connected(const char *remote_call, const char *local_call,
+                                bool we_called)
 {
     pthread_mutex_lock(&g_conn_lock);
-    if (arq_conn.src_addr[0] == '\0')
-    {
-        /* Callee side: report the caller as src and the SSID they dialed as dst.
-         * local_call is the callsign (primary or secondary) whose DST CRC16
-         * matched the incoming CALL; fall back to the primary if unset. */
-        snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", remote_call);
-        snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s",
-                 (local_call && local_call[0]) ? local_call : arq_conn.my_call_sign);
-    }
+    /* The side comes from the FSM.  It used to be inferred from src_addr (set
+     * meant "we called"), but an incoming CALL handled just before a queued
+     * CONNECT clears src_addr (cb_notify_pending), and the outgoing session
+     * that CONNECT then placed was reported backwards. */
+    arq_protocol_session_calls(we_called, remote_call, local_call,
+                               g_connect_src, arq_conn.my_call_sign,
+                               arq_conn.src_addr, arq_conn.dst_addr,
+                               CALLSIGN_MAX_SIZE);
     arq_conn.TRX = RX;
     pthread_mutex_unlock(&g_conn_lock);
     /* Flush any stale RX bytes from the previous session before notifying
@@ -303,7 +308,11 @@ static void cb_notify_pending(const char *remote_call, const char *local_call)
      * backwards: CONNECTED <our call> <the caller>, which BPQ does not route
      * to the BBS.  On air, KG9NI 1.9.22: CONNECT KG9NI-1 K7EK ended by LISTEN
      * OFF in DISCONNECTING (01:24), then K7EK called in (03:17), and the
-     * session sat silent for 2 min until K7EK hung up. */
+     * session sat silent for 2 min until K7EK hung up.
+     *
+     * cb_notify_connected no longer reads these to tell the side, so the reset
+     * only keeps the UI from showing the old session's calls.  It leaves
+     * g_connect_src alone: a CONNECT may already be queued behind this CALL. */
     pthread_mutex_lock(&g_conn_lock);
     memset(arq_conn.src_addr, 0, sizeof(arq_conn.src_addr));
     memset(arq_conn.dst_addr, 0, sizeof(arq_conn.dst_addr));
@@ -593,6 +602,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         pthread_mutex_lock(&g_conn_lock);
         snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
+        snprintf(g_connect_src, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         arq_conn.session_bw = 0;
         pthread_mutex_unlock(&g_conn_lock);
         /* The FSM defers a CONNECT that arrives while the previous session is
@@ -1056,6 +1066,7 @@ int arq_init(size_t frame_size, int mode)
 
     /* single-threaded: before worker threads start -- no lock needed */
     memset(&arq_conn, 0, sizeof(arq_conn));
+    g_connect_src[0] = '\0';
     arq_conn.frame_size      = frame_size;
     arq_conn.mode            = mode;
     arq_conn.call_burst_size = 1;

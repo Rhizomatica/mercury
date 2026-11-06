@@ -197,6 +197,31 @@ uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank)
     return now_ms + base_ms + (x % (uint64_t)stagger_ms);
 }
 
+static const char *call_or(const char *call, const char *fallback)
+{
+    return (call && call[0]) ? call : (fallback ? fallback : "");
+}
+
+void arq_protocol_session_calls(bool we_called, const char *remote_call,
+                                const char *local_call, const char *connect_src,
+                                const char *my_call,
+                                char *src, char *dst, size_t bufsz)
+{
+    if (!src || !dst || bufsz == 0)
+        return;
+    const char *peer = remote_call ? remote_call : "";
+    if (we_called)
+    {
+        snprintf(src, bufsz, "%s", call_or(connect_src, my_call));
+        snprintf(dst, bufsz, "%s", peer);
+    }
+    else
+    {
+        snprintf(src, bufsz, "%s", peer);
+        snprintf(dst, bufsz, "%s", call_or(local_call, my_call));
+    }
+}
+
 /* ======================================================================
  * Frame header codec
  * ====================================================================== */

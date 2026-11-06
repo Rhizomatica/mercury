@@ -32,7 +32,7 @@ extern void mock_set_uptime_ms(uint64_t ms);
 /* ---- FFF Fakes for arq_fsm_callbacks_t ---- */
 
 FAKE_VOID_FUNC(fake_send_tx_frame, int, int, size_t, const uint8_t *, int);
-FAKE_VOID_FUNC(fake_notify_connected, const char *, const char *);
+FAKE_VOID_FUNC(fake_notify_connected, const char *, const char *, bool);
 FAKE_VOID_FUNC(fake_notify_pending, const char *, const char *);
 FAKE_VOID_FUNC(fake_notify_pending_again, const char *);
 FAKE_VOID_FUNC(fake_notify_cancelpending);
@@ -224,6 +224,7 @@ void test_incoming_call_records_dialed_secondary(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
     TEST_ASSERT_EQUAL_STRING("KO0OOO-2", fake_notify_connected_fake.arg1_val);
+    TEST_ASSERT_FALSE(fake_notify_connected_fake.arg2_val);   /* we answered */
 }
 
 /* Helper: drive LISTENING -> ACCEPTING via an incoming CALL. */
@@ -432,6 +433,40 @@ void test_accept_transitions_to_connected(void)
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
+    TEST_ASSERT_TRUE(fake_notify_connected_fake.arg2_val);    /* we called */
+}
+
+/* The host's CONNECT queued behind an incoming CALL: the CALL is answered
+ * first (PENDING, which resets arq.c's addresses), then the CONNECT aborts it
+ * and places our call.  That call's CONNECTED must say we called; arq.c used
+ * to infer the side from the addresses the PENDING had just cleared, and
+ * reported the session backwards. */
+void test_connect_behind_incoming_call_connects_as_caller(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "W1ABC", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_pending_fake.call_count);
+
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_connected_fake.call_count);
+    TEST_ASSERT_EQUAL_STRING("DST1", fake_notify_connected_fake.arg0_val);
+    TEST_ASSERT_TRUE(fake_notify_connected_fake.arg2_val);
 }
 
 /* A connect that got through only on MFSK starts the session deaf to the
@@ -1930,6 +1965,7 @@ int main(void)
     RUN_TEST(test_incoming_call_transitions_to_accepting);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
+    RUN_TEST(test_connect_behind_incoming_call_connects_as_caller);
     RUN_TEST(test_mfsk_only_connect_starts_deaf_on_the_floor);
     RUN_TEST(test_floor_accept_to_a_control_mode_call_is_not_deafness);
     RUN_TEST(test_repeat_on_control_mode_is_answered_on_the_floor);
