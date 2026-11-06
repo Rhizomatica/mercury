@@ -794,6 +794,66 @@ Notes for anyone measuring the channel with their own commands:
 - A seed names one fade only for one configuration (spectrum, paths, sample
   rate, AWGN on or off); see "Seeds" above.
 
+## Carrier offset
+
+The channel model carries a **carrier offset**: the transmitter's frequency
+error as the receiver sees it.  The signal is rotated by it before the paths
+are summed, so the whole burst moves in the passband while the fade stays
+what it was.
+
+```c
+watterson_set_carrier_offset(&w, hz);   /* 0 = no rotation */
+```
+
+It is a channel property, not a path property.  A path's own `freq_hz` is
+that path's Doppler shift -- a different thing, and it was the only frequency
+mechanism the model had until this one: `utils/watterson_test --freq` used
+to carry its own oscillator for the same rotation, which was a second copy
+of the arithmetic that drifted (its float accumulator put the offset 0.02 Hz
+off at 50 Hz).  The tool now uses the model's, so there is one rotation in
+one place.
+
+Three things are worth knowing about it:
+
+- **It is applied before the paths**, because that is where a transmitter's
+  error lives.  Over a multipath channel the paths then see the error at
+  different instants, their relative phase drifts at 2*pi*f*delay, and the
+  received power moves with it: over `ccir-poor` (2 ms) a 100 Hz offset
+  moves the measured SNR3k by about 0.6 dB.  That is the physical reason a
+  carrier offset costs BER over a spread channel, not a defect of the
+  model.  A *receiver's* own oscillator error would be the same rotation
+  applied after the channel, and would preserve the output's magnitude
+  exactly.
+- **It does not change the channel's SNR on a flat channel.**  The rotation
+  preserves the signal's power, and the noise is the receiver's and is added
+  after the channel either way.
+- **The phase accumulator is carried across calls and is double.**  A float
+  accumulator drifts the measured offset by 6e-4 of its nominal value over
+  20 s at 48 kHz, which a tone test can see.
+
+Why it exists: the OFDM acquisition's capture window is +-55 Hz and the MFSK
+floor's is +-100 Hz (docs/OFFSET-ACQUISITION-FINDINGS.md and
+docs/MFSK-PORT.md), so a channel that can be asked for a carrier error is
+what turns those two numbers into a session-level answer.  The two
+mechanisms agree: the same offset applied through this rotation and through
+the bench's own analytic shift (`utils/bench_common.c`,
+`bench_freq_shift_real`) give the same acquisition window -- 10/10 acquired
+and delivered to +-55 Hz on DATAC16, 7/10 acquired and 0/10 delivered at
+60 Hz, 3/10 and 0/10 at 70 Hz, both ways.
+
+Reaching it:
+
+```sh
+utils/watterson_test in.s16 out.s16 --ccir-poor --No -20 --freq 50   # the channel
+utils/acquire_vs_decode DATAC16 20 -100 -100 awgnc 0.4 50           # a burst on it
+```
+
+The integration harness already passes `--freq` to the channel process
+(`tests/integration/channel_bridge_test.go`, `ChannelParams.FreqOffsetHz`),
+so a session can be run over an offset channel with
+`MERCURY_CH_FREQ=50` once that variable is wired through (see the follow-up
+list below).
+
 ## Follow-ups (not in this change)
 
 - Re-measure the mode thresholds and the carousel's fading figures on the
@@ -809,13 +869,21 @@ Notes for anyone measuring the channel with their own commands:
   and receiver filter shapes, transmitter-receiver sample-rate offset and
   time-varying frequency drift. These stay outside the channel presets so
   that standard-channel numbers stay comparable.
-- Frequency-shift presets and an integration case under carrier offset at
-  Mercury's own ±50 Hz and ±100 Hz. The ±50 Hz is the acquisition range of
+- **Frequency-shift presets and an integration case under carrier offset at
+  Mercury's own ±50 Hz and ±100 Hz.** The ±50 Hz is the acquisition range of
   the OFDM (orthogonal frequency-division multiplexing) modem, `fmin` and
   `fmax` in `modem/freedv/ofdm.c`. The ±100 Hz is the MFSK acquisition
   tolerance given in `docs/MFSK-PORT.md`. Today a per-path shift is reachable
   only through `--path` or the C API. Every sensitivity so far was measured
   on a perfectly tuned simulator.
+  **Partly done:** the model now carries a channel-level carrier offset (see
+  "Carrier offset" above), which reaches every bench through
+  `utils/watterson_test --freq` and `utils/chanutil_open_offset()`. The
+  per-mode capture windows and the session-level case are in
+  `docs/ACQUISITION-WINDOWS.md`. Still open: a *named* offset preset (the
+  table above has one row per channel, and an offset is a second axis --
+  `off50` and `off100` would be two more rows, or a suffix on every name),
+  and the seed hygiene below, which changes the pinned realisations.
 - A separate seed-derived random stream for the AWGN, so that a seed names
   the fade regardless of `--No` and sample rate. The golden hash, which runs
   with AWGN on, would then be re-pinned.
