@@ -104,7 +104,7 @@ found by a sweep of its own (`acquire_vs_decode`, 50 trials a point):
 | DATAC17 | 2100 Hz | −4.5 dB | 0.10 |
 | QAM16C2 | 2100 Hz | +3.6 dB | 0.30 |
 
-The spread is 17 dB, and it is not the mode's *robustness* that differs
+The spread is 16 dB, and it is not the mode's *robustness* that differs
 so much as where the SNR3k axis lands for a mode of that bandwidth: the
 narrow modes concentrate their power, so their SNR3k floor is much lower
 than the wide ones'.
