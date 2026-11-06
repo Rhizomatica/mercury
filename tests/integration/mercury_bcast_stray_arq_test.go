@@ -41,7 +41,10 @@ func kissEncode(cmd byte, payload []byte) []byte {
 
 // kissFrames reads KISS frames off conn and sends each unescaped payload
 // (command byte stripped) on the channel until conn closes.
-func kissFrames(conn net.Conn, frames chan<- []byte) {
+func kissFrames(conn net.Conn, frames chan<- []byte) { kissRead(conn, frames, 1) }
+
+// kissRead is kissFrames keeping the command byte (skip 0) or not (skip 1).
+func kissRead(conn net.Conn, frames chan<- []byte, skip int) {
 	buf := make([]byte, 4096)
 	var cur []byte
 	in, esc := false, false
@@ -51,7 +54,7 @@ func kissFrames(conn net.Conn, frames chan<- []byte) {
 			switch {
 			case b == kissFEND:
 				if in && len(cur) > 1 {
-					frames <- append([]byte(nil), cur[1:]...)
+					frames <- append([]byte(nil), cur[skip:]...)
 				}
 				cur, in, esc = cur[:0], true, false
 			case !in:

@@ -90,8 +90,13 @@ static _Atomic bool tnc_txq_open = false;
 #endif
 static atomic_int tnc_last_buffer_sent = -1;
 static atomic_bool bcast_client_done = false;
-/* A broadcast client is attached and its worker drains the RX ring. */
+/* A broadcast client is attached and its worker drains the RX ring, whose
+ * records are a frame behind its uint16 length. */
 static atomic_bool bcast_client_present = false;
+#define BCAST_RX_REC_HDR 2
+/* The mode a client's station messages (the beacon) go on: BEACONMODE, -1
+ * for the listen mode. */
+static _Atomic int bcast_beacon_mode = -1;
 /* The host program's tap on every broadcast frame decoded (broadcast_set_rx_tap). */
 static void (*_Atomic bcast_rx_tap)(const uint8_t *frame, size_t len, int mode, float snr);   /* static: starts NULL (clang takes no NULL initializer here) */
 static _Atomic uint8_t bcast_reply_cmd = CMD_DATA;
@@ -563,6 +568,43 @@ static void execute_control_command(char *buffer)
      * owns the payload mode and would overwrite this within one RX-loop
      * iteration.  Note this does NOT give a later ARQ connection a head start
      * -- every session's start rung comes from the connect. */
+    /* BEACONMODE <index>  -- the mode a broadcast client's station messages
+     * (the beacon: PACKET_TYPE_STATION, sent with CMD_MODEM_FRAME) go on,
+     * instead of the listen mode: 8 (DATAC16) or any index MODE accepts; -1
+     * goes back to the listen mode.  BEACONMODE alone reports it. */
+    if (!strncmp(buffer, "BEACONMODE", strlen("BEACONMODE")))
+    {
+        int idx = -2;
+        int count = mercury_cli_mode_count();
+        if (sscanf(buffer, "BEACONMODE %d", &idx) == 1)
+        {
+            int mode = idx >= 0 && idx < count ? freedv_modes[idx] : -1;
+            if (idx == -1 ||
+                (mode >= 0 && modem_beacon_mode_ok(mode)))
+            {
+                atomic_store(&bcast_beacon_mode, mode);
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+            }
+            else
+                reply_wrong(received);
+        }
+        else
+        {
+            int mode = atomic_load(&bcast_beacon_mode);
+            char reply[64];
+            int n = snprintf(reply, sizeof(reply), "BEACONMODE -1 LISTEN\r");
+            for (int i = 0; mode >= 0 && i < count; i++)
+                if (freedv_modes[i] == mode)
+                {
+                    n = snprintf(reply, sizeof(reply), "BEACONMODE %d %s\r",
+                                 i, freedv_mode_names[i]);
+                    break;
+                }
+            tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)n);
+        }
+        return;
+    }
+
     if (!strncmp(buffer, "MODE", strlen("MODE")))
     {
         int idx = -1;
@@ -1170,6 +1212,23 @@ static bool bcast_frame_and_queue(uint8_t *decoded_frame, int frame_len,
 static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
                                          uint8_t kiss_cmd, size_t frame_size)
 {
+    /* A station message, with BEACONMODE set: on that mode, not the listen
+     * mode's ring.  The queue holds a few; past that this client waits, as it
+     * does on a full broadcast ring. */
+    int beacon_mode = atomic_load(&bcast_beacon_mode);
+    if (kiss_cmd == CMD_MODEM_FRAME && beacon_mode >= 0 && frame_len > 0 &&
+        frame_header_packet_type(decoded_frame[0]) == PACKET_TYPE_STATION)
+    {
+        int rc;
+        while ((rc = modem_beacon_send(decoded_frame, (size_t)frame_len, beacon_mode)) == MODEM_BEACON_FULL &&
+               !mercury_stop && !bcast_client_done)
+            msleep(100);
+        if (rc == MODEM_BEACON_BAD)
+            HLOGW("tcp-bcast", "Discarding station message: %d bytes do not fit the BEACONMODE frame",
+                  frame_len);
+        return rc == 0;
+    }
+
     /* Latch reply command — same framing style goes back to the client */
     atomic_store_explicit(&bcast_reply_cmd,
         (kiss_cmd == CMD_AX25 || kiss_cmd == CMD_AX25CALLSIGN)
@@ -1348,6 +1407,16 @@ static bool bcast_frame_and_queue(uint8_t *decoded_frame, int frame_len,
 static uint8_t bcast_get_tx_payload(uint8_t *frame_buffer, size_t frame_size,
                                      uint8_t **payload_out, int *payload_len_out)
 {
+    /* A station message (the beacon) goes up whole, as it was sent: one
+     * modem frame, at its own mode's size. */
+    if (frame_size >= HEADER_SIZE &&
+        frame_header_packet_type(frame_buffer[0]) == PACKET_TYPE_STATION)
+    {
+        *payload_out     = frame_buffer;
+        *payload_len_out = (int)frame_size;
+        return CMD_MODEM_FRAME;
+    }
+
     /* A length-prefixed broadcast frame is self-describing: detect it from the
      * received frame's own header, independent of what the local client last
      * transmitted (bcast_reply_cmd defaults to CMD_DATA and is reset on every
@@ -1431,8 +1500,8 @@ void broadcast_rx_frame(const uint8_t *frame, size_t len, int mode, float snr)
     memcpy(copy, frame, len);
     uint8_t *payload_start;
     int payload_len;
-    (void)bcast_get_tx_payload(copy, len, &payload_start, &payload_len);
-    if (payload_len > 0)
+    uint8_t cmd = bcast_get_tx_payload(copy, len, &payload_start, &payload_len);
+    if (payload_len > 0 && cmd != CMD_MODEM_FRAME)   /* a beacon is not chat */
     {
         int text_len = payload_len;
         while (text_len > 0 && payload_start[text_len - 1] == '\0')
@@ -1446,8 +1515,16 @@ void broadcast_rx_frame(const uint8_t *frame, size_t len, int mode, float snr)
     if (tap)
         tap(frame, len, mode, snr);
 
+    /* Each frame behind its length: a station message is not the listen
+     * mode's size, and the listen mode can change under buffered frames. */
     if (atomic_load(&bcast_client_present))
-        write_buffer(data_rx_buffer_broadcast, (uint8_t *)frame, len);
+    {
+        uint8_t rec[BCAST_RX_REC_HDR + MAX_PAYLOAD];
+        uint16_t l = (uint16_t)len;
+        memcpy(rec, &l, BCAST_RX_REC_HDR);
+        memcpy(rec + BCAST_RX_REC_HDR, frame, len);
+        write_buffer(data_rx_buffer_broadcast, rec, BCAST_RX_REC_HDR + len);
+    }
 }
 
 void *send_thread(void *client_socket_ptr)
@@ -1463,9 +1540,8 @@ void *send_thread(void *client_socket_ptr)
         return NULL;
     }
 
-    /* Size for the widest selectable frame, not the current one: a listen-mode
-     * change can grow the frame size under a connected client, and the loop
-     * below re-reads it.  MAX_PAYLOAD is 1213 bytes, so this costs nothing. */
+    /* Size for the widest frame, not the listen mode's: each record says its
+     * own size, and MAX_PAYLOAD is 1213 bytes, so this costs nothing. */
     frame_buffer = (uint8_t *)malloc(MAX_PAYLOAD);
     kiss_buffer = (uint8_t *)malloc((MAX_PAYLOAD * 2) + 3);
 
@@ -1479,19 +1555,10 @@ void *send_thread(void *client_socket_ptr)
 
     while (!mercury_stop && !bcast_client_done)
     {
-        /* Re-read: a MODE command can change the broadcast framing while this
-         * client stays connected. */
-        frame_size = atomic_load(&broadcast_frame_size_cfg);
-        if (frame_size == 0 || frame_size > MAX_PAYLOAD)
-        {
-            msleep(100);
-            continue;
-        }
-
         /* Only this worker consumes the RX ring, and the server clears it
-         * after joining us. A full frame therefore cannot disappear between
-         * this size check and read_buffer(). Poll while no frame is ready. */
-        if (size_buffer(data_rx_buffer_broadcast) < frame_size)
+         * after joining us. broadcast_rx_frame writes each record whole, so
+         * once its length is there the frame is too. Poll while none is. */
+        if (size_buffer(data_rx_buffer_broadcast) < BCAST_RX_REC_HDR)
         {
             msleep(100);
             continue;
@@ -1500,12 +1567,15 @@ void *send_thread(void *client_socket_ptr)
         if (bcast_client_done)
             break;
 
-        if (read_buffer(data_rx_buffer_broadcast, frame_buffer, frame_size) < 0)
+        uint16_t rec_len;
+        if (read_buffer(data_rx_buffer_broadcast, (uint8_t *)&rec_len, BCAST_RX_REC_HDR) < 0 ||
+            rec_len == 0 || rec_len > MAX_PAYLOAD ||
+            read_buffer(data_rx_buffer_broadcast, frame_buffer, rec_len) < 0)
             break;
 
         uint8_t *payload_start;
         int payload_len;
-        uint8_t reply_cmd = bcast_get_tx_payload(frame_buffer, frame_size,
+        uint8_t reply_cmd = bcast_get_tx_payload(frame_buffer, rec_len,
                                                   &payload_start, &payload_len);
         if (payload_len <= 0)
             continue;

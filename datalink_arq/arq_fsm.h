@@ -396,6 +396,9 @@ int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now);
 int arq_call_carrier(const arq_session_t *sess);
 /** Whether a pattern can arrive now (the modem's detector runs only then). */
 bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now);
+/** Why the channel is busy now (a CAR_KEYED_* sign), 0 when clear: the
+ *  listen-before-talk test the FSM keys by. */
+int arq_fsm_channel_keyed(const arq_session_t *sess);
 
 /**
  * @brief Human-readable name for a connection state (for log output).

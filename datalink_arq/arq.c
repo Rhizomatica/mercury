@@ -1178,6 +1178,14 @@ bool arq_session_active(void)
            st == ARQ_CONN_CONNECTED || st == ARQ_CONN_DISCONNECTING;
 }
 
+bool arq_channel_heard(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    bool heard = arq_fsm_channel_keyed(&g_sess) != 0;
+    pthread_mutex_unlock(&g_sess_lock);
+    return heard;
+}
+
 bool arq_is_link_connected(void)
 {
     pthread_mutex_lock(&g_sess_lock);

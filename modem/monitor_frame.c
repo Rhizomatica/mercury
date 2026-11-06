@@ -133,6 +133,11 @@ void process_monitor_frame(const uint8_t *data, size_t nbytes_out,
                              ? "BCAST_CTRL" : "BCAST_DATA",
                          detail, snr_est);
         break;
+    case PACKET_TYPE_STATION:
+        snprintf(detail, sizeof(detail), "LAYOUT=%u",
+                 (unsigned)frame_header_extension(data[0]));
+        tnc_send_monitor(mode_name, "STATION", detail, snr_est);
+        break;
     default:
         tnc_send_monitor(mode_name, "FRAME", "unknown-type", snr_est);
         break;

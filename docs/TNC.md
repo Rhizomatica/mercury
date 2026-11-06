@@ -409,6 +409,41 @@ reception and transmission while idle.
 
 ---
 
+### BEACONMODE
+
+Set the mode a broadcast client's **station messages** go on: frames of
+packet type `0x07` (`PACKET_TYPE_STATION`, the HERMES position beacon), sent
+on the broadcast port with KISS `0x03` (`CMD_MODEM_FRAME`).  The index space
+is `-m`'s, as for `MODE`.  The listen mode stays as it is.
+
+```
+BEACONMODE 8\r     send station messages on DATAC16
+BEACONMODE -1\r    send them at the listen mode again (the default)
+BEACONMODE\r       report it
+```
+
+The query form answers `BEACONMODE <index> <name>\r`, or `BEACONMODE -1
+LISTEN\r`.
+
+**Response:** `OK\r` on success, `WRONG\r` for an index other than 8
+(DATAC16), one `MODE` accepts, or -1.
+
+A station message is sent once, zero-padded to that mode's frame, after any
+ARQ session or carousel has ended, and only when no decoder is on a frame
+(after ~10 s of a busy channel, it is sent anyway).  One that does not fit the
+mode's frame is discarded.  The best modes for it are the ones every listening
+Mercury already decodes, whatever its listen mode:
+
+- DATAC16, the control mode (14 bytes, 3.1 s);
+- MFSK (98 bytes, 12.8 s) and MFSK500 (98 bytes, 25.6 s), the call listeners'
+  modes, heard by a station with `LISTEN ON`.
+
+On any other mode, only stations whose listen mode it is will hear it.
+Mercury itself does not read the frame past its header: the layout is the
+host's (hermes-radio-daemon `docs/BEACON-FORMAT.md`).
+
+---
+
 ### MONITOR
 
 Enable or disable **monitor mode** — the VARA-monitor equivalent: decode every
@@ -583,7 +618,8 @@ MONITOR DATAC16 DISCONNECT SID=42 SNR=18.4\r
 `DATAC4`, `DATAC3`, `DATAC1`, `DATAC17`, `QAM16C2` or `MFSK`).  `<kind>`
 names the frame: `CALL`, `ACCEPT`, `CQ`, `DISCONNECT`, `CONTROL` / `DATA`
 for another protocol version's session frames, `BCAST_CTRL` / `BCAST_DATA`
-for broadcast frames, or `FRAME` when the frame type is unknown.
+for broadcast frames, `STATION` for a station message (the beacon, detail
+`LAYOUT=<n>`), or `FRAME` when the frame type is unknown.
 
 `<detail>` carries what the monitor could recover:
 
@@ -797,6 +833,12 @@ Three client framings are accepted, distinguished by the KISS command byte:
 Payloads larger than the modem frame (minus 3 bytes of header+length)
 are truncated (`0x00`/`0x01`/unformatted-`0x02`) or discarded (raw
 hermes-broadcast `0x02`) — the broadcast plane does not fragment.
+
+**Station messages** (packet type `0x07`, the beacon) are the one exception
+to the listen mode's frame size.  Sent with `0x03`, they go on the
+[`BEACONMODE`](#beaconmode) mode when one is set.  Received, they are handed up
+from whichever decoder heard them, at that mode's frame size, whole and with
+command `0x03`.  They are never stored as chat.
 
 ---
 

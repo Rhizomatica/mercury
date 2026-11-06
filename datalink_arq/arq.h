@@ -212,6 +212,9 @@ bool arq_is_link_connected(void);
 /** A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED,
  *  DISCONNECTING): what stops a broadcast carousel. */
 bool arq_session_active(void);
+/** Whether another station is keyed, by the FSM's listen-before-talk test:
+ *  what a station message waits on before it keys (modem_beacon_send). */
+bool arq_channel_heard(void);
 
 /**
  * @brief Drop received bytes an ended session left in the RX buffer.
