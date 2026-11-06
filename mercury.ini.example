@@ -225,10 +225,13 @@ max_keydown_s = 0
 ; strands traffic in the queue.  That is field experience on HF, not theory, and
 ; it is why VARA ships with busy detection off as well.
 ;
-; Turn it on if you scan: it is then the only early warning a host gets, since
-; everything else waits for a full frame to decode (3.7 s for a connect request)
-; and a scanning host cannot hold its dwell that long.  Expect to tune the
-; thresholds below per band and noise environment before trusting it.
+; It is the earliest warning Mercury can give (a connect request takes 3.7 s
+; to decode, an MFSK one 13.5 s), but BPQ32's scanner does not hold on it: on
+; air it kept hopping through BUSY, and only refused its own outgoing connects
+; ("Channel is busy").  On a scanning station it also keeps one noise floor for
+; every channel, so a noisier channel reads BUSY (docs/TNC.md, "Scanning
+; hosts").  Leave it off with BPQ32 scanning.  Expect to tune the thresholds
+; below per band and noise environment before trusting it.
 ;
 ; It needs a receive filter at least ~1.8 kHz wide.  It measures 300-2700 Hz
 ; and takes its noise floor from the quieter bands there; a narrower filter

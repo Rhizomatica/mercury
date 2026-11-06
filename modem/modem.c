@@ -2257,6 +2257,60 @@ static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
     pthread_mutex_unlock(&w->mlock);
 }
 
+/* Frames a CALL decoder has locked onto but not decoded yet: the control plane
+ * (DATAC16) and the two MFSK call listeners, one slot each.  since_ms is when
+ * the lock started, 0 when there is none.  Diagnostic only: the host's
+ * LISTEN OFF handler reads it, so a scanner hop that cuts a CALL off shows in
+ * the log (modem_rx_frame_in_flight).  A lock can also be noise.
+ * The MFSK listeners are fed only while a CALL can arrive (LISTENING,
+ * ACCEPTING), so a LISTEN OFF flushes them: their frame is lost on the
+ * LISTEN OFF itself, whatever the host does next. */
+enum { RX_INFLIGHT_CTRL, RX_INFLIGHT_LISTEN, RX_INFLIGHT_LISTEN_ALT, RX_INFLIGHT_SLOTS };
+static _Atomic uint64_t g_rx_inflight_since_ms[RX_INFLIGHT_SLOTS];
+static _Atomic int      g_rx_inflight_mode[RX_INFLIGHT_SLOTS];
+
+static void rx_inflight_note(int slot, int mode, const rx_metrics_accum_t *m, uint64_t now)
+{
+    if (m->sync && !m->frame_decoded)
+    {
+        if (atomic_load(&g_rx_inflight_since_ms[slot]) == 0)
+        {
+            atomic_store(&g_rx_inflight_mode[slot], mode);
+            atomic_store(&g_rx_inflight_since_ms[slot], now);
+        }
+    }
+    else
+        atomic_store(&g_rx_inflight_since_ms[slot], 0);
+}
+
+bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms,
+                              bool *lost_on_listen_off)
+{
+    uint64_t now = monotonic_ms();
+    uint64_t oldest = 0;
+    int mode = -1;
+    int slot = -1;
+    for (int i = 0; i < RX_INFLIGHT_SLOTS; i++)
+    {
+        uint64_t since = atomic_load(&g_rx_inflight_since_ms[i]);
+        if (since && (oldest == 0 || since < oldest))
+        {
+            oldest = since;
+            mode = atomic_load(&g_rx_inflight_mode[i]);
+            slot = i;
+        }
+    }
+    if (oldest == 0)
+        return false;
+    if (mode_name)
+        *mode_name = mode_name_from_enum(mode);
+    if (lost_on_listen_off)
+        *lost_on_listen_off = slot != RX_INFLIGHT_CTRL;
+    if (for_ms)
+        *for_ms = now > oldest ? now - oldest : 0;
+    return true;
+}
+
 /* Bind a worker's own codec instance (see rx_worker_t.own_codec). */
 static int rx_decoder_bind_own(rx_decoder_state_t *state, modem_codec_t codec, int mode)
 {
@@ -3301,10 +3355,16 @@ void *rx_thread(void *g_modem)
         pay_was_sync  = m_pay.sync;
         {
             /* The listener is not a link-quality source: it hears noise while
-             * idle.  Drain its metrics so they do not accumulate. */
-            rx_metrics_accum_t ignored = {0};
-            rx_worker_take_metrics(&w_listen, &ignored);
-            rx_worker_take_metrics(&w_listen_alt, &ignored);
+             * idle.  Drain its metrics so they do not accumulate; they only
+             * say whether a CALL is arriving (modem_rx_frame_in_flight). */
+            rx_metrics_accum_t m_listen = {0}, m_listen_alt = {0};
+            rx_worker_take_metrics(&w_listen, &m_listen);
+            rx_worker_take_metrics(&w_listen_alt, &m_listen_alt);
+            uint64_t now = monotonic_ms();
+            rx_inflight_note(RX_INFLIGHT_CTRL, atomic_load(&w_ctrl.mode), &m_ctrl, now);
+            rx_inflight_note(RX_INFLIGHT_LISTEN, atomic_load(&w_listen.mode), &m_listen, now);
+            rx_inflight_note(RX_INFLIGHT_LISTEN_ALT, atomic_load(&w_listen_alt.mode),
+                             &m_listen_alt, now);
         }
         {
             /* The monitor decoders are also not a link-quality source: their
