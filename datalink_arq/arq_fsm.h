@@ -299,9 +299,15 @@ typedef struct
                           int burst_remaining);
 
     /** Notify TCP interface that a connection is established.
-     *  @param remote_call  the peer (caller) callsign
-     *  @param local_call   our dialed callsign/SSID (empty => use primary) */
-    void (*notify_connected)(const char *remote_call, const char *local_call);
+     *  @param remote_call  the peer's callsign
+     *  @param local_call   callee: our dialed callsign/SSID (empty => primary)
+     *  @param we_called    true when we placed the call (an ACCEPT was heard),
+     *                      false when we answered one.  The receiver must take
+     *                      the side from here, not from its own state: an
+     *                      incoming CALL can reset that state after the host
+     *                      queued a CONNECT. */
+    void (*notify_connected)(const char *remote_call, const char *local_call,
+                             bool we_called);
 
     /** Notify TCP interface of an incoming call that is pending acceptance.
      *  @param remote_call  the peer (caller) callsign

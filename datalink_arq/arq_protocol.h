@@ -250,6 +250,19 @@ int arq_protocol_retry_rank(const char *local_call, const char *remote_call);
 
 uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank);
 
+/* The two callsigns a CONNECTED reports: src is the station that called, dst
+ * the one that was called, on both peers.
+ *   we_called    which side we are, as the FSM knows it
+ *   remote_call  the peer
+ *   local_call   callee: the callsign the caller dialed (empty: the primary)
+ *   connect_src  caller: the source of the host's CONNECT (empty: the primary)
+ *   my_call      our primary callsign
+ * src and dst hold bufsz bytes each. */
+void arq_protocol_session_calls(bool we_called, const char *remote_call,
+                                const char *local_call, const char *connect_src,
+                                const char *my_call,
+                                char *src, char *dst, size_t bufsz);
+
 #define ARQ_CALL_RETRY_SLOTS       atomic_load(&arq_call_retry_slots)
 #define ARQ_ACCEPT_RETRY_SLOTS     atomic_load(&arq_accept_retry_slots)
 #define ARQ_DISCONNECT_RETRY_SLOTS atomic_load(&arq_disconnect_retry_slots)

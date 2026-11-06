@@ -1122,7 +1122,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         if (sess->car_ctl_deaf) sess->car_rx_level = 0;
         sess->car_my_snr   = ev->rx_snr;
         if (g_cbs.notify_connected)
-            g_cbs.notify_connected(sess->remote_call, sess->local_call);
+            g_cbs.notify_connected(sess->remote_call, sess->local_call, true);
         if (g_timing)
             arq_timing_record_connect(g_timing, sess->control_mode);
         sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_CAROUSEL);
@@ -1205,7 +1205,7 @@ static void car_connect_callee(arq_session_t *sess, const arq_event_t *ev)
     sess->accept_fallback = false;
     sess->car_tx_level = -1;          /* the caller's frames will say */
     if (g_cbs.notify_connected)
-        g_cbs.notify_connected(sess->remote_call, sess->local_call);
+        g_cbs.notify_connected(sess->remote_call, sess->local_call, false);
     if (g_timing)
         arq_timing_record_connect(g_timing, sess->control_mode);
     /* A LISTEN OFF deferred by the grace period is honoured here, read before
