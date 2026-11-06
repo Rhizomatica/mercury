@@ -113,6 +113,18 @@ func TestMercuryARQTransfer(t *testing.T) {
 		}
 		params.Gain = g
 	}
+	// MERCURY_CH_FREQ is the carrier offset in Hz: the transmitter's
+	// frequency error as the receiver sees it, passed to the channel process
+	// as --freq.  It is what the OFDM acquisition's capture window (+-55 Hz)
+	// and the MFSK floor's (+-100 Hz) are measured against, so it is how a
+	// session is run over a mistuned link.  See docs/ACQUISITION-WINDOWS.md.
+	if v := os.Getenv("MERCURY_CH_FREQ"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			t.Fatalf("bad MERCURY_CH_FREQ %q: %v", v, err)
+		}
+		params.FreqOffsetHz = f
+	}
 
 	// MERCURY_TEST_TRANSPORT=sock runs the deterministic lockstep bench
 	// instead of the real-time FIFO bridge: virtual time advances only as the
