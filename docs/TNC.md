@@ -649,7 +649,8 @@ What a scanning host needs from Mercury, as seen in KG9NI's logs (LinBPQ
 scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
 
 - **BPQ32 attaches Mercury as a VARA port** and holds its scan from `PENDING`
-  until `DISCONNECTED` or `CANCELPENDING`.  In every session the scanner
+  until `DISCONNECTED` or `CANCELPENDING`, or until six scan intervals pass
+  with no new `PENDING` (see `PENDING`).  In every session the scanner
   stopped once the CALL decoded, including a 32 s connect that needed a
   repeated CALL and a failed one it held for 43 s.
 - **Each hop is `LISTEN OFF`, `LISTEN ON` and a `BW` command.**  The dwell

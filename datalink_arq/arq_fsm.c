@@ -1288,8 +1288,8 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * proof it is, so it holds the channel for another stretch. */
         HLOGI(LOG_COMP, "CALL from %s again: PENDING again (holds a scanning host's channel)",
               sess->remote_call);
-        if (g_cbs.notify_pending)
-            g_cbs.notify_pending(sess->remote_call, sess->local_call);
+        if (g_cbs.notify_pending_again)
+            g_cbs.notify_pending_again(sess->remote_call);
         break;
 
     case ARQ_EV_TX_COMPLETE:

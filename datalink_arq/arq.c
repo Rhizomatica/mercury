@@ -313,6 +313,17 @@ static void cb_notify_pending(const char *remote_call, const char *local_call)
           remote_call, (local_call && local_call[0]) ? local_call : "(primary)");
 }
 
+/* PENDING again, for the call already pending (arq_fsm.h).  Not
+ * cb_notify_pending: its address reset must happen once, when the call
+ * arrives.  A repeat is handled on the FSM thread after a host CONNECT may
+ * have written src_addr/dst_addr on the command thread; clearing them then
+ * left cb_notify_connected reporting the host's own call backwards (#477). */
+static void cb_notify_pending_again(const char *remote_call)
+{
+    (void)remote_call;   /* the FSM logs the repeat with the callsign */
+    arq_tnc_send_pending();
+}
+
 static void cb_notify_cancelpending(void)
 {
     pthread_mutex_lock(&g_conn_lock);
@@ -1072,6 +1083,7 @@ int arq_init(size_t frame_size, int mode)
         .send_tx_frame       = cb_send_tx_frame,
         .notify_connected    = cb_notify_connected,
         .notify_pending      = cb_notify_pending,
+        .notify_pending_again = cb_notify_pending_again,
         .notify_cancelpending = cb_notify_cancelpending,
         .notify_disconnected = cb_notify_disconnected,
         .deliver_rx_data     = cb_deliver_rx_data,
