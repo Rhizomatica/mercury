@@ -85,7 +85,8 @@ log_utc = false
 
 ; Cap on the log file (-L), in MB (default: 20; 0: no cap).  Past it the file
 ; moves to <file>.1, replacing the one before, and a new one starts: at most
-; twice this on disk.  A scanning host (BPQ32) toggles LISTEN every ~11 s,
+; twice this on disk.  Output redirected from the console (mercury > file) is
+; not capped.  A scanning host (BPQ32) toggles LISTEN every ~11 s,
 ; which at verbose = true is 60 000+ lines a day.
 log_max_mb = 20
 
