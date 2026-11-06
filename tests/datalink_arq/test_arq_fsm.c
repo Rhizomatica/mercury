@@ -124,7 +124,12 @@ void setUp(void)
     arq_fsm_init(&sess);
 }
 
-void tearDown(void) { }
+/* Tests that set these put them back here: a failed assertion leaves at once. */
+void tearDown(void)
+{
+    atomic_store(&arq_call_retry_slots, ARQ_CALL_RETRY_SLOTS_DEFAULT);
+    arq_protocol_set_call_max_s(ARQ_CALL_MAX_S_DEFAULT);
+}
 
 /* ---- Connection lifecycle tests ---- */
 
@@ -1181,6 +1186,81 @@ void test_quiet_peer_disconnect_does_not_wait_for_slots(void)
     TEST_ASSERT_TRUE(time_now_ms() < now + 5000);
 }
 
+/* What the callee gives its last word when it hangs up: the drain timeout
+ * or the carousel's budget, whichever is longer (fsm_connected_carousel). */
+static uint64_t callee_drain_ms(void)
+{
+    uint64_t w = (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000;
+    if (car_drain_budget_ms(sess.car) > w) w = car_drain_budget_ms(sess.car);
+    return w;
+}
+
+/* The callee said its application hung up (M_END) and went silent: the
+ * caller ends the session once the callee's own drain would have, at most
+ * 120 s, with one DISCONNECT, not at the 240 s lost-peer watchdog (N3JXB ->
+ * KG9NI-1). */
+void test_silent_peer_after_hangup_is_ended_early(void)
+{
+    goto_connected();
+    sess.car->end_req = CAR_END_WISH;      /* as a poll with M_END sets it on M */
+    TEST_ASSERT_TRUE(car_peer_ending(sess.car));
+    uint64_t wait = callee_drain_ms();
+    if (wait > 120000) wait = 120000;
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + wait - 1000);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms <= sess.car_last_rx_ms + wait,
+                             "the timer is armed for the end of the wait");
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + wait);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT(0, sess.tx_retries_left);
+}
+
+/* The callee drains its last word for the drain timeout or the rung's
+ * budget, whichever is longer: with the timeout configured past the budget
+ * (disconnect_drain_timeout_s), the caller waits the timeout too, so a fade
+ * shorter than it does not drop the word the callee is still delivering. */
+void test_silent_peer_after_hangup_waits_the_callees_drain(void)
+{
+    int saved = atomic_load(&arq_disconnect_drain_timeout_s);
+    atomic_store(&arq_disconnect_drain_timeout_s, 110);
+    goto_connected();
+    sess.car->end_req = CAR_END_WISH;
+    sess.car->tx_level = sess.car->poll_level = 1;      /* a rung whose budget is under 110 s */
+    uint64_t budget = car_drain_budget_ms(sess.car);
+    TEST_ASSERT_TRUE_MESSAGE(budget < 110000, "the rung's budget is under the drain timeout");
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + budget + 1000);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    bool held = sess.conn_state == ARQ_CONN_CONNECTED;
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + 110000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    arq_conn_state_t after = sess.conn_state;
+    atomic_store(&arq_disconnect_drain_timeout_s, saved);
+
+    TEST_ASSERT_TRUE_MESSAGE(held, "past the budget, inside the callee's drain");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, after);
+}
+
+/* The same silence from a peer that has not hung up is a fade, not an end:
+ * only the lost-peer watchdog ends it. */
+void test_silent_peer_without_hangup_waits_for_the_watchdog(void)
+{
+    goto_connected();
+    mock_set_uptime_ms(sess.car_last_rx_ms + 130000);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
 /* A deferred APP_DISCONNECT that never drains must still tear down once the
  * drain deadline elapses — guarantees the rig is not keyed indefinitely
  * after the host disconnects (the "Mercury kept hanging on" report). */
@@ -1327,6 +1407,62 @@ void test_call_timeout(void)
     }
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+}
+
+/* Place a call with RETRIES-many CALLs and let them come due every 24 s, the
+ * longest call interval (the floor's), with nothing answering.  Returns when
+ * the call ends; *last_call_ms is when the last CALL was keyed. */
+static int call_unanswered(int retries, uint64_t *last_call_ms)
+{
+    atomic_store(&arq_call_retry_slots, retries);
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    *last_call_ms = time_now_ms();
+    for (int i = 0; i < retries + 2 && sess.conn_state == ARQ_CONN_CALLING; i++) {
+        unsigned before = fake_send_tx_frame_fake.call_count;
+        mock_set_uptime_ms(time_now_ms() + 24000);
+        ev = make_event(ARQ_EV_TIMER_RETRY);
+        arq_fsm_dispatch(&sess, &ev);
+        if (fake_send_tx_frame_fake.call_count != before) *last_call_ms = time_now_ms();
+    }
+    return (int)fake_send_tx_frame_fake.call_count;
+}
+
+/* RETRIES 20 (BPQ32) is ~8 min of CALLs; arq:call_max_s (300 s) ends it:
+ * no CALL is keyed past the cap, and the call ends at the first CALL due
+ * after it.  On air K7EK called an unanswering path for 479 s, 18 times. */
+void test_call_gives_up_at_call_max_s(void)
+{
+    uint64_t start = time_now_ms(), last;
+    int calls = call_unanswered(20, &last);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE(last - start < (uint64_t)ARQ_CALL_MAX_S_DEFAULT * 1000);
+    TEST_ASSERT_TRUE(time_now_ms() - start >= (uint64_t)ARQ_CALL_MAX_S_DEFAULT * 1000);
+    TEST_ASSERT_TRUE(time_now_ms() - start < (uint64_t)ARQ_CALL_MAX_S_DEFAULT * 1000 + 24000);
+    TEST_ASSERT_TRUE(calls < 1 + 20);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+}
+
+/* arq:call_max_s = 0: RETRIES alone decides, every CALL is sent. */
+void test_call_max_s_zero_sends_every_retry(void)
+{
+    arq_protocol_set_call_max_s(0);
+    uint64_t start = time_now_ms(), last;
+    int calls = call_unanswered(20, &last);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1 + 20, calls);
+    TEST_ASSERT_TRUE(last - start >= (uint64_t)ARQ_CALL_MAX_S_DEFAULT * 1000);
+}
+
+/* The default RETRIES ends well inside the cap: nothing changes for it. */
+void test_call_max_s_leaves_default_retries_alone(void)
+{
+    uint64_t last;
+    int calls = call_unanswered(ARQ_CALL_RETRY_SLOTS_DEFAULT, &last);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1 + ARQ_CALL_RETRY_SLOTS_DEFAULT, calls);
 }
 
 /* CALL timeout with NO listen intent falls back to DISCONNECTED. */
@@ -1543,6 +1679,24 @@ void test_listen_off_drops_live_link_without_draining(void)
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
     /* No air-side DISCONNECT frame — that is one more keydown on a channel we
      * were just told to give up; the peer times out instead. */
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+}
+
+/* LISTEN OFF during the DISCONNECT exchange ends the session the way every
+ * other end of DISCONNECTING does: the host is told and the connection is
+ * cleared (arq.c's disconnect callback, which also logs "Disconnected").
+ * It was told only when a call was queued behind the teardown (on air, KG9NI
+ * -> KE8CGS, 1.9.22: the log stopped at the DISCONNECT). */
+void test_listen_off_in_disconnecting_ends_the_session(void)
+{
+    goto_disconnecting_caller_held();
+
+    arq_event_t ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+    /* Still no more keydowns on a channel the host asked back. */
     TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
 }
 
@@ -1796,6 +1950,7 @@ int main(void)
     RUN_TEST(test_redial_inside_reply_guard_leaves_nothing_owed);
     RUN_TEST(test_disconnect_reply_survives_another_tx_complete);
     RUN_TEST(test_listen_off_drops_live_link_without_draining);
+    RUN_TEST(test_listen_off_in_disconnecting_ends_the_session);
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_rejects_zero_session_id);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
@@ -1804,12 +1959,18 @@ int main(void)
     RUN_TEST(test_drain_ends_when_the_peer_falls_silent);
     RUN_TEST(test_disconnect_during_a_slow_exchange_still_drains);
     RUN_TEST(test_quiet_peer_disconnect_does_not_wait_for_slots);
+    RUN_TEST(test_silent_peer_after_hangup_is_ended_early);
+    RUN_TEST(test_silent_peer_after_hangup_waits_the_callees_drain);
+    RUN_TEST(test_silent_peer_without_hangup_waits_for_the_watchdog);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
     RUN_TEST(test_rx_disconnect_with_backlog_ends_at_once);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
     RUN_TEST(test_call_timeout_no_listen);
+    RUN_TEST(test_call_gives_up_at_call_max_s);
+    RUN_TEST(test_call_max_s_zero_sends_every_retry);
+    RUN_TEST(test_call_max_s_leaves_default_retries_alone);
     RUN_TEST(test_accepting_gives_up_after_budget);
     RUN_TEST(test_accept_fallback_completes_on_first_frame);
     RUN_TEST(test_ended_session_is_not_resurrected_by_a_late_frame);

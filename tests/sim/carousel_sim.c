@@ -91,6 +91,11 @@ typedef struct {
     int      kd_n;
     int      kd_no;               /* this keydown's index, for carousel_sim_force_unsensed */
     bool     turn_mine;           /* the last trace line was "turn: mine" (recv_fallbacks) */
+    /* The last "rx round" line, for gated_probes: its smoothed SNR, and the
+     * rungs it marked not allowed ('x'). */
+    bool     round_snr_ok;
+    float    round_snr;
+    char     round_gp[160];
     /* CAR_NAV: the keydown's header pattern, heard by the peer or not, and
      * when the peer's detector reports it. */
     bool     nav_ok, nav_sent;
@@ -299,12 +304,41 @@ static void io_bind_rx(void *ctx, int mode)
     if (mode != s->rx_mode) { s->rx_mode = mode; s->bound_at = now_ms; }
 }
 static int recv_fallbacks;
+static int gated_probes;
+/* Did the last "rx round" line mark rung lv not allowed?  Its gp list reads
+ * " 0:5/0.83 2:4/0.87 3:0/0.00x". */
+static bool round_marked_out(const station_t *s, int lv)
+{
+    char key[16];
+    snprintf(key, sizeof key, " %d:", lv);
+    const char *p = strstr(s->round_gp, key);
+    if (!p) return false;
+    p += strlen(key);
+    while (*p && *p != ' ') p++;
+    return p[-1] == 'x';
+}
 static void io_trace(void *ctx, const char *line)
 {
     station_t *s = ctx;
     /* the fall-back to ok_lv taken as the turn passes (m_decide_recv, #448) is
      * traced right after "turn: mine"; m_decide_send's is not */
     if (s->turn_mine && !strncmp(line, "tx: no answer on lv=", 20) && strstr(line, "back to")) recv_fallbacks++;
+    /* A poll naming a rung the last round left out and the SNR gates: a
+     * re-probe the SNR forbids (on air 2026-11-05: DATAC3 at -4.2 dB). */
+    if (!strncmp(line, "rx round lv=", 12)) {
+        const char *p = strstr(line, " snr=");
+        const char *g = strstr(line, "gp[lv:B/s/deliv]");
+        s->round_snr_ok = p && g;
+        if (s->round_snr_ok) {
+            char *end;
+            s->round_snr = strtof(p + 5, &end);
+            s->round_snr_ok = *end != '?';
+            snprintf(s->round_gp, sizeof s->round_gp, "%s", g + 16);
+        }
+    } else if (!strncmp(line, "rx -> poll lv=", 14) && s->round_snr_ok) {
+        int lv = atoi(line + 14);
+        if (lv > 0 && round_marked_out(s, lv) && s->round_snr < car_rung_gate_db(lv)) gated_probes++;
+    }
     s->turn_mine = !strncmp(line, "turn: mine", 10);
     if (trace) printf("%9.1f %c   %s\n", now_ms / 1000.0, 'A' + ((station_t *)ctx)->id, line);
 }
@@ -610,6 +644,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     nev = 0;
     collisions = 0;
     recv_fallbacks = 0;
+    gated_probes = 0;
     bad_frames = 0;
     slot_breaches = 0;
     frame_no = 0;
@@ -763,6 +798,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->keydowns = keydown_no;
     res->kd_overlaps = kd_overlaps;
     res->recv_fallbacks = recv_fallbacks;
+    res->gated_probes = gated_probes;
     res->kd_unexplained = kd_unexplained;
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;

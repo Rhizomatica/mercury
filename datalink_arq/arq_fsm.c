@@ -579,6 +579,29 @@ static bool car_peer_quiet(const arq_session_t *sess, uint64_t now)
     return sess->car_session && now - sess->car_last_rx_ms >= ARQ_CAR_PEER_QUIET_MS;
 }
 
+/* Silence after which a callee that has said its application hung up (M_END)
+ * is gone.  Its last bytes, still to come, get what the callee itself gives
+ * them: a callee hanging up with data held drains it for the configured drain
+ * timeout or the carousel's budget for its rung, whichever is longer (the
+ * APP_DISCONNECT case in fsm_connected_carousel).  Waiting less, the caller
+ * would end while the callee still delivers, and a fade shorter than the
+ * callee's drain would drop a frame that was coming.  The budget (78-131 s by
+ * rung today) is past the 45 s default, so the timeout decides only when it
+ * is configured longer (disconnect_drain_timeout_s), or if the budget
+ * shrinks.  Counted from the last frame heard, which comes after the callee's
+ * hang-up, so the caller never ends first; at most ARQ_CAR_PEER_QUIET_MS,
+ * past which a DISCONNECT is not worth repeating either.  It used to be the
+ * lost-peer watchdog, 240 s, on a session both applications had left (on
+ * air, N3JXB -> KG9NI-1, 1.9.22: the M_END at 14:36:03, nine polls
+ * unanswered, dropped at 14:40:03). */
+static uint64_t car_peer_end_wait_ms(const arq_session_t *sess)
+{
+    uint64_t w = (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000ULL;
+    uint64_t car_budget = car_drain_budget_ms(sess->car);
+    if (car_budget > w) w = car_budget;
+    return w < ARQ_CAR_PEER_QUIET_MS ? w : ARQ_CAR_PEER_QUIET_MS;
+}
+
 static void car_io_keydown(void *ctx, const car_frame_t *fr, int n)
 {
     arq_session_t *sess = ctx;
@@ -1032,6 +1055,14 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
     }
 }
 
+/* Has this call gone on past arq:call_max_s (0: no cap)?  From entering
+ * CALLING, which happens once per call (APP_CONNECT). */
+static bool call_over_time(const arq_session_t *sess)
+{
+    int cap_s = atomic_load(&arq_call_max_s);
+    return cap_s > 0 && time_now_ms() - sess->state_enter_ms >= (uint64_t)cap_s * 1000;
+}
+
 /* A CALL waits while a frame we caught is arriving (decoder_hears_frame; not
  * the energy busy detector, off by default and not to hold CALLs): the
  * ACCEPT to a repeat, on the floor, outlasts the control mode's call interval
@@ -1117,6 +1148,16 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TIMER_RETRY:
+        /* No new CALL past arq:call_max_s, whatever RETRIES left: BPQ32's
+         * RETRIES 20 kept a station calling an unanswering path for ~8 min
+         * (K7EK, 18 times in two days).  Checked when a CALL comes due, so
+         * the last one keyed still has its full wait for the ACCEPT. */
+        if (sess->tx_retries_left > 0 && call_over_time(sess))
+        {
+            HLOGI(LOG_COMP, "CALL: %d s of calling (arq:call_max_s), %d CALLs not sent -- giving up",
+                  (int)((time_now_ms() - sess->state_enter_ms) / 1000), sess->tx_retries_left);
+            sess->tx_retries_left = 0;
+        }
         if (sess->tx_retries_left > 0 && call_must_wait(sess))
             break;
         if (sess->tx_retries_left > 0)
@@ -1520,12 +1561,19 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         /* Stop retransmitting DISCONNECT frames: the host wants the radio
          * free, and the peer will time out without them.  That also rules
          * out a deferred call, so drop it and say so -- otherwise the client
-         * would wait for a CONNECTED that is not coming. */
-        if (call_queued(sess))
-        {
-            sess->pending_connect_call[0] = '\0';
-            notify_session_ended(sess);
-        }
+         * would wait for a CONNECTED that is not coming.
+         *
+         * The session ends here as on every other way out of DISCONNECTING:
+         * through notify_session_ended, which logs "Disconnected" and clears
+         * the connection's addresses and queue.  Called only for a queued
+         * call, it left an end with no "Disconnected" in the log at all (on
+         * air, KG9NI -> KE8CGS, 1.9.22: the DISCONNECT keyed, LISTEN OFF 2 s
+         * later, and the log just stops). */
+        HLOGI(LOG_COMP, "LISTEN OFF during the DISCONNECT exchange: releasing the radio, "
+              "the peer's ack not awaited");
+        if (g_timing) arq_timing_record_disconnect(g_timing, "listen_off");
+        sess->pending_connect_call[0] = '\0';
+        notify_session_ended(sess);
         enter_idle_after_call(sess);
         return;
 
@@ -1650,6 +1698,20 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
             notify_session_ended(sess);
             enter_idle_after_call(sess);
+            return true;
+        }
+        if (car_peer_ending(sess->car) && now - sess->car_last_rx_ms >= car_peer_end_wait_ms(sess))
+        {
+            /* The callee has all of ours (it says M_END only then) and its
+             * application has hung up: what it still holds is its last word,
+             * lost now as it was at the watchdog, only later.  One DISCONNECT
+             * tells it, in case it still hears us; no retries to a peer this
+             * quiet. */
+            HLOGW(LOG_COMP, "carousel: the peer hung up and has been silent %llu s -- "
+                  "ending the session, its last data not received",
+                  (unsigned long long)((now - sess->car_last_rx_ms) / 1000));
+            car_begin_disconnect(sess, now);
+            sess->tx_retries_left = 0;
             return true;
         }
         car_on_time(sess->car, now);
@@ -1793,7 +1855,26 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          * times out on its own (same reasoning as a dirty ABORT).  A frame
          * already in the air finishes; truncating a keydown mid-frame only
          * leaves the peer decoding garbage, since the transmitter is keyed
-         * either way. */
+         * either way.
+         *
+         * Said in the log, with what it costs: the session ends without a
+         * word to the peer, and whatever of ours is undelivered is dropped.
+         * A host whose scanner steps after its own DISCONNECT lands here
+         * mid-drain (on air, KG9NI -> N3JXB, 1.9.22: 18 bytes dropped, the
+         * peer left to time out, nothing in the log but "Disconnected"). */
+        {
+            size_t left = (sess->car_active ? car_tx_inflight(sess->car) : 0) +
+                          (size_t)session_tx_backlog(sess);
+            const char *when = sess->teardown == ARQ_TD_DRAINING
+                             ? "while draining after the host's DISCONNECT"
+                             : "on a live link";
+            if (left)
+                HLOGW(LOG_COMP, "LISTEN OFF %s: releasing the radio, %zu bytes of ours "
+                      "dropped, no DISCONNECT sent", when, left);
+            else
+                HLOGI(LOG_COMP, "LISTEN OFF %s: releasing the radio, no DISCONNECT sent", when);
+        }
+        if (g_timing) arq_timing_record_disconnect(g_timing, "listen_off");
         sess->pending_connect_call[0] = '\0';   /* releasing the radio rules out a queued call */
         notify_session_ended(sess);
         enter_idle_after_call(sess);
@@ -1983,6 +2064,8 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
         uint64_t d = car_next_deadline(sess->car);
         if (sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS < d)
             d = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
+        if (car_peer_ending(sess->car) && sess->car_last_rx_ms + car_peer_end_wait_ms(sess) < d)
+            d = sess->car_last_rx_ms + car_peer_end_wait_ms(sess);
         if (sess->teardown == ARQ_TD_DRAINING && sess->teardown_deadline_ms < d)
             d = sess->teardown_deadline_ms;
         if (sess->teardown == ARQ_TD_DRAINING && sess->car_last_rx_ms + ARQ_CAR_PEER_QUIET_MS < d)

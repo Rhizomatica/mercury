@@ -422,6 +422,66 @@ void test_car_callee_last_word_then_hangup(void)
     sim_destroy(s);
 }
 
+/* The callee says its application has hung up (M_END) with its last word
+ * still to send, and then the channel dies (on air, N3JXB -> KG9NI-1, 1.9.22:
+ * the M_END at 14:36:03, nothing decoded after it).  The caller used to poll
+ * for that word until the 240 s lost-peer watchdog; it ends the session once
+ * the callee has been silent as long as the callee's own drain, at most
+ * 120 s. */
+void test_car_callee_hangup_then_silence_ends_early(void)
+{
+    sim_t *s = make_sim(1, 0.0);
+    sim_set_snr(s, 5.0);
+    connect_ab(s);
+    for (int i = 0; i < 1200 && !(state(sim_a(s)) == ARQ_CONN_CONNECTED &&
+                                  state(sim_b(s)) == ARQ_CONN_CONNECTED); i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    static uint8_t word[3000];
+    fill(word, sizeof(word), 5);
+    static uint8_t rx[4096];
+    /* As on air: the callee hangs up with its last word queued, and its
+     * poll acknowledging the caller's last bytes says so. */
+    queue(s, sim_b(s), word, sizeof(word));
+    arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+    sim_inject(s, sim_b(s), &disc);
+    uint8_t mine[5] = { 'b', 'y', 'e', '\r', '\n' };
+    queue(s, sim_a(s), mine, sizeof(mine));
+
+    arq_session_t *a = sim_endpoint_session(sim_a(s));
+    for (int i = 0; i < 6000 && state(sim_a(s)) == ARQ_CONN_CONNECTED && !car_peer_ending(a->car); i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_TRUE_MESSAGE(car_peer_ending(a->car), "the caller heard the callee's M_END");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    TEST_ASSERT_TRUE_MESSAGE(sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)) < sizeof(word),
+                             "the callee's last word is still on its way");
+
+    sim_set_per(s, 1.0);                          /* the channel dies */
+    uint64_t last_rx = a->car_last_rx_ms;
+    bool sent_disconnect = false;
+    uint64_t left_at = 0;                         /* when the caller left CONNECTED */
+    for (int i = 0; i < 3000 && state(sim_a(s)) != ARQ_CONN_DISCONNECTED; i++) {
+        sim_run_until_idle(s, 100);
+        if (!left_at && state(sim_a(s)) != ARQ_CONN_CONNECTED) left_at = sim_clock_now();
+        if (state(sim_a(s)) == ARQ_CONN_DISCONNECTING) sent_disconnect = true;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(sent_disconnect, "the caller told the callee");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, state(sim_a(s)));
+    TEST_ASSERT_NOT_EQUAL_UINT64(0, left_at);
+    uint64_t gone_ms = left_at - last_rx;
+    char msg[96];
+    snprintf(msg, sizeof(msg), "the caller ended %llu ms after the callee went quiet",
+             (unsigned long long)gone_ms);
+    /* The wait (the callee's own drain: the drain timeout or the budget,
+     * whichever is longer, at most 120 s), and a keydown of slack: the
+     * watchdog's 240 s is well past it. */
+    uint64_t wait = (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000;
+    if (car_drain_budget_ms(a->car) > wait) wait = car_drain_budget_ms(a->car);
+    if (wait > 120000) wait = 120000;
+    TEST_ASSERT_TRUE_MESSAGE(gone_ms <= wait + 20000, msg);
+    sim_destroy(s);
+}
+
 /* The callee's ACCEPTs never reach the caller: it falls back to LISTENING
  * still seeded, to catch the caller's first round in case the caller did
  * connect.  The caller never comes, and the seed must not outlive the wait:
@@ -709,6 +769,7 @@ int main(void)
     RUN_TEST(test_car_callee_hangup_acks_last_bytes);
     RUN_TEST(test_car_callee_hangup_is_ended_by_the_caller);
     RUN_TEST(test_car_callee_last_word_then_hangup);
+    RUN_TEST(test_car_callee_hangup_then_silence_ends_early);
     RUN_TEST(test_car_disconnect_after_transfer);
     RUN_TEST(test_car_abort_skips_the_drain);
     RUN_TEST(test_car_reply_during_final_poll);

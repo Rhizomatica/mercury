@@ -244,6 +244,26 @@ static void test_carousel_drop_below_control_mode(void)
         }
 }
 
+/* A rung that failed is not re-probed while the SNR gates it.  On air
+ * (VE4KLM <- K7EK, 30 m, 2026-11-05) DATAC3 went dead near its -1 dB
+ * threshold, and the receiver came back to it at -4.2 dB every couple of
+ * minutes: a lost frame and a re-poll each time.  The same shape here: a
+ * start just under DATAC3's threshold, then a drop past its gate.  Before the
+ * fix these seeds made 10 such probes (7, 11, 13, 18, 19, 26). */
+static void test_carousel_no_reprobe_below_gate(void)
+{
+    static const char *CHAN[] = { "step:-1:-4.5:60", "step:-1.5:-4.5:90" };
+    for (size_t k = 0; k < sizeof(CHAN) / sizeof(CHAN[0]); k++)
+        for (uint64_t seed = 1; seed <= 30; seed++) {
+            car_sim_result_t r;
+            char what[64];
+            carousel_sim_run(seed, CHAN[k], true, LIMIT_MS, &r);
+            snprintf(what, sizeof(what), "seed %llu %s bidir", (unsigned long long)seed, CHAN[k]);
+            TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.gated_probes, what);
+        }
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -414,6 +434,7 @@ int main(void)
     RUN_TEST(test_carousel_max_keydown);
     RUN_TEST(test_carousel_request_response_completes);
     RUN_TEST(test_carousel_drop_below_control_mode);
+    RUN_TEST(test_carousel_no_reprobe_below_gate);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }

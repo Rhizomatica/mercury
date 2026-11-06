@@ -222,6 +222,21 @@ void modem_set_monitor_enabled(bool enabled)
 }
 bool modem_get_monitor_enabled(void) { return mock_monitor_enabled; }
 
+/* ---- in-flight frame stub (LISTEN OFF diagnostic) ---- */
+
+static bool mock_inflight = false;
+
+bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms,
+                              bool *lost_on_listen_off)
+{
+    if (!mock_inflight)
+        return false;
+    if (mode_name)          *mode_name = "MFSK";
+    if (for_ms)             *for_ms = 2100;
+    if (lost_on_listen_off) *lost_on_listen_off = true;
+    return true;
+}
+
 /* Use the actual ring implementation for the shutdown race; retain command
  * test stubs under their usual names. No audio/modem hardware is linked. */
 #define size_buffer real_size_buffer
@@ -342,6 +357,7 @@ void setUp(void)
     queued_line_count = 0;
     memset(&arq_conn, 0, sizeof(arq_conn));
     mock_bandwidth_hz = 2300;
+    mock_inflight = false;
 
     /* Broadcast framing state */
     memset(last_write_buffer_data, 0, sizeof(last_write_buffer_data));
@@ -456,6 +472,18 @@ void test_cmd_listen_on(void)
 
 void test_cmd_listen_off(void)
 {
+    char cmd[] = "LISTEN OFF";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_OFF, captured_cmd.type);
+}
+
+/* A scanner's LISTEN OFF that lands mid-frame is only logged: the command
+ * still goes through and is answered OK. */
+void test_cmd_listen_off_mid_frame_still_releases(void)
+{
+    mock_inflight = true;
     char cmd[] = "LISTEN OFF";
     execute_control_command(cmd);
 
@@ -768,6 +796,54 @@ void test_cmd_retries(void)
     assert_ok_response();
     TEST_ASSERT_EQUAL_INT(ARQ_CMD_SET_RETRY, captured_cmd.type);
     TEST_ASSERT_EQUAL_INT(10, captured_cmd.value);
+}
+
+/* BPQ32 passes a port's init lines verbatim: "RETRIES=20" must work too. */
+void test_cmd_retries_with_equals(void)
+{
+    char cmd[] = "RETRIES=20";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_SET_RETRY, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(20, captured_cmd.value);
+}
+
+void test_cmd_retries_with_spaced_equals(void)
+{
+    char cmd[] = "RETRIES = 7";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(7, captured_cmd.value);
+}
+
+void test_cmd_retries_not_a_number(void)
+{
+    char cmd[] = "RETRIES=abc";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, captured_cmd_count);
+}
+
+void test_cmd_retries_trailing_junk(void)
+{
+    char cmd[] = "RETRIES 10x";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, captured_cmd_count);
+}
+
+void test_cmd_callint_with_equals(void)
+{
+    char cmd[] = "CALLINT=12";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_SET_CALLINT, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(12, captured_cmd.value);
 }
 
 void test_cmd_connect(void)
@@ -1965,6 +2041,7 @@ int main(void)
     RUN_TEST(test_cmd_mycall_does_not_register_dropped_secondaries);
     RUN_TEST(test_cmd_listen_on);
     RUN_TEST(test_cmd_listen_off);
+    RUN_TEST(test_cmd_listen_off_mid_frame_still_releases);
     RUN_TEST(test_cmd_public_on);
     RUN_TEST(test_cmd_compression);
     RUN_TEST(test_cmd_tune_on);
@@ -1994,6 +2071,11 @@ int main(void)
     RUN_TEST(test_cmd_bw2300);
     RUN_TEST(test_cmd_bw_invalid);
     RUN_TEST(test_cmd_retries);
+    RUN_TEST(test_cmd_retries_with_equals);
+    RUN_TEST(test_cmd_retries_with_spaced_equals);
+    RUN_TEST(test_cmd_retries_not_a_number);
+    RUN_TEST(test_cmd_retries_trailing_junk);
+    RUN_TEST(test_cmd_callint_with_equals);
     RUN_TEST(test_cmd_connect);
     RUN_TEST(test_cmd_disconnect);
     RUN_TEST(test_cmd_cqframe);

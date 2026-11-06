@@ -115,6 +115,19 @@ void test_silence_fallback_setter_clamps_to_default(void)
     TEST_ASSERT_EQUAL_INT(ARQ_SILENCE_FALLBACK_S_DEFAULT, atomic_load(&arq_silence_fallback_s));
 }
 
+void test_call_max_setter_clamps_to_default(void)
+{
+    arq_protocol_set_call_max_s(120);
+    TEST_ASSERT_EQUAL_INT(120, atomic_load(&arq_call_max_s));
+    arq_protocol_set_call_max_s(0);              /* no cap */
+    TEST_ASSERT_EQUAL_INT(0, atomic_load(&arq_call_max_s));
+    arq_protocol_set_call_max_s(-5);
+    TEST_ASSERT_EQUAL_INT(ARQ_CALL_MAX_S_DEFAULT, atomic_load(&arq_call_max_s));
+    arq_protocol_set_call_max_s(ARQ_CALL_MAX_S_MAX + 1);
+    TEST_ASSERT_EQUAL_INT(ARQ_CALL_MAX_S_DEFAULT, atomic_load(&arq_call_max_s));
+    arq_protocol_set_call_max_s(ARQ_CALL_MAX_S_DEFAULT);
+}
+
 void test_retry_rank_is_antisymmetric_and_deterministic(void)
 {
     /* The two peers compare the SAME pair of callsigns, so exactly one defers
@@ -608,6 +621,7 @@ int main(void)
     RUN_TEST(test_decode_snr_zero_is_unknown);
     /* Retry stagger */
     RUN_TEST(test_silence_fallback_setter_clamps_to_default);
+    RUN_TEST(test_call_max_setter_clamps_to_default);
     RUN_TEST(test_retry_rank_is_antisymmetric_and_deterministic);
     RUN_TEST(test_retry_rank_degenerate_pair_falls_back);
     RUN_TEST(test_retry_deadline_stagger_is_exact);

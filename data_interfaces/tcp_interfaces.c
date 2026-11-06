@@ -24,6 +24,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 #include <stdatomic.h>
 #include <sys/types.h>
 #if !defined(_WIN32)
@@ -299,6 +300,42 @@ static int arq_buffered_bytes_snapshot(void)
     return buffered;
 }
 
+/* "NAME 20", and also "NAME=20" / "NAME = 20": BPQ32 passes a port's init
+ * lines to the TNC verbatim, and a station's RETRIES=20 was answered WRONG
+ * with nothing in the log to show it.  Only a whole integer counts. */
+static bool parse_int_command(const char *buffer, const char *name, int *out)
+{
+    size_t n = strlen(name);
+    if (strncmp(buffer, name, n) != 0)
+        return false;
+    const char *p = buffer + n;
+    if (*p != ' ' && *p != '\t' && *p != '=')
+        return false;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    if (*p == '=')
+        p++;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    char *end = NULL;
+    long v = strtol(p, &end, 10);
+    if (end == p)
+        return false;
+    while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')
+        end++;
+    if (*end != '\0' || v < INT_MIN || v > INT_MAX)
+        return false;
+    *out = (int)v;
+    return true;
+}
+
+/* Answer WRONG, and say so in the log: the host may never show it. */
+static void reply_wrong(const char *command)
+{
+    HLOGW("tcp-ctl", "Command rejected (WRONG): %s", command);
+    tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+}
+
 static void execute_control_command(char *buffer)
 {
     arq_cmd_msg_t cmd;
@@ -308,6 +345,10 @@ static void execute_control_command(char *buffer)
         return;
 
     HLOGI("tcp-ctl", "Command received: %s", buffer);
+    /* Some handlers tokenize buffer in place (MYCALL); keep the line as sent
+     * for reply_wrong(). */
+    char received[128];
+    snprintf(received, sizeof(received), "%s", buffer);
 
     if (!strncmp(buffer, "MYCALL", strlen("MYCALL")))
     {
@@ -322,7 +363,7 @@ static void execute_control_command(char *buffer)
         char *tok = strtok_r(tmp, " \t\r\n", &saveptr);
         if (!tok)
         {
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
             return;
         }
 
@@ -336,7 +377,7 @@ static void execute_control_command(char *buffer)
         snprintf(primary_call, sizeof(primary_call), "%s", tok);
         if (arq_submit_tcp_cmd(&cmd) != 0)
         {
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
             return;
         }
 
@@ -384,10 +425,26 @@ static void execute_control_command(char *buffer)
             cmd.type = ARQ_CMD_LISTEN_ON;
         if (temp[1] == 'F')
             cmd.type = ARQ_CMD_LISTEN_OFF;
+        /* A scanning host (BPQ32) sends LISTEN OFF at every hop.  If a CALL
+         * is half received at that moment, nothing else would show it is
+         * lost: say so, with no session up (a LISTEN OFF in a session is
+         * logged by the ARQ layer).  An MFSK listener is flushed by the
+         * LISTEN OFF itself; a DATAC16 frame is lost only if the host then
+         * changes frequency. */
+        const char *inflight_mode = NULL;
+        uint64_t inflight_ms = 0;
+        bool lost_now = false;
+        if (cmd.type == ARQ_CMD_LISTEN_OFF && !arq_is_link_connected() &&
+            modem_rx_frame_in_flight(&inflight_mode, &inflight_ms, &lost_now))
+            HLOGI("tcp-ctl", "LISTEN OFF %.1f s into a %s frame not yet decoded: %s "
+                  "(or it was noise)",
+                  (double)inflight_ms / 1000.0, inflight_mode ? inflight_mode : "?",
+                  lost_now ? "LISTEN OFF drops it"
+                           : "if the host now changes frequency, it is lost");
         if (cmd.type != ARQ_CMD_NONE && arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
         return;
     }
 
@@ -415,7 +472,7 @@ static void execute_control_command(char *buffer)
             }
             else
             {
-                tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+                reply_wrong(received);
             }
         }
         else
@@ -439,7 +496,7 @@ static void execute_control_command(char *buffer)
         if (arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
         return;
     }
 
@@ -462,7 +519,7 @@ static void execute_control_command(char *buffer)
             if (arq_submit_tcp_cmd(&cmd) == 0)
                 tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
             else
-                tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+                reply_wrong(received);
         }
         else
         {
@@ -482,7 +539,7 @@ static void execute_control_command(char *buffer)
             arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
         return;
     }
 
@@ -490,12 +547,12 @@ static void execute_control_command(char *buffer)
     {
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_RETRY;
-        if (sscanf(buffer, "RETRIES %d", &cmd.value) == 1 &&
+        if (parse_int_command(buffer, "RETRIES", &cmd.value) &&
             cmd.value >= 0 &&
             arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
         return;
     }
 
@@ -520,7 +577,7 @@ static void execute_control_command(char *buffer)
             else if (rc == MODEM_LISTEN_MODE_BUSY)
                 tcp_write(CTL_TCP_PORT, (uint8_t *)"BUSY\r", 5);
             else
-                tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+                reply_wrong(received);
         }
         else
         {
@@ -546,12 +603,12 @@ static void execute_control_command(char *buffer)
     {
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_CALLINT;
-        if (sscanf(buffer, "CALLINT %d", &cmd.value) == 1 &&
+        if (parse_int_command(buffer, "CALLINT", &cmd.value) &&
             cmd.value >= 0 &&
             arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
         return;
     }
 
@@ -597,7 +654,7 @@ static void execute_control_command(char *buffer)
         char arg[16] = {0};
         if (sscanf(buffer, "TUNE %15s", arg) != 1)
         {
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
             return;
         }
 
@@ -620,7 +677,7 @@ static void execute_control_command(char *buffer)
         float dbfs = 0.0f;
         if (sscanf(arg, "%f", &dbfs) != 1 || modem_tune_start(dbfs) != 0)
         {
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
             return;
         }
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
@@ -635,7 +692,7 @@ static void execute_control_command(char *buffer)
             arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
         return;
     }
 
@@ -650,7 +707,7 @@ static void execute_control_command(char *buffer)
             arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
         return;
     }
 
@@ -661,7 +718,7 @@ static void execute_control_command(char *buffer)
         if (arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
         return;
     }
 
@@ -674,7 +731,7 @@ static void execute_control_command(char *buffer)
         if (arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            reply_wrong(received);
         return;
     }
 
@@ -693,7 +750,7 @@ static void execute_control_command(char *buffer)
     }
 
     HLOGW("tcp-ctl", "Unknown command: %s", buffer);
-    tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+    reply_wrong(received);
 }
 
 static void process_control_bytes(char *line_buf, int *line_len, const uint8_t *data, ssize_t len)

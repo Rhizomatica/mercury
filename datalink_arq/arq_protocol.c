@@ -21,6 +21,7 @@ _Atomic int arq_call_fast_slots        = ARQ_CALL_FAST_SLOTS_DEFAULT;
 _Atomic int arq_accept_retry_slots     = ARQ_ACCEPT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_silence_fallback_s    = ARQ_SILENCE_FALLBACK_S_DEFAULT;
+_Atomic int arq_call_max_s            = ARQ_CALL_MAX_S_DEFAULT;
 _Atomic int arq_retry_stagger_ms       = ARQ_RETRY_STAGGER_MS_DEFAULT;
 _Atomic int arq_disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
 _Atomic int arq_tx_mfsk_only           = 0;
@@ -140,6 +141,13 @@ void arq_protocol_set_silence_fallback_s(int seconds)
     if (seconds < ARQ_SILENCE_FALLBACK_S_MIN || seconds > ARQ_SILENCE_FALLBACK_S_MAX)
         seconds = ARQ_SILENCE_FALLBACK_S_DEFAULT;
     atomic_store(&arq_silence_fallback_s, seconds);
+}
+
+void arq_protocol_set_call_max_s(int seconds)
+{
+    if (seconds < 0 || seconds > ARQ_CALL_MAX_S_MAX)
+        seconds = ARQ_CALL_MAX_S_DEFAULT;
+    atomic_store(&arq_call_max_s, seconds);
 }
 
 void arq_protocol_set_call_fast_slots(int retries)
