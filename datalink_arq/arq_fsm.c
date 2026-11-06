@@ -473,6 +473,8 @@ static int peer_is_transmitting(const arq_session_t *sess)
     return decoder_hears_frame(sess);
 }
 
+int arq_fsm_channel_keyed(const arq_session_t *sess) { return peer_is_transmitting(sess); }
+
 /* The first signal alone: one of our decoders is on a frame. */
 static int decoder_hears_frame(const arq_session_t *sess)
 {

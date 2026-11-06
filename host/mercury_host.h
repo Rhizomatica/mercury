@@ -185,6 +185,24 @@ int         mercury_host_set_listen_mode(int index);
  * Setting the listen mode answers MERCURY_HOST_BUSY in both. */
 const char *mercury_host_busy_reason(void);
 
+/* ---- station messages (the beacon) -----------------------------------------
+ *
+ * One frame the host built, sent once on the mode of index mode_index: 8
+ * (DATAC16) or one mercury_host_mode_switchable accepts -- not the listen
+ * mode, which stays as it is.  frame[0] is a PACKET_TYPE_STATION header
+ * (0x07 << 5 | layout, hermes-radio-daemon docs/BEACON-FORMAT.md), len at
+ * most that mode's frame; Mercury zero-pads the rest.  It is held while an
+ * ARQ session is up or a carousel sends, and keyed once no decoder is on a
+ * frame (after ~10 s of a busy channel, regardless).  Returns at once:
+ * MERCURY_HOST_OK queued, MERCURY_HOST_FULL with 4 waiting (try again),
+ * MERCURY_HOST_BAD for the mode, the header or the size.  The bytes are
+ * copied.
+ *
+ * Received ones reach on_frame below, from whichever decoder heard them (the
+ * control decoder hears DATAC16 and, while listening, the call listeners hear
+ * MFSK and MFSK500, whatever the listen mode), and never the chat store. */
+int mercury_host_beacon_send(const uint8_t *frame, size_t len, int mode_index);
+
 /* ---- the broadcast carousel ------------------------------------------------
  *
  * A message sent by Mercury itself as a RaptorQ carousel, wire-compatible with
@@ -222,7 +240,8 @@ void mercury_host_bcast_stats(mercury_host_bcast_stats_t *out);
 /* ---- what the broadcast plane hears -----------------------------------------
  *
  * on_frame: every broadcast frame decoded, at the listen mode (chat and file
- * frames alike; received chat lines also go to the chat store, see above);
+ * frames alike; received chat lines also go to the chat store, see above),
+ * and every station message, at any mode (see above);
  * mode is the FreeDV mode number, snr the modem's estimate in dB.
  * on_object: each file the frames complete, its bytes and the name it was
  * sent under, at a listen mode that carries files; Mercury files nothing.

@@ -40,6 +40,7 @@
 #include "../datalink_arq/arq_protocol.h"
 #include "tcp_interfaces.h"
 #include "../datalink_broadcast/bcast_status.h"
+#include "../datalink_broadcast/kiss.h"     /* MAX_PAYLOAD */
 #include "channel_busy.h"
 #include "tx_pacing.h"
 #include "freedv_api.h"
@@ -858,6 +859,80 @@ int modem_get_listen_mode(void)
 size_t modem_get_broadcast_frame_size(void)
 {
     return atomic_load(&broadcast_frame_size);
+}
+
+/* --- Station messages (the beacon) ----------------------------------------
+ * Each goes on a mode of its own, not the listen mode, so it cannot share the
+ * broadcast ring, whose frames are all the listen mode's size.  Written by the
+ * host's or the broadcast client's thread, taken by the TX thread. */
+typedef struct {
+    int     mode;
+    size_t  len;                    /* the mode's whole frame, zero-padded */
+    uint8_t frame[MAX_PAYLOAD];
+} beacon_t;
+
+static pthread_mutex_t beacon_lock = PTHREAD_MUTEX_INITIALIZER;
+static beacon_t        beacon_q[MODEM_BEACON_QUEUE];
+static int             beacon_head = 0, beacon_n = 0;
+
+bool modem_beacon_mode_ok(int mode)
+{
+    return mode == FREEDV_MODE_DATAC16 || is_payload_split_mode(mode);
+}
+
+int modem_beacon_send(const uint8_t *frame, size_t len, int mode)
+{
+    if (!frame || len == 0 ||
+        frame_header_packet_type(frame[0]) != PACKET_TYPE_STATION ||
+        !modem_beacon_mode_ok(mode))
+        return MODEM_BEACON_BAD;
+
+    size_t frame_size = 0;
+    pthread_mutex_lock(&modem_pool_lock);
+    modem_codec_t codec = pooled_codec_for_mode_locked(mode, &frame_size);
+    pthread_mutex_unlock(&modem_pool_lock);
+    if (!codec.be || frame_size == 0 || len > frame_size || frame_size > MAX_PAYLOAD)
+        return MODEM_BEACON_BAD;
+
+    pthread_mutex_lock(&beacon_lock);
+    if (beacon_n == MODEM_BEACON_QUEUE)
+    {
+        pthread_mutex_unlock(&beacon_lock);
+        return MODEM_BEACON_FULL;
+    }
+    beacon_t *b = &beacon_q[(beacon_head + beacon_n) % MODEM_BEACON_QUEUE];
+    b->mode = mode;
+    b->len = frame_size;
+    memcpy(b->frame, frame, len);
+    memset(b->frame + len, 0, frame_size - len);
+    beacon_n++;
+    pthread_mutex_unlock(&beacon_lock);
+    HLOGI("modem", "Station message queued for %s (%zu of %zu bytes)",
+          mode_name_from_enum(mode), len, frame_size);
+    return 0;
+}
+
+/* The mode the next one goes on, -1 with none waiting. */
+static int beacon_next_mode(void)
+{
+    pthread_mutex_lock(&beacon_lock);
+    int mode = beacon_n > 0 ? beacon_q[beacon_head].mode : -1;
+    pthread_mutex_unlock(&beacon_lock);
+    return mode;
+}
+
+static bool beacon_take(beacon_t *out)
+{
+    pthread_mutex_lock(&beacon_lock);
+    bool have = beacon_n > 0;
+    if (have)
+    {
+        *out = beacon_q[beacon_head];
+        beacon_head = (beacon_head + 1) % MODEM_BEACON_QUEUE;
+        beacon_n--;
+    }
+    pthread_mutex_unlock(&beacon_lock);
+    return have;
 }
 
 void modem_set_monitor_enabled(bool enabled)
@@ -2132,6 +2207,12 @@ static void process_received_frame(const uint8_t *data,
         broadcast_rx_frame((const uint8_t *)data, payload_nbytes, mode, snr_est);
         break;
     }
+    case PACKET_TYPE_STATION:
+        /* Whatever the decoder and its size: a beacon describes itself, and
+         * the ones on DATAC16 and MFSK are heard by the control decoder and
+         * the call listeners, at any listen mode. */
+        broadcast_rx_frame((const uint8_t *)data, payload_nbytes, mode, snr_est);
+        break;
     default:
         HLOGW("modem-rx", "Unknown frame type received");
         break;
@@ -2626,6 +2707,7 @@ void *tx_thread(void *g_modem)
     generic_modem_t *modem = (generic_modem_t *)g_modem;
     uint8_t *data = NULL;
     size_t data_size = 0;
+    uint64_t beacon_wait_since = 0;   /* when a station message began waiting on a busy channel */
 
     while (!mercury_stop)
     {
@@ -2657,14 +2739,25 @@ void *tx_thread(void *g_modem)
             (pending_arq_app > 0) ||
             (pending_arq_data > 0) ||
             (pending_arq_control > 0);
+        /* A station message waits out a session or a carousel, without
+         * counting as traffic meanwhile: the session's actions are waited for
+         * as usual. */
+        int beacon_mode = beacon_next_mode();
+        bool beacon_ready = beacon_mode >= 0 && !arq_tx_queued &&
+                            !arq_session_active() && !bcast_carousel_sending();
         bool local_tx_queued =
             arq_tx_queued ||
-            (pending_broadcast > 0);
+            (pending_broadcast > 0) ||
+            beacon_ready;
         if (arq_policy_ready && arq_snapshot.trx != TX && arq_tx_queued)
         {
             int desired_mode = arq_snapshot.preferred_tx_mode;
             if (desired_mode >= 0)
                 maybe_switch_modem_mode(modem, desired_mode, arq_snapshot.trx, false);
+        }
+        else if (arq_snapshot.trx != TX && beacon_ready)
+        {
+            maybe_switch_modem_mode(modem, beacon_mode, arq_snapshot.trx, false);
         }
         else if (arq_snapshot.trx != TX &&
                  !arq_tx_queued &&
@@ -2684,6 +2777,7 @@ void *tx_thread(void *g_modem)
         int frames_per_burst = 1;
         int tx_frames_per_burst = 1;
         pthread_mutex_lock(&modem_pool_lock);
+        int tx_mode = modem->mode;
         payload_bytes_per_modem_frame = modem->payload_bytes_per_modem_frame;
         if (modem_codec_valid(&modem->codec))
             frames_per_burst = modem->codec.be->frames_per_burst(modem->codec.ctx);
@@ -2779,8 +2873,42 @@ void *tx_thread(void *g_modem)
                 HLOGW("modem-tx", "Failed to send ARQ buffered frame");
         }
 
+        /* A station message, once the modem is on its mode.  It keys when no
+         * decoder is on a frame, or after ~10 s of waiting regardless, as a
+         * DISCONNECT does (ARQ_CHANNEL_DEFER_MAX): a decoder stuck in false
+         * sync must not hold it for good. */
+        if (!sent_from_action && beacon_ready && tx_mode == beacon_mode)
+        {
+            uint64_t now = virtual_clock_enabled() ? time_now_ms() : monotonic_ms();
+            bool heard = arq_channel_heard();
+            if (!heard || (beacon_wait_since != 0 &&
+                           now - beacon_wait_since >=
+                               (uint64_t)ARQ_CHANNEL_DEFER_MS * ARQ_CHANNEL_DEFER_MAX))
+            {
+                beacon_t b;
+                beacon_wait_since = 0;
+                if (beacon_take(&b) && b.len == payload_bytes_per_modem_frame && b.len <= data_size)
+                {
+                    memcpy(data, b.frame, b.len);
+                    HLOGI("modem-tx", "Sending station message on %s%s",
+                          mode_name_from_enum(b.mode), heard ? " (the channel stayed busy)" : "");
+                    if (send_modulated_data_with_cq_status(modem, data, 1) < 0)
+                        HLOGW("modem-tx", "Failed to send station message");
+                }
+                else
+                    HLOGW("modem-tx", "Station message dropped: it no longer fits the %s frame",
+                          mode_name_from_enum(tx_mode));
+                sent_from_action = true;
+            }
+            else if (beacon_wait_since == 0)
+                beacon_wait_since = now;
+        }
+        else
+            beacon_wait_since = 0;
+
         size_t expect_bcast = atomic_load(&broadcast_frame_size);
-        if (size_buffer(data_tx_buffer_broadcast) >= required &&
+        if (!beacon_ready &&
+            size_buffer(data_tx_buffer_broadcast) >= required &&
             expect_bcast > 0 &&
             payload_bytes_per_modem_frame == expect_bcast)
         {
@@ -2792,11 +2920,14 @@ void *tx_thread(void *g_modem)
                 HLOGW("modem-tx", "Failed to send broadcast buffered frame");
         }
 
-        if (!sent_from_action &&
-            size_buffer(data_tx_buffer_arq) < required &&
-            size_buffer(data_tx_buffer_arq_control) < required &&
-            size_buffer(data_tx_buffer_broadcast) < required &&
-            !waited_for_action)
+        /* A station message waiting (on a busy channel, or for its mode) sleeps
+         * too: the broadcast ring is held behind it, so a full ring would
+         * otherwise spin this loop until the beacon goes. */
+        if (!sent_from_action && !waited_for_action &&
+            (beacon_ready ||
+             (size_buffer(data_tx_buffer_arq) < required &&
+              size_buffer(data_tx_buffer_arq_control) < required &&
+              size_buffer(data_tx_buffer_broadcast) < required)))
         {
             usleep(100000); // sleep for 100ms if there is no data to send
         }

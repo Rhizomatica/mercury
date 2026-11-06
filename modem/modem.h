@@ -133,6 +133,19 @@ int    modem_get_listen_mode(void);
 bool   modem_listen_mode_switchable(int mode);
 size_t modem_get_broadcast_frame_size(void);
 
+/* A station message (PACKET_TYPE_STATION, the beacon), sent once on `mode`
+ * rather than the listen mode: zero-padded to that mode's frame, held while
+ * an ARQ session is up or a carousel sends, and keyed when no decoder is on a
+ * frame (as a DISCONNECT is: at most ~10 s of waiting).  `mode` is DATAC16
+ * or one MODE accepts.  0 queued; MODEM_BEACON_BAD for the mode, a frame
+ * that is not a station message or does not fit; MODEM_BEACON_FULL while
+ * MODEM_BEACON_QUEUE are waiting.  The bytes are copied. */
+#define MODEM_BEACON_BAD   (-1)
+#define MODEM_BEACON_FULL  (-2)
+#define MODEM_BEACON_QUEUE 4
+int    modem_beacon_send(const uint8_t *frame, size_t len, int mode);
+bool   modem_beacon_mode_ok(int mode);
+
 int   modem_tune_start(float dbfs);
 // Stop the carrier and unkey. Safe to call when not tuning; blocks until the
 // tuning thread has unkeyed.
