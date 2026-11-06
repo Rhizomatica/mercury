@@ -258,6 +258,12 @@ uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank);
  *   connect_src  caller: the source of the host's CONNECT (empty: the primary)
  *   my_call      our primary callsign
  * src and dst hold bufsz bytes each. */
+/* Which of our callsigns `call` names, ignoring case: the entry of `ours`
+ * (n of them; NULL or empty entries are skipped), or NULL when it is none of
+ * them.  An outgoing CALL goes out from the host's CONNECT source only when
+ * it is one of ours, since only those does an ACCEPT reach us on. */
+const char *arq_protocol_own_call(const char *call, const char *const *ours, int n);
+
 void arq_protocol_session_calls(bool we_called, const char *remote_call,
                                 const char *local_call, const char *connect_src,
                                 const char *my_call,

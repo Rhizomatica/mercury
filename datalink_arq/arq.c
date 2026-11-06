@@ -604,7 +604,26 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
         snprintf(g_connect_src, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         arq_conn.session_bw = 0;
+        /* The CALL goes out from the CONNECT's source, as VARA does, when it
+         * is one of ours: BPQ32 dials from its BBS callsign, which need not
+         * be the primary.  It used to go out from the primary whatever the
+         * source, so the two ends reported different callers (on air: KG9NI,
+         * primary KG9NI-7, CONNECT KG9NI-1 K7EK; K7EK heard KG9NI-7).  Any
+         * other source stays on the primary: an ACCEPT reaches us only on a
+         * callsign of ours. */
+        const char *ours[1 + CALLSIGN_MAX_SECONDARY];
+        int n_ours = 0;
+        ours[n_ours++] = arq_conn.my_call_sign;
+        for (int i = 0; i < arq_conn.secondary_call_count && i < CALLSIGN_MAX_SECONDARY; i++)
+            ours[n_ours++] = arq_conn.secondary_calls[i];
+        const char *from = arq_protocol_own_call(msg->arg0, ours, n_ours);
+        char primary[CALLSIGN_MAX_SIZE];
+        snprintf(primary, sizeof(primary), "%s", arq_conn.my_call_sign);
+        snprintf(ev.local_call, CALLSIGN_MAX_SIZE, "%s", from ? from : "");
         pthread_mutex_unlock(&g_conn_lock);
+        if (!from && msg->arg0[0] && primary[0])
+            HLOGW(LOG_COMP, "CONNECT from %s, which is not one of our callsigns (MYCALL): calling as %s",
+                  msg->arg0, primary);
         /* The FSM defers a CONNECT that arrives while the previous session is
          * ending, and then skips that session's teardown callback -- which is
          * what would normally flush the TX queue.  So flush the leftovers here,

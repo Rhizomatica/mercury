@@ -187,6 +187,12 @@ On success, the asynchronous response
 `CONNECTED <sourcecall> <destcall> <bandwidth>\r` is sent on the control port,
 preserving the same call order as the original `CONNECT` command on both peers.
 
+`<mycall>` is the callsign the CALL goes out from, as in VARA, when it is the
+primary callsign or one of the others given to `MYCALL`: the callee's ACCEPT
+comes back to it. BPQ32, for example, dials from its BBS callsign, which need
+not be the port's primary. Any other `<mycall>` is logged as a warning and the
+CALL goes out from the primary callsign (up to 1.9.22 it always did).
+
 Example:
 ```
 CONNECT AAAA BBBB\r

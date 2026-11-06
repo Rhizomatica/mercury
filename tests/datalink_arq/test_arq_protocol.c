@@ -175,6 +175,18 @@ void test_session_calls_follow_the_side(void)
     TEST_ASSERT_EQUAL_STRING("KG9NI-7", dst);
 }
 
+void test_own_call_matches_ours_only(void)
+{
+    const char *ours[] = { "KG9NI-7", "KG9NI-1", "", NULL, "KG9NI" };
+    TEST_ASSERT_EQUAL_PTR(ours[0], arq_protocol_own_call("KG9NI-7", ours, 5));
+    TEST_ASSERT_EQUAL_PTR(ours[1], arq_protocol_own_call("kg9ni-1", ours, 5));
+    TEST_ASSERT_EQUAL_PTR(ours[4], arq_protocol_own_call("KG9NI", ours, 5));
+    TEST_ASSERT_NULL(arq_protocol_own_call("K7EK", ours, 5));
+    TEST_ASSERT_NULL(arq_protocol_own_call("KG9NI-11", ours, 5));
+    TEST_ASSERT_NULL(arq_protocol_own_call("", ours, 5));
+    TEST_ASSERT_NULL(arq_protocol_own_call(NULL, ours, 5));
+}
+
 void test_retry_deadline_stagger_is_exact(void)
 {
     mock_set_uptime_ms(1000);
@@ -649,6 +661,7 @@ int main(void)
     RUN_TEST(test_retry_rank_is_antisymmetric_and_deterministic);
     RUN_TEST(test_retry_rank_degenerate_pair_falls_back);
     RUN_TEST(test_session_calls_follow_the_side);
+    RUN_TEST(test_own_call_matches_ours_only);
     RUN_TEST(test_retry_deadline_stagger_is_exact);
     RUN_TEST(test_retry_deadline_stagger_disabled_is_exact);
     RUN_TEST(test_retry_deadline_fallback_is_bounded);

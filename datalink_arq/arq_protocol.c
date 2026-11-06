@@ -9,6 +9,7 @@
 #include "arq_protocol.h"
 
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
 #include <stdatomic.h>
 #include <math.h>
@@ -195,6 +196,16 @@ uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank)
     x ^= x >> 31;
 
     return now_ms + base_ms + (x % (uint64_t)stagger_ms);
+}
+
+const char *arq_protocol_own_call(const char *call, const char *const *ours, int n)
+{
+    if (!call || !call[0] || !ours)
+        return NULL;
+    for (int i = 0; i < n; i++)
+        if (ours[i] && ours[i][0] && strcasecmp(call, ours[i]) == 0)
+            return ours[i];
+    return NULL;
 }
 
 static const char *call_or(const char *call, const char *fallback)
