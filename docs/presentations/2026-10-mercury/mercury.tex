@@ -1,4 +1,4 @@
-% Mercury: the HF modem of HERMES -- recent developments (October 2026)
+% Mercury: the HF modem of HERMES -- recent developments (November 2026)
 % Build: make  (pdflatex twice; needs texlive with beamer, metropolis, FiraSans, pgfplots)
 % Copyright (C) 2026 Rhizomatica
 % SPDX-License-Identifier: CC-BY-SA-4.0
@@ -68,7 +68,7 @@
 \title{Mercury}
 \subtitle{A free software HF modem and reliable data link}
 \author{Rhizomatica}
-\date{October 2026}
+\date{November 2026}
 
 \begin{document}
 
@@ -85,7 +85,7 @@
       {\color{horange}\rule{3.5cm}{2.5pt}}\par\vspace{0.6em}
       {\large A free software HF modem and reliable data link}\par\vspace{0.2em}
       {\normalsize Email, files and messages, from below $-10$~dB SNR to 3.1~kbit/s}\par\vspace{1.2em}
-      {\small\color{hdkgreen}\bfseries Rhizomatica \quad\textbullet\quad the modem of HERMES \quad\textbullet\quad October 2026}\par
+      {\small\color{hdkgreen}\bfseries Rhizomatica \quad\textbullet\quad the modem of HERMES \quad\textbullet\quad November 2026}\par
       {\scriptsize\color{hdkmauve}github.com/Rhizomatica/mercury \quad\textbullet\quad hermes.radio}};
   \end{tikzpicture}
 \end{frame}
@@ -119,6 +119,7 @@
     \begin{itemize}
       \item The HF software modem of \textbf{HERMES}: it turns an SSB radio into a data link for email, files and messages
       \item Hands the application a \textbf{TCP connection}: a VARA-compatible TNC (control 8300, data 8301), KISS and broadcast on 8100
+      \item Or runs \textbf{in-process}: \texttt{libmercury\_host} links the modem into hermes-radio-daemon
       \item A clean \textbf{rewrite in C} (v2, since March 2026); the C++ v1 lives on as \texttt{mercuryv1}
       \item \textbf{Free software}: GPL-3.0-or-later; vendored codec2 subset LGPL-2.1
       \item Built by Rhizomatica for communities beyond the Internet, first in the Amazon rainforest
@@ -144,23 +145,27 @@
     \column{0.5\textwidth}
     \centering
     \begin{tikzpicture}
-      \foreach \v/\l/\y in {1109/{commits on trunk since the C rewrite (2026-03-05)}/0,
-                            496/{commits since 1 September}/-1.35,
-                            5/{releases since September (1.9.15 \textrightarrow{} 1.9.19)}/-2.7}{
+      \foreach \v/\l/\y in {1398/{commits on trunk since the C rewrite (2026-03-05)}/0,
+                            783/{commits since 1 September}/-1.35,
+                            8/{releases since September (1.9.15 \textrightarrow{} 1.9.22)}/-2.7}{
         \node[anchor=east,font=\fontsize{30}{30}\selectfont\bfseries,text=horange] at (0,\y) {\v};
         \node[anchor=west,text width=4.6cm,font=\small] at (0.25,\y) {\l};
       }
     \end{tikzpicture}
     \column{0.5\textwidth}
     \begin{block}{Platforms}
-      Linux (amd64, arm64, armhf, i386), Raspberry Pi 4/5, Windows (signed), macOS (universal, notarised); \textbf{iOS and Android coming soon}
+      Linux (amd64, arm64, armhf, i386), Raspberry Pi 4/5, Windows (signed), macOS (universal, notarised); \textbf{iOS on the App Store}; Android and Sailfish OS as technology previews
     \end{block}
     \begin{block}{Releases}
+      \footnotesize
       \textbf{1.9.18} (12 Oct): the carousel data plane\\
-      \textbf{1.9.19} (13 Oct): MFSK centred on 1500 Hz, hence air-protocol version 2 (does not interoperate with 1.9.18); JNOS 2.0 support
+      \textbf{1.9.19} (13 Oct): MFSK centred on 1500 Hz; JNOS 2.0\\
+      \textbf{1.9.20} (22 Oct): the ladder starts high and falls back fast; a 500 Hz MFSK floor; new connect frames, so no link to 1.9.19\\
+      \textbf{1.9.21} (24 Oct): MFSK-only transmit; Hermes-Lite 2\\
+      \textbf{1.9.22} (3 Nov): MFSK calls heard across bandwidths
     \end{block}
   \end{columns}
-  \src{Source: git history of \texttt{mercuryv2}; docs/RELEASE-1.9.18.md, docs/RELEASE-1.9.19.md}
+  \src{Source: git history of \texttt{mercuryv2}; docs/RELEASE-1.9.18.md to docs/RELEASE-1.9.22.md}
 \end{frame}
 
 \begin{frame}{Release 1.9.18 compared with 1.9.17: a 2 KB transfer}
@@ -203,6 +208,7 @@
     \textbf{Mode} & \textbf{Origin} & \textbf{BW, Hz} & \textbf{Payload, B} & \textbf{bit/s} & \textbf{FEC (n,k)} & \textbf{Role} \\
     \midrule
     \ours MFSK     & \ours Mercury           & \ours 1000 & \ours 98   & \ours $\sim$60 & \ours LDPC (1600,800)   & \ours rung 0 (floor) \\
+    \ours MFSK500  & \ours Mercury           & \ours 500  & \ours 98   & \ours $\sim$31 & \ours LDPC (1600,800)   & \ours rung 0 at BW500 \\
     \ours DATAC15  & \ours Mercury           & \ours 200  & \ours 30   & \ours 68       & \ours (768,256)          & \ours rung 1 \\
     DATAC4         & codec2                  & 250        & 54         & 87             & (1472,448)               & rung 2 \\
     DATAC3         & codec2                  & 500        & 126        & 321            & (2048,1024)              & rung 3 (BW500 top) \\
@@ -215,7 +221,7 @@
     \bottomrule
   \end{tabular}
   \par\medskip
-  {\small\colorbox{hgreen!35}{\strut\, green \,} = designed by us: three of the seven rungs, and the control mode}
+  {\small\colorbox{hgreen!35}{\strut\, green \,} = designed by us: both MFSK floors, DATAC15, DATAC17 and the control mode}
   \src{Source: docs/MODES.md}
 \end{frame}
 
@@ -231,8 +237,8 @@
       \node[font=\scriptsize,text=hdkmauve,anchor=north] at (\i+0.46,-0.15) {\s};
     }
     \draw[-{Latex[length=3mm]},horange,line width=1.5pt] (-0.2,-1.6) -- (7.0,-1.6) node[right,font=\small\color{hblack}] {SNR};
-    \node[anchor=west,font=\scriptsize,text=hdkmauve] at (-0.25,-2.2) {start rung chosen by the SNR the caller measured (dB); then link adaptation by measured goodput};
-    \draw[hdkgreen,dashed,line width=0.8pt] (3.96,-0.6) -- (3.96,7.3) node[above,font=\scriptsize\color{hdkgreen}] {BW500 cap};
+    \node[anchor=west,font=\scriptsize,text=hdkmauve] at (-0.25,-2.2) {start rung from the connect's SNR; every poll carries its SNR in dB, so a fresh reading jumps straight to its rung};
+    \draw[hdkgreen,dashed,line width=0.8pt] (3.96,-0.6) -- (3.96,7.3) node[above,font=\scriptsize\color{hdkgreen}] {BW500 cap (floor: MFSK500)};
   \end{tikzpicture}
   \src{Source: datalink\_arq/carousel.c (car\_start\_level), docs/CAROUSEL-SPEC.md \S 15}
 \end{frame}
@@ -334,7 +340,7 @@
     \column{0.55\textwidth}
     \begin{itemize}
       \item An acknowledgement as a \textbf{Welch-Costas pattern}: 16 MFSK symbols, \textbf{0.64 s}
-      \item 5.8$\times$ less airtime than a 3.74 s DATAC16 frame
+      \item 4.8$\times$ less airtime than a 3.08 s DATAC16 frame
       \item Detected every time down to about $-9$ dB on fading and $-22$ dB on AWGN
       \item \textbf{0 false alarms} in 30 trials down to $-26$ dB; 0 in 2 h of noise after the half-subcarrier search
       \item Frequency search over $\pm$78 Hz: an IC-7100 and an sBitx went from 0/5 to 17/17 patterns on air
@@ -379,17 +385,17 @@
   \src{Sim, 100 trials a point, Watterson model, 2026-10-15 (PR \#390); docs/MFSK-PORT.md; docs/RELEASE-1.9.19.md}
 \end{frame}
 
-\begin{frame}{Under review: a 500 Hz MFSK floor for BW500 sessions}
+\begin{frame}{A 500 Hz MFSK floor for BW500 sessions}
   \small
   \begin{columns}[T]
     \column{0.5\textwidth}
-    \begin{block}{MFSK500: the BW500 floor (PR \#390)}
+    \begin{block}{MFSK500: the BW500 floor (1.9.20)}
       \begin{itemize}
         \item The 1 kHz MFSK cannot be decoded behind a 500 Hz filter
         \item 32 tones 15.625 Hz apart, 80 ms symbols, 26~s frames
         \item 90 \%: \hl{$-14.1$~dB} AWGN, $-10.4$~dB moderate fading, behind the filter too
         \item Searches at 2 kHz: idle receive \textbf{cheaper} than the 1 kHz floor
-        \item BW2300 and BW2750 keep the 1 kHz floor; air-protocol version 3
+        \item BW2300 and BW2750 keep the 1 kHz floor
       \end{itemize}
     \end{block}
     \column{0.5\textwidth}
@@ -401,11 +407,11 @@
         \item A burst with a \textbf{gap in its audio} (a playback underrun at the transmitter) is read across the gap
       \end{itemize}
     \end{block}
-    \begin{exampleblock}{On air, two bench stations}
-      \footnotesize Every complete MFSK500 frame was decoded in both directions, including frames hit by underruns. BW500 sessions on the floor were answered by its patterns.
+    \begin{exampleblock}{Calls across bandwidths (1.9.22)}
+      \footnotesize A waiting station decodes \textbf{both} floors, for 1.3--2.3 \% of a Pi 4 core. On air, BW2750 against BW500 with an MFSK-only caller: \hl{0 of 4} connects before, \hl{5 of 5} after
     \end{exampleblock}
   \end{columns}
-  \src{Source: PR \#390 (draft), measurements 2026-10-15/16}
+  \src{Source: docs/RELEASE-1.9.20.md, docs/RELEASE-1.9.22.md; PRs \#406, \#451}
 \end{frame}
 
 % =============================================================================
@@ -472,20 +478,21 @@
     \end{block}
     \column{0.33\textwidth}
     \begin{block}{Connection at low SNR}
-      After two unanswered DATAC16 CALLs, the CALL alternates with MFSK.
+      Fast DATAC16 CALLs first (2--4, from \texttt{RETRIES}), then MFSK.
+      A callee hearing a CALL twice answers on MFSK.
       The ACCEPT names the start rung and carries the callee's nonce
     \end{block}
     \column{0.33\textwidth}
     \begin{block}{Session binding}
       Seed = CRC16(session id, nonce, both calls), mixed into every frame's CRC.
-      CALL and ACCEPT carry the air-protocol version (1.9.18: 1, 1.9.19: 2); a CALL of another version is logged, not answered
+      Since 1.9.20 the connect frames have their own type (CALL2): 1.9.20--1.9.22 interoperate; a 1.9.19 CALL is refused
     \end{block}
   \end{columns}
   \medskip
   \begin{exampleblock}{Listen before talk}
     \small Every keying path waits for a clear channel; the busy detector is opt-in (off by default)
   \end{exampleblock}
-  \src{Source: docs/CAROUSEL-TURNS.md, docs/CAROUSEL-SPEC.md; PRs \#317, \#351}
+  \src{Source: docs/CAROUSEL-TURNS.md, docs/CAROUSEL-SPEC.md, docs/RELEASE-1.9.20.md; PRs \#317, \#351, \#420, \#443}
 \end{frame}
 
 \begin{frame}{Results: simulation, modem bench and on-air tests}
@@ -513,12 +520,40 @@
   \src{Source: docs/CAROUSEL-REPORT.md, docs/CAROUSEL-ARQ.md}
 \end{frame}
 
+\begin{frame}{Release 1.9.20: start high, fall back fast}
+  \begin{columns}[c]
+    \column{0.56\textwidth}
+    \begin{tikzpicture}
+      \begin{axis}[ybar,width=8.0cm,height=5.0cm,bar width=13pt,ymin=0,ymax=75,
+          ylabel={seconds (lower is better)},symbolic x coords={c1,q16,td},xtick=data,
+          xticklabels={{to DATAC1\\{\tiny $-12$ \textrightarrow{} $+10$ dB}},{to QAM16C2\\{\tiny $-12$ \textrightarrow{} $+20$ dB}},{teardown\\{\tiny on air}}},
+          x tick label style={font=\scriptsize,align=center,text width=2.4cm},
+          legend style={at={(0.98,0.98)},anchor=north east,font=\scriptsize,fill=hcream,draw=none},
+          axis background/.style={fill=hcream},tick label style={font=\scriptsize},label style={font=\scriptsize},
+          nodes near coords,every node near coord/.append style={font=\tiny},ymajorgrids,grid style={hcreamdk},enlarge x limits=0.25]
+        \addplot[fill=hmauve,draw=hdkmauve] coordinates {(c1,40) (q16,64) (td,8.6)};
+        \addplot[fill=hgreen,draw=hdkgreen] coordinates {(c1,20) (q16,20) (td,5.9)};
+        \legend{1.9.19,1.9.20}
+      \end{axis}
+    \end{tikzpicture}
+    \column{0.42\textwidth}
+    \small
+    \begin{itemize}
+      \item Every poll carries its \textbf{SNR in dB}: both ends know both directions, and a reading jumps straight to its rung
+      \item A drop below the control mode reaches the floor in \hl{96 s}, not 15 min; 120/120 simulated 50 KB transfers, against 92
+      \item \textbf{High Doppler} (10--30 Hz, no OFDM mode decodes): starts on the floor; ITU-R/CCIR presets \hl{60/84 \textrightarrow{} 80/84}
+      \item Idle sessions with a fifth of the frames lost: 5 of 100 dropped in 30 min, against 82
+    \end{itemize}
+  \end{columns}
+  \src{Simulator, 120 seeds a cell; Go harness through the Watterson presets; on air, sBitx bench. Source: docs/RELEASE-1.9.20.md; PRs \#406, \#413}
+\end{frame}
+
 % =============================================================================
 \section{Formal methods: TLA+ and TLAPS}
 
 \begin{frame}{Formal models of the protocol layers}
-  \centering\small
-  \begin{tabular}{@{}p{3.1cm} p{5.6cm} p{4.6cm}@{}}
+  \centering\footnotesize
+  \begin{tabular}{@{}p{3.1cm} p{5.8cm} p{4.4cm}@{}}
     \toprule
     \textbf{Model} & \textbf{What it proves} & \textbf{Checked} \\
     \midrule
@@ -527,9 +562,11 @@
     \textbf{CarouselProofs} & Spec $\Rightarrow$ $\Box$Safety for any number of blocks & \hl{TLAPS: 823 obligations} (Z3, Zenon) \\
     \textbf{CarouselTurns} (timed) & NoOverlap: the two stations never key together; MNotShutOut & 18.5 M states; MFSK config 27.1 M \\
     \textbf{RungAgreement} & Agree, WastedF, FallbacksAgree, Delivered: both ends agree on the rung & 3234 states; 17168 at 4 rungs \\
+    \textbf{ConnectHandshake} & NoDoom, NoHalfConnect, Settles: no connect the other end does not stand by & 9473 states; 34177 big \\
+    \textbf{SessionTeardown} & NoKill, NoLostWord, NoCut, Mutual: no end leaves on another session's frame or cuts the last word & 2.57 M states lossy; 15.6 M with foreign patterns \\
     \bottomrule
   \end{tabular}
-  \src{Source: specs/carousel, specs/turns, specs/rungs (README files)}
+  \src{Source: specs/carousel, specs/turns, specs/rungs, specs/connect, specs/teardown (README files)}
 \end{frame}
 
 \begin{frame}{Validation of the models}
@@ -538,7 +575,7 @@
     \begin{block}{Mutation testing}
       \begin{itemize}
         \item Turns: five mutants (no grid, late, long, blind, reuse) each violate NoOverlap
-        \item Rungs: five more (no request, no bind, deaf, unnamed, previous rung)
+        \item Rungs: five more (no request, no bind, deaf, unnamed, previous rung), and the code before \#448
         \item Blocks: the no-check config violates Integrity, as it must
         \item Before the integrity work, the model found \textbf{two real bugs}, 9 steps each
       \end{itemize}
@@ -547,7 +584,7 @@
     \begin{block}{Conformance of the implementation}
       \begin{itemize}
         \item \texttt{car\_explore} runs the \textbf{real} \texttt{carousel.c} under every set of up to 3 losses or sensing failures, plus spurious BREAKs and corrupt frames
-        \item \textbf{19\,765 runs in 1.5 s} in CI; 9.09 M in the long sweep
+        \item \textbf{58\,179 runs in 10 s} in CI; 9.09 M in the long sweep
         \item Overrun and slot oracles in the simulator check the timed model's assumptions
       \end{itemize}
     \end{block}
@@ -568,7 +605,7 @@
       \fill[hgreen!70,draw=hdkgreen] (0.9,1.1) -- (5.1,1.1) -- (4.3,2.2) -- (1.7,2.2) -- cycle;
       \fill[hmauve!70,draw=hdkmauve] (1.7,2.2) -- (4.3,2.2) -- (3.6,3.3) -- (2.4,3.3) -- cycle;
       \fill[horange!80,draw=horange] (2.4,3.3) -- (3.6,3.3) -- (3,4.3) -- cycle;
-      \node[font=\scriptsize\bfseries] at (3,0.55) {unit: 40 binaries, $\sim$495 tests};
+      \node[font=\scriptsize\bfseries] at (3,0.55) {unit: 46 suites, $\sim$570 tests};
       \node[font=\scriptsize\bfseries] at (3,1.65) {simulator + explorer};
       \node[font=\scriptsize\bfseries,align=center] at (3,2.75) {Go bench};
       \node[font=\scriptsize\bfseries] at (3,3.75) {air};
@@ -589,10 +626,10 @@
   \begin{columns}[T]
     \column{0.5\textwidth}
     \begin{block}{Builds}
-      Linux amd64, arm64, armhf; Windows x64 (cross); macOS arm64; the Fyne GUI on Linux and Windows
+      Linux amd64, arm64, armhf; Windows x64 (cross); macOS arm64; Android; the Fyne GUI on Linux (amd64, arm64) and Windows
     \end{block}
     \begin{block}{Tests}
-      Unit tests on amd64 and \textbf{i386}; the Go integration bench
+      Unit tests on amd64 and \textbf{i386}; the Go integration bench, also on a fresh random channel seed each run, every seed logged
     \end{block}
     \column{0.5\textwidth}
     \begin{block}{Sanitizers}
@@ -632,7 +669,7 @@
       \textbf{26 of 26 checks passed}; a second run reproduced the results byte for byte.
     \end{exampleblock}
   \end{columns}
-  \src{Source: PR \#379 (Joseph Freivald, approved): docs/CHANNEL-MODEL.md, tests/common/test\_watterson.c}
+  \src{Source: PR \#379 (Joseph Freivald, merged 19 Oct): docs/CHANNEL-MODEL.md, tests/common/test\_watterson.c}
 \end{frame}
 
 \begin{frame}{Independent measurement tools}
@@ -666,18 +703,18 @@
   \begin{columns}[T]
     \column{0.33\textwidth}
     \begin{block}{\faEnvelope\ Mail and files}
-      UUCP is the HERMES default (\texttt{-Y} probe race fixed upstream); NNCP works too; JNOS 2.0 BBS-to-BBS and telnet with no IP on air
+      UUCP is the HERMES default; NNCP works too; JNOS 2.0 BBS-to-BBS; Winlink through Pat and scanning BPQ32 gateways; vARIM (\texttt{max\_keydown\_s})
     \end{block}
     \column{0.33\textwidth}
     \begin{block}{\faProjectDiagram\ Networks}
-      Reticulum over KISS on the broadcast port; broadcast files by a RaptorQ fountain, wire-compatible with hermes-broadcast
+      Reticulum over KISS on the broadcast port; broadcast files by a RaptorQ fountain, wire-compatible with hermes-broadcast; HERMES station beacons (in review, \#480)
     \end{block}
     \column{0.33\textwidth}
     \begin{block}{\faLock\ Encryption (in review)}
-      Optional Noise\_KK sessions (X25519, ChaCha20-Poly1305), XChaCha20 broadcast files; off by default (PR \#306)
+      Optional Noise\_KK sessions (X25519, ChaCha20-Poly1305), XChaCha20 broadcast files; off by default (PR \#410)
     \end{block}
   \end{columns}
-  \src{Source: docs/JNOS.md, docs/RETICULUM.md, docs/BROADCAST-FILE.md; PR \#306}
+  \src{Source: docs/JNOS.md, docs/RETICULUM.md, docs/BROADCAST-FILE.md, docs/TNC.md; PRs \#410, \#480}
 \end{frame}
 
 \begin{frame}{Interfaces and platforms}
@@ -688,19 +725,19 @@
       \item \textbf{Our own WebSocket server}: 28\,820 vendored GPL-2.0-only lines replaced by about 1500 of ours (RFC 6455, TLS through OpenSSL)
       \item Status: modes, the peer's view of our signal, frequency, \textbf{carrier offset}
       \item \textbf{TUNE}: a 1 kHz tuning carrier, hard 60 s unkey deadline
-      \item Audio: ALSA, Pulse, CoreAudio, AAudio, WASAPI, DirectSound, \textbf{RTP} to hermes-radio-daemon
-      \item PTT: Hamlib, serial RTS, CM108 GPIO, HERMES shared memory
+      \item Audio: ALSA, Pulse, CoreAudio, AAudio, WASAPI, DirectSound, \textbf{RTP} to hermes-radio-daemon, \textbf{Hermes-Lite 2}
+      \item PTT: Hamlib (also driverless USB to CP210x radios), serial RTS, CM108 GPIO, HERMES shared memory
     \end{itemize}
     \column{0.5\textwidth}
     \begin{itemize}
       \item \textbf{Fyne GUI} with the engine linked in
       \item \textbf{Windows}: Authenticode-signed (Certum)
-      \item \textbf{macOS}: universal x86\_64 + arm64, static Hamlib, notarised
-      \item \textbf{iOS and Android}: coming soon, the modem and its GUI on the phone
+      \item \textbf{macOS}: universal x86\_64 + arm64, static Hamlib, notarised; a Mac App Store package
+      \item \textbf{iOS}: on the App Store; \textbf{Android} (.apk) and \textbf{Sailfish OS}: technology previews
       \item \textbf{Raspberry Pi} 4 and 5, the HERMES station computers
     \end{itemize}
   \end{columns}
-  \src{Source: README.md, docs/WEBSOCKET\_STATUS.md, docs/WINDOWS-SIGNING.md, docs/MACOS-UNIVERSAL.md; PR \#383}
+  \src{Source: README.md, docs/WEBSOCKET\_STATUS.md, docs/HERMES-LITE-2.md, docs/RELEASE-1.9.20.md, docs/RELEASE-1.9.21.md; PRs \#383, \#418, \#421, \#428}
 \end{frame}
 
 % =============================================================================
@@ -708,13 +745,17 @@
 
 \begin{frame}{Future work}
   \begin{columns}[T]
-    \column{0.47\textwidth}
-    \begin{block}{\faMobile*\ Mercury on iOS and Android}
-      The modem and its GUI on the phone: coming soon
-    \end{block}
-    \column{0.47\textwidth}
+    \column{0.31\textwidth}
     \begin{block}{\faLock\ Optional encryption}
-      Encrypted sessions on the carousel plane, off by default (Noise\_KK, PR \#306)
+      Encrypted sessions on the carousel plane, off by default (Noise\_KK, PR \#410)
+    \end{block}
+    \column{0.31\textwidth}
+    \begin{block}{\faMapMarker*\ Station beacons}
+      HERMES position and status beacons on DATAC16, heard by every listening station (PR \#480, received 6 of 6 on air)
+    \end{block}
+    \column{0.31\textwidth}
+    \begin{block}{\faMobile*\ Mobile apps}
+      Android and Sailfish OS out of preview; a background service on Android
     \end{block}
   \end{columns}
 \end{frame}
