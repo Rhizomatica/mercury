@@ -426,7 +426,8 @@ void test_car_callee_last_word_then_hangup(void)
  * still to send, and then the channel dies (on air, N3JXB -> KG9NI-1, 1.9.22:
  * the M_END at 14:36:03, nothing decoded after it).  The caller used to poll
  * for that word until the 240 s lost-peer watchdog; it ends the session once
- * the callee has been silent for the drain budget, at most 120 s. */
+ * the callee has been silent as long as the callee's own drain, at most
+ * 120 s. */
 void test_car_callee_hangup_then_silence_ends_early(void)
 {
     sim_t *s = make_sim(1, 0.0);
@@ -471,9 +472,11 @@ void test_car_callee_hangup_then_silence_ends_early(void)
     char msg[96];
     snprintf(msg, sizeof(msg), "the caller ended %llu ms after the callee went quiet",
              (unsigned long long)gone_ms);
-    /* The wait (the drain budget, at most 120 s), and a keydown of slack:
-     * the watchdog's 240 s is well past it. */
-    uint64_t wait = car_drain_budget_ms(a->car);
+    /* The wait (the callee's own drain: the drain timeout or the budget,
+     * whichever is longer, at most 120 s), and a keydown of slack: the
+     * watchdog's 240 s is well past it. */
+    uint64_t wait = (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000;
+    if (car_drain_budget_ms(a->car) > wait) wait = car_drain_budget_ms(a->car);
     if (wait > 120000) wait = 120000;
     TEST_ASSERT_TRUE_MESSAGE(gone_ms <= wait + 20000, msg);
     sim_destroy(s);

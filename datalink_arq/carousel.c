@@ -2609,7 +2609,7 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
         apply_need(c, m);
         if (m->ending) {
             car_trace(c, "the peer's application has hung up");
-            c->peer_ending = true;
+            c->end_req = CAR_END_WISH;        /* on M: S has hung up (car_peer_ending) */
         }
         c->peer_has_data = m->has_data;
         /* ...and what it holds, as in a status: an ack of my last round that
@@ -3277,7 +3277,7 @@ uint64_t car_drain_budget_ms(const car_t *c)
 }
 
 bool car_is_master(const car_t *c) { return c && c->master; }
-bool car_peer_ending(const car_t *c) { return c && c->master && c->peer_ending; }
+bool car_peer_ending(const car_t *c) { return c && c->master && c->end_req == CAR_END_WISH; }
 
 uint64_t car_free_at(const car_t *c, uint64_t now, uint64_t len)
 {

@@ -1156,6 +1156,81 @@ void test_quiet_peer_disconnect_does_not_wait_for_slots(void)
     TEST_ASSERT_TRUE(time_now_ms() < now + 5000);
 }
 
+/* What the callee gives its last word when it hangs up: the drain timeout
+ * or the carousel's budget, whichever is longer (fsm_connected_carousel). */
+static uint64_t callee_drain_ms(void)
+{
+    uint64_t w = (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000;
+    if (car_drain_budget_ms(sess.car) > w) w = car_drain_budget_ms(sess.car);
+    return w;
+}
+
+/* The callee said its application hung up (M_END) and went silent: the
+ * caller ends the session once the callee's own drain would have, at most
+ * 120 s, with one DISCONNECT, not at the 240 s lost-peer watchdog (N3JXB ->
+ * KG9NI-1). */
+void test_silent_peer_after_hangup_is_ended_early(void)
+{
+    goto_connected();
+    sess.car->end_req = CAR_END_WISH;      /* as a poll with M_END sets it on M */
+    TEST_ASSERT_TRUE(car_peer_ending(sess.car));
+    uint64_t wait = callee_drain_ms();
+    if (wait > 120000) wait = 120000;
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + wait - 1000);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms <= sess.car_last_rx_ms + wait,
+                             "the timer is armed for the end of the wait");
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + wait);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT(0, sess.tx_retries_left);
+}
+
+/* The callee drains its last word for the drain timeout or the rung's
+ * budget, whichever is longer: with the timeout configured past the budget
+ * (disconnect_drain_timeout_s), the caller waits the timeout too, so a fade
+ * shorter than it does not drop the word the callee is still delivering. */
+void test_silent_peer_after_hangup_waits_the_callees_drain(void)
+{
+    int saved = atomic_load(&arq_disconnect_drain_timeout_s);
+    atomic_store(&arq_disconnect_drain_timeout_s, 110);
+    goto_connected();
+    sess.car->end_req = CAR_END_WISH;
+    sess.car->tx_level = sess.car->poll_level = 1;      /* a rung whose budget is under 110 s */
+    uint64_t budget = car_drain_budget_ms(sess.car);
+    TEST_ASSERT_TRUE_MESSAGE(budget < 110000, "the rung's budget is under the drain timeout");
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + budget + 1000);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    bool held = sess.conn_state == ARQ_CONN_CONNECTED;
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + 110000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    arq_conn_state_t after = sess.conn_state;
+    atomic_store(&arq_disconnect_drain_timeout_s, saved);
+
+    TEST_ASSERT_TRUE_MESSAGE(held, "past the budget, inside the callee's drain");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, after);
+}
+
+/* The same silence from a peer that has not hung up is a fade, not an end:
+ * only the lost-peer watchdog ends it. */
+void test_silent_peer_without_hangup_waits_for_the_watchdog(void)
+{
+    goto_connected();
+    mock_set_uptime_ms(sess.car_last_rx_ms + 130000);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
 /* A deferred APP_DISCONNECT that never drains must still tear down once the
  * drain deadline elapses — guarantees the rig is not keyed indefinitely
  * after the host disconnects (the "Mercury kept hanging on" report). */
@@ -1779,6 +1854,9 @@ int main(void)
     RUN_TEST(test_drain_ends_when_the_peer_falls_silent);
     RUN_TEST(test_disconnect_during_a_slow_exchange_still_drains);
     RUN_TEST(test_quiet_peer_disconnect_does_not_wait_for_slots);
+    RUN_TEST(test_silent_peer_after_hangup_is_ended_early);
+    RUN_TEST(test_silent_peer_after_hangup_waits_the_callees_drain);
+    RUN_TEST(test_silent_peer_without_hangup_waits_for_the_watchdog);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
     RUN_TEST(test_rx_disconnect_with_backlog_ends_at_once);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);

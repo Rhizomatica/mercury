@@ -580,16 +580,25 @@ static bool car_peer_quiet(const arq_session_t *sess, uint64_t now)
 }
 
 /* Silence after which a callee that has said its application hung up (M_END)
- * is gone.  Its last bytes, still to come, get the drain budget: three
- * exchanges at the rung, enough for a lost round to be asked about and
- * answered (car_drain_budget_ms) -- at most ARQ_CAR_PEER_QUIET_MS, past which
- * a DISCONNECT is not worth repeating either.  It used to be the lost-peer
- * watchdog, 240 s, nothing else to deliver on a session both applications
- * had left (on air, N3JXB -> KG9NI-1, 1.9.22: the M_END at 14:36:03, nine
- * polls unanswered, dropped at 14:40:03). */
+ * is gone.  Its last bytes, still to come, get what the callee itself gives
+ * them: a callee hanging up with data held drains it for the configured drain
+ * timeout or the carousel's budget for its rung, whichever is longer (the
+ * APP_DISCONNECT case in fsm_connected_carousel).  Waiting less, the caller
+ * would end while the callee still delivers, and a fade shorter than the
+ * callee's drain would drop a frame that was coming.  The budget (78-131 s by
+ * rung today) is past the 45 s default, so the timeout decides only when it
+ * is configured longer (disconnect_drain_timeout_s), or if the budget
+ * shrinks.  Counted from the last frame heard, which comes after the callee's
+ * hang-up, so the caller never ends first; at most ARQ_CAR_PEER_QUIET_MS,
+ * past which a DISCONNECT is not worth repeating either.  It used to be the
+ * lost-peer watchdog, 240 s, on a session both applications had left (on
+ * air, N3JXB -> KG9NI-1, 1.9.22: the M_END at 14:36:03, nine polls
+ * unanswered, dropped at 14:40:03). */
 static uint64_t car_peer_end_wait_ms(const arq_session_t *sess)
 {
-    uint64_t w = car_drain_budget_ms(sess->car);
+    uint64_t w = (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000ULL;
+    uint64_t car_budget = car_drain_budget_ms(sess->car);
+    if (car_budget > w) w = car_budget;
     return w < ARQ_CAR_PEER_QUIET_MS ? w : ARQ_CAR_PEER_QUIET_MS;
 }
 

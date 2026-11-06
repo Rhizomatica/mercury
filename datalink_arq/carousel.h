@@ -213,9 +213,10 @@ typedef struct {
     } anc;
     uint8_t  end_req;               /* S: CAR_END_WISH, my application has hung up and my
                                      * polls say so (M_END); CAR_END_SLOT, my next slot
-                                     * carries the session's DISCONNECT */
-    bool     peer_ending;           /* M: a poll of S's said its application has hung
-                                     * up (M_END) -- what S still holds or not */
+                                     * carries the session's DISCONNECT.
+                                     * M: CAR_END_WISH, a poll of S's said S's application
+                                     * has hung up (M_END), whatever S still holds
+                                     * (car_peer_ending); never CAR_END_SLOT */
     int      req_lv, req_n;         /* a REQ: M's round I may not have heard */
     uint8_t  req_mk;
     uint8_t  rx_mk;                 /* the M round whose frames I am counting */
