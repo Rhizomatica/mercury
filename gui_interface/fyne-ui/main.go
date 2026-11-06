@@ -1257,7 +1257,8 @@ func main() {
 				appendLog(fmt.Sprintf("Failed to persist callsign: %v\n", err))
 			}
 		}
-		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort, history, tcpHost, persistCallsign)
+		_, localEngine := link.(*engineLink)
+		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort, history, tcpHost, localEngine && !useRemote, persistCallsign)
 	})
 
 	topBar := container.NewHBox(

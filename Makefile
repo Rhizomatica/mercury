@@ -294,10 +294,14 @@ else
 HOST_AUDIO_OBJS = host/audio_host.o
 HOST_RADIO_OBJS = host/radio_host.o
 HOST_UI_OBJS = host/ui_host.o
-HOST_API_OBJS = host/api_host.o
 HOST_INI_OBJS =
 HOST_SHM_OBJS =
 endif
+# The host API (host/mercury_host.h: chat, broadcast, beacon) needs only the
+# core, so both builds carry it: the daemon for hermes-radio-daemon, the core
+# archive for the UI's engine.
+HOST_API_OBJS = host/api_host.o
+HOST_API_OBJS_W64 = host/api_host.w64.o
 
 MERCURY_LINK_INPUTS = \
 	main.o common/cfg_utils.o $(HOST_INI_OBJS) \
@@ -399,7 +403,7 @@ RAPTORQ_CFLAGS = -Idatalink_broadcast/raptorq/include -Idatalink_broadcast/rapto
 RAPTORQ_OBJS     = $(patsubst %.c,%.o,$(RAPTORQ_SRCS))
 RAPTORQ_OBJS_W64 = $(patsubst %.c,%.w64.o,$(RAPTORQ_SRCS))
 BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o datalink_broadcast/bcast_carousel.o datalink_broadcast/bcast_rx_host.o $(RAPTORQ_OBJS)
-BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o datalink_broadcast/bcast_carousel.w64.o $(RAPTORQ_OBJS_W64)
+BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o datalink_broadcast/bcast_carousel.w64.o datalink_broadcast/bcast_rx_host.w64.o $(RAPTORQ_OBJS_W64)
 
 $(RAPTORQ_OBJS): %.o: %.c
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
@@ -420,6 +424,9 @@ datalink_broadcast/bcast_rx_host.o: datalink_broadcast/bcast_rx_host.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 datalink_broadcast/bcast_carousel.w64.o: datalink_broadcast/bcast_carousel.c
+	$(MINGW_CC) $(CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_rx_host.w64.o: datalink_broadcast/bcast_rx_host.c
 	$(MINGW_CC) $(CFLAGS) -c $< -o $@
 
 # Modem objects that no sub-make builds.  The top-level implicit rule compiles
@@ -467,13 +474,13 @@ endif
 #     ar: radio_io/hidapi-macos/hid.o: No such file or directory
 # $(BINARY) already declares it via MERCURY_LINK_INPUTS, which is why the CLI
 # build was unaffected and only the .app/.dmg packaging path broke.
-libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS) $(MODEM_TOP_OBJS)
+libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS) $(MODEM_TOP_OBJS) $(HOST_API_OBJS)
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	# Remove a stale archive first: macOS ar (cctools) refuses to update an
 	# existing *fat* .a in place, so a leftover universal build would wedge the
 	# next native build ("is a fat file"). Fresh create is identical on Linux.
 	rm -f $@
-	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(BCAST_FILE_OBJS) $(HOST_API_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
 
 # The daemon build: everything but the host-replaceable modules, plus host/,
 # for a program that links Mercury in (hermes-radio-daemon).  Link it with
@@ -484,6 +491,9 @@ HOST_CFLAGS = $(CFLAGS) -Ihost $(INIPARSER_CFLAGS)
 
 host/%.o: host/%.c host/mercury_host.h
 	$(CC) $(HOST_CFLAGS) -c $< -o $@
+
+host/api_host.w64.o: host/api_host.c host/mercury_host.h
+	$(MINGW_CC) $(HOST_CFLAGS) -c $< -o $@
 
 libmercury_host.a: internal_deps $(BCAST_FILE_OBJS) $(MODEM_TOP_OBJS) $(HOST_AUDIO_OBJS) $(HOST_RADIO_OBJS) $(HOST_UI_OBJS) $(HOST_API_OBJS)
 ifneq ($(MERCURY_HOST),daemon)
@@ -510,9 +520,9 @@ libmercury_core_w64.a: $(HIDAPI_W64_OBJ)
 	# The bridge calls bcast_file_*, so the RaptorQ objects belong in this
 	# archive too -- built with the cross compiler into their own .w64.o paths,
 	# so a native build afterwards is not left linking Windows objects.
-	$(MAKE) $(BCAST_FILE_OBJS_W64) OS=Windows_NT HAVE_HERMES_SHM=0
+	$(MAKE) $(BCAST_FILE_OBJS_W64) $(HOST_API_OBJS_W64) OS=Windows_NT HAVE_HERMES_SHM=0
 	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
-	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(HIDAPI_W64_OBJ) $(BCAST_FILE_OBJS_W64) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
+	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(HIDAPI_W64_OBJ) $(BCAST_FILE_OBJS_W64) $(HOST_API_OBJS_W64) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 
 # HIDAPI_LDFLAGS is passed through CGO_LDFLAGS rather than hardcoded in
 # mercury_link_linux.go's #cgo directive, because hidapi is OPTIONAL: only this

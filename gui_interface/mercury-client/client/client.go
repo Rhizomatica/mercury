@@ -22,6 +22,9 @@ type Config struct {
 	ARQPort        int
 	BroadcastPort  int
 	BandwidthHz    int
+	// NoBroadcastPort leaves the broadcast port alone: the caller carries
+	// broadcast another way (the UI, through the engine in its own process).
+	NoBroadcastPort bool
 }
 
 // ChatMessage is a single chat line emitted for display.
@@ -87,6 +90,9 @@ func (c *Client) Connect() error {
 	arqControlAddr := fmt.Sprintf("%s:%d", c.cfg.IP, c.cfg.ARQPort)
 	arqDataAddr := fmt.Sprintf("%s:%d", c.cfg.IP, c.cfg.ARQPort+1)
 	broadcastAddr := fmt.Sprintf("%s:%d", c.cfg.IP, c.cfg.BroadcastPort)
+	if c.cfg.NoBroadcastPort {
+		broadcastAddr = ""
+	}
 
 	mc := modem.NewModemClient(arqControlAddr, arqDataAddr, broadcastAddr)
 	if err := mc.Connect(); err != nil {
