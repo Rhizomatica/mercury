@@ -578,20 +578,17 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
          * before anything for the new call can be queued, so no stale byte
          * reaches a different station.
          *
-         * Only in DISCONNECTING.  A redial can also arrive while the session is
-         * still CONNECTED with its DISCONNECT deferred; there the old session
-         * is still delivering its last bytes (that is why the disconnect was
-         * deferred), and flushing would cut them off.  In that case nothing
-         * flushes at all: normally the drain empties the queue before teardown,
-         * but if the drain deadline forces the teardown first, bytes it did not
-         * send would go out on the new call.  Accepted as a narrow edge: it
-         * needs a DISCONNECT with data still unsent, a redial before the ACK,
-         * and a drain that times out.
+         * Also while the session is still CONNECTED with its DISCONNECT held to
+         * drain: the redial ends that drain (arq_fsm.c, fsm_connected), so the
+         * old session's unsent bytes are not delivered either way, and left
+         * here they would go out on the new call.
          *
          * Locks are taken one at a time (never nested), keeping the leaf
          * ordering described at g_conn_lock. */
         pthread_mutex_lock(&g_sess_lock);
-        bool tearing_down = (g_sess.conn_state == ARQ_CONN_DISCONNECTING);
+        bool tearing_down = (g_sess.conn_state == ARQ_CONN_DISCONNECTING) ||
+                            (g_sess.conn_state == ARQ_CONN_CONNECTED &&
+                             g_sess.teardown == ARQ_TD_DRAINING);
         pthread_mutex_unlock(&g_sess_lock);
         if (tearing_down)
         {

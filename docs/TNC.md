@@ -221,8 +221,19 @@ DISCONNECT\r
 
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
-Mercury sends DISCONNECT frames to the peer.  Once complete, the
-asynchronous response `DISCONNECTED\r` is sent on the control port.
+`DISCONNECTED\r` is sent on the control port at once (the VARA
+convention); the air side ends after it.  Mercury first delivers what is
+still queued or unconfirmed, for up to three exchanges at the session's
+rung (minutes at the MFSK floor), then sends DISCONNECT frames to the peer.
+It does not wait to deliver when nothing has been heard from the peer
+for 120 s, and a delivery under way stops once that silence is reached.
+
+While that delivery is under way:
+
+- a second `DISCONNECT` ends the session at once, as `ABORT` does;
+- a `CONNECT` ends it too: the old session's unsent bytes are dropped,
+  its DISCONNECT goes out, and the new call is placed after it.  A
+  `DISCONNECT` before that call is placed cancels the call.
 
 ---
 

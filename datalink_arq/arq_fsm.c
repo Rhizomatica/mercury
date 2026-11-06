@@ -854,6 +854,12 @@ static bool car_disconnect_must_wait(arq_session_t *sess, const arq_event_t *ev,
 {
     if (!sess->car_session || !car_is_master(sess->car))
         return false;
+    /* A peer silent ARQ_CAR_PEER_QUIET_MS has no slots in use to keep clear,
+     * and its one DISCONNECT has no retry to lose (car_begin_disconnect).
+     * Waiting for them held a DISCONNECT 17 s after the host's at the floor,
+     * for a peer silent 128 s (on air, N3JXB -> VE4KLM, 1.9.22). */
+    if (car_peer_quiet(sess, now))
+        return false;
     const arq_mode_timing_t *tm = arq_protocol_mode_timing(session_ctl_mode(sess));
     uint64_t len = 110 + (tm ? (uint64_t)(tm->frame_duration_s * 1000.0f) : 4400) + 200;
     uint64_t at = car_free_at(sess->car, now, len);
@@ -1638,7 +1644,15 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         car_on_time(sess->car, now);
         break;
     case ARQ_EV_APP_DISCONNECT:
-        sess->disc_req_ms = now;
+    {
+        /* A DISCONNECT while one is already held to drain: the operator is
+         * still watching the rig key for a session they have hung up.  End it
+         * now, as ABORT does.  Re-arming the drain here pushed the end out by
+         * another full budget each time (on air, N3JXB at the MFSK floor:
+         * three DISCONNECTs over 69 s, the last 148 s deadline still ahead). */
+        bool repeat = sess->teardown == ARQ_TD_DRAINING;
+        if (!repeat)
+            sess->disc_req_ms = now;
         if (call_queued(sess))
         {
             HLOGI(LOG_COMP, "Deferred CONNECT to %s cancelled", sess->pending_connect_call);
@@ -1650,6 +1664,9 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
          * DISCONNECT off a keydown on the air (disconnect_must_wait). */
         if (ev->abort)
             HLOGI(LOG_COMP, "ABORT: dropping what the carousel has not delivered");
+        else if (repeat)
+            HLOGI(LOG_COMP, "DISCONNECT again while draining: ending now, %zu bytes undelivered",
+                  car_tx_inflight(sess->car) + (size_t)session_tx_backlog(sess));
         else if (car_peer_quiet(sess, now) && !car_drained(sess))
             HLOGI(LOG_COMP, "DISCONNECT: the peer is silent, not waiting to deliver");
         /* A callee that owes the caller an ack (its application hung up on
@@ -1677,9 +1694,11 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             car_wish_end(sess->car);      /* the callee's polls say so: M_END */
             break;
         }
-        HLOGI(LOG_COMP, "DISCONNECT: nothing left to deliver, ending now");
+        if (!ev->abort && !repeat)
+            HLOGI(LOG_COMP, "DISCONNECT: nothing left to deliver, ending now");
         car_begin_disconnect(sess, now);
         return true;
+    }
     case ARQ_EV_RX_ACCEPT:
         return true;                  /* not part of the carousel's session */
     default:
@@ -1714,6 +1733,20 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         HLOGW(LOG_COMP,
               "Deferred DISCONNECT drain timeout (%ds) — forcing teardown",
               ARQ_DISCONNECT_DRAIN_TIMEOUT_S);
+        car_begin_disconnect(sess, time_now_ms());
+        return;
+    }
+    /* ...nor while the peer is silent: past ARQ_CAR_PEER_QUIET_MS nothing
+     * held is going to be delivered, and the rest of the budget only keeps
+     * the rig keying for a session the host has hung up (on air, N3JXB ->
+     * VE4KLM, 1.9.22: nothing heard after the ACCEPT, the drain up to 148 s
+     * at the floor).  car_begin_disconnect sends the one DISCONNECT a quiet
+     * peer gets.  Not on a frame of the peer's: it is not silent. */
+    if (sess->teardown == ARQ_TD_DRAINING && car_peer_quiet(sess, time_now_ms()) &&
+        ev->id != ARQ_EV_RX_CAROUSEL && ev->id != ARQ_EV_RX_PATTERN)
+    {
+        HLOGI(LOG_COMP, "Deferred DISCONNECT: nothing from the peer in %llu s, not draining on",
+              (unsigned long long)((time_now_ms() - sess->car_last_rx_ms) / 1000));
         car_begin_disconnect(sess, time_now_ms());
         return;
     }
@@ -1770,6 +1803,18 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
             snprintf(sess->pending_connect_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
             HLOGI(LOG_COMP, "CONNECT to %s deferred until the teardown completes",
                   sess->pending_connect_call);
+            /* The host was told DISCONNECTED when it hung up (arq.c, the VARA
+             * convention), so to it the radio is free and this call is the
+             * only one.  Draining on meant the old session kept keying while
+             * the new call waited unseen, for up to the whole drain budget
+             * (on air, N3JXB at the MFSK floor: "it continued to send in
+             * MFSK and did not understand that there was a new connection
+             * being attempted").  So the redial ends the drain: the old
+             * session's DISCONNECT goes now and the call follows it.  arq.c
+             * has flushed the old session's TX queue already. */
+            HLOGI(LOG_COMP, "Ending the old session's drain for the new call (%zu bytes undelivered)",
+                  car_tx_inflight(sess->car) + (size_t)session_tx_backlog(sess));
+            car_begin_disconnect(sess, time_now_ms());
         }
         else
         {
@@ -1929,6 +1974,8 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
             d = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
         if (sess->teardown == ARQ_TD_DRAINING && sess->teardown_deadline_ms < d)
             d = sess->teardown_deadline_ms;
+        if (sess->teardown == ARQ_TD_DRAINING && sess->car_last_rx_ms + ARQ_CAR_PEER_QUIET_MS < d)
+            d = sess->car_last_rx_ms + ARQ_CAR_PEER_QUIET_MS;
         sess->deadline_ms    = d;
         sess->deadline_event = ARQ_EV_TIMER_CAROUSEL;
     }
