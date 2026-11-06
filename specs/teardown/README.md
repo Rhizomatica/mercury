@@ -26,7 +26,9 @@ What it models:
   callee whose DISCONNECT is out, waiting only for the answer, takes a CALL
   for it from any callsign: a station calls with another MYCALL per
   application (`CALLS`).
-- Silence ends a connected session.
+- Silence ends a connected session.  A caller that has heard the callee's
+  M_END and then hears nothing more, as long as the callee's own drain
+  would last, ends it sooner, with one DISCONNECT.
 - The caller may call again once it has ended (a deferred CONNECT), up to
   `NS` sessions.  Session ids come from `SIDS`, so consecutive sessions may
   share one, as `(time & 0x7F) | 1` allows.
@@ -63,7 +65,11 @@ Properties:
   never drops a CALL for it.
 - `NoUnasked`: the caller ends a session on an M_END only of that session.
 - `NoLostWord`: the caller never ends on an M_END while the callee holds a
-  last word the caller has not got.
+  last word the caller has not got.  A caller ending on the callee's
+  silence after an M_END is exempt: that word is lost to the channel, as it
+  was at the lost-peer watchdog, and the ghost `wordgone` records it.
+- `NoCut`: the caller ends a session on silence only once the callee's
+  application has hung up in it.
 - `NoInherited`: the callee holds a DISCONNECT back only for the session
   whose application hung up.  No teardown step outlives its session.
 - `Confirmed`: on a lossless channel the caller never leaves a session
@@ -131,22 +137,37 @@ drain also ends once the peer has been silent `ARQ_CAR_PEER_QUIET_MS`
 `asked` and `forced`, and property `Released`.  `Mut_rearm.cfg` and
 `Mut_redialwait.cfg` have the old rules.
 
+Silence after an M_END (2026-11-05): the callee's M_END says its
+application has hung up, but the caller acts on it only holding everything
+of the callee's.  On air (N3JXB -> KG9NI-1, 1.9.22) the M_END came with one
+small frame of the callee's still to send, and then nothing more was
+decoded: the caller polled for it until the 240 s lost-peer watchdog, which
+dropped the session without a DISCONNECT.  Now the caller remembers the
+M_END (`car_peer_ending`: `end_req` on the caller) and, once the callee has
+been silent as long as the callee's own drain would last (the drain timeout
+or the rung's budget, whichever is longer, at most 120 s), ends the session
+with one DISCONNECT.  In the model: `mend` (set by any M_END of its session
+the caller hears), `MEndSilent` (a timer), the ghosts `cut` and `wordgone`,
+and property `NoCut`.  `Mut_endsilence.cfg` ends on silence without an
+M_END.
+
 Results:
 
 - `SessionTeardown.cfg`: the code's rules, lossless, 2 sessions, 2 caller
-  callsigns.  No error, 41 421 distinct states (21 317 before the
-  caller's drain, 10 645 before the callee's owed ack, 4 957 before the
+  callsigns.  No error, 56 041 distinct states (41 421 before the
+  silence after an M_END, 21 317 before the caller's drain, 10 645 before the callee's owed ack, 4 957 before the
   last word, 2 069 before M_END).
 - `SessionTeardown_lossy.cfg`: the same with any frame lost.  No error,
-  1 373 461 distinct states (599 881 before the caller's drain, 264 149
+  2 568 389 distinct states (1 373 461 before the silence after an M_END,
+  599 881 before the caller's drain, 264 149
   before the owed ack, 124 141 before the last word, 52 041 before M_END).  `Clean` does not apply
   here.
 - `Mut_ignorepattern.cfg`: the end waiting for the answer to its
   DISCONNECT does not take the pattern.  It violates `Clean`: it retries
   and times out.
 - `ForeignPattern.cfg`: the code's rules, lossy, with another station's
-  patterns heard (`FPAT`).  No error, 8 403 333 distinct states (3 621 957
-  before the caller's drain, 1 655 453 before the owed ack): keyed by the
+  patterns heard (`FPAT`).  No error, 15 602 153 distinct states (8 403 333
+  before the silence after an M_END, 3 621 957 before the caller's drain, 1 655 453 before the owed ack): keyed by the
   session, none is taken.  Safety only: unbounded foreign traffic keeps the
   queue full for ever, and `Mutual` fails on that, not on a rule.
 - `Mut_unkeyed.cfg`: the same, with a pattern taken whatever session keyed
@@ -154,8 +175,8 @@ Results:
   end cleared its seed before the reply went out, and in the harness the
   peer, still in the session, never detected it (3 runs of 3).
 - `ForeignEnd.cfg`: the code's rules, lossy, with another station's M_END
-  frames heard (`FEND`).  No error, 6 850 643 distinct states (2 956 247
-  before the caller's drain, 1 370 595 before the owed ack): seeded by its
+  frames heard (`FEND`).  No error, 12 686 499 distinct states (6 850 643
+  before the silence after an M_END, 2 956 247 before the caller's drain, 1 370 595 before the owed ack): seeded by its
   session, none is taken.  Safety only, as `ForeignPattern.cfg`.
 - `Mut_unkeyedend.cfg`: the same, with an M_END taken whatever session sent
   it.  It violates `NoUnasked`.
@@ -172,13 +193,16 @@ Results:
 - `Mut_redialwait.cfg`: lossless, a CONNECT while the caller drains waits
   behind the drain, the old session keying on (the rule before
   2026-11-05).  It violates `Released`.
+- `Mut_endsilence.cfg`: lossy, the caller ends on silence without having
+  heard an M_END.  It violates `NoCut`: a fade in a live session, the
+  callee's application still in it, ends the session.
 - `Mut_staleteardown.cfg`: lossless, a CALL taken keeps the DISCONNECT the
   last session held back to drain.  It violates `NoInherited`.
 - `Mut_skipreply.cfg`: lossless, an end owing the reply to its peer's
   DISCONNECT goes idle without keying it.  It violates `Clean`: the peer
   retries and times out.
 - `Mut_anypattern.cfg`: a pattern ends an end in any state, not only one
-  whose DISCONNECT is out.  No error, the same 1 373 461 states: as with the
+  whose DISCONNECT is out.  No error, the same 2 568 389 states: as with the
   session-id check below, frames in order and timers longer than an
   exchange mean no pattern reaches an end that is not waiting for one.
   In the code the rule keeps the carousel's own patterns (not modelled

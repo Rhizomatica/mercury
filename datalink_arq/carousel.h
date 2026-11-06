@@ -213,7 +213,10 @@ typedef struct {
     } anc;
     uint8_t  end_req;               /* S: CAR_END_WISH, my application has hung up and my
                                      * polls say so (M_END); CAR_END_SLOT, my next slot
-                                     * carries the session's DISCONNECT */
+                                     * carries the session's DISCONNECT.
+                                     * M: CAR_END_WISH, a poll of S's said S's application
+                                     * has hung up (M_END), whatever S still holds
+                                     * (car_peer_ending); never CAR_END_SLOT */
     int      req_lv, req_n;         /* a REQ: M's round I may not have heard */
     uint8_t  req_mk;
     uint8_t  rx_mk;                 /* the M round whose frames I am counting */
@@ -417,6 +420,9 @@ bool     car_owes_ack(const car_t *c);
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds
  * on a fast rung; minutes at the MFSK floor. */
 uint64_t car_drain_budget_ms(const car_t *c);
+/* The caller has heard the callee say its application has hung up (M_END),
+ * whether or not everything of the callee's has arrived since. */
+bool     car_peer_ending(const car_t *c);
 /* Bytes taken from the application that the peer has not confirmed yet. */
 size_t car_tx_inflight(const car_t *c);
 
