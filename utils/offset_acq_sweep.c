@@ -60,6 +60,14 @@ static const char *mode_name_of(int freedv_mode) {
       return "DATAC4";
     case FREEDV_MODE_DATAC3:
       return "DATAC3";
+    case FREEDV_MODE_DATAC1:
+      return "DATAC1";
+    case FREEDV_MODE_DATAC0:
+      return "DATAC0";
+    case FREEDV_MODE_DATAC17:
+      return "DATAC17";
+    case FREEDV_MODE_QAM16C2:
+      return "QAM16C2";
     default:
       return "?";
   }

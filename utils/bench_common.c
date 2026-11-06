@@ -287,6 +287,7 @@ int bench_mode_from_name(const char *s) {
   if (!strcmp(s, "DATAC16") || !strcmp(s, "datac16")) return FREEDV_MODE_DATAC16;
   if (!strcmp(s, "DATAC15") || !strcmp(s, "datac15")) return FREEDV_MODE_DATAC15;
   if (!strcmp(s, "DATAC13") || !strcmp(s, "datac13")) return FREEDV_MODE_DATAC13;
+  if (!strcmp(s, "DATAC14") || !strcmp(s, "datac14")) return FREEDV_MODE_DATAC14;
   if (!strcmp(s, "DATAC4") || !strcmp(s, "datac4")) return FREEDV_MODE_DATAC4;
   if (!strcmp(s, "DATAC3") || !strcmp(s, "datac3")) return FREEDV_MODE_DATAC3;
   if (!strcmp(s, "DATAC1") || !strcmp(s, "datac1")) return FREEDV_MODE_DATAC1;
