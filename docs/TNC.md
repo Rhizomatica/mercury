@@ -606,7 +606,9 @@ The detector is **disabled by default** and is enabled via the `[channel]`
 section of `mercury.ini` (`busy_detect = true`).  It is off because the hosts
 that consume these notifications act on them: BPQ32 and Winlink hold
 transmissions while BUSY is asserted, so a false or over-eager BUSY stops the
-station transmitting.  Enable it if your host scans.  Its sensitivity/timing knobs
+station transmitting.  BPQ32's scanner does not hold on it (see "Scanning
+hosts" below), so turning it on for scanning costs outgoing connects and gains
+nothing there.  Its sensitivity/timing knobs
 (`busy_threshold_db`, `busy_hysteresis_db`, `busy_on_debounce_ms`,
 `busy_hang_ms`) typically need on-air tuning per band/noise environment. When
 disabled, these notifications are never sent. See `mercury.ini.example`.
@@ -623,8 +625,8 @@ for ~100-145 s until the floor catches up.
 `BUSY ON` is the earliest notification a host can act on: it follows the carrier
 by roughly the debounce time (~0.3 s by default), whereas `PENDING` cannot be
 sent until a whole connect request has decoded — 3.74 s in the DATAC16 control
-mode. A host that scans channels needs the former to hold its dwell long enough
-to receive the latter.
+mode.  A host that scans could use the former to hold its dwell long enough to
+receive the latter; BPQ32 does not.
 
 ### Scanning hosts (BPQ32)
 
@@ -660,8 +662,17 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   before the first MFSK one (see `RETRIES`).  To catch MFSK CALLs, a scanning
   station needs a longer dwell, or a hold that starts before the CALL
   decodes.
-- **`BUSY ON` is the only earlier signal Mercury sends** (see above).  Whether
-  BPQ32's scanner holds on it has not been confirmed yet.
+- **BPQ32's scanner does not hold on `BUSY ON`**, the only earlier signal
+  Mercury sends.  With `busy_detect = true` (KG9NI, 2026-11-06), it kept
+  hopping every 10 s through every BUSY spell: 94 hops in one of 16 minutes.
+  What BPQ32 does with BUSY is refuse its own outgoing connects ("Sorry, Can't
+  Connect - Channel is busy"), and two forwards that night went by AX/IP
+  instead.
+- **One noise floor serves every scanned channel.**  Mercury does not know the
+  host retuned, so the busy detector carries its floor and its state from one
+  channel to the next.  At KG9NI every CLEAR came on one of the three channels,
+  and BUSY returned 0.6-5.7 s after the hop to another one, on a band the
+  operator heard as empty.
 - **After a host `DISCONNECT`, a scan hop can cut the teardown short.**
   Mercury answers `DISCONNECTED` straight away and finishes on the air; the
   scanner's next `LISTEN OFF` releases the radio before that is done (#473).
