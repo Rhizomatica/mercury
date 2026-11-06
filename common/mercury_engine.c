@@ -223,6 +223,7 @@ int mercury_engine_init(const mercury_config *cfg,
     if (log_rc == 0)
     {
         hermes_log_set_utc(cfg->log_utc);
+        hermes_log_set_max_bytes((unsigned long long)cfg->log_max_mb * 1024ULL * 1024ULL);
         hermes_log_level_t min_level = cfg->trace ? HERMES_LOG_LEVEL_TRACE
                                       : verbose ? HERMES_LOG_LEVEL_DEBUG
                                                 : HERMES_LOG_LEVEL_INFO;

@@ -32,6 +32,10 @@ void hermes_log_set_level(hermes_log_level_t level);
 /* Text log timestamps in UTC, with a Z suffix (default: local time). */
 void hermes_log_set_utc(bool utc);
 bool hermes_log_utc(void);
+/* Cap the file sink at this many bytes (0, the default: no cap).  Past it the
+ * file moves to <path>.1, replacing the one before, and a new one starts at
+ * <path>: at most twice the cap on disk (main:log_max_mb). */
+void hermes_log_set_max_bytes(unsigned long long bytes);
 void hermes_log_set_component_level(const char *component, hermes_log_level_t level);
 
 /**
