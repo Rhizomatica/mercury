@@ -798,6 +798,54 @@ void test_cmd_retries(void)
     TEST_ASSERT_EQUAL_INT(10, captured_cmd.value);
 }
 
+/* BPQ32 passes a port's init lines verbatim: "RETRIES=20" must work too. */
+void test_cmd_retries_with_equals(void)
+{
+    char cmd[] = "RETRIES=20";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_SET_RETRY, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(20, captured_cmd.value);
+}
+
+void test_cmd_retries_with_spaced_equals(void)
+{
+    char cmd[] = "RETRIES = 7";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(7, captured_cmd.value);
+}
+
+void test_cmd_retries_not_a_number(void)
+{
+    char cmd[] = "RETRIES=abc";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, captured_cmd_count);
+}
+
+void test_cmd_retries_trailing_junk(void)
+{
+    char cmd[] = "RETRIES 10x";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, captured_cmd_count);
+}
+
+void test_cmd_callint_with_equals(void)
+{
+    char cmd[] = "CALLINT=12";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_SET_CALLINT, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(12, captured_cmd.value);
+}
+
 void test_cmd_connect(void)
 {
     char cmd[] = "CONNECT SRC1 DST1";
@@ -2023,6 +2071,11 @@ int main(void)
     RUN_TEST(test_cmd_bw2300);
     RUN_TEST(test_cmd_bw_invalid);
     RUN_TEST(test_cmd_retries);
+    RUN_TEST(test_cmd_retries_with_equals);
+    RUN_TEST(test_cmd_retries_with_spaced_equals);
+    RUN_TEST(test_cmd_retries_not_a_number);
+    RUN_TEST(test_cmd_retries_trailing_junk);
+    RUN_TEST(test_cmd_callint_with_equals);
     RUN_TEST(test_cmd_connect);
     RUN_TEST(test_cmd_disconnect);
     RUN_TEST(test_cmd_cqframe);

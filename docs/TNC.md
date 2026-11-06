@@ -344,6 +344,10 @@ alone is about 8 minutes on the frequency.
 RETRIES 10\r
 ```
 
+`RETRIES=10` and `CALLINT=10` are accepted too, since BPQ32 passes a port's init
+lines to the TNC as written.  A command Mercury answers `WRONG` is logged as a
+warning: `Command rejected (WRONG): <line>`.
+
 ---
 
 ### CALLINT
