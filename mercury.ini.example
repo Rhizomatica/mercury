@@ -189,6 +189,12 @@ retry_stagger_ms = 2000
 ; no QRM, so the gain under interference is not measured (#442).
 silence_fallback_s = 150
 
+; The longest a station calls, in seconds, whatever the host's RETRIES asks
+; for (default 300; 0 = no cap, RETRIES alone decides; max 3600).  No new CALL
+; is keyed past it.  BPQ32's RETRIES 20 is ~8 minutes of CALLs on the
+; frequency; on air nearly every connect came within 5 minutes.
+call_max_s = 300
+
 ; Transmit MFSK only (default: false).  For radios that can only transmit FSK
 ; (not PSK/QAM) — the QRP Labs QDX, QRPguys AFSK III and similar — which can
 ; key constant-envelope MFSK but not the OFDM/QAM payload modes.  When set,

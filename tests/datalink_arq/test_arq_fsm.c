@@ -124,7 +124,12 @@ void setUp(void)
     arq_fsm_init(&sess);
 }
 
-void tearDown(void) { }
+/* Tests that set these put them back here: a failed assertion leaves at once. */
+void tearDown(void)
+{
+    atomic_store(&arq_call_retry_slots, ARQ_CALL_RETRY_SLOTS_DEFAULT);
+    arq_protocol_set_call_max_s(ARQ_CALL_MAX_S_DEFAULT);
+}
 
 /* ---- Connection lifecycle tests ---- */
 
@@ -1304,6 +1309,62 @@ void test_call_timeout(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
 }
 
+/* Place a call with RETRIES-many CALLs and let them come due every 24 s, the
+ * longest call interval (the floor's), with nothing answering.  Returns when
+ * the call ends; *last_call_ms is when the last CALL was keyed. */
+static int call_unanswered(int retries, uint64_t *last_call_ms)
+{
+    atomic_store(&arq_call_retry_slots, retries);
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    *last_call_ms = time_now_ms();
+    for (int i = 0; i < retries + 2 && sess.conn_state == ARQ_CONN_CALLING; i++) {
+        unsigned before = fake_send_tx_frame_fake.call_count;
+        mock_set_uptime_ms(time_now_ms() + 24000);
+        ev = make_event(ARQ_EV_TIMER_RETRY);
+        arq_fsm_dispatch(&sess, &ev);
+        if (fake_send_tx_frame_fake.call_count != before) *last_call_ms = time_now_ms();
+    }
+    return (int)fake_send_tx_frame_fake.call_count;
+}
+
+/* RETRIES 20 (BPQ32) is ~8 min of CALLs; arq:call_max_s (300 s) ends it:
+ * no CALL is keyed past the cap, and the call ends at the first CALL due
+ * after it.  On air K7EK called an unanswering path for 479 s, 18 times. */
+void test_call_gives_up_at_call_max_s(void)
+{
+    uint64_t start = time_now_ms(), last;
+    int calls = call_unanswered(20, &last);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE(last - start < (uint64_t)ARQ_CALL_MAX_S_DEFAULT * 1000);
+    TEST_ASSERT_TRUE(time_now_ms() - start >= (uint64_t)ARQ_CALL_MAX_S_DEFAULT * 1000);
+    TEST_ASSERT_TRUE(time_now_ms() - start < (uint64_t)ARQ_CALL_MAX_S_DEFAULT * 1000 + 24000);
+    TEST_ASSERT_TRUE(calls < 1 + 20);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+}
+
+/* arq:call_max_s = 0: RETRIES alone decides, every CALL is sent. */
+void test_call_max_s_zero_sends_every_retry(void)
+{
+    arq_protocol_set_call_max_s(0);
+    uint64_t start = time_now_ms(), last;
+    int calls = call_unanswered(20, &last);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1 + 20, calls);
+    TEST_ASSERT_TRUE(last - start >= (uint64_t)ARQ_CALL_MAX_S_DEFAULT * 1000);
+}
+
+/* The default RETRIES ends well inside the cap: nothing changes for it. */
+void test_call_max_s_leaves_default_retries_alone(void)
+{
+    uint64_t last;
+    int calls = call_unanswered(ARQ_CALL_RETRY_SLOTS_DEFAULT, &last);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1 + ARQ_CALL_RETRY_SLOTS_DEFAULT, calls);
+}
+
 /* CALL timeout with NO listen intent falls back to DISCONNECTED. */
 void test_call_timeout_no_listen(void)
 {
@@ -1785,6 +1846,9 @@ int main(void)
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
     RUN_TEST(test_call_timeout_no_listen);
+    RUN_TEST(test_call_gives_up_at_call_max_s);
+    RUN_TEST(test_call_max_s_zero_sends_every_retry);
+    RUN_TEST(test_call_max_s_leaves_default_retries_alone);
     RUN_TEST(test_accepting_gives_up_after_budget);
     RUN_TEST(test_accept_fallback_completes_on_first_frame);
     RUN_TEST(test_ended_session_is_not_resurrected_by_a_late_frame);

@@ -336,6 +336,10 @@ while it is on the frequency, and any listener decodes them whatever its
 bandwidth.  The cap keeps the first MFSK CALL, which a weak path needs, at
 about 47 s (#442).
 
+However many CALLs `RETRIES` allows, no new one is keyed after
+`arq:call_max_s` seconds of calling (default 300; 0 = no cap).  `RETRIES 20`
+alone is about 8 minutes on the frequency.
+
 ```
 RETRIES 10\r
 ```

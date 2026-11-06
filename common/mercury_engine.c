@@ -188,6 +188,7 @@ int mercury_engine_init(const mercury_config *cfg,
     arq_set_disconnect_drain_timeout_s(cfg->disconnect_drain_timeout_s);
     arq_set_retry_stagger_ms(cfg->retry_stagger_ms);
     arq_protocol_set_silence_fallback_s(cfg->silence_fallback_s);
+    arq_protocol_set_call_max_s(cfg->call_max_s);
     arq_set_tx_mfsk_only(cfg->mfsk_tx_only);
     arq_set_max_keydown_s(cfg->max_keydown_s);
     modem_set_tx_gain(powf(10.0f, cfg->tx_gain_db / 20.0f));

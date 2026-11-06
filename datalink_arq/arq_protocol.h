@@ -231,6 +231,16 @@ extern _Atomic int arq_retry_stagger_ms;
 extern _Atomic int arq_silence_fallback_s;
 void arq_protocol_set_silence_fallback_s(int seconds);
 
+/* The longest a station calls, in seconds, whatever RETRIES asks for: no
+ * new CALL is keyed past it.  A host's RETRIES 20 (BPQ32) is ~8 min of CALLs,
+ * and on air (K7EK, Nov 3-5) 18 calls ran all of it unanswered, while of
+ * the 21 that connected 20 did so within 300 s (the slowest 254 s; one at
+ * 321 s).  0 = no cap: RETRIES alone decides, as before. */
+#define ARQ_CALL_MAX_S_DEFAULT 300
+#define ARQ_CALL_MAX_S_MAX     3600
+extern _Atomic int arq_call_max_s;
+void arq_protocol_set_call_max_s(int seconds);
+
 /* Deterministic per-node retry rank from the exchanged callsign pair.
  * strcmp() is antisymmetric, so the two peers always disagree: one returns 0
  * (send first) and the other 1 (defer).  Returns -1 when the pair is

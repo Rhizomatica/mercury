@@ -1032,6 +1032,14 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
     }
 }
 
+/* Has this call gone on past arq:call_max_s (0: no cap)?  From entering
+ * CALLING, which happens once per call (APP_CONNECT). */
+static bool call_over_time(const arq_session_t *sess)
+{
+    int cap_s = atomic_load(&arq_call_max_s);
+    return cap_s > 0 && time_now_ms() - sess->state_enter_ms >= (uint64_t)cap_s * 1000;
+}
+
 /* A CALL waits while a frame we caught is arriving (decoder_hears_frame; not
  * the energy busy detector, off by default and not to hold CALLs): the
  * ACCEPT to a repeat, on the floor, outlasts the control mode's call interval
@@ -1117,6 +1125,16 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TIMER_RETRY:
+        /* No new CALL past arq:call_max_s, whatever RETRIES left: BPQ32's
+         * RETRIES 20 kept a station calling an unanswering path for ~8 min
+         * (K7EK, 18 times in two days).  Checked when a CALL comes due, so
+         * the last one keyed still has its full wait for the ACCEPT. */
+        if (sess->tx_retries_left > 0 && call_over_time(sess))
+        {
+            HLOGI(LOG_COMP, "CALL: %d s of calling (arq:call_max_s), %d CALLs not sent -- giving up",
+                  (int)((time_now_ms() - sess->state_enter_ms) / 1000), sess->tx_retries_left);
+            sess->tx_retries_left = 0;
+        }
         if (sess->tx_retries_left > 0 && call_must_wait(sess))
             break;
         if (sess->tx_retries_left > 0)
