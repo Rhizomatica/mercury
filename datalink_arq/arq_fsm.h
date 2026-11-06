@@ -308,6 +308,14 @@ typedef struct
      *  @param local_call   our dialed callsign/SSID (empty => use primary) */
     void (*notify_pending)(const char *remote_call, const char *local_call);
 
+    /** Send PENDING again for the call already pending: a repeat of the CALL
+     *  we are answering renews a scanning host's hold (BPQ32: six scan
+     *  intervals per PENDING).  Only the notice: unlike notify_pending, it
+     *  must not reset the connection's addresses, since a host CONNECT may
+     *  have written them while the repeat sat in the queue.
+     *  @param remote_call  the peer (caller) callsign */
+    void (*notify_pending_again)(const char *remote_call);
+
     /** Notify TCP interface that a pending incoming call did not complete. */
     void (*notify_cancelpending)(void);
 

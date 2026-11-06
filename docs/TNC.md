@@ -534,6 +534,13 @@ Sent when Mercury detects an incoming ARQ connect request addressed to the
 local station. This is an early warning so VARA-compatible host applications
 can suspend scanning or other idle activity while the link setup is in progress.
 
+Mercury sends it again each time it hears the same caller's CALL repeated while
+it is still answering. BPQ32 holds its scan only six scan intervals per
+`PENDING` (VARA.c: `ConnectPending = 6`), not until the connect completes, and
+then hops, and the hop's `LISTEN OFF` cancels the incoming connect. On K7EK's
+station (an 11 s dwell) that came 72-85 s after the first `PENDING`, in
+5 incoming connects, one of them 17 s after Mercury had answered a repeated CALL.
+
 Mercury also sends `PENDING\r` when an outgoing `CQFRAME` actually begins
 transmitting so VARA clients can treat CQ send as an in-progress operation.
 
@@ -642,7 +649,8 @@ What a scanning host needs from Mercury, as seen in KG9NI's logs (LinBPQ
 scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
 
 - **BPQ32 attaches Mercury as a VARA port** and holds its scan from `PENDING`
-  until `DISCONNECTED` or `CANCELPENDING`.  In every session the scanner
+  until `DISCONNECTED` or `CANCELPENDING`, or until six scan intervals pass
+  with no new `PENDING` (see `PENDING`).  In every session the scanner
   stopped once the CALL decoded, including a 32 s connect that needed a
   repeated CALL and a failed one it held for 43 s.
 - **Each hop is `LISTEN OFF`, `LISTEN ON` and a `BW` command.**  The dwell

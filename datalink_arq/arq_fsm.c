@@ -1279,6 +1279,17 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * DATAC16 says the same thing, sooner: the floor (accept_carrier). */
         sess->call_rx_mode      = accept_carrier(sess, ev);
         sess->accept_tx_pending = accept_keys(sess);   /* answering a CALL we just heard */
+        /* And PENDING again.  A scanning host holds its channel for a fixed
+         * time per PENDING -- BPQ32 six scan intervals (VARA.c: "Time out
+         * after 6 Scanintervals"), then hops, and the hop's LISTEN OFF
+         * cancels us.  On air (K7EK <- KG9NI-7, 30 m, 2026-11-05) BPQ hopped
+         * 84 s after the first PENDING, 17 s after we had answered a repeat
+         * of the CALL: the caller was still there.  A CALL we hear is the
+         * proof it is, so it holds the channel for another stretch. */
+        HLOGI(LOG_COMP, "CALL from %s again: PENDING again (holds a scanning host's channel)",
+              sess->remote_call);
+        if (g_cbs.notify_pending_again)
+            g_cbs.notify_pending_again(sess->remote_call);
         break;
 
     case ARQ_EV_TX_COMPLETE:

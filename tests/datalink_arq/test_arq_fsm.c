@@ -34,6 +34,7 @@ extern void mock_set_uptime_ms(uint64_t ms);
 FAKE_VOID_FUNC(fake_send_tx_frame, int, int, size_t, const uint8_t *, int);
 FAKE_VOID_FUNC(fake_notify_connected, const char *, const char *);
 FAKE_VOID_FUNC(fake_notify_pending, const char *, const char *);
+FAKE_VOID_FUNC(fake_notify_pending_again, const char *);
 FAKE_VOID_FUNC(fake_notify_cancelpending);
 FAKE_VOID_FUNC(fake_notify_disconnected, bool);
 FAKE_VOID_FUNC(fake_deliver_rx_data, const uint8_t *, size_t);
@@ -46,6 +47,7 @@ static arq_fsm_callbacks_t test_callbacks = {
     .send_tx_frame       = fake_send_tx_frame,
     .notify_connected    = fake_notify_connected,
     .notify_pending      = fake_notify_pending,
+    .notify_pending_again = fake_notify_pending_again,
     .notify_cancelpending = fake_notify_cancelpending,
     .notify_disconnected = fake_notify_disconnected,
     .deliver_rx_data     = fake_deliver_rx_data,
@@ -106,6 +108,7 @@ void setUp(void)
     RESET_FAKE(fake_send_tx_frame);
     RESET_FAKE(fake_notify_connected);
     RESET_FAKE(fake_notify_pending);
+    RESET_FAKE(fake_notify_pending_again);
     RESET_FAKE(fake_notify_cancelpending);
     RESET_FAKE(fake_notify_disconnected);
     RESET_FAKE(fake_deliver_rx_data);
@@ -355,6 +358,35 @@ void test_accepting_rx_call_rearms_budget(void)
         arq_fsm_dispatch(&sess, &ev);
     }
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+}
+
+/* A scanning host holds its channel a fixed time per PENDING (BPQ32: six scan
+ * intervals), so each repeat of the CALL we answer sends PENDING again; a CALL
+ * from another station, which we do not answer, does not.  The repeat goes
+ * through notify_pending_again, never notify_pending: the latter resets the
+ * connection's addresses, which a host CONNECT may have just written. */
+void test_accepting_repeat_call_sends_pending_again(void)
+{
+    enter_accepting();
+    int first = fake_notify_pending_fake.call_count;
+    TEST_ASSERT_GREATER_THAN(0, first);
+
+    arq_event_t call = make_event(ARQ_EV_RX_CALL);
+    call.session_id = 0x42;
+    strncpy(call.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    mock_set_uptime_ms(15000);
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_pending_again_fake.call_count);
+    TEST_ASSERT_EQUAL_STRING("REMOTE1", fake_notify_pending_again_fake.arg0_val);
+    TEST_ASSERT_EQUAL_INT(first, fake_notify_pending_fake.call_count);
+
+    arq_event_t other = make_event(ARQ_EV_RX_CALL);
+    other.session_id = 0x43;
+    strncpy(other.remote_call, "OTHER1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &other);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_pending_again_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(first, fake_notify_pending_fake.call_count);
 }
 
 /* Connection-setup slots must stay short by default so a failed connect and
@@ -1950,6 +1982,7 @@ int main(void)
     RUN_TEST(test_accept_fallback_completes_on_first_frame);
     RUN_TEST(test_ended_session_is_not_resurrected_by_a_late_frame);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
+    RUN_TEST(test_accepting_repeat_call_sends_pending_again);
     RUN_TEST(test_default_call_accept_slots_are_short);
     RUN_TEST(test_retries_scale_fast_call_slots);
     RUN_TEST(test_stop_listen);
