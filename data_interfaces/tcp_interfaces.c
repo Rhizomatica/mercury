@@ -1639,7 +1639,7 @@ void *recv_thread(void *client_socket_ptr)
                 /* Re-read: see send_thread. */
                 frame_size = atomic_load(&broadcast_frame_size_cfg);
                 uint8_t kiss_cmd = kiss_last_command();
-                HLOGI("tcp-bcast", "KISS frame decoded: cmd=0x%02X len=%d (expected %zu)",
+                HLOGI("tcp-bcast", "KISS frame decoded: cmd=0x%02X len=%d (listen-mode frame %zu)",
                       kiss_cmd, frame_len, frame_size);
 
                 if (!bcast_process_decoded_frame(decoded_frame, frame_len, kiss_cmd, frame_size))
