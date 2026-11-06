@@ -70,6 +70,7 @@
 #define CFG_KEY_TNC_BUFFER_REPORT_MS "tnc:buffer_report_ms"
 #define CFG_KEY_ARQ_RETRY_STAGGER_MS          "arq:retry_stagger_ms"
 #define CFG_KEY_ARQ_SILENCE_FALLBACK_S        "arq:silence_fallback_s"
+#define CFG_KEY_ARQ_CALL_MAX_S                "arq:call_max_s"
 #define CFG_KEY_ARQ_MFSK_TX_ONLY              "arq:mfsk_tx_only"
 #define CFG_KEY_ARQ_MAX_KEYDOWN_S             "arq:max_keydown_s"
 #define CFG_KEY_BUSY_DETECT                   "channel:busy_detect"
@@ -121,6 +122,9 @@ typedef struct {
     int      silence_fallback_s;        /* ARQ: seconds of silence before the
                                          * control moves to the MFSK floor.
                                          * Default 150, range 110..600.      */
+    int      call_max_s;                /* ARQ: the longest a station calls,
+                                         * seconds, whatever RETRIES says.
+                                         * Default 300, 0 = no cap, max 3600. */
     bool     mfsk_tx_only;              /* ARQ: transmit MFSK only (FSK-only
                                          * radios).  Default false.          */
     int      max_keydown_s;             /* ARQ: longest carousel round asked
