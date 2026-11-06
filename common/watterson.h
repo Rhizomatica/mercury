@@ -135,6 +135,26 @@ typedef struct watterson
      * convention so SNR3k = -No - 14.82 holds. */
     float  chan_norm;
 
+    /* Carrier offset: the transmitter's frequency error as the receiver sees
+     * it.  Applied as a rotation of the input signal, so the whole burst
+     * moves in the passband while the fade stays what it was.  This is the
+     * channel-level counterpart of a path's own freq_hz (a Doppler shift of
+     * that path): a mistuned radio shifts every path at once.
+     *
+     * It is applied BEFORE the paths, because that is where a transmitter's
+     * error lives: over a multipath channel the paths then see the error at
+     * different instants, which is the physical reason a carrier offset costs
+     * BER over a spread channel.  A receiver's own oscillator error would be
+     * the same rotation applied after the channel, and would preserve the
+     * output's magnitude exactly.
+     *
+     * The phase is accumulated in double: at 48 kHz for 20 s the float
+     * accumulator's rounding drifts the measured offset by 6e-4 of its
+     * nominal value, which a tone test can see. */
+    float  carrier_offset_hz;
+    double carrier_phase;      /* rotation accumulator, carried across calls */
+    double carrier_phase_inc;  /* 2*pi*carrier_offset_hz/sample_rate        */
+
     /* Power accumulators for SNR measurement.  Reset at init and on
      * watterson_reset_meas(); accumulated across watterson_process() calls.
      * The faded signal power is summed BEFORE the AWGN is added, and the
@@ -170,6 +190,21 @@ int watterson_init(watterson_t *w, int sample_rate);
 /* Select the Doppler spectrum for paths added after this call (default
  * WATTERSON_SPECTRUM_GAUSSIAN).  Returns 0, or -1 for an unknown value. */
 int watterson_set_spectrum(watterson_t *w, int spectrum);
+
+/* Carrier offset, in Hz: the transmitter's frequency error as the receiver
+ * sees it.  The signal is rotated by 2*pi*hz*t before the paths are summed,
+ * so the burst lands off the passband centre by that much -- which is what
+ * a mistuned radio does to a receiver's acquisition search.
+ *
+ * It is a channel property, not a path property: every path moves together.
+ * A path's own freq_hz (see watterson_add_path) is that path's Doppler
+ * shift, a different thing.
+ *
+ * The offset is applied to the input, so the fade, the noise and the
+ * measured SNR are unchanged by it; only where the signal sits in the
+ * passband moves.  Zero (the default) is no rotation at all. */
+void  watterson_set_carrier_offset(watterson_t *w, float hz);
+float watterson_get_carrier_offset(const watterson_t *w);
 
 /* Named channel presets.  The standard ones (ccir-*, itur-*) use the Gaussian
  * spectrum with doppler_hz as the ITU-R F.1487 Doppler spread (2 sigma).  The

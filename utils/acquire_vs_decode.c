@@ -79,14 +79,38 @@ int main(int argc, char **argv)
                         "utils/watterson_test --list-presets prints them)\n", argv[5]);
         return 1;
     }
+    /* Optional 6th arg: the acquisition threshold (timing_mx_thresh).  The
+     * mode's stock value is used when it is absent.  Passing it makes a table
+     * recorded at another threshold reproducible -- docs/MODES.md's DATAC16
+     * table was recorded at 0.45, before the threshold moved to 0.40. */
+    int    thresh_given = (argc > 6);
+
+    /* Optional 7th arg: the channel's carrier offset in Hz -- the
+     * transmitter's frequency error as the receiver sees it.  The whole
+     * burst then moves in the passband, which is what a mistuned radio does
+     * to a receiver's acquisition search.  It needs a channel preset: the
+     * plain AWGN case here adds its noise in the tool, not in the channel
+     * model, so there is no channel to offset. */
+    float offset_hz = (argc > 7) ? (float)atof(argv[7]) : 0.0f;
+    if (offset_hz != 0.0f && chan == CHAN_AWGN)
+    {
+        fprintf(stderr, "a carrier offset needs a channel preset (awgn adds its "
+                        "noise in the tool); try awgnc, mpg, mpp, mpd or a "
+                        "watterson preset name\n");
+        return 1;
+    }
 
     int mode = mode_from_name(modename);
     if (mode < 0 || trials <= 0)
     {
-        fprintf(stderr, "usage: %s [MODE] [trials] [snr_lo] [snr_hi] [channel]\n"
+        fprintf(stderr, "usage: %s [MODE] [trials] [snr_lo] [snr_hi] [channel] [thresh] [offset_hz]\n"
                         "  MODE: DATAC0/1/3/4/13/15/16/17, QAM16C2 (default DATAC16)\n"
                         "  channel: awgn (default), awgnc, mpg, mpp, mpd, or any watterson preset\n"
-                        "           name, e.g. ccir-poor (utils/watterson_test --list-presets)\n", argv[0]);
+                        "           name, e.g. ccir-poor (utils/watterson_test --list-presets)\n"
+                        "  thresh: timing_mx_thresh (default: the mode's stock value)\n"
+                        "  offset_hz: the channel's carrier offset -- the transmitter's frequency\n"
+                        "           error as the receiver sees it (default 0; needs a channel\n"
+                        "           preset, not the plain awgn one)\n", argv[0]);
         return 1;
     }
 
@@ -95,6 +119,7 @@ int main(int argc, char **argv)
     if (!tx || !rx) { fprintf(stderr, "freedv_open failed\n"); return 1; }
     freedv_set_frames_per_burst(tx, 1);
     freedv_set_frames_per_burst(rx, 1);
+    if (thresh_given) freedv_set_timing_mx_thresh(rx, (float)atof(argv[6]));
 
     int nbytes  = freedv_get_bits_per_modem_frame(tx) / 8;
     int ntx     = freedv_get_n_tx_modem_samples(tx);
@@ -105,6 +130,8 @@ int main(int argc, char **argv)
     printf("%s: %d byte frame, burst %d samples (%.2f s at %.0f Hz)\n",
            modename, nbytes, nburst, nburst / FS, FS);
     printf("channel: %s\n", chanutil_preset_name(chan));
+    if (offset_hz != 0.0f) printf("carrier offset: %+.1f Hz\n", (double)offset_hz);
+    printf("timing_mx_thresh: %g\n", (double)freedv_get_timing_mx_thresh(rx));
     printf("acquired = reached FREEDV_RX_SYNC;  delivered = frame out with CRC ok\n\n");
     if (chan == CHAN_AWGN)
         printf("  SNR3k    acquired   delivered   decoded|acquired\n");
@@ -130,7 +157,7 @@ int main(int argc, char **argv)
         chanutil_t *ch = NULL;
         if (chan != CHAN_AWGN)
         {
-            ch = chanutil_open(chan, (float)snr, 1234u);
+            ch = chanutil_open_offset(chan, (float)snr, 1234u, offset_hz);
             if (!ch) { fprintf(stderr, "chanutil_open failed\n"); return 1; }
         }
 
