@@ -1046,6 +1046,8 @@ static bool level_gated(const car_t *c, int lv)
            !(c->rung[lv].sent >= 3.0 && level_delivery(c, lv) >= 0.7);
 }
 
+float car_rung_gate_db(int lv) { return level_min_db(lv) - SNR_GATE_DB; }
+
 static bool level_allowed(const car_t *c, int lv)
 {
     if (level_dead(c, lv) || level_gated(c, lv)) return false;
@@ -1061,10 +1063,14 @@ static bool level_allowed(const car_t *c, int lv)
 static bool level_gated(const car_t *c, int lv);
 static bool reprobe_due(const car_t *c, int lv, uint64_t now)
 {
-    /* A rung the SNR has excluded and nobody has tried is not probed: its
-     * probe clock starts at 0, and "due" at 60 s probed QAM16C2 at 8 dB
-     * first thing in a session. */
-    if (!c->rung[lv].rounds && level_gated(c, lv)) return false;
+    /* A rung the SNR has excluded is not probed: untried, its probe clock
+     * starts at 0, and "due" at 60 s probed QAM16C2 at 8 dB first thing in a
+     * session.  Tried and failed, it was still re-probed on its backoff: on
+     * air (VE4KLM <- K7EK, 30 m, 2026-11-05) DATAC3 (-1 dB) went dead, and
+     * then came back for a probe at -4.2 dB every couple of minutes, each a
+     * lost frame and a re-poll.  One that delivered is not gated
+     * (level_gated). */
+    if (level_gated(c, lv)) return false;
     uint64_t wait = c->rung[lv].backoff_ms ? c->rung[lv].backoff_ms : DEAD_PROBE_MS;
     return now - c->rung[lv].probe_at >= wait;
 }

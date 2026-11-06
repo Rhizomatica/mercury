@@ -388,6 +388,9 @@ bool car_wants_nav(const car_t *c);
  * airtime, a round's fixed overhead): for computing bounds. */
 void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *frames,
                        uint64_t *round_air_ms, uint64_t *overhead_ms);
+/* The smoothed SNR below which the SNR alone keeps a rung out (level_gated,
+ * before its delivery exception): for the sims' probe checks. */
+float car_rung_gate_db(int lv);
 
 /* The session's own control keydowns (its DISCONNECT) follow the turn rules
  * too.  The caller: car_free_at() is the earliest time from now a keydown of
