@@ -436,6 +436,27 @@ void test_accept_transitions_to_connected(void)
     TEST_ASSERT_TRUE(fake_notify_connected_fake.arg2_val);    /* we called */
 }
 
+/* An outgoing call does not inherit the callsign the last incoming CALL
+ * dialed: it fed the next outgoing call's retry rank, while the CALL itself
+ * goes out from the primary. */
+void test_connect_clears_the_dialed_callsign(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "W1ABC", CALLSIGN_MAX_SIZE);
+    strncpy(ev.local_call,  "KO0OOO-2", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_STRING("KO0OOO-2", sess.local_call);
+
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL_STRING("", sess.local_call);
+}
+
 /* The host's CONNECT queued behind an incoming CALL: the CALL is answered
  * first (PENDING, which resets arq.c's addresses), then the CONNECT aborts it
  * and places our call.  That call's CONNECTED must say we called; arq.c used
@@ -1966,6 +1987,7 @@ int main(void)
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
     RUN_TEST(test_connect_behind_incoming_call_connects_as_caller);
+    RUN_TEST(test_connect_clears_the_dialed_callsign);
     RUN_TEST(test_mfsk_only_connect_starts_deaf_on_the_floor);
     RUN_TEST(test_floor_accept_to_a_control_mode_call_is_not_deafness);
     RUN_TEST(test_repeat_on_control_mode_is_answered_on_the_floor);
