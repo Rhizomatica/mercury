@@ -417,10 +417,15 @@ on the broadcast port with KISS `0x03` (`CMD_MODEM_FRAME`).  The index space
 is `-m`'s, as for `MODE`.  The listen mode stays as it is.
 
 ```
-BEACONMODE 8\r     send station messages on DATAC16
-BEACONMODE -1\r    send them at the listen mode again (the default)
+BEACONMODE 8\r     send station messages on DATAC16 (the default)
+BEACONMODE -1\r    send them at the listen mode instead
 BEACONMODE\r       report it
 ```
+
+DATAC16 is the default because it is the most robust mode a compact (14-byte)
+beacon fits that every running Mercury decodes: its control decoder is always
+on it.  DATAC15 is as robust, but only stations whose listen mode it is decode
+it.
 
 The query form answers `BEACONMODE <index> <name>\r`, or `BEACONMODE -1
 LISTEN\r`.

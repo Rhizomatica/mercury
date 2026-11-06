@@ -385,7 +385,7 @@ void setUp(void)
     write_buffer_call_count = 0;
     mock_kiss_last_command_val = CMD_DATA;
     atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
-    atomic_store(&bcast_beacon_mode, -1);
+    atomic_store(&bcast_beacon_mode, FREEDV_MODE_DATAC16);   /* the default */
     mock_beacon_calls = 0;
     mock_beacon_mode = -1;
     mock_beacon_len = 0;
@@ -679,25 +679,25 @@ void test_cmd_mode_query_reports_index_and_name(void)
     TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);
 }
 
-/* BEACONMODE: the mode a client's station messages go on.  Index 8 is
- * DATAC16, 4 DATAC13 (no runtime decoder: refused). */
+/* BEACONMODE: the mode a client's station messages go on, DATAC16 (index 8)
+ * by default.  Index 7 is DATAC15, 4 DATAC13 (no runtime decoder: refused). */
 void test_cmd_beaconmode_sets_reports_and_refuses(void)
 {
-    char set[] = "BEACONMODE 8";
-    execute_control_command(set);
-    assert_ok_response();
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, atomic_load(&bcast_beacon_mode));
+    char query[] = "BEACONMODE";
+    execute_control_command(query);              /* DATAC16 until told otherwise */
+    TEST_ASSERT_EQUAL_STRING_LEN("BEACONMODE 8 DATAC16\r", (char *)last_tcp_write_buf, 21);
 
     tcp_write_call_count = 0;
-    char query[] = "BEACONMODE";
-    execute_control_command(query);
-    TEST_ASSERT_EQUAL_STRING_LEN("BEACONMODE 8 DATAC16\r", (char *)last_tcp_write_buf, 21);
+    char set[] = "BEACONMODE 7";
+    execute_control_command(set);
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, atomic_load(&bcast_beacon_mode));
 
     tcp_write_call_count = 0;
     char bad[] = "BEACONMODE 4";
     execute_control_command(bad);
     assert_wrong_response();
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, atomic_load(&bcast_beacon_mode));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, atomic_load(&bcast_beacon_mode));
 
     tcp_write_call_count = 0;
     char back[] = "BEACONMODE -1";
@@ -1286,14 +1286,15 @@ void test_broadcast_rx_station_message_goes_up_whole(void)
     TEST_ASSERT_EQUAL_INT(sizeof(frame), n);
 }
 
-/* A client's beacon goes on BEACONMODE's mode; without one, like any modem
- * frame, into the listen mode's ring. */
+/* A client's beacon goes on BEACONMODE's mode, DATAC16 by default; with -1,
+ * like any modem frame, into the listen mode's ring. */
 void test_bcast_tx_station_message_takes_the_beacon_mode(void)
 {
     const size_t fsz = 30;
     uint8_t frame[MAX_PAYLOAD] = {0};
     frame[0] = (uint8_t)(PACKET_TYPE_STATION << PACKET_TYPE_SHIFT);
 
+    atomic_store(&bcast_beacon_mode, -1);
     TEST_ASSERT_TRUE(bcast_process_decoded_frame(frame, 14, CMD_MODEM_FRAME, fsz));
     TEST_ASSERT_EQUAL_INT(0, mock_beacon_calls);
     TEST_ASSERT_EQUAL_INT(1, write_buffer_call_count);

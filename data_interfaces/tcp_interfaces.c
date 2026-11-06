@@ -95,8 +95,9 @@ static atomic_bool bcast_client_done = false;
 static atomic_bool bcast_client_present = false;
 #define BCAST_RX_REC_HDR 2
 /* The mode a client's station messages (the beacon) go on: BEACONMODE, -1
- * for the listen mode. */
-static _Atomic int bcast_beacon_mode = -1;
+ * for the listen mode.  DATAC16 by default: the most robust mode a compact
+ * beacon fits that every running Mercury decodes (its control decoder). */
+static _Atomic int bcast_beacon_mode = FREEDV_MODE_DATAC16;
 /* The host program's tap on every broadcast frame decoded (broadcast_set_rx_tap). */
 static void (*_Atomic bcast_rx_tap)(const uint8_t *frame, size_t len, int mode, float snr);   /* static: starts NULL (clang takes no NULL initializer here) */
 static _Atomic uint8_t bcast_reply_cmd = CMD_DATA;
@@ -570,8 +571,8 @@ static void execute_control_command(char *buffer)
      * -- every session's start rung comes from the connect. */
     /* BEACONMODE <index>  -- the mode a broadcast client's station messages
      * (the beacon: PACKET_TYPE_STATION, sent with CMD_MODEM_FRAME) go on,
-     * instead of the listen mode: 8 (DATAC16) or any index MODE accepts; -1
-     * goes back to the listen mode.  BEACONMODE alone reports it. */
+     * instead of the listen mode: 8 (DATAC16, the default) or any index MODE
+     * accepts; -1 sends them at the listen mode.  BEACONMODE alone reports it. */
     if (!strncmp(buffer, "BEACONMODE", strlen("BEACONMODE")))
     {
         int idx = -2;
