@@ -352,6 +352,31 @@ void test_accepting_rx_call_rearms_budget(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
 }
 
+/* A scanning host holds its channel a fixed time per PENDING (BPQ32: six scan
+ * intervals), so each repeat of the CALL we answer sends PENDING again; a CALL
+ * from another station, which we do not answer, does not. */
+void test_accepting_repeat_call_sends_pending_again(void)
+{
+    enter_accepting();
+    int first = fake_notify_pending_fake.call_count;
+    TEST_ASSERT_GREATER_THAN(0, first);
+
+    arq_event_t call = make_event(ARQ_EV_RX_CALL);
+    call.session_id = 0x42;
+    strncpy(call.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    mock_set_uptime_ms(15000);
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(first + 1, fake_notify_pending_fake.call_count);
+    TEST_ASSERT_EQUAL_STRING("REMOTE1", fake_notify_pending_fake.arg0_val);
+
+    arq_event_t other = make_event(ARQ_EV_RX_CALL);
+    other.session_id = 0x43;
+    strncpy(other.remote_call, "OTHER1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &other);
+    TEST_ASSERT_EQUAL_INT(first + 1, fake_notify_pending_fake.call_count);
+}
+
 /* Connection-setup slots must stay short by default so a failed connect and
  * its mirror ACCEPT window give up quickly. */
 void test_default_call_accept_slots_are_short(void)
@@ -1789,6 +1814,7 @@ int main(void)
     RUN_TEST(test_accept_fallback_completes_on_first_frame);
     RUN_TEST(test_ended_session_is_not_resurrected_by_a_late_frame);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
+    RUN_TEST(test_accepting_repeat_call_sends_pending_again);
     RUN_TEST(test_default_call_accept_slots_are_short);
     RUN_TEST(test_retries_scale_fast_call_slots);
     RUN_TEST(test_stop_listen);
