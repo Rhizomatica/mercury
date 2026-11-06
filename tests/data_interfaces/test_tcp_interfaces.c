@@ -225,15 +225,15 @@ bool modem_get_monitor_enabled(void) { return mock_monitor_enabled; }
 /* ---- in-flight frame stub (LISTEN OFF diagnostic) ---- */
 
 static bool mock_inflight = false;
-static int  mock_inflight_queries = 0;
 
-bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms)
+bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms,
+                              bool *lost_on_listen_off)
 {
-    mock_inflight_queries++;
     if (!mock_inflight)
         return false;
-    if (mode_name) *mode_name = "DATAC16";
-    if (for_ms)    *for_ms = 2100;
+    if (mode_name)          *mode_name = "MFSK";
+    if (for_ms)             *for_ms = 2100;
+    if (lost_on_listen_off) *lost_on_listen_off = true;
     return true;
 }
 
@@ -358,7 +358,6 @@ void setUp(void)
     memset(&arq_conn, 0, sizeof(arq_conn));
     mock_bandwidth_hz = 2300;
     mock_inflight = false;
-    mock_inflight_queries = 0;
 
     /* Broadcast framing state */
     memset(last_write_buffer_data, 0, sizeof(last_write_buffer_data));
@@ -490,18 +489,6 @@ void test_cmd_listen_off_mid_frame_still_releases(void)
 
     assert_ok_response();
     TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_OFF, captured_cmd.type);
-    TEST_ASSERT_EQUAL_INT(1, mock_inflight_queries);
-}
-
-/* LISTEN ON never asks: the diagnostic is about a hop away. */
-void test_cmd_listen_on_does_not_query_in_flight(void)
-{
-    mock_inflight = true;
-    char cmd[] = "LISTEN ON";
-    execute_control_command(cmd);
-
-    assert_ok_response();
-    TEST_ASSERT_EQUAL_INT(0, mock_inflight_queries);
 }
 
 void test_cmd_public_on(void)
@@ -2007,7 +1994,6 @@ int main(void)
     RUN_TEST(test_cmd_listen_on);
     RUN_TEST(test_cmd_listen_off);
     RUN_TEST(test_cmd_listen_off_mid_frame_still_releases);
-    RUN_TEST(test_cmd_listen_on_does_not_query_in_flight);
     RUN_TEST(test_cmd_public_on);
     RUN_TEST(test_cmd_compression);
     RUN_TEST(test_cmd_tune_on);

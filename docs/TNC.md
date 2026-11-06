@@ -635,8 +635,17 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   until `DISCONNECTED` or `CANCELPENDING`.  In every session the scanner
   stopped once the CALL decoded, including a 32 s connect that needed a
   repeated CALL and a failed one it held for 43 s.
-- **Each hop is `LISTEN OFF`, `LISTEN ON` and a `BW` command.**  These only
-  set flags: they do not reset Mercury's decoders.  The dwell was 10.1-10.2 s.
+- **Each hop is `LISTEN OFF`, `LISTEN ON` and a `BW` command.**  The dwell
+  was 10.1-10.2 s.  The DATAC16 decoder keeps decoding through them, but the
+  two MFSK call listeners do not:
+  - a `LISTEN OFF` flushes both: they are fed only while LISTENING or
+    ACCEPTING, so a partly received MFSK CALL is dropped even when
+    `LISTEN ON` follows 0.1 s later on the same frequency;
+  - a `BW` change between `BW500` and `BW2300`/`BW2750` flushes both too: the
+    listeners swap floors, and each swap drops what it holds.
+
+  While a scan schedule held KG9NI on one channel (5-31 min), BPQ32 sent no
+  hop commands, so the MFSK listeners were not flushed there.
 - **Only a whole CALL decoded inside one dwell starts a session.**  CALL
   lengths on the air:
 
@@ -661,12 +670,14 @@ When `LISTEN OFF` arrives with no session up while a CALL decoder has locked
 onto a frame it has not decoded yet, Mercury logs it:
 
 ```
-[tcp-ctl] LISTEN OFF 2.1 s into a DATAC16 frame not yet decoded: if the host now changes frequency, that frame is lost (or it was noise)
+[tcp-ctl] LISTEN OFF 2.1 s into a DATAC16 frame not yet decoded: if the host now changes frequency, it is lost (or it was noise)
+[tcp-ctl] LISTEN OFF 6.4 s into a MFSK frame not yet decoded: LISTEN OFF drops it (or it was noise)
 ```
 
-A CALL cut off by a hop shows as one of these lines with no `RX_CALL` after
-it.  The lock can also be noise or another station's traffic, so read the
-line together with the caller's log.
+A DATAC16 frame is lost only if the host then retunes; an MFSK one is lost to
+the `LISTEN OFF` itself.  A CALL cut off by a hop shows as one of these lines
+with no `RX_CALL` after it.  The lock can also be noise or another station's
+traffic, so read the line together with the caller's log.
 
 ### DISCONNECTED
 
