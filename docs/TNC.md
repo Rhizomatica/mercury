@@ -436,7 +436,9 @@ LISTEN\r`.
 A station message is sent once, zero-padded to that mode's frame, after any
 ARQ session or carousel has ended, and only when no decoder is on a frame
 (after ~10 s of a busy channel, it is sent anyway).  One that does not fit the
-mode's frame is discarded.  The best modes for it are the ones every listening
+mode's frame (a full-layout beacon on DATAC16, for example) goes at the listen
+mode instead, as with `BEACONMODE -1`, and the log says so.  Like `MODE`, the
+setting holds for the life of the modem, not of the client that sent it.  The best modes for it are the ones every listening
 Mercury already decodes, whatever its listen mode:
 
 - DATAC16, the control mode (14 bytes, 3.1 s);

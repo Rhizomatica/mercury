@@ -215,6 +215,7 @@ size_t modem_get_broadcast_frame_size(void) { return 14; }
 static int mock_beacon_calls = 0;
 static int mock_beacon_mode  = -1;
 static size_t mock_beacon_len = 0;
+static int mock_beacon_rc = 0;
 
 bool modem_beacon_mode_ok(int mode)
 {
@@ -227,7 +228,7 @@ int modem_beacon_send(const uint8_t *frame, size_t len, int mode)
     mock_beacon_calls++;
     mock_beacon_mode = mode;
     mock_beacon_len = len;
-    return 0;
+    return mock_beacon_rc;
 }
 
 /* ---- modem monitor-mode stubs ---- */
@@ -1306,6 +1307,15 @@ void test_bcast_tx_station_message_takes_the_beacon_mode(void)
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, mock_beacon_mode);
     TEST_ASSERT_EQUAL_size_t(14, mock_beacon_len);
     TEST_ASSERT_EQUAL_INT(1, write_buffer_call_count);
+
+    /* Too big for the BEACONMODE frame (a full layout on DATAC16): it goes at
+     * the listen mode, as with -1, instead of being dropped. */
+    mock_beacon_rc = MODEM_BEACON_BAD;
+    TEST_ASSERT_TRUE(bcast_process_decoded_frame(frame, 26, CMD_MODEM_FRAME, fsz));
+    TEST_ASSERT_EQUAL_INT(2, mock_beacon_calls);
+    TEST_ASSERT_EQUAL_INT(2, write_buffer_call_count);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    mock_beacon_rc = 0;
 }
 
 void test_bcast_rx_cmd_data_exact_size(void)

@@ -1215,7 +1215,9 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
 {
     /* A station message, with BEACONMODE set: on that mode, not the listen
      * mode's ring.  The queue holds a few; past that this client waits, as it
-     * does on a full broadcast ring. */
+     * does on a full broadcast ring.  One too big for that mode goes at the
+     * listen mode instead, as with BEACONMODE -1: dropping it would tell the
+     * client nothing. */
     int beacon_mode = atomic_load(&bcast_beacon_mode);
     if (kiss_cmd == CMD_MODEM_FRAME && beacon_mode >= 0 && frame_len > 0 &&
         frame_header_packet_type(decoded_frame[0]) == PACKET_TYPE_STATION)
@@ -1224,10 +1226,10 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
         while ((rc = modem_beacon_send(decoded_frame, (size_t)frame_len, beacon_mode)) == MODEM_BEACON_FULL &&
                !mercury_stop && !bcast_client_done)
             msleep(100);
-        if (rc == MODEM_BEACON_BAD)
-            HLOGW("tcp-bcast", "Discarding station message: %d bytes do not fit the BEACONMODE frame",
-                  frame_len);
-        return rc == 0;
+        if (rc != MODEM_BEACON_BAD)
+            return rc == 0;
+        HLOGI("tcp-bcast", "Station message of %d bytes does not fit the BEACONMODE frame: sending it at the listen mode",
+              frame_len);
     }
 
     /* Latch reply command — same framing style goes back to the client */

@@ -2879,7 +2879,7 @@ void *tx_thread(void *g_modem)
          * sync must not hold it for good. */
         if (!sent_from_action && beacon_ready && tx_mode == beacon_mode)
         {
-            uint64_t now = monotonic_ms();
+            uint64_t now = virtual_clock_enabled() ? time_now_ms() : monotonic_ms();
             bool heard = arq_channel_heard();
             if (!heard || (beacon_wait_since != 0 &&
                            now - beacon_wait_since >=
@@ -2895,6 +2895,9 @@ void *tx_thread(void *g_modem)
                     if (send_modulated_data_with_cq_status(modem, data, 1) < 0)
                         HLOGW("modem-tx", "Failed to send station message");
                 }
+                else
+                    HLOGW("modem-tx", "Station message dropped: it no longer fits the %s frame",
+                          mode_name_from_enum(tx_mode));
                 sent_from_action = true;
             }
             else if (beacon_wait_since == 0)
@@ -2917,11 +2920,14 @@ void *tx_thread(void *g_modem)
                 HLOGW("modem-tx", "Failed to send broadcast buffered frame");
         }
 
-        if (!sent_from_action &&
-            size_buffer(data_tx_buffer_arq) < required &&
-            size_buffer(data_tx_buffer_arq_control) < required &&
-            size_buffer(data_tx_buffer_broadcast) < required &&
-            !waited_for_action)
+        /* A station message waiting (on a busy channel, or for its mode) sleeps
+         * too: the broadcast ring is held behind it, so a full ring would
+         * otherwise spin this loop until the beacon goes. */
+        if (!sent_from_action && !waited_for_action &&
+            (beacon_ready ||
+             (size_buffer(data_tx_buffer_arq) < required &&
+              size_buffer(data_tx_buffer_arq_control) < required &&
+              size_buffer(data_tx_buffer_broadcast) < required)))
         {
             usleep(100000); // sleep for 100ms if there is no data to send
         }
