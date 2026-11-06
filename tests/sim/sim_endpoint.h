@@ -22,7 +22,10 @@ typedef struct {
 sim_endpoint_t            *sim_endpoint_create(const char *my_call, const char *peer_call);
 void                       sim_endpoint_destroy(sim_endpoint_t *ep);
 arq_session_t             *sim_endpoint_session(sim_endpoint_t *ep);
+/* The callsign a CALL or ACCEPT must be addressed to for this endpoint to
+ * take it: its own, or the one sim_endpoint_set_rx_call() gave. */
 const char                *sim_endpoint_call(sim_endpoint_t *ep);
+void                       sim_endpoint_set_rx_call(sim_endpoint_t *ep, const char *call);
 void                       sim_endpoint_queue_tx(sim_endpoint_t *ep,
                                                   const uint8_t *data, size_t len);
 size_t                     sim_endpoint_delivered(sim_endpoint_t *ep,

@@ -250,6 +250,12 @@ int arq_protocol_retry_rank(const char *local_call, const char *remote_call);
 
 uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank);
 
+/* Which of our callsigns `call` names, ignoring case: the entry of `ours`
+ * (n of them; NULL or empty entries are skipped), or NULL when it is none of
+ * them.  An outgoing CALL goes out from the host's CONNECT source only when
+ * it is one of ours, since only those does an ACCEPT reach us on. */
+const char *arq_protocol_own_call(const char *call, const char *const *ours, int n);
+
 /* The two callsigns a CONNECTED reports: src is the station that called, dst
  * the one that was called, on both peers.
  *   we_called    which side we are, as the FSM knows it

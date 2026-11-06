@@ -137,6 +137,44 @@ void test_sim_connect_handshake(void)
     sim_destroy(s);
 }
 
+/* The host's CONNECT names a secondary callsign as its source (BPQ32 dials from
+ * its BBS callsign): the CALL goes out from it, the callee's ACCEPT comes back
+ * to it, and both ends seed the session with it.  A's primary is A0AAA-7 and
+ * it is reached only on A0AAA-1, so a CALL from the primary gets no ACCEPT
+ * that A takes, and a seed from the primary on one end alone delivers
+ * nothing. */
+void test_sim_connect_from_secondary_callsign(void)
+{
+    sim_channel_cfg_t chan = { .seed = 7, .per = 0.0, .guard_ms = 100 };
+    sim_t *s = sim_create(&chan, "A0AAA-7", "B0BBB");
+    TEST_ASSERT_NOT_NULL(s);
+    sim_endpoint_set_rx_call(sim_a(s), "A0AAA-1");
+
+    arq_event_t listen = { .id = ARQ_EV_APP_LISTEN };
+    sim_inject(s, sim_b(s), &listen);
+
+    arq_event_t conn = { .id = ARQ_EV_APP_CONNECT };
+    snprintf(conn.remote_call, CALLSIGN_MAX_SIZE, "%s", "B0BBB");
+    snprintf(conn.local_call,  CALLSIGN_MAX_SIZE, "%s", "A0AAA-1");
+    sim_inject(s, sim_a(s), &conn);
+    sim_run_until_idle(s, 60000);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sim_endpoint_session(sim_a(s))->conn_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sim_endpoint_session(sim_b(s))->conn_state);
+    TEST_ASSERT_EQUAL_STRING("A0AAA-1", sim_endpoint_session(sim_b(s))->remote_call);
+
+    uint8_t blob[1500];
+    for (int i = 0; i < (int)sizeof(blob); i++) blob[i] = (uint8_t)(i * 7);
+    sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+    arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
+    sim_inject(s, sim_a(s), &dready);
+    sim_run_until_idle(s, 600000);
+
+    sim_verdict_t v = sim_prop_integrity(s, sim_a(s), sim_b(s), blob, sizeof(blob));
+    TEST_ASSERT_TRUE_MESSAGE(v.ok, v.detail);
+    sim_destroy(s);
+}
+
 /* ======================================================================
  * Task 6: Property checker unit test
  * ====================================================================== */
@@ -644,6 +682,7 @@ int main(void)
 
     /* Task 5: connect handshake */
     RUN_TEST(test_sim_connect_handshake);
+    RUN_TEST(test_sim_connect_from_secondary_callsign);
 
     /* Task 6: property checkers */
     RUN_TEST(test_prop_integrity_detects_mismatch);

@@ -135,10 +135,11 @@ typedef struct
 
     /* Call setup */
     char     remote_call[CALLSIGN_MAX_SIZE];
-    /* For an incoming CALL: which of OUR callsigns (primary or a secondary)
-     * the frame's DST CRC16 matched — i.e. the SSID the caller dialed.  Empty
-     * when not applicable; the callee reports this as the connection's local
-     * address so a station listening on multiple SSIDs shows the dialed one. */
+    /* Which of OUR callsigns (primary or a secondary) this session uses.
+     * RX_CALL: the one the frame's DST CRC16 matched, i.e. the SSID the caller
+     * dialed; the callee reports it as the connection's local address.
+     * APP_CONNECT: the host's CONNECT source, when it is one of ours; the
+     * CALL goes out from it.  Empty: the primary. */
     char     local_call[CALLSIGN_MAX_SIZE];
 } arq_event_t;
 
@@ -160,9 +161,10 @@ typedef struct
     int      call_carrier;             /* the carrier the last CALL went out on */
     int      call_rx_mode;             /* the carrier the CALL we answer came on */
     char     remote_call[CALLSIGN_MAX_SIZE];
-    char     local_call[CALLSIGN_MAX_SIZE];  /* our dialed callsign/SSID for an
-                                              * accepted incoming CALL (empty =>
-                                              * fall back to the primary)        */
+    char     local_call[CALLSIGN_MAX_SIZE];  /* our callsign in this session:
+                                              * the one an incoming CALL dialed,
+                                              * or the one an outgoing CALL goes
+                                              * out from (empty => the primary) */
 
     /* --- Mode / speed --- */
     int      payload_mode;             /* MY data TX mode (ISS); per-direction,
@@ -248,6 +250,7 @@ typedef struct
                                        /* a CONNECT that came during the
                                         * teardown, placed once it completes;
                                         * empty = none                       */
+    char     pending_connect_local[CALLSIGN_MAX_SIZE];  /* its source (local_call) */
 
     uint64_t last_rx_ms;              /* last frame decoded from the peer      */
 

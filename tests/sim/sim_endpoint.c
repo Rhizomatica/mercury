@@ -18,6 +18,9 @@ struct sim_endpoint {
     arq_session_t sess;
     char my_call[CALLSIGN_MAX_SIZE];
     char peer_call[CALLSIGN_MAX_SIZE];
+    char rx_call[CALLSIGN_MAX_SIZE];   /* a CALL/ACCEPT reaches us on this one
+                                        * (empty: my_call), as a secondary
+                                        * callsign does in arq.c */
 
     uint8_t tx[SIM_TX_CAP]; size_t tx_head, tx_len;   /* app bytes to send   */
     uint8_t rx[SIM_RX_CAP]; size_t rx_len;            /* delivered app bytes */
@@ -57,7 +60,11 @@ void sim_endpoint_set_mfsk_tx(sim_endpoint_t *ep, bool on) { ep->mfsk_tx = on; }
 
 sim_endpoint_t *sim_endpoint_active(void)                    { return s_active; }
 arq_session_t  *sim_endpoint_session(sim_endpoint_t *ep)     { return &ep->sess; }
-const char     *sim_endpoint_call(sim_endpoint_t *ep)        { return ep->my_call; }
+const char     *sim_endpoint_call(sim_endpoint_t *ep)        { return ep->rx_call[0] ? ep->rx_call : ep->my_call; }
+void sim_endpoint_set_rx_call(sim_endpoint_t *ep, const char *call)
+{
+    snprintf(ep->rx_call, sizeof(ep->rx_call), "%s", call ? call : "");
+}
 
 sim_endpoint_t *sim_endpoint_create(const char *my_call, const char *peer_call)
 {

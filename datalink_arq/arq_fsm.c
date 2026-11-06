@@ -377,7 +377,8 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     }
     else
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
-                                    my_call, sess->remote_call, bw_hz,
+                                    sess->local_call[0] ? sess->local_call : my_call,
+                                    sess->remote_call, bw_hz,
                                     ARQ_TX_MFSK_ONLY);
     if (n > 0)
     {
@@ -408,7 +409,8 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
          * callsign), so say why — otherwise this is a CALL that never goes out
          * and a session that retries against silence. */
         HLOGW(LOG_COMP, "%s not sent: cannot encode callsign '%s' (too long?)",
-              is_accept ? "ACCEPT" : "CALL", my_call);
+              is_accept ? "ACCEPT" : "CALL",
+              sess->local_call[0] ? sess->local_call : my_call);
 }
 
 /* The mode for the session's own control frames (DISCONNECT and the rest):
@@ -696,11 +698,12 @@ static uint16_t car_seed(const arq_session_t *sess, bool is_caller)
 {
     char me[CALLSIGN_MAX_SIZE];
     arq_conn_get_calls(me, NULL, NULL, sizeof(me));
-    /* The callee may have been dialed on a secondary callsign: the one the
-     * caller wrote in its CALL is what both ends hash. */
-    const char *callee_me = sess->local_call[0] ? sess->local_call : me;
-    const char *caller = is_caller ? me : sess->remote_call;
-    const char *callee = is_caller ? sess->remote_call : callee_me;
+    /* Either end may be on a secondary callsign (the callee dialed on one, the
+     * caller calling from one): the callsigns in the CALL are what both ends
+     * hash, and local_call holds ours. */
+    const char *my_end = sess->local_call[0] ? sess->local_call : me;
+    const char *caller = is_caller ? my_end : sess->remote_call;
+    const char *callee = is_caller ? sess->remote_call : my_end;
     unsigned char buf[4 + 2 * CALLSIGN_MAX_SIZE];
     int n = 0;
     buf[n++] = sess->session_id;
@@ -932,6 +935,10 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_APP_CONNECT:
         send_disconnect_reply(sess);    /* owed first; the CALL queues behind it */
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
+        /* The CALL goes out from the host's CONNECT source (arq.c checked it
+         * is one of ours).  Set on every call, so the callsign the last
+         * incoming CALL dialed is not left behind for this one. */
+        snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = (uint8_t)(time_now_ms() & ARQ_CONNECT_SESSION_MASK) | 0x01;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->call_sends_done = 0;
@@ -1416,7 +1423,9 @@ static void fire_deferred_connect(arq_session_t *sess)
         return;
     arq_event_t ev = { .id = ARQ_EV_APP_CONNECT };
     snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", sess->pending_connect_call);
+    snprintf(ev.local_call, CALLSIGN_MAX_SIZE, "%s", sess->pending_connect_local);
     sess->pending_connect_call[0] = '\0';
+    sess->pending_connect_local[0] = '\0';
     HLOGI(LOG_COMP, "Teardown complete: placing deferred call to %s", ev.remote_call);
     arq_fsm_dispatch(sess, &ev);
 }
@@ -1543,6 +1552,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
          * (see fire_deferred_connect below): arriving after the new CONNECT,
          * it would read as "your call failed". */
         snprintf(sess->pending_connect_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
+        snprintf(sess->pending_connect_local, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         HLOGI(LOG_COMP, "CONNECT to %s deferred until the teardown completes",
               sess->pending_connect_call);
         break;
@@ -1893,6 +1903,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         if (sess->teardown == ARQ_TD_DRAINING)
         {
             snprintf(sess->pending_connect_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
+            snprintf(sess->pending_connect_local, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
             HLOGI(LOG_COMP, "CONNECT to %s deferred until the teardown completes",
                   sess->pending_connect_call);
             /* The host was told DISCONNECTED when it hung up (arq.c, the VARA
