@@ -51,6 +51,7 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_FALSE(c.verbose);
     TEST_ASSERT_FALSE(c.trace);
     TEST_ASSERT_FALSE(c.log_utc);   /* local time unless asked */
+    TEST_ASSERT_EQUAL_INT(20, c.log_max_mb);
 }
 
 /* Set non-default values, write, read back, assert preserved. */
@@ -496,10 +497,34 @@ void test_log_utc_roundtrips(void)
     TEST_ASSERT_TRUE(r.log_utc);
 }
 
+/* main:log_max_mb round-trips, 0 (no cap) included; out of range keeps the default. */
+void test_log_max_mb_roundtrips(void)
+{
+    mercury_config w, r;
+    int values[] = { 0, 5, 20 };
+    for (size_t k = 0; k < sizeof values / sizeof values[0]; k++)
+    {
+        cfg_set_defaults(&w);
+        w.log_max_mb = values[k];
+        TEST_ASSERT_TRUE(cfg_write(&w, TMP));
+        cfg_set_defaults(&r);
+        r.log_max_mb = 7;
+        TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+        TEST_ASSERT_EQUAL_INT(values[k], r.log_max_mb);
+    }
+    cfg_set_defaults(&w);
+    w.log_max_mb = -3;
+    TEST_ASSERT_TRUE(cfg_write(&w, TMP));
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_INT(CFG_LOG_MAX_MB_DEFAULT, r.log_max_mb);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_log_utc_roundtrips);
+    RUN_TEST(test_log_max_mb_roundtrips);
     RUN_TEST(test_defaults_match_constants);
     RUN_TEST(test_tls_cert_paths_default_to_the_system_locations);
     RUN_TEST(test_tls_settings_roundtrip);

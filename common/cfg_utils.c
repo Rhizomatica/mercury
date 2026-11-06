@@ -60,6 +60,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->verbose            = false;
     cfg->trace              = false;
     cfg->log_utc            = false;
+    cfg->log_max_mb         = CFG_LOG_MAX_MB_DEFAULT;
     cfg->freedv_verbosity   = 0;
     cfg->disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
     cfg->tnc_keepalive_s = 60;
@@ -399,6 +400,10 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     b = iniparser_getboolean(ini, CFG_KEY_LOG_UTC, cfg->log_utc ? 1 : 0);
     cfg->log_utc = (bool) b;
 
+    i = iniparser_getint(ini, CFG_KEY_LOG_MAX_MB, cfg->log_max_mb);
+    if (i >= 0 && i <= CFG_LOG_MAX_MB_MAX)
+        cfg->log_max_mb = i;
+
     i = iniparser_getint(ini, CFG_KEY_FREEDV_VERBOSITY, cfg->freedv_verbosity);
     if (i >= 0 && i <= 3)
         cfg->freedv_verbosity = i;
@@ -560,6 +565,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "verbose = %s\n",           cfg->verbose ? "true" : "false");
     fprintf(f, "trace = %s\n",             cfg->trace ? "true" : "false");
     fprintf(f, "log_utc = %s\n",           cfg->log_utc ? "true" : "false");
+    fprintf(f, "log_max_mb = %d\n",        cfg->log_max_mb);
     fprintf(f, "freedv_verbosity = %d\n",  cfg->freedv_verbosity);
     fprintf(f, "\n[ptt]\n");
     fprintf(f, "method = %s\n", cfg_ptt_method_name(cfg->ptt.method));

@@ -16,6 +16,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <sys/stat.h>
 
 #include "unity.h"
 #include "hermes_log.h"
@@ -213,6 +215,97 @@ void test_init_reports_a_logger_already_running(void)
     hermes_log_shutdown();
 }
 
+/* Count the lines of a file holding a marker, and whether it holds another. */
+static int count_lines_with(const char *path, const char *marker, const char *also, bool *has_also)
+{
+    FILE *fp = fopen(path, "r");
+    if (!fp)
+        return -1;
+    char line[1024];
+    int n = 0;
+    *has_also = false;
+    while (fgets(line, sizeof line, fp))
+    {
+        if (strstr(line, marker)) n++;
+        if (also && strstr(line, also)) *has_also = true;
+    }
+    fclose(fp);
+    return n;
+}
+
+/* Past the cap the file moves to <path>.1 and a new one starts, each saying
+ * where the other is; no line is lost, and neither file outgrows the cap by
+ * more than a line.  Cap 0: one file, however long. */
+void test_file_rotates_past_the_cap(void)
+{
+    char tmpl[] = "/tmp/mercury_log_XXXXXX";
+    int fd = mkstemp(tmpl);
+    TEST_ASSERT_TRUE(fd >= 0);
+    close(fd);
+    char old[sizeof tmpl + 2];
+    snprintf(old, sizeof old, "%s.1", tmpl);
+    unlink(old);
+
+    const unsigned long long cap = 4096;
+    hermes_log_set_max_bytes(cap);
+    TEST_ASSERT_EQUAL_INT(0, hermes_log_init(64));
+    TEST_ASSERT_EQUAL_INT(0, hermes_log_set_file(tmpl, HERMES_LOG_LEVEL_DEBUG, false));
+    hermes_log_set_level(HERMES_LOG_LEVEL_ERROR);
+    const int lines = 100;   /* ~10 kB: rotates twice, and .1 is the second */
+    for (int i = 0; i < lines; i++)
+        HLOGI("test", "rotation-line %03d ................................", i);
+    hermes_log_shutdown();
+    hermes_log_set_max_bytes(0);
+
+    bool cur_note = false, old_note = false;
+    int in_cur = count_lines_with(tmpl, "rotation-line", "earlier lines are in", &cur_note);
+    int in_old = count_lines_with(old, "rotation-line", "continued in", &old_note);
+    TEST_ASSERT_TRUE_MESSAGE(in_old > 0, "nothing was moved to <path>.1");
+    TEST_ASSERT_TRUE_MESSAGE(in_cur > 0, "no new file after the move");
+    TEST_ASSERT_TRUE_MESSAGE(cur_note, "the new file does not say where the earlier lines are");
+    TEST_ASSERT_TRUE_MESSAGE(old_note, "the moved file does not say where the log went on");
+
+    /* The newest lines, in order and with none missing across the two files:
+     * the last line of .1 is followed by the first line of the new file. */
+    FILE *fp = fopen(tmpl, "r");
+    char line[1024];
+    int first = -1, last = -1;
+    while (fgets(line, sizeof line, fp))
+    {
+        const char *m = strstr(line, "rotation-line ");
+        if (!m) continue;
+        int v = atoi(m + strlen("rotation-line "));
+        if (first < 0) first = v;
+        TEST_ASSERT_TRUE(last < 0 || v == last + 1);
+        last = v;
+    }
+    fclose(fp);
+    TEST_ASSERT_EQUAL_INT(lines - 1, last);
+    TEST_ASSERT_EQUAL_INT(lines - in_cur, first);
+
+    struct stat st;
+    TEST_ASSERT_EQUAL_INT(0, stat(old, &st));
+    TEST_ASSERT_TRUE(st.st_size < (off_t)(cap + 1024));
+    unlink(tmpl);
+    unlink(old);
+
+    /* No cap: a single file with every line. */
+    strcpy(tmpl + strlen(tmpl) - 6, "XXXXXX");
+    fd = mkstemp(tmpl);
+    TEST_ASSERT_TRUE(fd >= 0);
+    close(fd);
+    snprintf(old, sizeof old, "%s.1", tmpl);
+    TEST_ASSERT_EQUAL_INT(0, hermes_log_init(64));
+    TEST_ASSERT_EQUAL_INT(0, hermes_log_set_file(tmpl, HERMES_LOG_LEVEL_DEBUG, false));
+    hermes_log_set_level(HERMES_LOG_LEVEL_ERROR);
+    for (int i = 0; i < lines; i++)
+        HLOGI("test", "rotation-line %03d ................................", i);
+    hermes_log_shutdown();
+    TEST_ASSERT_EQUAL_INT(lines, count_lines_with(tmpl, "rotation-line", NULL, &cur_note));
+    TEST_ASSERT_EQUAL_INT(-1, stat(old, &st));
+    unlink(tmpl);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -222,5 +315,6 @@ int main(void)
     RUN_TEST(test_set_file_records_entries);
     RUN_TEST(test_set_file_same_path_announced_once);
     RUN_TEST(test_timestamps_local_by_default_utc_with_z);
+    RUN_TEST(test_file_rotates_past_the_cap);
     return UNITY_END();
 }

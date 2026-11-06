@@ -51,6 +51,9 @@
 #define CFG_KEY_VERBOSE             "main:verbose"
 #define CFG_KEY_TRACE               "main:trace"
 #define CFG_KEY_LOG_UTC             "main:log_utc"
+#define CFG_KEY_LOG_MAX_MB          "main:log_max_mb"
+#define CFG_LOG_MAX_MB_DEFAULT      20
+#define CFG_LOG_MAX_MB_MAX          100000
 #define CFG_KEY_FREEDV_VERBOSITY    "main:freedv_verbosity"
 #define CFG_KEY_HAMLIB_LOG_LEVEL    "main:hamlib_log_level"
 #define CFG_KEY_RADIO_SERIAL_SPEED  "main:radio_serial_speed"
@@ -109,6 +112,7 @@ typedef struct {
     bool     verbose;
     bool     trace;                 /* TRACE log level: raw decoded frame bytes */
     bool     log_utc;               /* text log timestamps in UTC (default: local) */
+    int      log_max_mb;            /* log file cap: past it, moved to <file>.1 (0: none) */
     int      freedv_verbosity;      /* 0..3 */
     int      disconnect_drain_timeout_s;/* ARQ: absolute cap (s) on how long an
                                     * app DISCONNECT stays deferred while
