@@ -3581,8 +3581,14 @@ void *rx_thread(void *g_modem)
                  * transmissions while it is asserted -- so reporting it would
                  * stall the very link that is running.  Clear a latched BUSY
                  * on the way in, or a host is left holding one for the whole
-                 * QSO with no BUSY OFF to release it. */
-                if (busy_on && arq_get_trx() != TX && arq_is_link_connected())
+                 * QSO with no BUSY OFF to release it.
+                 *
+                 * The session lasts until the teardown is over, not just while
+                 * CONNECTED: the FSM's listen-before-talk reads BUSY as the
+                 * peer keyed, so a BUSY in DISCONNECTING holds our DISCONNECT
+                 * frame up to the deferral cap (K7EK, 2026-11-06: 11 s, by
+                 * which time BPQ had moved on and the peer never heard it). */
+                if (busy_on && arq_get_trx() != TX && arq_link_has_peer())
                 {
                     if (atomic_exchange_explicit(&g_channel_busy, false,
                                                  memory_order_relaxed))

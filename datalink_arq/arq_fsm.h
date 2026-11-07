@@ -419,6 +419,11 @@ int arq_fsm_channel_keyed(const arq_session_t *sess);
  */
 const char *arq_conn_state_name(arq_conn_state_t s);
 
+/** The link to the peer exists: CONNECTED, or DISCONNECTING (the teardown is
+ *  still an exchange with that peer).  Energy on the channel in these states
+ *  is the peer, not occupancy (the busy detector's mute, modem.c). */
+bool arq_conn_state_has_peer(arq_conn_state_t s);
+
 /**
  * @brief Human-readable name for an event (for log output).
  */

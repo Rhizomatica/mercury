@@ -1209,6 +1209,14 @@ bool arq_channel_heard(void)
     return heard;
 }
 
+bool arq_link_has_peer(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    bool has_peer = arq_conn_state_has_peer(g_sess.conn_state);
+    pthread_mutex_unlock(&g_sess_lock);
+    return has_peer;
+}
+
 bool arq_is_link_connected(void)
 {
     pthread_mutex_lock(&g_sess_lock);
