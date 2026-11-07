@@ -83,10 +83,16 @@ void test_frames_and_a_completed_file_reach_the_host(void)
     free(data);
 }
 
-/* Frames only: no file decode is attempted, every frame still arrives. */
+/* Frames only: no file decode is attempted, every frame still arrives, and no
+ * directory is needed for it (an Android app has no TMPDIR, no /tmp). */
 void test_frames_only(void)
 {
+    const char *tmp = getenv("TMPDIR");
+    char saved[512];
+    snprintf(saved, sizeof(saved), "%s", tmp ? tmp : "");
+    setenv("TMPDIR", "/nonexistent/mercury-test", 1);
     TEST_ASSERT_EQUAL_INT(0, bcast_rx_host_set(NULL, on_frame, NULL));
+    if (tmp) setenv("TMPDIR", saved, 1); else unsetenv("TMPDIR");
     uint8_t f[510] = { 0x7f };
     for (int i = 0; i < 5; i++) s_tap(f, sizeof(f), 1001, 1.0f);
     for (int i = 0; i < 100 && atomic_load(&s_frames) < 5; i++) usleep(10000);

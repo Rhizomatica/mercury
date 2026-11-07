@@ -147,7 +147,8 @@ static void stop_locked(void)
     pthread_join(s_thread, NULL);
     s_live = false;
     clear_buffer(s_q);           /* also wakes a tap still waiting on a full ring */
-    rmdir(s_dir);
+    if (s_dir[0])
+        rmdir(s_dir);
 }
 
 int bcast_rx_host_set(bcast_host_object_fn on_object, bcast_host_frame_fn on_frame, void *user)
@@ -162,13 +163,25 @@ int bcast_rx_host_set(bcast_host_object_fn on_object, bcast_host_frame_fn on_fra
     if (!s_q)
         s_q = circular_buf_init(s_q_mem, sizeof(s_q_mem));
     clear_buffer(s_q);           /* nothing of a previous run's in-flight frame */
-    const char *tmp = getenv("TMPDIR");
-    snprintf(s_dir, sizeof(s_dir), "%s/mercury-bcast-rx-XXXXXX", tmp && *tmp ? tmp : "/tmp");
-    if (!mkdtemp(s_dir))
+    /* The directory is for the files only: frames alone need none (the UI's
+     * engine on Android, with no TMPDIR, and on Windows, with no mkdtemp). */
+    s_dir[0] = '\0';
+    if (on_object)
     {
-        HLOGW("bcast-rx", "cannot make a directory for received files (%s)", s_dir);
+#ifdef _WIN32
+        HLOGW("bcast-rx", "received files are not handed over on Windows");
         pthread_mutex_unlock(&s_lock);
         return -1;
+#else
+        const char *tmp = getenv("TMPDIR");
+        snprintf(s_dir, sizeof(s_dir), "%s/mercury-bcast-rx-XXXXXX", tmp && *tmp ? tmp : "/tmp");
+        if (!mkdtemp(s_dir))
+        {
+            HLOGW("bcast-rx", "cannot make a directory for received files (%s)", s_dir);
+            pthread_mutex_unlock(&s_lock);
+            return -1;
+        }
+#endif
     }
     s_on_object = on_object;
     s_on_frame = on_frame;
@@ -176,7 +189,8 @@ int bcast_rx_host_set(bcast_host_object_fn on_object, bcast_host_frame_fn on_fra
     atomic_store(&s_stop, false);
     if (pthread_create(&s_thread, NULL, worker, NULL) != 0)
     {
-        rmdir(s_dir);
+        if (s_dir[0])
+            rmdir(s_dir);
         pthread_mutex_unlock(&s_lock);
         return -1;
     }
