@@ -727,11 +727,13 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   What BPQ32 does with BUSY is refuse its own outgoing connects ("Sorry, Can't
   Connect - Channel is busy"), and two forwards that night went by AX/IP
   instead.
-- **One noise floor serves every scanned channel.**  Mercury does not know the
-  host retuned, so the busy detector carries its floor and its state from one
-  channel to the next.  At KG9NI every CLEAR came on one of the three channels,
-  and BUSY returned 0.6-5.7 s after the hop to another one, on a band the
-  operator heard as empty.
+- **The busy detector takes a new noise floor at each hop.**  Mercury is not
+  told the host retuned, so it takes `LISTEN OFF` as the sign: it waits 1 s
+  for the radio to retune, then measures the floor afresh, keeping its
+  BUSY/CLEAR verdict until the new channel decides it.  Up to 1.9.22 it
+  carried one floor across every channel: at KG9NI every CLEAR came on one of
+  the three channels, and BUSY returned 0.6-5.7 s after the hop to another
+  one, on a band the operator heard as empty.
 - **After a host `DISCONNECT`, a scan hop can cut the teardown short.**
   Mercury answers `DISCONNECTED` straight away and finishes on the air; the
   scanner's next `LISTEN OFF` releases the radio before that is done (#473).

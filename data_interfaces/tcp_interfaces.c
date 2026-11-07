@@ -447,6 +447,10 @@ static void execute_control_command(char *buffer)
                   (double)inflight_ms / 1000.0, inflight_mode ? inflight_mode : "?",
                   lost_now ? "LISTEN OFF drops it"
                            : "if the host now changes frequency, it is lost");
+        /* Each hop starts with LISTEN OFF, and Mercury is told nothing else
+         * of it: the busy detector's floor belongs to the channel it left. */
+        if (cmd.type == ARQ_CMD_LISTEN_OFF)
+            modem_busy_channel_changed();
         if (cmd.type != ARQ_CMD_NONE && arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else

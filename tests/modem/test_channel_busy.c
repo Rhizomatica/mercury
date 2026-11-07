@@ -232,6 +232,85 @@ void test_digital_silence_does_not_latch_busy(void)
     }
 }
 
+/* Scan hops (docs/TNC.md, "Scanning hosts").  Learn a quiet channel's floor,
+ * then move to an empty channel 12 dB noisier: the floor carried over reads
+ * that noise as a signal. */
+static void learn_quiet_channel(void)
+{
+    bool busy = false;
+    for (uint64_t t = 0; t <= 3000; t += 50) {
+        fill_noise(-110.0f);
+        feed(t, &busy);
+    }
+    TEST_ASSERT_FALSE(busy);
+}
+
+static bool any_busy_on_noise(uint64_t from, uint64_t to, float noise_db)
+{
+    bool busy = false, ever = false;
+    for (uint64_t t = from; t <= to; t += 50) {
+        fill_noise(noise_db);
+        feed(t, &busy);
+        ever |= busy;
+    }
+    return ever;
+}
+
+void test_hop_to_noisier_channel_reads_busy_on_the_old_floor(void)
+{
+    learn_quiet_channel();
+    TEST_ASSERT_TRUE(any_busy_on_noise(3050, 8000, -98.0f));
+}
+
+void test_reseed_on_hop_keeps_a_noisier_channel_clear(void)
+{
+    learn_quiet_channel();
+    channel_busy_reseed(&st);
+    TEST_ASSERT_FALSE(any_busy_on_noise(3050, 8000, -98.0f));
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, -98.0f, st.noise_floor_db);
+}
+
+/* The verdict survives the reseed: a channel that is still busy sends the
+ * host no CLEAR/BUSY pair. */
+void test_reseed_keeps_a_busy_verdict(void)
+{
+    bool busy = false;
+    for (uint64_t t = 0; t <= 1000; t += 50) {
+        fill_noise(-100.0f);
+        add_passband_signal(-60.0f);
+        feed(t, &busy);
+    }
+    TEST_ASSERT_TRUE(busy);
+    channel_busy_reseed(&st);
+    for (uint64_t t = 1050; t <= 5000; t += 50) {
+        fill_noise(-100.0f);
+        add_passband_signal(-60.0f);
+        TEST_ASSERT_FALSE(feed(t, &busy));
+        TEST_ASSERT_TRUE(busy);
+    }
+}
+
+/* Off a busy channel onto a quiet one: CLEAR, after the usual hang. */
+void test_reseed_to_quiet_channel_releases_after_hang(void)
+{
+    bool busy = false;
+    for (uint64_t t = 0; t <= 1000; t += 50) {
+        fill_noise(-100.0f);
+        add_passband_signal(-60.0f);
+        feed(t, &busy);
+    }
+    TEST_ASSERT_TRUE(busy);
+    channel_busy_reseed(&st);
+    uint64_t cleared_at = 0;
+    for (uint64_t t = 1050; t <= 5000 && !cleared_at; t += 50) {
+        fill_noise(-100.0f);
+        if (feed(t, &busy) && !busy)
+            cleared_at = t;
+    }
+    TEST_ASSERT_TRUE(cleared_at != 0);
+    TEST_ASSERT_TRUE(cleared_at - 1050 >= cfg.hang_ms);
+}
+
 /* A digital mode covers most of the passband, so the floor candidate sits
  * inside it.  At the normal rise rate the floor climbed under a continuous
  * +12 dB signal and read CLEAR 13 s into it -- telling a host it may key over
@@ -277,6 +356,10 @@ int main(void)
     RUN_TEST(test_real_noise_stays_clear);
     RUN_TEST(test_real_wideband_signal_asserts_and_releases);
     RUN_TEST(test_digital_silence_does_not_latch_busy);
+    RUN_TEST(test_hop_to_noisier_channel_reads_busy_on_the_old_floor);
+    RUN_TEST(test_reseed_on_hop_keeps_a_noisier_channel_clear);
+    RUN_TEST(test_reseed_keeps_a_busy_verdict);
+    RUN_TEST(test_reseed_to_quiet_channel_releases_after_hang);
     RUN_TEST(test_long_wideband_signal_is_not_absorbed);
     RUN_TEST(test_noise_step_releases_eventually);
     return UNITY_END();
