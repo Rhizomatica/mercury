@@ -22,9 +22,6 @@ type Config struct {
 	ARQPort        int
 	BroadcastPort  int
 	BandwidthHz    int
-	// NoBroadcastPort leaves the broadcast port alone: the caller carries
-	// broadcast another way (the UI, through the engine in its own process).
-	NoBroadcastPort bool
 }
 
 // ChatMessage is a single chat line emitted for display.
@@ -60,6 +57,20 @@ type Client struct {
 	broadcastRx lineAssembler
 }
 
+// Events are the client's event channels, for a caller holding the client
+// behind an interface.
+type Events struct {
+	Log           <-chan string
+	ARQChat       <-chan ChatMessage
+	BroadcastChat <-chan ChatMessage
+	Status        <-chan string
+}
+
+// Events returns the client's event channels.
+func (c *Client) Events() Events {
+	return Events{Log: c.LogCh, ARQChat: c.ARQChatCh, BroadcastChat: c.BroadcastChatCh, Status: c.StatusCh}
+}
+
 // New returns a Client configured with the given parameters.
 func New(cfg Config) *Client {
 	if cfg.IP == "" {
@@ -90,9 +101,6 @@ func (c *Client) Connect() error {
 	arqControlAddr := fmt.Sprintf("%s:%d", c.cfg.IP, c.cfg.ARQPort)
 	arqDataAddr := fmt.Sprintf("%s:%d", c.cfg.IP, c.cfg.ARQPort+1)
 	broadcastAddr := fmt.Sprintf("%s:%d", c.cfg.IP, c.cfg.BroadcastPort)
-	if c.cfg.NoBroadcastPort {
-		broadcastAddr = ""
-	}
 
 	mc := modem.NewModemClient(arqControlAddr, arqDataAddr, broadcastAddr)
 	if err := mc.Connect(); err != nil {

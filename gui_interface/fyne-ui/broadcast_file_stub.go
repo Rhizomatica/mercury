@@ -3,10 +3,10 @@
 package main
 
 import (
-	"fmt"
-
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/widget"
+
+	"mercury-client/client"
 )
 
 // Broadcast files are cut into frames by the engine (RaptorQ, bcast_file.c),
@@ -38,16 +38,10 @@ func broadcastEngineModeRaw() int { return -1 }
 func broadcastModeFrameSize(mode int) int { return 0 }
 
 // No engine in this build, so the chat window never takes the in-process path
-// (broadcast_engine.go): engineIsLocal says no, and the rest are not reached.
+// (engine_tnc.go): engineIsLocal says no, and the rest are not reached.
 
 func engineIsLocal(host string) bool { return false }
 
-func engineSendBroadcastChat(line string) error {
-	return fmt.Errorf("no embedded engine")
-}
-
-func engineChatLastSeq() uint64 { return 0 }
-
-func engineChatSince(seq uint64) ([]HistoryMessage, uint64) { return nil, seq }
+func newEngineTNC(cfg client.Config) tncClient { return client.New(cfg) }
 
 func engineSetBroadcastFilter(f func([]byte) bool) {}

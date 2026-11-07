@@ -65,15 +65,32 @@ func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, br
 	mercuryClientSingleton = cw
 }
 
+// tncClient is the TNC the window drives: over TCP (client.Client), or this
+// UI's own engine in-process (engineTNC, engine_tnc.go).
+type tncClient interface {
+	Connect() error
+	Disconnect()
+	IsConnected() bool
+	IsARQConnected() bool
+	ConnectARQWith(src, dst string) error
+	DisconnectARQ() error
+	AbortARQ() error
+	SendARQMessage(msg string) error
+	SetBandwidth(hz int) error
+	SendCQFrame() error
+	SendBroadcast(msg string) error
+	SetBroadcastFrameFilter(f client.BroadcastFrameFilter)
+	Events() client.Events
+}
+
 type chatWindow struct {
 	win  fyne.Window
-	mc   *client.Client
+	mc   tncClient
 	done chan struct{}
 	// localEngine: whether the UI runs the engine in its own process, and its
 	// ports (asked at each connect: the mode can change while the window is
-	// open).  inEngine: this connection is to it, so broadcast goes through
-	// the engine's host calls (broadcast_engine.go), not its broadcast TCP
-	// port.  Set at connect.
+	// open).  inEngine: this connection is to it, so the window uses
+	// engineTNC, not the TCP ports.  Set at connect.
 	localEngine func() (bool, int, int)
 	inEngine    bool
 	log         *widget.Label
@@ -254,10 +271,10 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	// so it lives with the broadcast controls and is enabled by the same signal.
 	cw.bcastFile = newBroadcastFilePanel(cw.win, fyne.CurrentApp().Preferences(),
 		func() broadcastSender {
-			if cw.mc == nil {
-				return nil
+			if tcp, ok := cw.mc.(*client.Client); ok {
+				return tcp
 			}
-			return cw.mc
+			return nil
 		},
 		func() bool { return cw.inEngine && cw.mc != nil && cw.mc.IsConnected() },
 		func(f func([]byte) bool) {
@@ -578,13 +595,15 @@ func (cw *chatWindow) onConnect() {
 		local, engARQ, engBcast = cw.localEngine()
 	}
 	cw.inEngine = local && engineIsLocal(cfg.IP) && cfg.ARQPort == engARQ && cfg.BroadcastPort == engBcast
-	cfg.NoBroadcastPort = cw.inEngine
 	// Remember the callsign for the next start: the operator set it here, and
 	// without this it falls back to "NOCALL" every time (issue #381).
 	if cw.persistCallsign != nil && strings.TrimSpace(cw.myCall.Text) != "" {
 		cw.persistCallsign(cw.myCall.Text)
 	}
-	mc := client.New(cfg)
+	var mc tncClient = client.New(cfg)
+	if cw.inEngine {
+		mc = newEngineTNC(cfg)
+	}
 	if err := mc.Connect(); err != nil {
 		dialog.ShowError(err, cw.win)
 		cw.logMsg("connect: %v", err)
@@ -598,11 +617,7 @@ func (cw *chatWindow) onConnect() {
 
 	go cw.forwardLog()
 	go cw.forwardARQChat()
-	if cw.inEngine {
-		go cw.forwardEngineBroadcastChat(engineChatLastSeq())
-	} else {
-		go cw.forwardBroadcastChat()
-	}
+	go cw.forwardBroadcastChat()
 	go cw.forwardStatus()
 	go cw.watchLink()
 
@@ -793,16 +808,6 @@ func (cw *chatWindow) onSendBroadcast() {
 	if msg == "" {
 		return
 	}
-	if cw.inEngine {
-		// The engine stores the line as sent, and forwardEngineBroadcastChat
-		// shows it from there, as the client echoes its own.
-		if err := engineSendBroadcastChat(strings.TrimSpace(cw.myCall.Text) + ": " + msg); err != nil {
-			dialog.ShowError(err, cw.win)
-			return
-		}
-		cw.bcastMsg.SetText("")
-		return
-	}
 	if err := mc.SendBroadcast(msg); err != nil {
 		dialog.ShowError(err, cw.win)
 		return
@@ -818,7 +823,7 @@ func (cw *chatWindow) forwardLog() {
 	}
 	for {
 		select {
-		case m, ok := <-mc.LogCh:
+		case m, ok := <-mc.Events().Log:
 			if !ok {
 				return
 			}
@@ -837,7 +842,7 @@ func (cw *chatWindow) forwardARQChat() {
 	}
 	for {
 		select {
-		case m, ok := <-mc.ARQChatCh:
+		case m, ok := <-mc.Events().ARQChat:
 			if !ok {
 				return
 			}
@@ -856,7 +861,7 @@ func (cw *chatWindow) forwardBroadcastChat() {
 	}
 	for {
 		select {
-		case m, ok := <-mc.BroadcastChatCh:
+		case m, ok := <-mc.Events().BroadcastChat:
 			if !ok {
 				return
 			}
@@ -864,36 +869,6 @@ func (cw *chatWindow) forwardBroadcastChat() {
 			cw.appendRichChat(cw.bcastBox, call, text, formatChatTimestamp(m.Time))
 		case <-done:
 			return
-		}
-	}
-}
-
-// forwardEngineBroadcastChat shows the broadcast chat lines the engine stores
-// after seq, sent and received, while connected to it.  Twice a second it asks
-// for the newest seq, and for the lines only when that moved.
-func (cw *chatWindow) forwardEngineBroadcastChat(seq uint64) {
-	done := cw.done
-	if done == nil {
-		return
-	}
-	tick := time.NewTicker(500 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-done:
-			return
-		case <-tick.C:
-			if engineChatLastSeq() == seq {
-				continue
-			}
-			var msgs []HistoryMessage
-			msgs, seq = engineChatSince(seq)
-			for _, m := range msgs {
-				if m.Plane == "bcast" {
-					call, text := splitCallText(m.Text)
-					cw.appendRichChat(cw.bcastBox, call, text, historyTimestamp(m))
-				}
-			}
 		}
 	}
 }
@@ -954,7 +929,7 @@ func (cw *chatWindow) forwardStatus() {
 	}
 	for {
 		select {
-		case s, ok := <-mc.StatusCh:
+		case s, ok := <-mc.Events().Status:
 			if !ok {
 				return
 			}
