@@ -335,9 +335,14 @@ static bool parse_int_command(const char *buffer, const char *name, int *out)
     return true;
 }
 
+/* Commands answered WRONG so far: how tnc_host_command, which gets no
+ * reply, tells a rejected line. */
+static atomic_uint wrong_replies = 0;
+
 /* Answer WRONG, and say so in the log: the host may never show it. */
 static void reply_wrong(const char *command)
 {
+    atomic_fetch_add(&wrong_replies, 1);
     HLOGW("tcp-ctl", "Command rejected (WRONG): %s", command);
     tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
 }
@@ -870,8 +875,11 @@ static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notif
  * Its replies and state lines go where an absent client's go (nowhere:
  * drain_tnc_queue_to_ctl); it follows the session from the status instead.
  * A TCP client that connects takes the slot from it as from another TCP
- * client, ending its session (host_release_tnc from the accept). */
+ * client, ending its session (host_release_tnc from the accept).
+ * host_tnc_lock makes the host's check-and-run and the accept's taking of
+ * the slot one step each, so the two never hold it together. */
 static atomic_bool host_holds_tnc = false;
+static pthread_mutex_t host_tnc_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* What a TCP control client's leaving does (close_ctl_client), for the host. */
 static bool host_release_tnc(void)
@@ -890,8 +898,6 @@ int tnc_host_command(const char *line)
 {
     if (!line)
         return -1;
-    if (net_get_status(CTL_TCP_PORT) == NET_CONNECTED)
-        return -2;
     char buf[256];
     snprintf(buf, sizeof(buf), "%s", line);
     size_t n = strlen(buf);
@@ -899,14 +905,30 @@ int tnc_host_command(const char *line)
         buf[--n] = '\0';
     if (n == 0)
         return -1;
+    pthread_mutex_lock(&host_tnc_lock);
+    if (net_get_status(CTL_TCP_PORT) == NET_CONNECTED)
+    {
+        pthread_mutex_unlock(&host_tnc_lock);
+        return -2;
+    }
     atomic_store(&host_holds_tnc, true);
+    unsigned wrong = atomic_load(&wrong_replies);
     execute_control_command(buf);
-    return 0;
+    bool refused = atomic_load(&wrong_replies) != wrong;
+    pthread_mutex_unlock(&host_tnc_lock);
+    return refused ? -1 : 0;
+}
+
+bool tnc_host_holds(void)
+{
+    return atomic_load(&host_holds_tnc);
 }
 
 void tnc_host_release(void)
 {
+    pthread_mutex_lock(&host_tnc_lock);
     (void)host_release_tnc();
+    pthread_mutex_unlock(&host_tnc_lock);
 }
 
 /* The session's received bytes go to the data client when one is attached
@@ -1049,11 +1071,13 @@ void *arq_reactor_thread(void *port)
                     arq_cmd_msg_t cmd;
                     if (ctl_client >= 0)
                         close_ctl_client(&ctl_client, &data_client, true);
+                    pthread_mutex_lock(&host_tnc_lock);
                     if (host_release_tnc())
                         HLOGI("tcp-ctl", "Control client connected: it takes the TNC from the host program");
                     ctl_client = fd;
                     cli_ctl_sockfd = fd;
                     net_set_status(CTL_TCP_PORT, NET_CONNECTED);
+                    pthread_mutex_unlock(&host_tnc_lock);
                     memset(&cmd, 0, sizeof(cmd));
                     cmd.type = ARQ_CMD_CLIENT_CONNECT;
                     (void)arq_submit_tcp_cmd(&cmd);

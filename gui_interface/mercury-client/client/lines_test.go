@@ -23,21 +23,21 @@ func TestLineAssemblerEndings(t *testing.T) {
 		{"no ending waits", []string{"no ending"}, nil, "no ending"},
 	}
 	for _, tc := range cases {
-		var a lineAssembler
+		var a LineAssembler
 		var got []string
 		for _, ch := range tc.chunks {
-			got = append(got, a.push([]byte(ch))...)
+			got = append(got, a.Push([]byte(ch))...)
 		}
 		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: lines %q, want %q", tc.name, got, tc.want)
 		}
-		if a.pending() != (tc.rest != "") {
-			t.Errorf("%s: pending %v, want %v", tc.name, a.pending(), tc.rest != "")
+		if a.Pending() != (tc.rest != "") {
+			t.Errorf("%s: pending %v, want %v", tc.name, a.Pending(), tc.rest != "")
 		}
-		if f := a.flush(); f != tc.rest {
+		if f := a.Flush(); f != tc.rest {
 			t.Errorf("%s: flush %q, want %q", tc.name, f, tc.rest)
 		}
-		if a.pending() || a.flush() != "" {
+		if a.Pending() || a.Flush() != "" {
 			t.Errorf("%s: flush did not empty the assembler", tc.name)
 		}
 	}
@@ -45,8 +45,8 @@ func TestLineAssemblerEndings(t *testing.T) {
 
 // Bytes are never altered: every non-blank line comes out exactly as sent.
 func TestLineAssemblerKeepsBytes(t *testing.T) {
-	var a lineAssembler
-	got := a.push([]byte("\x00\x01\xff ok\t\n"))
+	var a LineAssembler
+	got := a.Push([]byte("\x00\x01\xff ok\t\n"))
 	if len(got) != 1 || got[0] != "\x00\x01\xff ok\t" {
 		t.Fatalf("got %q", got)
 	}

@@ -3,8 +3,10 @@
 // The chat window's TNC client for this UI's own engine.
 //
 // engineTNC does what client.Client does over TCP, in-process: the control
-// port's own commands through mercury_host_tnc_command, chat through the
-// engine's chat calls, and the session followed from the engine's status.  It
+// port's own commands through mercury_host_tnc_command, ARQ chat as the
+// session's bytes (mercury_host_arq_read, cut into lines as client.Client
+// cuts the data port's), broadcast chat from the engine's chat store, and the
+// session followed from the window's telemetry.  It
 // holds the TNC's one client slot as a TCP client would, and a TCP client
 // that connects (uucp, VarAC) takes it, ending the session, as it takes it
 // from another TCP client.  A remote engine is still reached over TCP.
@@ -19,6 +21,7 @@ package main
 import "C"
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,7 +30,8 @@ import (
 	"mercury-client/client"
 )
 
-// engineTNCPoll is how often the session state and the chat store are read.
+// engineTNCPoll is how often the session's bytes, its state and the chat store
+// are read.
 const engineTNCPoll = 250 * time.Millisecond
 
 type engineTNC struct {
@@ -72,7 +76,7 @@ func (e *engineTNC) command(line string) error {
 	case C.MERCURY_HOST_BUSY:
 		return fmt.Errorf("another client (uucp, VarAC, RNS...) is attached to the TNC ports")
 	default:
-		return fmt.Errorf("the modem refused %q", line)
+		return fmt.Errorf("the modem refused %q", strings.TrimSpace(line))
 	}
 }
 
@@ -108,6 +112,7 @@ func (e *engineTNC) Disconnect() {
 		return
 	}
 	close(done)
+	engineSetBroadcastFilter(nil)
 	C.mercury_host_tnc_release()
 	e.sync.Store(false)
 	e.log <- "Disconnected from the modem."
@@ -168,6 +173,7 @@ func (e *engineTNC) SendARQMessage(msg string) error {
 	defer C.free(unsafe.Pointer(text))
 	switch C.mercury_host_chat_send(plane, text) {
 	case C.MERCURY_HOST_OK:
+		e.arqChat <- client.ChatMessage{Call: e.cfg.MyCallsign, Text: msg, Time: time.Now()}
 		return nil
 	case C.MERCURY_HOST_NO_LINK:
 		return fmt.Errorf("no ARQ session")
@@ -205,14 +211,15 @@ func (e *engineTNC) SetBroadcastFrameFilter(f client.BroadcastFrameFilter) {
 }
 
 // watch follows the session for the window, as client.Client's readers do
-// with the TNC's lines: the state changes, the chat lines the engine stores
-// (sent and received, on either plane), and the session's received bytes,
-// read so that its ring never fills (the lines are in the store).
+// with the TNC's lines and the data port: the session's received bytes as chat
+// lines (read so that its ring never fills), the state changes from the
+// telemetry, and the broadcast chat lines the engine stores.
 func (e *engineTNC) watch(done chan struct{}, seq uint64) {
 	tick := time.NewTicker(engineTNCPoll)
 	defer tick.Stop()
-	var cst C.ui_status_t
-	var drain [4096]byte
+	var buf [4096]byte
+	var rx client.LineAssembler
+	var lastRX time.Time
 	wasTX := false
 	send := func(ch chan string, s string) bool {
 		select {
@@ -222,52 +229,79 @@ func (e *engineTNC) watch(done chan struct{}, seq uint64) {
 			return false
 		}
 	}
+	chat := func(ch chan client.ChatMessage, m client.ChatMessage) bool {
+		select {
+		case ch <- m:
+			return true
+		case <-done:
+			return false
+		}
+	}
+	peer := func(t telemetryState) string {
+		if t.DestCallsign != "" {
+			return t.DestCallsign
+		}
+		return e.cfg.TargetCallsign
+	}
 	for {
 		select {
 		case <-done:
 			return
 		case <-tick.C:
 		}
-		for C.mercury_host_arq_read((*C.uint8_t)(unsafe.Pointer(&drain[0])), C.size_t(len(drain))) > 0 {
+		var t telemetryState
+		if currentTelemetry != nil {
+			t = currentTelemetry()
 		}
-		if C.mercury_ui_get_status(&cst) != 0 {
-			if bool(cst.client_tcp_connected) {
-				e.evicted.Store(true)
+		if C.mercury_host_tnc_held() == 0 {
+			e.evicted.Store(true)
+		}
+		for {
+			n := int(C.mercury_host_arq_read((*C.uint8_t)(unsafe.Pointer(&buf[0])), C.size_t(len(buf))))
+			if n == 0 {
+				break
 			}
-			if up := bool(cst.sync); up != e.sync.Load() {
-				e.sync.Store(up)
-				s := "DISCONNECTED"
-				if up {
-					s = "CONNECTED"
-				}
-				if !send(e.status, s) {
+			lastRX = time.Now()
+			for _, line := range rx.Push(buf[:n]) {
+				if !chat(e.arqChat, client.ChatMessage{Call: peer(t), Text: line, Time: lastRX}) {
 					return
 				}
 			}
-			tx := bool(cst.transmitting)
-			if wasTX && !tx && !send(e.status, "PTT OFF") {
+		}
+		// The session's last line may have no ending: show it once the link
+		// has been quiet a while, or when the session ends.
+		if up := t.Sync; up != e.sync.Load() || (rx.Pending() && time.Since(lastRX) > client.ChatPartialFlush) {
+			if line := rx.Flush(); line != "" && !chat(e.arqChat, client.ChatMessage{Call: peer(t), Text: line, Time: time.Now()}) {
 				return
 			}
-			wasTX = tx
 		}
+		if up := t.Sync; up != e.sync.Load() {
+			e.sync.Store(up)
+			s := "DISCONNECTED"
+			if up {
+				s = "CONNECTED"
+			}
+			if !send(e.status, s) {
+				return
+			}
+		}
+		tx := t.Direction == "tx"
+		if wasTX && !tx && !send(e.status, "PTT OFF") {
+			return
+		}
+		wasTX = tx
 		if engineChatLastSeq() == seq {
 			continue
 		}
 		var msgs []HistoryMessage
 		msgs, seq = engineChatSince(seq)
 		for _, m := range msgs {
-			cm := client.ChatMessage{Text: m.Text, Time: time.Unix(m.Ts, int64(m.Ms)*int64(time.Millisecond))}
-			ch := e.arqChat
-			if m.Plane == "bcast" {
-				cm.Broadcast, ch = true, e.bcastChat
-			} else if m.Dir == "tx" {
-				cm.Call = e.cfg.MyCallsign
-			} else {
-				cm.Call = m.Peer
+			if m.Plane != "bcast" {
+				continue // ARQ lines come from the session's bytes, above
 			}
-			select {
-			case ch <- cm:
-			case <-done:
+			cm := client.ChatMessage{Text: m.Text, Broadcast: true,
+				Time: time.Unix(m.Ts, int64(m.Ms)*int64(time.Millisecond))}
+			if !chat(e.bcastChat, cm) {
 				return
 			}
 		}

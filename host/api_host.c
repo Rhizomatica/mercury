@@ -86,6 +86,11 @@ void mercury_host_tnc_release(void)
     tnc_host_release();
 }
 
+int mercury_host_tnc_held(void)
+{
+    return tnc_host_holds() ? 1 : 0;
+}
+
 size_t mercury_host_arq_read(uint8_t *buf, size_t len)
 {
     return tnc_host_arq_read(buf, len);

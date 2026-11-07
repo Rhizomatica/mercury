@@ -278,10 +278,6 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		},
 		func() bool { return cw.inEngine && cw.mc != nil && cw.mc.IsConnected() },
 		func(f func([]byte) bool) {
-			if cw.inEngine {
-				engineSetBroadcastFilter(f)
-				return
-			}
 			if cw.mc == nil {
 				return
 			}

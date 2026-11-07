@@ -2165,6 +2165,8 @@ void test_host_tnc_command_runs_a_control_line(void)
     TEST_ASSERT_EQUAL_STRING("KO0OOO", captured_cmd.arg0);
     TEST_ASSERT_EQUAL_STRING("W1ABC", captured_cmd.arg1);
     TEST_ASSERT_EQUAL_INT(-1, tnc_host_command("\r\n"));
+    TEST_ASSERT_EQUAL_INT(-1, tnc_host_command("CONNECT KO0OOO")); /* WRONG */
+    TEST_ASSERT_EQUAL_INT(1, captured_cmd_count);
 }
 
 void test_host_tnc_release_is_a_client_leaving_once(void)
@@ -2173,8 +2175,10 @@ void test_host_tnc_release_is_a_client_leaving_once(void)
     tnc_host_release();                      /* not holding: nothing */
     TEST_ASSERT_EQUAL_INT(0, captured_cmd_count);
     TEST_ASSERT_EQUAL_INT(0, tnc_host_command("LISTEN ON"));
+    TEST_ASSERT_TRUE(tnc_host_holds());
     mock_monitor_enabled = true;
     tnc_host_release();
+    TEST_ASSERT_FALSE(tnc_host_holds());
     TEST_ASSERT_EQUAL_INT(2, captured_cmd_count);
     TEST_ASSERT_EQUAL_INT(ARQ_CMD_CLIENT_DISCONNECT, captured_cmd.type);
     TEST_ASSERT_FALSE(mock_monitor_enabled);

@@ -54,6 +54,7 @@ static int  s_tnc_rc, s_tnc_released;
 static char s_tnc_line[64];
 int  tnc_host_command(const char *l) { snprintf(s_tnc_line, sizeof(s_tnc_line), "%s", l ? l : ""); return s_tnc_rc; }
 void tnc_host_release(void) { s_tnc_released++; }
+bool tnc_host_holds(void) { return s_tnc_released == 0; }
 size_t tnc_host_arq_read(uint8_t *b, size_t n) { if (n) b[0] = 'x'; return n ? 1 : 0; }
 
 static bool s_session;
@@ -244,8 +245,10 @@ void test_tnc_calls(void)
     TEST_ASSERT_EQUAL_INT(MERCURY_HOST_BUSY, mercury_host_tnc_command("LISTEN ON"));
     s_tnc_rc = -1;
     TEST_ASSERT_EQUAL_INT(MERCURY_HOST_BAD, mercury_host_tnc_command(""));
+    TEST_ASSERT_EQUAL_INT(1, mercury_host_tnc_held());
     mercury_host_tnc_release();
     TEST_ASSERT_EQUAL_INT(1, s_tnc_released);
+    TEST_ASSERT_EQUAL_INT(0, mercury_host_tnc_held());
     uint8_t b[4];
     TEST_ASSERT_EQUAL_size_t(1, mercury_host_arq_read(b, sizeof(b)));
 }

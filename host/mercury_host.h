@@ -175,8 +175,10 @@ size_t   mercury_host_bcast_chat_max(void);
  * TCP control client is attached.  The replies and the state lines a TCP
  * client would read go nowhere: follow the session from the status (sync,
  * transmitting, mercury_host_busy_reason).  A TCP client that connects takes
- * the slot from the host as from another TCP client, ending the session.
- * mercury_host_tnc_release gives it back, as that client's leaving would.
+ * the slot from the host as from another TCP client, ending the session:
+ * mercury_host_tnc_held then says 0.  A line the control port answers WRONG
+ * is MERCURY_HOST_BAD.  mercury_host_tnc_release gives the slot back, as
+ * that client's leaving would.
  *
  * mercury_host_arq_read takes the session's received bytes (up to len, what
  * there is now; 0 with none) while the host holds the slot and no TCP data
@@ -185,6 +187,7 @@ size_t   mercury_host_bcast_chat_max(void);
  * chat store (above). */
 int    mercury_host_tnc_command(const char *line);
 void   mercury_host_tnc_release(void);
+int    mercury_host_tnc_held(void);
 size_t mercury_host_arq_read(uint8_t *buf, size_t len);
 
 /* ---- the listen mode -------------------------------------------------------
