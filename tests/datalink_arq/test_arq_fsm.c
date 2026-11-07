@@ -1624,6 +1624,48 @@ void test_listen_off_drops_outgoing_call(void)
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
 }
 
+/* A scanning host's hop is LISTEN OFF then LISTEN ON, 1 ms apart: the end of
+ * the listening spell must be reported per event, or the MFSK call listeners
+ * keep a CALL heard on the last channel and it is answered on this one. */
+void test_listen_off_ends_listening_even_when_listen_on_follows(void)
+{
+    arq_event_t on  = make_event(ARQ_EV_APP_LISTEN);
+    arq_event_t off = make_event(ARQ_EV_APP_STOP_LISTEN);
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, &on));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    TEST_ASSERT_TRUE(arq_fsm_dispatch_ends_listening(&sess, &off));
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, &on));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    /* LISTEN OFF with nothing to stop ends nothing */
+    TEST_ASSERT_TRUE(arq_fsm_dispatch_ends_listening(&sess, &off));
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, &off));
+}
+
+/* Answering a CALL keeps listening (the caller's MFSK CALLs must still be
+ * heard while ACCEPTING).  A LISTEN OFF inside the grace is held, so nothing
+ * ends yet; the timer that honours it does -- a deadline event, which arq.c
+ * counts too. */
+void test_accepting_listens_until_listen_off_is_honoured(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    mock_set_uptime_ms(1010);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "W1ABC", CALLSIGN_MAX_SIZE);
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, &ev));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, &ev));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    mock_set_uptime_ms(4000);
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    TEST_ASSERT_TRUE(arq_fsm_dispatch_ends_listening(&sess, &ev));
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, NULL));
+}
+
 /* LISTEN OFF received within ARQ_LISTEN_OFF_GRACE_MS of entering ACCEPTING
  * must be deferred, not acted on immediately — a scanning host (BPQ32) sends
  * LISTEN OFF at dwell expiry and needs time to process the just-sent PENDING
@@ -2009,6 +2051,8 @@ int main(void)
     RUN_TEST(test_listen_off_drops_pending_accept);
     RUN_TEST(test_listen_off_drops_outgoing_call);
     RUN_TEST(test_listen_off_deferred_within_grace_accepting);
+    RUN_TEST(test_listen_off_ends_listening_even_when_listen_on_follows);
+    RUN_TEST(test_accepting_listens_until_listen_off_is_honoured);
     RUN_TEST(test_listen_off_in_calling_is_immediate);
     RUN_TEST(test_deferred_listen_off_survives_connect);
     RUN_TEST(test_held_disconnect_does_not_outlive_its_session);

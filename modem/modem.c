@@ -2343,9 +2343,9 @@ static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
  * the lock started, 0 when there is none.  Diagnostic only: the host's
  * LISTEN OFF handler reads it, so a scanner hop that cuts a CALL off shows in
  * the log (modem_rx_frame_in_flight).  A lock can also be noise.
- * The MFSK listeners are fed only while a CALL can arrive (LISTENING,
- * ACCEPTING), so a LISTEN OFF flushes them: their frame is lost on the
- * LISTEN OFF itself, whatever the host does next. */
+ * A LISTEN OFF flushes the MFSK listeners (arq.c counts each spell of
+ * listening that ends, and the RX loop flushes when the count moves): their
+ * frame is lost on the LISTEN OFF itself, whatever the host does next. */
 enum { RX_INFLIGHT_CTRL, RX_INFLIGHT_LISTEN, RX_INFLIGHT_LISTEN_ALT, RX_INFLIGHT_SLOTS };
 static _Atomic uint64_t g_rx_inflight_since_ms[RX_INFLIGHT_SLOTS];
 static _Atomic int      g_rx_inflight_mode[RX_INFLIGHT_SLOTS];
@@ -3119,6 +3119,8 @@ void *rx_thread(void *g_modem)
                   l == 0 ? "own" : "other");
     }
     bool listen_fed = false, listen_alt_fed = false;
+    uint32_t listen_spells_seen = 0;
+    bool listen_spells_known = false;
     /* Monitor mode: per-mode passive decoders, started on the MONITOR-ON
      * transition and stopped on OFF. */
     rx_worker_t monitor_workers[MONITOR_MODE_COUNT];
@@ -3277,6 +3279,23 @@ void *rx_thread(void *g_modem)
         if (listen_fed && !feed_listen)
             atomic_store(&w_listen.flush_req, true);
         listen_fed = feed_listen;
+        /* A spell of listening ended since the last chunk, even if the next
+         * one has already begun: a scanning host's LISTEN OFF and LISTEN ON
+         * come 1 ms apart, inside one 20 ms chunk, so the feed above never
+         * stops.  What the listeners hold was heard before the hop, most
+         * likely on another channel: decoded now, the CALL was answered on
+         * the wrong one (on air, KG9NI -> K7EK, 1.9.22: an MFSK CALL decoded
+         * 2.5 s after the hop, its ACCEPT unheard, BPQ32 held 2 min there). */
+        if (have_arq_snapshot)
+        {
+            if (listen_spells_known && arq_snapshot.listen_spells_ended != listen_spells_seen)
+            {
+                atomic_store(&w_listen.flush_req, true);
+                atomic_store(&w_listen_alt.flush_req, true);
+            }
+            listen_spells_seen  = arq_snapshot.listen_spells_ended;
+            listen_spells_known = true;
+        }
         /* ...and the other floor, for a caller at the other bandwidth */
         int alt_mode = listen_mode == MERCURY_MODE_MFSK_N32 ? MERCURY_MODE_MFSK : MERCURY_MODE_MFSK_N32;
         bool feed_listen_alt = modem_codec_valid(&w_listen_alt.own_codec) &&

@@ -2080,3 +2080,17 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
         sess->deadline_event = ARQ_EV_TIMER_CAROUSEL;
     }
 }
+
+static bool listening_for_calls(arq_conn_state_t s)
+{
+    return s == ARQ_CONN_LISTENING || s == ARQ_CONN_ACCEPTING;
+}
+
+bool arq_fsm_dispatch_ends_listening(arq_session_t *sess, const arq_event_t *ev)
+{
+    if (!sess)
+        return false;
+    bool was = listening_for_calls(sess->conn_state);
+    arq_fsm_dispatch(sess, ev);
+    return was && !listening_for_calls(sess->conn_state);
+}

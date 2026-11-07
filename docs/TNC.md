@@ -699,9 +699,14 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
 - **Each hop is `LISTEN OFF`, `LISTEN ON` and a `BW` command.**  The dwell
   was 10.1-10.2 s.  The DATAC16 decoder keeps decoding through them, but the
   two MFSK call listeners do not:
-  - a `LISTEN OFF` flushes both: they are fed only while LISTENING or
-    ACCEPTING, so a partly received MFSK CALL is dropped even when
-    `LISTEN ON` follows 0.1 s later on the same frequency;
+  - a `LISTEN OFF` flushes both, so a partly received MFSK CALL is dropped
+    even when `LISTEN ON` follows a moment later on the same frequency.  Up
+    to 1.9.22 it usually did not: the flush waited for the receive loop to
+    see the station not listening, and BPQ32's `LISTEN ON` follows within
+    1 ms.  A CALL cut by the hop was then decoded on the next channel and
+    answered there, where the caller could not hear it (K7EK, 2026-11-06: an
+    MFSK CALL decoded 2.5 s after the hop, BPQ32 held on the wrong channel
+    for 2 min);
   - a `BW` change between `BW500` and `BW2300`/`BW2750` flushes both too: the
     listeners swap floors, and each swap drops what it holds.
 

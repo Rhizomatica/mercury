@@ -395,6 +395,18 @@ void arq_fsm_release(arq_session_t *sess);
 void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *event);
 
 /**
+ * @brief arq_fsm_dispatch(), and whether that one event ended a spell of
+ * listening for calls (LISTENING or ACCEPTING, to any other state).
+ *
+ * The MFSK call listeners must drop what they hold when such a spell ends --
+ * above all at a scanning host's LISTEN OFF, whose LISTEN ON follows within a
+ * millisecond, often in the same batch of events, and usually on another
+ * channel.  Checked per event, so a spell that ends and restarts at once is
+ * still seen (arq.c counts them for the modem).
+ */
+bool arq_fsm_dispatch_ends_listening(arq_session_t *sess, const arq_event_t *event);
+
+/**
  * @brief Return milliseconds until the next deadline, or INT_MAX if idle.
  *
  * Used by the event loop's blocking wait to set a poll timeout.
