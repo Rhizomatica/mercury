@@ -364,8 +364,9 @@ func (p *broadcastFilePanel) onSend() {
 	progress := func(pr broadcastFileProgress) {
 		if !pr.Done {
 			// Only repaint every few frames: a fast mode can produce these
-			// faster than the UI can usefully redraw.
-			if pr.FramesSent%5 != 0 {
+			// faster than the UI can usefully redraw.  The engine's carousel
+			// is sampled twice a second already.
+			if !inEngine && pr.FramesSent%5 != 0 {
 				return
 			}
 			fyne.Do(func() {

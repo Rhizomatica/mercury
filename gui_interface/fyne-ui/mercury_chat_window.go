@@ -53,8 +53,9 @@ func embeddedClientMayConnect(alreadyOurs bool, tel telemetryState) (bool, strin
 	return false, "Another client (uucp, VarAC, RNS...) is attached to the TNC ports."
 }
 
-// localEngine: the UI runs the engine in its own process (not Remote mode).
-func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string, localEngine bool, persistCallsign func(string)) {
+// localEngine says, when asked, whether the UI runs the engine in its own
+// process now (not Remote mode), and that engine's ARQ and broadcast ports.
+func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string, localEngine func() (bool, int, int), persistCallsign func(string)) {
 	if mercuryClientSingleton != nil {
 		mercuryClientSingleton.win.RequestFocus()
 		return
@@ -68,10 +69,12 @@ type chatWindow struct {
 	win  fyne.Window
 	mc   *client.Client
 	done chan struct{}
-	// localEngine: the UI runs the engine in its own process.  inEngine: this
-	// connection is to it, so broadcast goes through the engine's host calls
-	// (broadcast_engine.go), not its broadcast TCP port.  Set at connect.
-	localEngine bool
+	// localEngine: whether the UI runs the engine in its own process, and its
+	// ports (asked at each connect: the mode can change while the window is
+	// open).  inEngine: this connection is to it, so broadcast goes through
+	// the engine's host calls (broadcast_engine.go), not its broadcast TCP
+	// port.  Set at connect.
+	localEngine func() (bool, int, int)
 	inEngine    bool
 	log         *widget.Label
 	// logLines is the bounded ring (newest first) backing the log label,
@@ -256,7 +259,7 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 			}
 			return cw.mc
 		},
-		func() bool { return cw.inEngine },
+		func() bool { return cw.inEngine && cw.mc != nil && cw.mc.IsConnected() },
 		func(f func([]byte) bool) {
 			if cw.inEngine {
 				engineSetBroadcastFilter(f)
@@ -568,7 +571,11 @@ func (cw *chatWindow) onConnect() {
 		BroadcastPort:  bcastPort,
 		BandwidthHz:    bandwidthFromLabel(cw.bandwidth.Selected),
 	}
-	cw.inEngine = cw.localEngine && engineIsLocal(cfg.IP)
+	local, engARQ, engBcast := false, 0, 0
+	if cw.localEngine != nil {
+		local, engARQ, engBcast = cw.localEngine()
+	}
+	cw.inEngine = local && engineIsLocal(cfg.IP) && cfg.ARQPort == engARQ && cfg.BroadcastPort == engBcast
 	cfg.NoBroadcastPort = cw.inEngine
 	// Remember the callsign for the next start: the operator set it here, and
 	// without this it falls back to "NOCALL" every time (issue #381).
