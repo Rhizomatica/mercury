@@ -864,6 +864,67 @@ static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notif
     close_data_client(data_client_fd);
 }
 
+/* The host program as the TNC's client (tnc_host_command).  A host in this
+ * process (the UI's chat window) drives the TNC with the control port's own
+ * lines, in the one client slot, while no TCP control client is attached.
+ * Its replies and state lines go where an absent client's go (nowhere:
+ * drain_tnc_queue_to_ctl); it follows the session from the status instead.
+ * A TCP client that connects takes the slot from it as from another TCP
+ * client, ending its session (host_release_tnc from the accept). */
+static atomic_bool host_holds_tnc = false;
+
+/* What a TCP control client's leaving does (close_ctl_client), for the host. */
+static bool host_release_tnc(void)
+{
+    if (!atomic_exchange(&host_holds_tnc, false))
+        return false;
+    modem_set_monitor_enabled(false);
+    arq_cmd_msg_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = ARQ_CMD_CLIENT_DISCONNECT;
+    (void)arq_submit_tcp_cmd(&cmd);
+    return true;
+}
+
+int tnc_host_command(const char *line)
+{
+    if (!line)
+        return -1;
+    if (net_get_status(CTL_TCP_PORT) == NET_CONNECTED)
+        return -2;
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%s", line);
+    size_t n = strlen(buf);
+    while (n > 0 && (buf[n - 1] == '\r' || buf[n - 1] == '\n'))
+        buf[--n] = '\0';
+    if (n == 0)
+        return -1;
+    atomic_store(&host_holds_tnc, true);
+    execute_control_command(buf);
+    return 0;
+}
+
+void tnc_host_release(void)
+{
+    (void)host_release_tnc();
+}
+
+/* The session's received bytes go to the data client when one is attached
+ * (arq_reactor_thread); otherwise to the host, so the ring never fills and
+ * holds up the ARQ thread (cb_deliver_rx_data waits on a full one). */
+size_t tnc_host_arq_read(uint8_t *buf, size_t len)
+{
+    if (!buf || len == 0 || !atomic_load(&host_holds_tnc) ||
+        net_get_status(DATA_TCP_PORT) == NET_CONNECTED)
+        return 0;
+    size_t n = size_buffer(data_rx_buffer_arq);
+    if (n > len)
+        n = len;
+    if (n == 0 || read_buffer(data_rx_buffer_arq, buf, n) != 0)
+        return 0;
+    return n;
+}
+
 /* The queued lines to the control client, never dropping a byte: what the
  * socket does not take now (it is full) is kept, and goes first on the next
  * pass; the reactor never waits on it.  With no client connected there is no
@@ -988,6 +1049,8 @@ void *arq_reactor_thread(void *port)
                     arq_cmd_msg_t cmd;
                     if (ctl_client >= 0)
                         close_ctl_client(&ctl_client, &data_client, true);
+                    if (host_release_tnc())
+                        HLOGI("tcp-ctl", "Control client connected: it takes the TNC from the host program");
                     ctl_client = fd;
                     cli_ctl_sockfd = fd;
                     net_set_status(CTL_TCP_PORT, NET_CONNECTED);
