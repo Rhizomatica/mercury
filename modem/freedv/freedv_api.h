@@ -279,6 +279,21 @@ void freedv_set_timing_mx_thresh(struct freedv *freedv, float val);
 void freedv_set_bad_uw_errors(struct freedv *freedv, int val);
 float freedv_get_timing_mx_thresh(struct freedv *freedv);
 int freedv_get_bad_uw_errors(struct freedv *freedv);
+/* Acquisition telemetry, for the offset study (utils/offset_acq_sweep.c):
+ * the metric the acceptance threshold sees, the coarse frequency estimate
+ * (grid hypothesis plus its refinement) and the tracked estimate.  Read-only
+ * -- no behaviour changes. */
+float freedv_get_timing_mx(struct freedv *freedv);
+float freedv_get_coarse_foff_est(struct freedv *freedv);
+float freedv_get_foff_est(struct freedv *freedv);
+/* The span of the coarse frequency search (stock +-50 Hz): how far from the
+ * nominal carrier the acquisition can capture a mistuned carrier.  Wider
+ * costs one correlation pass per 5 Hz of span, so this is bench-facing for
+ * the offset study. */
+void freedv_set_freq_search_range(struct freedv *freedv, float fmin, float fmax);
+/* The coarse grid's step (Hz) and the fine stage's half-width (Hz). */
+void freedv_set_freq_search_step(struct freedv *freedv, float hz);
+void freedv_set_freq_search_fine(struct freedv *freedv, float hz);
 /* TX peak config for the OFDM Hilbert clipper, as one call (the four
  * parameters only make sense together).  Changes the transmitted
  * waveform's PAPR only; the receiver is untouched.  Bench-facing, for

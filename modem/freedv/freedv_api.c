@@ -1740,6 +1740,32 @@ int freedv_get_bad_uw_errors(struct freedv *f) {
   return (f != NULL && f->ofdm != NULL) ? ofdm_get_bad_uw_errors(f->ofdm) : 0;
 }
 
+float freedv_get_timing_mx(struct freedv *f) {
+  return (f != NULL && f->ofdm != NULL) ? ofdm_get_timing_mx(f->ofdm) : 0.0f;
+}
+
+float freedv_get_coarse_foff_est(struct freedv *f) {
+  return (f != NULL && f->ofdm != NULL) ? ofdm_get_coarse_foff_est_hz(f->ofdm)
+                                         : 0.0f;
+}
+
+float freedv_get_foff_est(struct freedv *f) {
+  return (f != NULL && f->ofdm != NULL) ? ofdm_get_foff_est_hz(f->ofdm) : 0.0f;
+}
+
+void freedv_set_freq_search_range(struct freedv *f, float fmin, float fmax) {
+  if (f != NULL && f->ofdm != NULL)
+    ofdm_set_freq_search_range(f->ofdm, fmin, fmax);
+}
+
+void freedv_set_freq_search_step(struct freedv *f, float hz) {
+  if (f != NULL && f->ofdm != NULL) ofdm_set_freq_search_step(f->ofdm, hz);
+}
+
+void freedv_set_freq_search_fine(struct freedv *f, float hz) {
+  if (f != NULL && f->ofdm != NULL) ofdm_set_freq_search_fine(f->ofdm, hz);
+}
+
 void freedv_set_tx_clip_config(struct freedv *f, bool clip_en, float gain1,
                                float gain2, float amp_scale) {
   if (f != NULL && f->ofdm != NULL)

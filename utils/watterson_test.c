@@ -178,7 +178,6 @@ int main(int argc, char *argv[])
     COMP        ch_fdm[BUF_N];
     COMP        ssbfiltbuf[SSBFILT_N + BUF_N];
     COMP        ssbfiltout[BUF_N];
-    COMP        phase_ch;
     float       No;
     float       tx_pwr, tx_pwr_fade, noise_pwr;
     int         frames, i, j, k, Fs, nclipped, noutclipped, ssbfilt_en, complex_out;
@@ -476,10 +475,13 @@ int main(int argc, char *argv[])
      * parsed, so --No takes effect regardless of its position. */
     watterson_set_noise(&watterson, No);
 
+    /* The carrier offset --freq asks for: the transmitter's frequency error
+     * as the receiver sees it.  The model rotates the signal by it, so the
+     * whole burst moves in the passband and the fade is untouched. */
+    watterson_set_carrier_offset(&watterson, foff_hz);
+
     /* ---- Initialisation ---- */
 
-    phase_ch.real = 1.0f;
-    phase_ch.imag = 0.0f;
 
     // noise variance for internal AWGN in watterson_process
     // (already set via watterson_set_noise)
@@ -583,25 +585,15 @@ int main(int argc, char *argv[])
             ch_in[i].imag = mag * sinf(angle);
         }
 
-        /* Frequency offset (pre-Watterson shift) */
-        {
-            float tau = 2.0f * M_PI;
-            float result = tau * foff_hz / Fs;
-            COMP foff_rect;
-            foff_rect.real = cosf(result);
-            foff_rect.imag = sinf(result);
-
-            for (i = 0; i < BUF_N; i++)
-            {
-                phase_ch = cmult(phase_ch, foff_rect);
-                ch_fdm[i] = cmult(ch_in[i], phase_ch);
-            }
-
-            /* Normalise oscillator */
-            float mag = cabsolute(phase_ch);
-            phase_ch.real /= mag;
-            phase_ch.imag /= mag;
-        }
+        /* Frequency offset.  The rotation is the model's own now: the
+         * carrier offset is a channel property (the transmitter's frequency
+         * error, which every path sees), and one implementation is worth
+         * more than two that can drift apart.  The model's accumulator is
+         * carried across blocks, so the rotation stays continuous over a
+         * long file -- this tool used to keep its own oscillator here, which
+         * was the same rotation with a second copy of the arithmetic. */
+        for (i = 0; i < BUF_N; i++)
+            ch_fdm[i] = ch_in[i];
 
         /* ---- Apply Watterson model ---- */
         watterson_process(&watterson, ch_fdm, BUF_N);
