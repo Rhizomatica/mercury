@@ -243,6 +243,11 @@ void modem_set_monitor_enabled(bool enabled)
 }
 bool modem_get_monitor_enabled(void) { return mock_monitor_enabled; }
 
+/* ---- busy detector channel change (LISTEN OFF) ---- */
+
+static int mock_busy_channel_changed_calls = 0;
+void modem_busy_channel_changed(void) { mock_busy_channel_changed_calls++; }
+
 /* ---- in-flight frame stub (LISTEN OFF diagnostic) ---- */
 
 static bool mock_inflight = false;
@@ -488,20 +493,26 @@ void test_cmd_mycall_does_not_register_dropped_secondaries(void)
 
 void test_cmd_listen_on(void)
 {
+    mock_busy_channel_changed_calls = 0;
     char cmd[] = "LISTEN ON";
     execute_control_command(cmd);
 
     assert_ok_response();
     TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_ON, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_channel_changed_calls);
 }
 
+/* LISTEN OFF starts a scanner's hop: the busy detector is told the channel
+ * may have changed. */
 void test_cmd_listen_off(void)
 {
+    mock_busy_channel_changed_calls = 0;
     char cmd[] = "LISTEN OFF";
     execute_control_command(cmd);
 
     assert_ok_response();
     TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_OFF, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(1, mock_busy_channel_changed_calls);
 }
 
 /* A scanner's LISTEN OFF that lands mid-frame is only logged: the command

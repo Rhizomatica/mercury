@@ -510,6 +510,13 @@ static pthread_mutex_t g_busy_cfg_lock = PTHREAD_MUTEX_INITIALIZER;
 static busy_state_t g_busy_state   = { .busy = false, .noise_floor_db = 0.0f,
                                        .inited = false, .above_since_ms = 0,
                                        .below_since_ms = 0 };
+/* Set by modem_busy_channel_changed (control thread), taken by the RX worker. */
+static atomic_bool  g_busy_reseed_req = false;
+
+void modem_busy_channel_changed(void)
+{
+    atomic_store_explicit(&g_busy_reseed_req, true, memory_order_relaxed);
+}
 
 void modem_set_busy_detect_enabled(bool enabled)
 {
@@ -3519,6 +3526,19 @@ void *rx_thread(void *g_modem)
          * is computed when either the UI waterfall (-W/UI) OR the channel-busy
          * detector needs it, so a headless station can still detect occupancy. */
         bool busy_on = atomic_load_explicit(&g_busy_enabled, memory_order_relaxed);
+        /* The host moved the radio (a scan hop): the floor learned on the
+         * last channel does not hold on this one.  Take it afresh once the
+         * radio has retuned (modem_busy_channel_changed). */
+        if (atomic_exchange_explicit(&g_busy_reseed_req, false, memory_order_relaxed))
+        {
+            channel_busy_reseed(&g_busy_state);
+            uint64_t until = monotonic_ms() + BUSY_HOP_HOLDOFF_MS;
+            if (until > busy_holdoff_until_ms)
+                busy_holdoff_until_ms = until;
+            if (busy_on)
+                HLOGD("modem-rx", "busy detector: new channel, floor re-seeds in %d ms",
+                      BUSY_HOP_HOLDOFF_MS);
+        }
         if (atomic_load_explicit(&g_spectrum_enabled, memory_order_relaxed) || busy_on)
         {
             uint64_t now_ms = monotonic_ms();

@@ -241,9 +241,10 @@ max_keydown_s = 0
 ; It is the earliest warning Mercury can give (a connect request takes 3.7 s
 ; to decode, an MFSK one 13.5 s), but BPQ32's scanner does not hold on it: on
 ; air it kept hopping through BUSY, and only refused its own outgoing connects
-; ("Channel is busy").  On a scanning station it also keeps one noise floor for
-; every channel, so a noisier channel reads BUSY (docs/TNC.md, "Scanning
-; hosts").  Leave it off with BPQ32 scanning.  Expect to tune the thresholds
+; ("Channel is busy").  On a scanning station it takes a new noise floor 1 s
+; after each hop (LISTEN OFF), so for the first 1.3-2.5 s on a channel it
+; still reports the last one's verdict (docs/TNC.md, "Scanning hosts").  Leave
+; it off with BPQ32 scanning.  Expect to tune the thresholds
 ; below per band and noise environment before trusting it.
 ;
 ; It needs a receive filter at least ~1.8 kHz wide.  It measures 300-2700 Hz

@@ -42,6 +42,14 @@ void channel_busy_init(busy_state_t *st)
     st->below_since_ms = 0;
 }
 
+void channel_busy_reseed(busy_state_t *st)
+{
+    if (!st) return;
+    st->inited         = false;
+    st->above_since_ms = 0;
+    st->below_since_ms = 0;
+}
+
 /* Map a passband edge frequency to a spectrum bin index. Real-input FFT: bin i
  * is centred at i * (Fs/2)/nbins, so bin = f / ((Fs/2)/nbins). */
 static int freq_to_bin(int freq_hz, int nbins, int sample_rate_hz)
