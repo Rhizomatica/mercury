@@ -134,6 +134,11 @@ typedef struct
     /* Listening or accepting: a CALL can arrive on MFSK, and only the
      * modem's MFSK call listener would decode it. */
     bool listening_for_calls;
+    /* How many spells of listening for calls have ended: the MFSK call
+     * listeners drop what they hold when it moves.  listening_for_calls alone
+     * misses a LISTEN OFF whose LISTEN ON follows 1 ms later (BPQ32's scan
+     * hop): the modem reads it once per 20 ms. */
+    uint32_t listen_spells_ended;
     /* The MFSK floor of my own bandwidth (arq_floor_mode), which callers at
      * it escalate to: the one the MFSK call listener decodes. */
     int listen_floor_mode;

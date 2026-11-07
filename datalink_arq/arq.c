@@ -757,6 +757,11 @@ static void *arq_payload_bridge_worker(void *arg)
  * Main ARQ event loop
  * ====================================================================== */
 
+/* Spells of listening for calls that have ended (arq_fsm_dispatch_ends_listening),
+ * for the modem's MFSK call listeners (listen_spells_ended in the snapshot).
+ * Guarded by g_sess_lock. */
+static uint32_t g_listen_spells_ended;
+
 static void *arq_event_loop_worker(void *arg)
 {
     (void)arg;
@@ -793,7 +798,8 @@ static void *arq_event_loop_worker(void *arg)
 
         pthread_mutex_lock(&g_sess_lock);
         for (size_t i = 0; i < n; i++)
-            arq_fsm_dispatch(&g_sess, &events[i]);
+            if (arq_fsm_dispatch_ends_listening(&g_sess, &events[i]))
+                g_listen_spells_ended++;
 
         /* Fire deadline */
         now = time_now_ms();
@@ -801,7 +807,8 @@ static void *arq_event_loop_worker(void *arg)
         {
             g_sess.deadline_ms = UINT64_MAX;
             arq_event_t tev = { .id = g_sess.deadline_event };
-            arq_fsm_dispatch(&g_sess, &tev);
+            if (arq_fsm_dispatch_ends_listening(&g_sess, &tev))
+                g_listen_spells_ended++;
         }
         pthread_mutex_unlock(&g_sess_lock);
     }
@@ -1382,6 +1389,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
      * MFSK CALLs arrived mid-ACCEPTING, and the call never connected. */
     snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING ||
                                      g_sess.conn_state == ARQ_CONN_ACCEPTING);
+    snapshot->listen_spells_ended = g_listen_spells_ended;
     snapshot->listen_floor_mode = arq_floor_mode(normalize_bandwidth_hz(own_bw));
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
