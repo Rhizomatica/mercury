@@ -26,10 +26,22 @@ jobs:
   tsan-unit:
     name: TSan (unit tests, Linux amd64)
     runs-on: ubuntu-latest
-    container: debian:trixie
+    container:
+      image: debian:trixie
+      # Privileged so the step below can lower vm.mmap_rnd_bits (a host-wide
+      # sysctl, not namespaced).
+      options: --privileged
     timeout-minutes: 30
     continue-on-error: true
     steps:
+      - name: Lower ASLR entropy for TSan
+        # The ubuntu-26.04 runner kernel uses more mmap randomization bits
+        # than GCC 14's TSan supports, so every test binary dies with
+        # "FATAL: ThreadSanitizer: unexpected memory mapping". 28 bits is the
+        # value TSan's memory layout expects.
+        run: |
+          echo 28 > /proc/sys/vm/mmap_rnd_bits
+          cat /proc/sys/vm/mmap_rnd_bits
       - name: Install build dependencies
         run: |
           apt-get update
