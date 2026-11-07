@@ -57,6 +57,20 @@ type Client struct {
 	broadcastRx lineAssembler
 }
 
+// Events are the client's event channels, for a caller holding the client
+// behind an interface.
+type Events struct {
+	Log           <-chan string
+	ARQChat       <-chan ChatMessage
+	BroadcastChat <-chan ChatMessage
+	Status        <-chan string
+}
+
+// Events returns the client's event channels.
+func (c *Client) Events() Events {
+	return Events{Log: c.LogCh, ARQChat: c.ARQChatCh, BroadcastChat: c.BroadcastChatCh, Status: c.StatusCh}
+}
+
 // New returns a Client configured with the given parameters.
 func New(cfg Config) *Client {
 	if cfg.IP == "" {
