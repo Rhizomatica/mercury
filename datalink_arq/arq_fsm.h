@@ -206,7 +206,7 @@ typedef struct
                                         * ABORT, control client gone) sets
                                         * it: it is the one teardown that stays
                                         * CONNECTED (draining the backlog)
-                                        * after the host is told DISCONNECTED.
+                                        * after the host hangs up.
                                         * Peer DISCONNECT, timeouts and LISTEN
                                         * OFF leave CONNECTED at once, so
                                         * nothing is delivered after them. */

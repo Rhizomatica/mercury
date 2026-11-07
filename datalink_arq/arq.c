@@ -666,14 +666,26 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
     }
 
     case ARQ_CMD_DISCONNECT:
-        /* VARA TNC spec: send DISCONNECTED to host immediately on receiving
-         * DISCONNECT command, before the over-the-air exchange completes.
-         * This lets the host close the socket cleanly while the FSM handles
-         * the air-side teardown.  We deliberately do NOT clear g_app_tx_buf
-         * here: the FSM drains any bytes still queued, then completes a clean
-         * air-side DISCONNECT handshake.  The retry-exhaustion path bounds the
-         * drain so a dead channel still tears down quickly (see arq_fsm.c). */
-        arq_tnc_send_disconnected();
+        /* DISCONNECTED is the host's "the session is closed", sent when it
+         * is: VARA's command reference has DISCONNECT end the link "once the
+         * TX buffer is empty" and DISCONNECTED mean "Session closed by either
+         * end".  The FSM ends the session -- the drain, then the DISCONNECT
+         * exchange -- and its end says DISCONNECTED (cb_notify_disconnected).
+         * We deliberately do NOT clear g_app_tx_buf here: the FSM drains any
+         * bytes still queued first.  ABORT stays immediate.
+         *
+         * Saying it at once let a scanning host move the radio mid-teardown:
+         * BPQ32 restarts its scan 15 s after DISCONNECTED (SCANSTART 15), and
+         * its LISTEN OFF ended the session before the peer had our DISCONNECT
+         * (on air, K7EK and KG9NI, 1.9.22: a retry due 20 s after the first
+         * cut off, and drains cut with no DISCONNECT sent at all; the peer
+         * timed out after 240 s).  BPQ32 keeps the radio while it waits for
+         * DISCONNECTED, and ABORTs after 30 s.
+         *
+         * With no session up there is nothing to end and no later notice to
+         * wait for: answer at once. */
+        if (!arq_session_active())
+            arq_tnc_send_disconnected();
         wait_payload_written();
         ev.id = ARQ_EV_APP_DISCONNECT;
         break;

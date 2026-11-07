@@ -1901,9 +1901,9 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
             snprintf(sess->pending_connect_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
             HLOGI(LOG_COMP, "CONNECT to %s deferred until the teardown completes",
                   sess->pending_connect_call);
-            /* The host was told DISCONNECTED when it hung up (arq.c, the VARA
-             * convention), so to it the radio is free and this call is the
-             * only one.  Draining on meant the old session kept keying while
+            /* The host redialled without waiting for DISCONNECTED (which
+             * comes when the session ends, arq.c): to it the old session is
+             * over and this call is the only one.  Draining on meant the old session kept keying while
              * the new call waited unseen, for up to the whole drain budget
              * (on air, N3JXB at the MFSK floor: "it continued to send in
              * MFSK and did not understand that there was a new connection

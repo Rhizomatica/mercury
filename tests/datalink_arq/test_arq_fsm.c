@@ -1156,8 +1156,8 @@ void test_repeat_disconnect_while_draining_ends_now(void)
     TEST_ASSERT_EQUAL_UINT64(first_req, sess.disc_req_ms);
 }
 
-/* A CONNECT while a DISCONNECT is held to drain ends the drain: the host was
- * already told DISCONNECTED, so for it the old session is over.  The call
+/* A CONNECT while a DISCONNECT is held to drain ends the drain: a host that
+ * redials has hung up on the old session.  The call
  * stays queued and is placed once the teardown completes. */
 void test_redial_while_draining_ends_the_drain(void)
 {

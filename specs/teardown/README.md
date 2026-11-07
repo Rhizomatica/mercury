@@ -15,8 +15,8 @@ What it models:
   keeps polling, and each poll gives the callee a slot.
 - With its last word not yet confirmed, the caller holds its DISCONNECT
   while the drain delivers it, up to the drain deadline or the peer's
-  silence.  The host was told DISCONNECTED already; a second DISCONNECT or
-  a CONNECT meanwhile ends the drain at once.
+  silence.  The host hears DISCONNECTED when the session ends; a second
+  DISCONNECT or a CONNECT meanwhile ends the drain at once.
 - The callee keys nothing of its own: its DISCONNECT goes in its next slot,
   and in every slot after that while it is ending.  With no slot it gives up.
 - Either end, hearing the peer's DISCONNECT, ends.  A connected end replies
@@ -121,8 +121,7 @@ M_END that the caller does not act on (the callee still holds a word of
 its own) still acknowledges the caller's word, as the poll does in the
 code.  `Mut_ackless.cfg` has the old rule.
 
-The caller's drain (2026-11-05): the host is told DISCONNECTED when it
-hangs up (arq.c, the VARA convention), and the caller then holds its
+The caller's drain (2026-11-05): the host hangs up, and the caller then holds its
 DISCONNECT to deliver what it has not yet confirmed (`ARQ_TD_DRAINING`), at
 the MFSK floor for up to 148 s.  On air (N3JXB -> VE4KLM, 1.9.22,
 2026-11-04) the callee went silent after the ACCEPT: the operator's
@@ -136,6 +135,16 @@ drain also ends once the peer has been silent `ARQ_CAR_PEER_QUIET_MS`
 `mdrain`, `MHold`, `MDrained`, `MDrainEnd`, `MAgain`, `MRedial`, the ghosts
 `asked` and `forced`, and property `Released`.  `Mut_rearm.cfg` and
 `Mut_redialwait.cfg` have the old rules.
+
+When the host hears DISCONNECTED (2026-11-07): when the session has
+closed, as VARA's command reference has it ("DISCONNECT: Disconnect the link,
+once the TX buffer is empty"; "DISCONNECTED: Session closed by either end"),
+not when it hangs up.  Until then arq.c said it at once, and BPQ32, which
+restarts its scan 15 s after DISCONNECTED, moved the radio mid-teardown: its
+LISTEN OFF ended the session before the peer had the DISCONNECT, and the peer
+waited out its 240 s watchdog (on air, K7EK and KG9NI, 1.9.22).  BPQ32 keeps
+the radio while it waits, and ABORTs after 30 s.  The model is unchanged: the
+host may still ask again during the drain (`HostAgain`), told or not.
 
 Silence after an M_END (2026-11-05): the callee's M_END says its
 application has hung up, but the caller acts on it only holding everything

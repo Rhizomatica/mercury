@@ -221,10 +221,18 @@ DISCONNECT\r
 
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
-`DISCONNECTED\r` is sent on the control port at once (the VARA
-convention); the air side ends after it.  Mercury first delivers what is
-still queued or unconfirmed, for up to three exchanges at the session's
-rung (minutes at the MFSK floor), then sends DISCONNECT frames to the peer.
+`DISCONNECTED\r` is sent on the control port when the session has
+closed, as VARA does ("Disconnect the link, once the TX buffer is empty").
+Mercury first delivers what is still queued or unconfirmed, for up to three
+exchanges at the session's rung (minutes at the MFSK floor), then sends
+DISCONNECT frames to the peer and waits for its answer.  With no session up,
+`DISCONNECTED\r` is sent at once.  A host that cannot wait sends `ABORT`.
+
+Up to 1.9.22 `DISCONNECTED\r` was sent at once, before the air side ended.
+A scanning BPQ32 restarts its scan 15 s after it, and its next `LISTEN OFF`
+ended the session before the peer had heard the DISCONNECT, leaving the
+peer to time out (240 s).  BPQ32 keeps the radio while it waits for
+`DISCONNECTED`, and sends `ABORT` after 30 s.
 It does not wait to deliver when nothing has been heard from the peer
 for 120 s, and a delivery under way stops once that silence is reached.
 
@@ -733,8 +741,13 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   and BUSY returned 0.6-5.7 s after the hop to another one, on a band the
   operator heard as empty.
 - **After a host `DISCONNECT`, a scan hop can cut the teardown short.**
-  Mercury answers `DISCONNECTED` straight away and finishes on the air; the
-  scanner's next `LISTEN OFF` releases the radio before that is done (#473).
+  It did up to 1.9.22, when Mercury answered `DISCONNECTED` straight away:
+  the scanner's next `LISTEN OFF` released the radio before the peer had the
+  DISCONNECT (#473).  On K7EK and KG9NI a DISCONNECT retry due 20 s after the
+  first was cut off, and two drains ended with no DISCONNECT sent; each time
+  the peer waited out its 240 s watchdog.  BPQ32 keeps the radio until
+  `DISCONNECTED`, now sent when the session has closed, restarts its scan
+  15 s after it, and sends `ABORT` if it has waited 30 s.
 
 When `LISTEN OFF` arrives with no session up while a CALL decoder has locked
 onto a frame it has not decoded yet, Mercury logs it:

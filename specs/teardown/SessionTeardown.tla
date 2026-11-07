@@ -10,8 +10,8 @@
 (*   its last word not yet confirmed, M holds the DISCONNECT while its    *)
 (*   drain delivers it (ARQ_TD_DRAINING; how, specs/carousel DirDone),   *)
 (*   up to a deadline or the peer's silence.  The host, told DISCONNECTED *)
-(*   already, may ask again meanwhile -- a second DISCONNECT, or a CONNECT *)
-(*   -- and either ends the drain at once, dropping what it holds.        *)
+(*   only when the session ends, may still ask again meanwhile -- a second *)
+(*   DISCONNECT, or a CONNECT -- and either ends the drain at once.       *)
 (*   Once S has said M_END, M remembers it; if S then falls silent as    *)
 (*   long as S's own drain would last, M ends with one DISCONNECT.       *)
 (*   S, the callee, keys nothing of its own: its DISCONNECT goes in its   *)
@@ -205,8 +205,8 @@ MAppDisc == /\ st["M"] = "conn" /\ ~mdrain /\ mw \notin {"owed", "acked"}
             /\ tries' = R
             /\ UNCHANGED <<gen, sid, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw, mdrain, asked, forced, mend, cut, wordgone>>
 \* ...with its last word not yet confirmed: the DISCONNECT is held while the
-\* drain delivers it (fsm_connected_carousel, ARQ_TD_DRAINING).  The host has
-\* been told DISCONNECTED already (arq.c, the VARA convention).
+\* drain delivers it (fsm_connected_carousel, ARQ_TD_DRAINING).  The host
+\* hears DISCONNECTED when the session ends, as VARA's (arq.c).
 MHold == /\ st["M"] = "conn" /\ ~mdrain /\ mw \in {"owed", "acked"}
          /\ mdrain' = TRUE
          /\ UNCHANGED <<st, gen, sid, sent, tries, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw, asked, forced, mend, cut, wordgone>>
@@ -222,7 +222,8 @@ MDrainEnd == /\ st["M"] = "conn" /\ mdrain /\ TimerOK("M")
              /\ st' = [st EXCEPT !["M"] = "ending"] /\ sent' = [sent EXCEPT !["M"] = FALSE]
              /\ tries' = R /\ mdrain' = FALSE
              /\ UNCHANGED <<gen, sid, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw, asked, forced, mend, cut, wordgone>>
-\* The host, told DISCONNECTED, asks again while the drain holds: a second
+\* The host asks again while the drain holds (it need not wait for
+\* DISCONNECTED, and before 2026-11-07 it had it already): a second
 \* DISCONNECT, or a CONNECT (the redial, placed once M is idle: Call).  Each
 \* ends the drain at once and drops what it has not delivered, as ABORT
 \* does.  Before (N3JXB, 1.9.22, 2026-11-04) a second DISCONNECT re-armed the
