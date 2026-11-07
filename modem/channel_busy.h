@@ -52,6 +52,16 @@ typedef struct {
     bool     inited;           /* false until the first update seeds the floor         */
     uint64_t above_since_ms;   /* 0 = not currently above the assert threshold         */
     uint64_t below_since_ms;   /* 0 = not currently below the release threshold        */
+
+    /* The last update's passband, for the log line on each transition: what
+     * made the verdict (a single loud band reads as a tone, many as a signal,
+     * a very quiet edge band as a receive filter narrower than the passband). */
+    float    peak_db;          /* loudest band                                         */
+    float    peak_hz;          /* its centre                                           */
+    float    quiet_db;         /* quietest band                                        */
+    float    quiet_hz;         /* its centre                                           */
+    int      bands_over;       /* bands at or over floor + threshold_db                */
+    int      bands;            /* bands measured                                       */
 } busy_state_t;
 
 /* Sensible defaults for HF NVIS.  Detector is opt-in (disabled unless a config

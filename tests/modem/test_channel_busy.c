@@ -266,6 +266,55 @@ void test_noise_step_releases_eventually(void)
     TEST_ASSERT_FALSE_MESSAGE(busy, "a 12 dB noise step held BUSY for 5 minutes");
 }
 
+/* What a transition is logged with (modem.c): a single tone is one band over
+ * the threshold, at the tone's frequency. */
+void test_tone_reports_one_band_at_its_frequency(void)
+{
+    bool busy = false;
+    for (uint64_t t = 0; t <= 1000; t += 50) {
+        fill_noise(-100.0f);
+        add_passband_signal(-60.0f);          /* ~1500 Hz */
+        feed(t, &busy);
+    }
+    TEST_ASSERT_TRUE(busy);
+    TEST_ASSERT_EQUAL_INT(1, st.bands_over);
+    TEST_ASSERT_TRUE(st.bands > 10);
+    TEST_ASSERT_FLOAT_WITHIN(150.0f, 1500.0f, st.peak_hz);
+    TEST_ASSERT_TRUE(st.peak_db - st.noise_floor_db >= cfg.threshold_db);
+}
+
+/* A wideband signal: most bands over the threshold. */
+void test_wideband_signal_reports_many_bands(void)
+{
+    bool busy = false;
+    fill_noise(-100.0f);
+    feed(0, &busy);                            /* seed the floor on noise */
+    for (uint64_t t = 50; t <= 1000; t += 50) {
+        fill_noise(-100.0f);
+        for (int i = 77; i <= 320; i++)        /* ~600-2500 Hz */
+            spec[i] = -80.0f;
+        feed(t, &busy);
+    }
+    TEST_ASSERT_TRUE(busy);
+    TEST_ASSERT_TRUE(st.bands_over > st.bands / 2);
+}
+
+/* A receive filter narrower than the passband: the quietest band is under
+ * the filter skirt, at the edge. */
+void test_narrow_filter_reports_the_quiet_edge(void)
+{
+    bool busy = false;
+    for (uint64_t t = 0; t <= 500; t += 50) {
+        fill_noise(-100.0f);
+        for (int i = 0; i < 77; i++)           /* below ~600 Hz: filtered out */
+            spec[i] = -140.0f;
+        feed(t, &busy);
+    }
+    TEST_ASSERT_TRUE(st.quiet_hz >= (float)BUSY_PASSBAND_LO_HZ);
+    TEST_ASSERT_TRUE(st.quiet_hz < 600.0f);
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, -140.0f, st.quiet_db);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -279,5 +328,8 @@ int main(void)
     RUN_TEST(test_digital_silence_does_not_latch_busy);
     RUN_TEST(test_long_wideband_signal_is_not_absorbed);
     RUN_TEST(test_noise_step_releases_eventually);
+    RUN_TEST(test_tone_reports_one_band_at_its_frequency);
+    RUN_TEST(test_wideband_signal_reports_many_bands);
+    RUN_TEST(test_narrow_filter_reports_the_quiet_edge);
     return UNITY_END();
 }

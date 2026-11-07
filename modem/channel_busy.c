@@ -40,6 +40,12 @@ void channel_busy_init(busy_state_t *st)
     st->inited         = false;
     st->above_since_ms = 0;
     st->below_since_ms = 0;
+    st->peak_db        = 0.0f;
+    st->peak_hz        = 0.0f;
+    st->quiet_db       = 0.0f;
+    st->quiet_hz       = 0.0f;
+    st->bands_over     = 0;
+    st->bands          = 0;
 }
 
 /* Map a passband edge frequency to a spectrum bin index. Real-input FFT: bin i
@@ -87,8 +93,10 @@ bool channel_busy_update(busy_state_t *st, const busy_cfg_t *cfg,
     if (band_bins < 1) band_bins = 1;
 
     float band_db[BUSY_MAX_BANDS];
+    float band_raw[BUSY_MAX_BANDS];          /* in frequency order, for the count */
     int   nb = 0;
-    float peak = -1e9f;
+    float peak = -1e9f, quiet = 1e9f;
+    float peak_hz = 0.0f, quiet_hz = 0.0f;
     for (int b0 = lo; b0 <= hi && nb < BUSY_MAX_BANDS; b0 += band_bins) {
         int b1 = b0 + band_bins - 1;
         if (b1 > hi) b1 = hi;
@@ -96,8 +104,11 @@ bool channel_busy_update(busy_state_t *st, const busy_cfg_t *cfg,
         for (int i = b0; i <= b1; i++)
             pw += pow(10.0, spectrum_dB[i] / 10.0);
         float v = (float)(10.0 * log10(pw / (double)(b1 - b0 + 1) + 1e-30));
+        float centre_hz = 0.5f * (float)(b0 + b1) * hz_per_bin;
+        band_raw[nb] = v;
         band_db[nb++] = v;
-        if (v > peak) peak = v;
+        if (v > peak)  { peak = v;  peak_hz = centre_hz; }
+        if (v < quiet) { quiet = v; quiet_hz = centre_hz; }
     }
 
     /* The floor candidate is the lower-QUARTILE band, not the quietest one.
@@ -138,6 +149,16 @@ bool channel_busy_update(busy_state_t *st, const busy_cfg_t *cfg,
     float excess       = peak - st->noise_floor_db;
     float assert_level = cfg->threshold_db;
     float release_level = cfg->threshold_db - cfg->hysteresis_db;
+
+    st->peak_db    = peak;
+    st->peak_hz    = peak_hz;
+    st->quiet_db   = quiet;
+    st->quiet_hz   = quiet_hz;
+    st->bands      = nb;
+    st->bands_over = 0;
+    for (int i = 0; i < nb; i++)
+        if (band_raw[i] >= st->noise_floor_db + assert_level)
+            st->bands_over++;
 
     bool changed = false;
 
