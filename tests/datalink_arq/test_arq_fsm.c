@@ -457,6 +457,21 @@ void test_connect_clears_the_dialed_callsign(void)
     TEST_ASSERT_EQUAL_STRING("", sess.local_call);
 }
 
+/* The busy detector is muted while the link has a peer (modem.c), and that
+ * includes the teardown: in DISCONNECTING the energy is still the peer, and a
+ * BUSY there held our DISCONNECT frame up to the deferral cap.  Before the
+ * link exists (CALLING, ACCEPTING) BUSY still counts: it is the listen before
+ * a call. */
+void test_peer_states_are_connected_and_disconnecting(void)
+{
+    TEST_ASSERT_TRUE(arq_conn_state_has_peer(ARQ_CONN_CONNECTED));
+    TEST_ASSERT_TRUE(arq_conn_state_has_peer(ARQ_CONN_DISCONNECTING));
+    TEST_ASSERT_FALSE(arq_conn_state_has_peer(ARQ_CONN_DISCONNECTED));
+    TEST_ASSERT_FALSE(arq_conn_state_has_peer(ARQ_CONN_LISTENING));
+    TEST_ASSERT_FALSE(arq_conn_state_has_peer(ARQ_CONN_CALLING));
+    TEST_ASSERT_FALSE(arq_conn_state_has_peer(ARQ_CONN_ACCEPTING));
+}
+
 /* The host's CONNECT queued behind an incoming CALL: the CALL is answered
  * first (PENDING, which resets arq.c's addresses), then the CONNECT aborts it
  * and places our call.  That call's CONNECTED must say we called; arq.c used
@@ -1988,6 +2003,7 @@ int main(void)
     RUN_TEST(test_accept_transitions_to_connected);
     RUN_TEST(test_connect_behind_incoming_call_connects_as_caller);
     RUN_TEST(test_connect_clears_the_dialed_callsign);
+    RUN_TEST(test_peer_states_are_connected_and_disconnecting);
     RUN_TEST(test_mfsk_only_connect_starts_deaf_on_the_floor);
     RUN_TEST(test_floor_accept_to_a_control_mode_call_is_not_deafness);
     RUN_TEST(test_repeat_on_control_mode_is_answered_on_the_floor);
