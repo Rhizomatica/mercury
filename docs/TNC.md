@@ -743,16 +743,21 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   stopped once the CALL decoded, including a 32 s connect that needed a
   repeated CALL and a failed one it held for 43 s.
 - **Each hop is `LISTEN OFF`, `LISTEN ON` and a `BW` command.**  The dwell
-  was 10.1-10.2 s.  The DATAC16 decoder keeps decoding through them, but the
-  two MFSK call listeners do not:
-  - a `LISTEN OFF` flushes both, so a partly received MFSK CALL is dropped
-    even when `LISTEN ON` follows a moment later on the same frequency.  Up
-    to 1.9.22 it usually did not: the flush waited for the receive loop to
-    see the station not listening, and BPQ32's `LISTEN ON` follows within
-    1 ms.  A CALL cut by the hop was then decoded on the next channel and
-    answered there, where the caller could not hear it (K7EK, 2026-11-06: an
-    MFSK CALL decoded 2.5 s after the hop, BPQ32 held on the wrong channel
-    for 2 min);
+  was 10.1-10.2 s.  What the call decoders hold does not survive them:
+  - a `LISTEN OFF` with no session up drops every partly received frame:
+    the DATAC16 decoder's, the payload decoder's and the two MFSK call
+    listeners', sync included.  A partly received CALL is dropped even when
+    `LISTEN ON` follows a moment later on the same frequency; the caller's
+    next CALL is heard as usual.  Up to 1.9.22 such a CALL could still
+    decode, on the next channel, and was answered there, where the caller
+    could not hear it.  BPQ32 then held the wrong channel for about 2 min
+    (six scan intervals) while the caller's repeats went unheard:
+    - MFSK: the flush waited for the receive loop to see the station not
+      listening, and BPQ32's `LISTEN ON` follows within 1 ms (K7EK,
+      2026-11-06: decoded 2.5 s after the hop; 2026-11-07: four calls,
+      0.2-4.2 s after it);
+    - DATAC16: its decoder was not flushed at all (K7EK, 2026-11-07: two
+      calls decoded 1.4 s and 1.9 s after the hop);
   - a `BW` change between `BW500` and `BW2300`/`BW2750` flushes both too: the
     listeners swap floors, and each swap drops what it holds.
 
@@ -801,13 +806,12 @@ When `LISTEN OFF` arrives with no session up while a CALL decoder has locked
 onto a frame it has not decoded yet, Mercury logs it:
 
 ```
-[tcp-ctl] LISTEN OFF 2.1 s into a DATAC16 frame not yet decoded: if the host now changes frequency, it is lost (or it was noise)
+[tcp-ctl] LISTEN OFF 2.1 s into a DATAC16 frame not yet decoded: LISTEN OFF drops it (or it was noise)
 [tcp-ctl] LISTEN OFF 6.4 s into a MFSK frame not yet decoded: LISTEN OFF drops it (or it was noise)
 ```
 
-A DATAC16 frame is lost only if the host then retunes; an MFSK one is lost to
-the `LISTEN OFF` itself.  A CALL cut off by a hop shows as one of these lines
-with no `RX_CALL` after it.  The lock can also be noise or another station's
+Either frame is lost to the `LISTEN OFF` itself.  A CALL cut off by a hop
+shows as one of these lines with no `RX_CALL` after it.  The lock can also be noise or another station's
 traffic, so read the line together with the caller's log.
 
 ### DISCONNECTED

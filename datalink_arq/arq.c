@@ -758,9 +758,19 @@ static void *arq_payload_bridge_worker(void *arg)
  * ====================================================================== */
 
 /* Spells of listening for calls that have ended (arq_fsm_dispatch_ends_listening),
- * for the modem's MFSK call listeners (listen_spells_ended in the snapshot).
- * Guarded by g_sess_lock. */
+ * for the modem's MFSK call listeners (listen_spells_ended in the snapshot),
+ * and those that ended with no session after them (listen_releases), for its
+ * control and payload decoders.  Guarded by g_sess_lock. */
 static uint32_t g_listen_spells_ended;
+static uint32_t g_listen_releases;
+
+static void count_listen_end(arq_listen_end_t end)
+{
+    if (end != ARQ_LISTEN_GOES_ON)
+        g_listen_spells_ended++;
+    if (end == ARQ_LISTEN_ENDS_RELEASED)
+        g_listen_releases++;
+}
 
 static void *arq_event_loop_worker(void *arg)
 {
@@ -798,8 +808,7 @@ static void *arq_event_loop_worker(void *arg)
 
         pthread_mutex_lock(&g_sess_lock);
         for (size_t i = 0; i < n; i++)
-            if (arq_fsm_dispatch_ends_listening(&g_sess, &events[i]))
-                g_listen_spells_ended++;
+            count_listen_end(arq_fsm_dispatch_ends_listening(&g_sess, &events[i]));
 
         /* Fire deadline */
         now = time_now_ms();
@@ -807,8 +816,7 @@ static void *arq_event_loop_worker(void *arg)
         {
             g_sess.deadline_ms = UINT64_MAX;
             arq_event_t tev = { .id = g_sess.deadline_event };
-            if (arq_fsm_dispatch_ends_listening(&g_sess, &tev))
-                g_listen_spells_ended++;
+            count_listen_end(arq_fsm_dispatch_ends_listening(&g_sess, &tev));
         }
         pthread_mutex_unlock(&g_sess_lock);
     }
@@ -1398,6 +1406,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING ||
                                      g_sess.conn_state == ARQ_CONN_ACCEPTING);
     snapshot->listen_spells_ended = g_listen_spells_ended;
+    snapshot->listen_releases     = g_listen_releases;
     snapshot->listen_floor_mode = arq_floor_mode(normalize_bandwidth_hz(own_bw));
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;

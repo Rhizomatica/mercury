@@ -401,9 +401,14 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
             if (mercury_mode_is_mfsk(answer))
                 sess->peer_tx_mode = answer;
         }
+        /* An ACCEPT to a repeated control-mode CALL goes on the floor too
+         * (accept_carrier): the CALL did not come on it, the caller listens
+         * there. */
         if (mode != sess->control_mode)
             HLOGI(LOG_COMP, "%s on the MFSK floor (%s)", is_accept ? "ACCEPT" : "CALL",
-                  is_accept ? "the CALL came on it" : "the fast CALLs went unanswered");
+                  !is_accept ? "the fast CALLs went unanswered"
+                  : mercury_mode_is_mfsk(sess->call_heard_mode) ? "the CALL came on it"
+                  : "a repeated CALL: the caller listens there");
         send_frame(PACKET_TYPE_ARQ_CALL2, mode, (size_t)n, frame, 0);
     }
     else
@@ -981,6 +986,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = ev->session_id;
         /* a repeat after our ACCEPTs ran out: answered as in ACCEPTING */
         sess->call_rx_mode    = same_session ? accept_carrier(sess, ev) : ev->mode;
+        sess->call_heard_mode = ev->mode;
         if (!same_session)
         {
             /* A new session takes the CALL's bandwidth; a repeat keeps the
@@ -1289,6 +1295,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * kept on DATAC16 kept failing the same way (#235).  A repeat on
          * DATAC16 says the same thing, sooner: the floor (accept_carrier). */
         sess->call_rx_mode      = accept_carrier(sess, ev);
+        sess->call_heard_mode   = ev->mode;
         sess->accept_tx_pending = accept_keys(sess);   /* answering a CALL we just heard */
         /* And PENDING again.  A scanning host holds its channel for a fixed
          * time per PENDING -- BPQ32 six scan intervals (VARA.c: "Time out
@@ -2091,11 +2098,14 @@ static bool listening_for_calls(arq_conn_state_t s)
     return s == ARQ_CONN_LISTENING || s == ARQ_CONN_ACCEPTING;
 }
 
-bool arq_fsm_dispatch_ends_listening(arq_session_t *sess, const arq_event_t *ev)
+arq_listen_end_t arq_fsm_dispatch_ends_listening(arq_session_t *sess, const arq_event_t *ev)
 {
     if (!sess)
-        return false;
+        return ARQ_LISTEN_GOES_ON;
     bool was = listening_for_calls(sess->conn_state);
     arq_fsm_dispatch(sess, ev);
-    return was && !listening_for_calls(sess->conn_state);
+    if (!was || listening_for_calls(sess->conn_state))
+        return ARQ_LISTEN_GOES_ON;
+    return sess->conn_state == ARQ_CONN_DISCONNECTED ? ARQ_LISTEN_ENDS_RELEASED
+                                                     : ARQ_LISTEN_ENDS_IN_SESSION;
 }

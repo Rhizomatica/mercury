@@ -272,14 +272,12 @@ bool modem_get_busy_reseed_on_hop(void) { return mock_busy_reseed; }
 
 static bool mock_inflight = false;
 
-bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms,
-                              bool *lost_on_listen_off)
+bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms)
 {
     if (!mock_inflight)
         return false;
-    if (mode_name)          *mode_name = "MFSK";
-    if (for_ms)             *for_ms = 2100;
-    if (lost_on_listen_off) *lost_on_listen_off = true;
+    if (mode_name) *mode_name = "MFSK";
+    if (for_ms)    *for_ms = 2100;
     return true;
 }
 
