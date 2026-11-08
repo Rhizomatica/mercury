@@ -231,8 +231,9 @@ max_keydown_s = 0
 ; busy/clear from the RX spectrum and reports transitions to the host with
 ; VARA-compatible "BUSY ON" / "BUSY OFF" notifications on the control port.
 ;
-; OFF by default, deliberately.  Mercury itself never gates transmission on it,
-; but the hosts that consume these notifications do: BPQ32 and Winlink hold
+; OFF by default, deliberately.  Mercury itself waits on it only before a
+; station message (beacon), never inside a session, where the energy is the
+; peer; but the hosts that consume these notifications do: BPQ32 and Winlink hold
 ; transmissions while BUSY is asserted, so a detector that fires on noise, or on
 ; a station you are already in QSO with, stops the station transmitting and
 ; strands traffic in the queue.  That is field experience on HF, not theory, and

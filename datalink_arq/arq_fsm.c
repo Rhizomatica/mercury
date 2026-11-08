@@ -46,6 +46,11 @@ const char *arq_conn_state_name(arq_conn_state_t s)
     return "UNKNOWN";
 }
 
+bool arq_conn_state_has_peer(arq_conn_state_t s)
+{
+    return s == ARQ_CONN_CONNECTED || s == ARQ_CONN_DISCONNECTING;
+}
+
 const char *arq_event_name(arq_event_id_t ev)
 {
     static const char *names[] = {
