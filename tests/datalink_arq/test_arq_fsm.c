@@ -1402,6 +1402,76 @@ void test_disconnect_drain_timeout_forces_teardown(void)
  * was on the air.  The DISCONNECT keyed 42 ms after it ended, the peer keyed
  * its reply 0.9 s later (it never listened), and both were lost. */
 
+/* The same, behind a keydown longer than the deferral cap: an MFSK floor
+ * round is 27 s, and the shared 10 s cap ran out while we were still keyed.
+ * The DISCONNECT keyed 22 ms after the round, over the peer's ACK pattern;
+ * neither decoded, and the teardown took two retries and 46 s (NW8L-KA8RYU,
+ * IONOS MPD -5 dB, 1.9.22).  Our own keydown has its own cap; its end starts
+ * the DISCONNECT's budget afresh. */
+static uint64_t run_disconnect_deferrals_until(uint64_t until)
+{
+    while (fake_send_tx_frame_fake.call_count == 0 && sess.deadline_ms && sess.deadline_ms <= until)
+    {
+        mock_set_uptime_ms(sess.deadline_ms);
+        arq_event_t ev = make_event(sess.deadline_event);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+    return time_now_ms();
+}
+
+/* As on air: the host hung up with data undelivered, the drain ran out, and
+ * the teardown starts with the peer still answering. */
+static void goto_teardown_past_the_drain(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 256;
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_DRAINING, sess.teardown);
+    mock_set_uptime_ms(sess.teardown_deadline_ms + 10);
+    sess.car_last_rx_ms = time_now_ms() - 2000;     /* the peer is live */
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+}
+
+void test_disconnect_waits_out_a_long_keydown(void)
+{
+    goto_teardown_past_the_drain();
+
+    /* our 27 s floor round is on the air */
+    uint64_t start = time_now_ms();
+    arq_event_t ev = make_event(ARQ_EV_TX_STARTED);
+    arq_fsm_dispatch(&sess, &ev);
+    RESET_FAKE(fake_send_tx_frame);
+    run_disconnect_deferrals_until(start + 27000);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "the DISCONNECT keyed while our own round was still on the air");
+
+    mock_set_uptime_ms(start + 27000);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    uint64_t end = time_now_ms();
+    uint64_t sent = run_disconnect_deferrals_until(end + 30000);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_TRUE_MESSAGE(sent >= end + ARQ_ISS_POST_ACK_GUARD_MS,
+        "the DISCONNECT keyed inside the reply window of our round");
+}
+
+/* A TX_COMPLETE that never comes does not hold the DISCONNECT for ever. */
+void test_disconnect_keyed_deferral_is_bounded(void)
+{
+    goto_teardown_past_the_drain();
+    uint64_t start = time_now_ms();
+    arq_event_t ev;
+    ev = make_event(ARQ_EV_TX_STARTED);
+    arq_fsm_dispatch(&sess, &ev);
+    RESET_FAKE(fake_send_tx_frame);
+    uint64_t sent = run_disconnect_deferrals_until(start + 60000);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_TRUE(sent <= start + 40000);
+}
+
 
 
 
@@ -2109,6 +2179,8 @@ int main(void)
     RUN_TEST(test_silent_peer_after_hangup_is_ended_early);
     RUN_TEST(test_silent_peer_after_hangup_waits_the_callees_drain);
     RUN_TEST(test_silent_peer_without_hangup_waits_for_the_watchdog);
+    RUN_TEST(test_disconnect_waits_out_a_long_keydown);
+    RUN_TEST(test_disconnect_keyed_deferral_is_bounded);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
     RUN_TEST(test_rx_disconnect_with_backlog_ends_at_once);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);

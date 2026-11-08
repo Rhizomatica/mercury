@@ -1470,11 +1470,12 @@ static void fire_deferred_connect(arq_session_t *sess)
  * reply window has passed, by which time an invited frame has started and a
  * decoder holds sync on it; and not until the peer has been quiet for one
  * reply guard, so its radio is back on receive.  Bounded like the other
- * deferrals: after ARQ_CHANNEL_DEFER_MAX steps we key regardless. */
+ * deferrals: after ARQ_CHANNEL_DEFER_MAX steps we key regardless -- counted
+ * from the end of our own keydown (ARQ_CHANNEL_DEFER_KEYED_MAX). */
 static bool disconnect_must_wait(arq_session_t *sess)
 {
     uint64_t now = time_now_ms();
-    if (sess->defer_count >= ARQ_CHANNEL_DEFER_MAX)
+    if (sess->defer_count >= (sess->tx_active ? ARQ_CHANNEL_DEFER_KEYED_MAX : ARQ_CHANNEL_DEFER_MAX))
     {
         HLOGW(LOG_COMP, "DISCONNECT deferral cap reached (%u) - keying anyway",
               (unsigned)sess->defer_count);
@@ -1512,6 +1513,11 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 {
     const arq_mode_timing_t *tm;
     uint64_t now = time_now_ms();
+
+    /* Our keydown is over: the DISCONNECT's deferral budget starts now
+     * (ARQ_CHANNEL_DEFER_KEYED_MAX). */
+    if (ev->id == ARQ_EV_TX_COMPLETE)
+        sess->defer_count = 0;
 
     /* The callee ending a carousel session: the carousel keeps its slots, and
      * its next one carries our DISCONNECT (car_io_end). */
@@ -1839,9 +1845,14 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
      * the host has disconnected (K7EK "Mercury kept hanging on"). */
     if (sess->teardown == ARQ_TD_DRAINING && time_now_ms() >= sess->teardown_deadline_ms)
     {
+        /* the budget it had, not the configured least: the carousel's for
+         * its rung may be longer (148 s at the floor) */
+        uint64_t budget = sess->disc_req_ms && sess->teardown_deadline_ms > sess->disc_req_ms
+                              ? sess->teardown_deadline_ms - sess->disc_req_ms
+                              : (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000ULL;
         HLOGW(LOG_COMP,
-              "Deferred DISCONNECT drain timeout (%ds) — forcing teardown",
-              ARQ_DISCONNECT_DRAIN_TIMEOUT_S);
+              "Deferred DISCONNECT drain timeout (%llu s) — forcing teardown",
+              (unsigned long long)((budget + 500) / 1000));
         car_begin_disconnect(sess, time_now_ms());
         return;
     }
