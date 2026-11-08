@@ -41,7 +41,8 @@
 
 /* After the host moves the radio (a scan hop), no verdicts for this long: the
  * radio retunes after the host's commands, not before, and the FFT window
- * must hold only the new channel before its floor is taken. */
+ * must hold only the new channel before its floor is taken.  The same wait
+ * follows a switch-on (BUSYDETECT ON), for the spectrum average to settle. */
 #define BUSY_HOP_HOLDOFF_MS 1000
 
 typedef struct {

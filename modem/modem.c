@@ -512,17 +512,38 @@ static busy_state_t g_busy_state   = { .busy = false, .noise_floor_db = 0.0f,
                                        .below_since_ms = 0 };
 /* Set by modem_busy_channel_changed (control thread), taken by the RX worker. */
 static atomic_bool  g_busy_reseed_req = false;
+/* busy_reseed_on_hop / BUSYRESEED: off by default (docs/TNC.md, "Scanning
+ * hosts", for the trade-off). */
+static atomic_bool  g_busy_reseed_on_hop = false;
 
 void modem_busy_channel_changed(void)
 {
     atomic_store_explicit(&g_busy_reseed_req, true, memory_order_relaxed);
 }
 
+void modem_set_busy_reseed_on_hop(bool enabled)
+{
+    atomic_store_explicit(&g_busy_reseed_on_hop, enabled, memory_order_relaxed);
+}
+
+bool modem_get_busy_reseed_on_hop(void)
+{
+    return atomic_load_explicit(&g_busy_reseed_on_hop, memory_order_relaxed);
+}
+
+/* Callable while running (BUSYDETECT).  The RX worker sees the change on its
+ * next chunk: switched off, it sends BUSY OFF if the host was told BUSY ON;
+ * switched on, it waits BUSY_HOP_HOLDOFF_MS, then takes a fresh noise floor. */
 void modem_set_busy_detect_enabled(bool enabled)
 {
     atomic_store_explicit(&g_busy_enabled, enabled, memory_order_relaxed);
     if (!enabled)
         atomic_store_explicit(&g_channel_busy, false, memory_order_relaxed);
+}
+
+bool modem_get_busy_detect_enabled(void)
+{
+    return atomic_load_explicit(&g_busy_enabled, memory_order_relaxed);
 }
 
 void modem_set_busy_cfg(float threshold_db, float hysteresis_db,
@@ -3141,6 +3162,7 @@ void *rx_thread(void *g_modem)
      * radio's audio path.  Measured on a hermes-radio-daemon sBitx: exact
      * zeros from PTT ON + 40 ms to PTT OFF + ~50 ms. */
     uint64_t busy_holdoff_until_ms = monotonic_ms() + BUSY_TX_HOLDOFF_MS;
+    bool busy_was_on = false;   /* g_busy_enabled at the last chunk */
     bool spectrum_first_log = true;
 
     /* --- RX thread rate diagnostics (prints every ~5 seconds) --- */
@@ -3526,9 +3548,34 @@ void *rx_thread(void *g_modem)
          * is computed when either the UI waterfall (-W/UI) OR the channel-busy
          * detector needs it, so a headless station can still detect occupancy. */
         bool busy_on = atomic_load_explicit(&g_busy_enabled, memory_order_relaxed);
+        /* Switched off while running (BUSYDETECT OFF): a host told BUSY ON
+         * would otherwise hold it for good -- BPQ32 refuses its connects while
+         * BUSY stands.  g_busy_state.busy is what the host was last told. */
+        if (!busy_on && busy_was_on)
+        {
+            if (g_busy_state.busy)
+            {
+                tnc_send_busy(false);
+                HLOGI("modem-rx", "channel CLEAR (busy detector switched off)");
+            }
+            atomic_store_explicit(&g_channel_busy, false, memory_order_relaxed);
+            channel_busy_init(&g_busy_state);
+        }
+        /* Switched on (BUSYDETECT ON): the spectrum average was not kept
+         * while it was off, and its first frames seed a floor far under the
+         * noise -- a false BUSY within 0.4 s on a bench.  Let it settle. */
+        if (busy_on && !busy_was_on)
+        {
+            channel_busy_init(&g_busy_state);
+            uint64_t until = monotonic_ms() + BUSY_HOP_HOLDOFF_MS;
+            if (until > busy_holdoff_until_ms)
+                busy_holdoff_until_ms = until;
+        }
+        busy_was_on = busy_on;
         /* The host moved the radio (a scan hop): the floor learned on the
          * last channel does not hold on this one.  Take it afresh once the
          * radio has retuned (modem_busy_channel_changed). */
+        /* Only with busy_reseed_on_hop: the request is made only then. */
         if (atomic_exchange_explicit(&g_busy_reseed_req, false, memory_order_relaxed))
         {
             channel_busy_reseed(&g_busy_state);

@@ -248,6 +248,26 @@ bool modem_get_monitor_enabled(void) { return mock_monitor_enabled; }
 static int mock_busy_channel_changed_calls = 0;
 void modem_busy_channel_changed(void) { mock_busy_channel_changed_calls++; }
 
+/* ---- BUSYDETECT / BUSYRESEED switches ---- */
+
+static bool mock_busy_detect    = false;
+static int  mock_busy_detect_set_calls = 0;
+void modem_set_busy_detect_enabled(bool enabled)
+{
+    mock_busy_detect = enabled;
+    mock_busy_detect_set_calls++;
+}
+bool modem_get_busy_detect_enabled(void) { return mock_busy_detect; }
+
+static bool mock_busy_reseed    = false;
+static int  mock_busy_reseed_set_calls = 0;
+void modem_set_busy_reseed_on_hop(bool enabled)
+{
+    mock_busy_reseed = enabled;
+    mock_busy_reseed_set_calls++;
+}
+bool modem_get_busy_reseed_on_hop(void) { return mock_busy_reseed; }
+
 /* ---- in-flight frame stub (LISTEN OFF diagnostic) ---- */
 
 static bool mock_inflight = false;
@@ -418,6 +438,13 @@ void setUp(void)
     /* Monitor mode */
     mock_monitor_enabled    = false;
     mock_monitor_set_calls  = 0;
+
+    /* Busy detector switches (both off by default) */
+    mock_busy_detect           = false;
+    mock_busy_detect_set_calls = 0;
+    mock_busy_reseed           = false;
+    mock_busy_reseed_set_calls = 0;
+    mock_busy_channel_changed_calls = 0;
 }
 
 void tearDown(void) { }
@@ -493,7 +520,7 @@ void test_cmd_mycall_does_not_register_dropped_secondaries(void)
 
 void test_cmd_listen_on(void)
 {
-    mock_busy_channel_changed_calls = 0;
+    mock_busy_reseed = true;   /* LISTEN ON never re-seeds, even with it on */
     char cmd[] = "LISTEN ON";
     execute_control_command(cmd);
 
@@ -502,11 +529,22 @@ void test_cmd_listen_on(void)
     TEST_ASSERT_EQUAL_INT(0, mock_busy_channel_changed_calls);
 }
 
-/* LISTEN OFF starts a scanner's hop: the busy detector is told the channel
- * may have changed. */
+/* LISTEN OFF starts a scanner's hop.  With BUSYRESEED off (the default) the
+ * busy detector keeps its floor: nothing changes from before the option. */
 void test_cmd_listen_off(void)
 {
-    mock_busy_channel_changed_calls = 0;
+    char cmd[] = "LISTEN OFF";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_OFF, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_channel_changed_calls);
+}
+
+/* With it on, the detector is told the channel may have changed. */
+void test_cmd_listen_off_reseeds_busy_floor_when_enabled(void)
+{
+    mock_busy_reseed = true;
     char cmd[] = "LISTEN OFF";
     execute_control_command(cmd);
 
@@ -719,6 +757,77 @@ void test_cmd_beaconmode_sets_reports_and_refuses(void)
     execute_control_command(query);
     TEST_ASSERT_EQUAL_STRING_LEN("BEACONMODE -1 LISTEN\r", (char *)last_tcp_write_buf, 21);
     TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);    /* the listen mode is untouched */
+}
+
+/* ---- BUSYDETECT / BUSYRESEED: the busy detector's run-time switches ---- */
+
+void test_cmd_busydetect_on_off_and_query(void)
+{
+    char on[] = "BUSYDETECT ON";
+    execute_control_command(on);
+    assert_ok_response();
+    TEST_ASSERT_TRUE(mock_busy_detect);
+
+    tcp_write_call_count = 0;
+    char query[] = "BUSYDETECT";
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYDETECT ON\r", (char *)last_tcp_write_buf, 14);
+
+    tcp_write_call_count = 0;
+    char off[] = "BUSYDETECT off";
+    execute_control_command(off);
+    assert_ok_response();
+    TEST_ASSERT_FALSE(mock_busy_detect);
+
+    tcp_write_call_count = 0;
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYDETECT OFF\r", (char *)last_tcp_write_buf, 15);
+    TEST_ASSERT_EQUAL_INT(2, mock_busy_detect_set_calls);   /* the queries set nothing */
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_reseed_set_calls);
+}
+
+void test_cmd_busyreseed_on_off_and_query(void)
+{
+    char on[] = "BUSYRESEED ON";
+    execute_control_command(on);
+    assert_ok_response();
+    TEST_ASSERT_TRUE(mock_busy_reseed);
+
+    tcp_write_call_count = 0;
+    char query[] = "BUSYRESEED";
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYRESEED ON\r", (char *)last_tcp_write_buf, 14);
+
+    tcp_write_call_count = 0;
+    char off[] = "BUSYRESEED OFF";
+    execute_control_command(off);
+    assert_ok_response();
+    TEST_ASSERT_FALSE(mock_busy_reseed);
+
+    tcp_write_call_count = 0;
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYRESEED OFF\r", (char *)last_tcp_write_buf, 15);
+    TEST_ASSERT_EQUAL_INT(2, mock_busy_reseed_set_calls);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_detect_set_calls);
+}
+
+/* A bad argument changes nothing, and the name must be a whole word:
+ * "BUSYRESEEDON" is not "BUSYRESEED ON". */
+void test_cmd_busy_switches_reject_bad_input(void)
+{
+    char bad[] = "BUSYDETECT MAYBE";
+    execute_control_command(bad);
+    assert_wrong_response();
+
+    tcp_write_call_count = 0;
+    char longer[] = "BUSYRESEEDON";
+    execute_control_command(longer);
+    assert_wrong_response();
+
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_detect_set_calls);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_reseed_set_calls);
 }
 
 /* ---- MONITOR: the passive all-modes decoder (VARA-monitor style) ---- */
@@ -2170,6 +2279,7 @@ int main(void)
     RUN_TEST(test_cmd_mycall_does_not_register_dropped_secondaries);
     RUN_TEST(test_cmd_listen_on);
     RUN_TEST(test_cmd_listen_off);
+    RUN_TEST(test_cmd_listen_off_reseeds_busy_floor_when_enabled);
     RUN_TEST(test_cmd_listen_off_mid_frame_still_releases);
     RUN_TEST(test_cmd_public_on);
     RUN_TEST(test_cmd_compression);
@@ -2187,6 +2297,9 @@ int main(void)
     RUN_TEST(test_cmd_mode_unsupported_mode_is_wrong);
     RUN_TEST(test_cmd_mode_query_reports_index_and_name);
     RUN_TEST(test_cmd_beaconmode_sets_reports_and_refuses);
+    RUN_TEST(test_cmd_busydetect_on_off_and_query);
+    RUN_TEST(test_cmd_busyreseed_on_off_and_query);
+    RUN_TEST(test_cmd_busy_switches_reject_bad_input);
     RUN_TEST(test_cmd_monitor_on);
     RUN_TEST(test_cmd_monitor_off);
     RUN_TEST(test_cmd_monitor_query_reports_on);

@@ -503,6 +503,51 @@ that cost and is a possible optimisation.
 
 ---
 
+### BUSYDETECT
+
+Turn the channel-busy detector on or off while Mercury runs, without a
+restart.  It starts as `busy_detect` in `mercury.ini` sets it (off by
+default); the command does not save the change.
+
+```
+BUSYDETECT ON\r
+BUSYDETECT OFF\r
+BUSYDETECT\r
+```
+
+**Response:** `OK\r` on success, `WRONG\r` for an unrecognised argument.  The
+bare query answers `BUSYDETECT ON\r` or `BUSYDETECT OFF\r`.
+
+Switched off while it reports the channel busy, the detector sends
+`BUSY OFF\r` first, so the host is not left holding a BUSY.  Switched on again,
+it measures a new noise floor.  The thresholds stay the ones the ini set.  See
+[BUSY ON / BUSY OFF](#busy-on--busy-off).
+
+---
+
+### BUSYRESEED
+
+Choose whether the busy detector measures a new noise floor at each scan hop.
+It starts as `busy_reseed_on_hop` in `mercury.ini` sets it (off by default);
+the command does not save the change.
+
+```
+BUSYRESEED ON\r
+BUSYRESEED OFF\r
+BUSYRESEED\r
+```
+
+**Response:** `OK\r` on success, `WRONG\r` for an unrecognised argument.  The
+bare query answers `BUSYRESEED ON\r` or `BUSYRESEED OFF\r`.
+
+With it on, each `LISTEN OFF` (the start of a scanner's hop) makes the detector
+forget its floor, wait 1 s for the radio to retune, and measure the floor on
+the new channel, keeping its BUSY/CLEAR verdict until the new channel decides
+it.  With it off, one floor serves every channel.  Each way has a cost; see
+[Scanning hosts](#scanning-hosts-bpq32).
+
+---
+
 ### TUNE
 
 Key the transmitter and hold a steady **1000 Hz tone**, so an antenna tuner
@@ -661,7 +706,8 @@ existing VARA-compatible hosts (BPQ32, Winlink) act on them unchanged.
 Edge-triggered: `BUSY ON\r` on clear→busy, `BUSY OFF\r` on busy→clear.
 
 The detector is **disabled by default** and is enabled via the `[channel]`
-section of `mercury.ini` (`busy_detect = true`).  It is off because the hosts
+section of `mercury.ini` (`busy_detect = true`), or while running with
+[`BUSYDETECT ON`](#busydetect).  It is off because the hosts
 that consume these notifications act on them: BPQ32 and Winlink hold
 transmissions while BUSY is asserted, so a false or over-eager BUSY stops the
 station transmitting.  BPQ32's scanner does not hold on it (see "Scanning
@@ -727,13 +773,21 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   What BPQ32 does with BUSY is refuse its own outgoing connects ("Sorry, Can't
   Connect - Channel is busy"), and two forwards that night went by AX/IP
   instead.
-- **The busy detector takes a new noise floor at each hop.**  Mercury is not
-  told the host retuned, so it takes `LISTEN OFF` as the sign: it waits 1 s
-  for the radio to retune, then measures the floor afresh, keeping its
-  BUSY/CLEAR verdict until the new channel decides it.  Up to 1.9.22 it
-  carried one floor across every channel: at KG9NI every CLEAR came on one of
-  the three channels, and BUSY returned 0.6-5.7 s after the hop to another
-  one, on a band the operator heard as empty.
+- **By default one noise floor serves every scanned channel.**  Mercury is
+  not told the host retuned, so the busy detector carries its floor from one
+  channel to the next.  At KG9NI (2026-11-06) every CLEAR came on one of the
+  three channels, and BUSY returned 0.6-5.7 s after the hop to another one,
+  on a band the operator heard as empty.  With `busy_reseed_on_hop = true` (or
+  [`BUSYRESEED ON`](#busyreseed)) it takes `LISTEN OFF` as the sign of a hop:
+  it waits 1 s for the radio to retune, then measures the floor afresh,
+  keeping its BUSY/CLEAR verdict until the new channel decides it.
+  The trade-off: the floor is taken from the lower-quartile band of the
+  300-2700 Hz passband, so a signal wider than about 1.8 kHz (BW2300 DATAC,
+  VARA 2300) moves it.  A hop onto a channel where such a signal is already
+  under way seeds the floor on it, and the detector misses that signal until
+  it stops; the carried floor reports it BUSY.  So the re-seed swaps false
+  BUSY on noisier channels for missed BUSY on a hop into a wideband
+  transmission, which is why it is the operator's choice.
 - **After a host `DISCONNECT`, a scan hop can cut the teardown short.**
   Mercury answers `DISCONNECTED` straight away and finishes on the air; the
   scanner's next `LISTEN OFF` releases the radio before that is done (#473).
