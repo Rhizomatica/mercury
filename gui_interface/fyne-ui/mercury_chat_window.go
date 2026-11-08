@@ -329,6 +329,7 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		if cw.mc != nil {
 			cw.mc.Disconnect()
 		}
+		cw.leaveEngine()
 		if cw.done != nil {
 			close(cw.done)
 		}
@@ -546,6 +547,7 @@ func (cw *chatWindow) onConnect() {
 		cw.mc.Disconnect()
 		cw.mc = nil
 	}
+	cw.leaveEngine()
 	if cw.done != nil {
 		close(cw.done)
 		cw.done = nil
@@ -634,6 +636,7 @@ func (cw *chatWindow) onDisconnect() {
 		mc.Disconnect()
 		cw.mc = nil
 	}
+	cw.leaveEngine()
 	if cw.done != nil {
 		close(cw.done)
 		cw.done = nil
@@ -645,6 +648,17 @@ func (cw *chatWindow) onDisconnect() {
 	// instead of stacking the same messages on top of what is already shown.
 	cw.clearChat()
 	cw.logMsg("Disconnected.")
+}
+
+// leaveEngine undoes what a connection to the UI's own engine set in it: the
+// broadcast RX tap goes, and inEngine with it, so a filter installed while
+// disconnected, or for a later connection to another engine, is not taken to
+// the engine.
+func (cw *chatWindow) leaveEngine() {
+	if cw.inEngine {
+		engineSetBroadcastFilter(nil)
+		cw.inEngine = false
+	}
 }
 
 // clearChat empties the ARQ and broadcast chat panes on the UI thread.
@@ -918,6 +932,7 @@ func (cw *chatWindow) watchLink() {
 				cw.logMsg("Disconnected by the modem: another client has taken the TNC ports.")
 				mc.Disconnect()
 				cw.mc = nil
+				cw.leaveEngine()
 				if cw.done != nil {
 					close(cw.done)
 					cw.done = nil
