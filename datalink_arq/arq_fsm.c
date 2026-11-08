@@ -317,6 +317,22 @@ static int accept_carrier(const arq_session_t *sess, const arq_event_t *ev)
     return floor;
 }
 
+/* Say why the ACCEPT to this CALL goes where it does, when that is the floor:
+ * the CALL came on it, or it repeated one on the control mode, which
+ * accept_carrier answers on the floor, where such a caller listens.  Logged
+ * here, where the CALL is at hand; the ACCEPT goes out one guard later. */
+static void log_accept_carrier(const arq_session_t *sess, const arq_event_t *ev)
+{
+    if (!mercury_mode_is_mfsk(sess->call_rx_mode))
+        return;
+    if (mercury_mode_is_mfsk(ev->mode))
+        HLOGI(LOG_COMP, "CALL from %s on the MFSK floor: the ACCEPT goes there too",
+              ev->remote_call);
+    else
+        HLOGI(LOG_COMP, "CALL from %s repeated on the control mode: the ACCEPT goes "
+              "on the MFSK floor, where a repeating caller listens", ev->remote_call);
+}
+
 /* Does the ACCEPT go out, on the carrier chosen for it (call_rx_mode)?  Not
  * from a station that transmits only MFSK where that is the control mode:
  * it stays silent there, and answers the caller's next CALL, which the
@@ -401,14 +417,16 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
             if (mercury_mode_is_mfsk(answer))
                 sess->peer_tx_mode = answer;
         }
-        /* An ACCEPT to a repeated control-mode CALL goes on the floor too
-         * (accept_carrier): the CALL did not come on it, the caller listens
-         * there. */
+        /* Why an ACCEPT goes on the floor is logged where the CALL is at
+         * hand (log_accept_carrier): the CALL came on it, or a repeat on the
+         * control mode moved it there. */
         if (mode != sess->control_mode)
-            HLOGI(LOG_COMP, "%s on the MFSK floor (%s)", is_accept ? "ACCEPT" : "CALL",
-                  !is_accept ? "the fast CALLs went unanswered"
-                  : mercury_mode_is_mfsk(sess->call_heard_mode) ? "the CALL came on it"
-                  : "a repeated CALL: the caller listens there");
+        {
+            if (is_accept)
+                HLOGI(LOG_COMP, "ACCEPT on the MFSK floor");
+            else
+                HLOGI(LOG_COMP, "CALL on the MFSK floor (the fast CALLs went unanswered)");
+        }
         send_frame(PACKET_TYPE_ARQ_CALL2, mode, (size_t)n, frame, 0);
     }
     else
@@ -986,7 +1004,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = ev->session_id;
         /* a repeat after our ACCEPTs ran out: answered as in ACCEPTING */
         sess->call_rx_mode    = same_session ? accept_carrier(sess, ev) : ev->mode;
-        sess->call_heard_mode = ev->mode;
+        log_accept_carrier(sess, ev);
         if (!same_session)
         {
             /* A new session takes the CALL's bandwidth; a repeat keeps the
@@ -1295,7 +1313,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * kept on DATAC16 kept failing the same way (#235).  A repeat on
          * DATAC16 says the same thing, sooner: the floor (accept_carrier). */
         sess->call_rx_mode      = accept_carrier(sess, ev);
-        sess->call_heard_mode   = ev->mode;
+        log_accept_carrier(sess, ev);
         sess->accept_tx_pending = accept_keys(sess);   /* answering a CALL we just heard */
         /* And PENDING again.  A scanning host holds its channel for a fixed
          * time per PENDING -- BPQ32 six scan intervals (VARA.c: "Time out

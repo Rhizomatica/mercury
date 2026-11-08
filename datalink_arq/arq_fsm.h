@@ -159,7 +159,6 @@ typedef struct
     int      call_sends_done;          /* CALLs sent this attempt (escalation) */
     int      call_carrier;             /* the carrier the last CALL went out on */
     int      call_rx_mode;             /* the carrier we ACCEPT on (accept_carrier) */
-    int      call_heard_mode;          /* the carrier the CALL we answer came on */
     char     remote_call[CALLSIGN_MAX_SIZE];
     char     local_call[CALLSIGN_MAX_SIZE];  /* our dialed callsign/SSID for an
                                               * accepted incoming CALL (empty =>
