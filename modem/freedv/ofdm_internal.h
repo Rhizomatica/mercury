@@ -110,8 +110,6 @@ struct OFDM_CONFIG {
   char *data_mode;
   float fmin;
   float fmax;
-  float freq_search_step;  /* coarse grid step, Hz */
-  float freq_search_fine;  /* fine window half-width, Hz; 0 = derive from step */
   float EsNodB; /* EsNo est used for LDPC decoder */
 };
 
