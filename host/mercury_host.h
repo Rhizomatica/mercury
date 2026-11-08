@@ -184,7 +184,8 @@ size_t   mercury_host_bcast_chat_max(void);
  * there is now; 0 with none) while the host holds the slot and no TCP data
  * client is attached.  Read them while a session is up, even to drop them:
  * a full receive ring holds up the ARQ thread.  Chat lines are also in the
- * chat store (above). */
+ * chat store (above).  Stop reading, and release the slot, before
+ * mercury_shutdown: it frees the ring. */
 int    mercury_host_tnc_command(const char *line);
 void   mercury_host_tnc_release(void);
 int    mercury_host_tnc_held(void);

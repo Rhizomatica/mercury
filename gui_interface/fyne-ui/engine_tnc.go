@@ -42,8 +42,10 @@ type engineTNC struct {
 	arqChat   chan client.ChatMessage
 	bcastChat chan client.ChatMessage
 
-	mu   sync.Mutex
-	done chan struct{}
+	mu      sync.Mutex
+	done    chan struct{}
+	watched chan struct{} // closed when watch has returned
+	leaving sync.Mutex    // one Disconnect at a time, to its end
 
 	evicted atomic.Bool // a TCP client took the slot
 	sync    atomic.Bool // an ARQ session is up
@@ -93,29 +95,68 @@ func (e *engineTNC) Connect() error {
 	}
 	e.mu.Lock()
 	e.done = make(chan struct{})
-	done := e.done
+	e.watched = make(chan struct{})
+	done, watched := e.done, e.watched
 	e.mu.Unlock()
 	e.evicted.Store(false)
 	e.sync.Store(false)
-	e.log <- "Connected to the modem in this program."
-	go e.watch(done, engineChatLastSeq())
+	e.say("Connected to the modem in this program.")
+	liveEngineTNC.Store(e)
+	go func() {
+		defer close(watched)
+		e.watch(done, engineChatLastSeq())
+	}()
 	return nil
 }
 
-// Disconnect gives the TNC back, as a TCP client's leaving does.
+// Disconnect gives the TNC back, as a TCP client's leaving does.  It returns
+// once watch has stopped, so nothing reads the engine's ring after it: the
+// app's shutdown disconnects through it before the engine frees the ring.
 func (e *engineTNC) Disconnect() {
+	// The window's and the app's shutdown may both disconnect: the second
+	// returns only once the first has given the TNC back.
+	e.leaving.Lock()
+	defer e.leaving.Unlock()
 	e.mu.Lock()
-	done := e.done
+	done, watched := e.done, e.watched
 	e.done = nil
 	e.mu.Unlock()
 	if done == nil {
 		return
 	}
 	close(done)
+	<-watched
+	liveEngineTNC.CompareAndSwap(e, nil)
 	engineSetBroadcastFilter(nil)
 	C.mercury_host_tnc_release()
 	e.sync.Store(false)
-	e.log <- "Disconnected from the modem."
+	e.say("Disconnected from the modem.")
+}
+
+// say logs a line to the window, never waiting on it: after a disconnect
+// no one may be reading.
+func (e *engineTNC) say(s string) {
+	select {
+	case e.log <- s:
+	default:
+	}
+}
+
+// liveEngineTNC is the engineTNC holding the TNC, if any.
+var liveEngineTNC atomic.Pointer[engineTNC]
+
+// engineTNCShutdown gives the TNC back before the engine stops: its ring is
+// freed then, and watch would go on reading it.
+func engineTNCShutdown() {
+	if e := liveEngineTNC.Load(); e != nil {
+		e.Disconnect()
+	}
+}
+
+// engineTNCHeld says whether the chat window holds this UI's engine's TNC.
+func engineTNCHeld() bool {
+	e := liveEngineTNC.Load()
+	return e != nil && e.IsConnected()
 }
 
 func (e *engineTNC) IsConnected() bool {
@@ -138,6 +179,7 @@ func (e *engineTNC) ConnectARQWith(src, dst string) error {
 	timeout := time.After(120 * time.Second)
 	notStarted := time.After(15 * time.Second)
 	started := false
+	ticks := 0
 	for {
 		select {
 		case <-tick.C:
@@ -155,11 +197,17 @@ func (e *engineTNC) ConnectARQWith(src, dst string) error {
 		if e.sync.Load() {
 			return nil
 		}
-		if engineBusyReason() == "arq" {
+		switch r := engineBusyReason(); {
+		case r == "arq":
 			started = true
-		} else if started {
+		case started:
 			return fmt.Errorf("disconnected before connection established")
+		case r == "broadcast" && ticks >= 4:
+			// The call would be "arq", which comes first: a second on, the
+			// broadcast holding the modem means the call did not start.
+			return fmt.Errorf("the modem is sending a broadcast: the call did not start")
 		}
+		ticks++
 	}
 }
 

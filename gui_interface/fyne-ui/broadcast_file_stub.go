@@ -45,3 +45,7 @@ func engineIsLocal(host string) bool { return false }
 func newEngineTNC(cfg client.Config) tncClient { return client.New(cfg) }
 
 func engineSetBroadcastFilter(f func([]byte) bool) {}
+
+func engineTNCShutdown() {}
+
+func engineTNCHeld() bool { return false }

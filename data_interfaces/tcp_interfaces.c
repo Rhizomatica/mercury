@@ -936,6 +936,9 @@ void tnc_host_release(void)
  * holds up the ARQ thread (cb_deliver_rx_data waits on a full one). */
 size_t tnc_host_arq_read(uint8_t *buf, size_t len)
 {
+    /* Not under host_tnc_lock: a read under way may end just after the
+     * reactor gives the slot to a TCP client, which is harmless, since that
+     * eviction ends the session anyway. */
     if (!buf || len == 0 || !atomic_load(&host_holds_tnc) ||
         net_get_status(DATA_TCP_PORT) == NET_CONNECTED)
         return 0;
