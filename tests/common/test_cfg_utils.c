@@ -48,6 +48,7 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_EQUAL_INT(3,    c.busy_hysteresis_db);
     TEST_ASSERT_EQUAL_INT(300,  c.busy_on_debounce_ms);
     TEST_ASSERT_EQUAL_INT(1500, c.busy_hang_ms);
+    TEST_ASSERT_FALSE(c.busy_reseed_on_hop);   /* opt-in: a trade-off */
     TEST_ASSERT_FALSE(c.verbose);
     TEST_ASSERT_FALSE(c.trace);
     TEST_ASSERT_FALSE(c.log_utc);   /* local time unless asked */
@@ -70,6 +71,7 @@ void test_arq_tunables_roundtrip(void)
     w.busy_hysteresis_db          = 5;
     w.busy_on_debounce_ms         = 500;
     w.busy_hang_ms                = 2000;
+    w.busy_reseed_on_hop          = true;
     TEST_ASSERT_TRUE(cfg_write(&w, TMP));
 
     mercury_config r;
@@ -86,6 +88,7 @@ void test_arq_tunables_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(5,    r.busy_hysteresis_db);
     TEST_ASSERT_EQUAL_INT(500,  r.busy_on_debounce_ms);
     TEST_ASSERT_EQUAL_INT(2000, r.busy_hang_ms);
+    TEST_ASSERT_TRUE(r.busy_reseed_on_hop);
 }
 
 void test_legacy_radio_config_maps_to_hamlib_ptt(void)

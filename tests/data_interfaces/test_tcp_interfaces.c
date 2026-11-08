@@ -210,6 +210,27 @@ int modem_set_listen_mode(int mode)
 int    modem_get_listen_mode(void)          { return mock_listen_mode_cur; }
 size_t modem_get_broadcast_frame_size(void) { return 14; }
 
+/* ---- modem station-message (beacon) stubs ---- */
+
+static int mock_beacon_calls = 0;
+static int mock_beacon_mode  = -1;
+static size_t mock_beacon_len = 0;
+static int mock_beacon_rc = 0;
+
+bool modem_beacon_mode_ok(int mode)
+{
+    return mode == FREEDV_MODE_DATAC16 || mode == FREEDV_MODE_DATAC15 ||
+           mode == 100;   /* MERCURY_MODE_MFSK */
+}
+int modem_beacon_send(const uint8_t *frame, size_t len, int mode)
+{
+    (void)frame;
+    mock_beacon_calls++;
+    mock_beacon_mode = mode;
+    mock_beacon_len = len;
+    return mock_beacon_rc;
+}
+
 /* ---- modem monitor-mode stubs ---- */
 
 static bool mock_monitor_enabled = false;
@@ -222,18 +243,41 @@ void modem_set_monitor_enabled(bool enabled)
 }
 bool modem_get_monitor_enabled(void) { return mock_monitor_enabled; }
 
+/* ---- busy detector channel change (LISTEN OFF) ---- */
+
+static int mock_busy_channel_changed_calls = 0;
+void modem_busy_channel_changed(void) { mock_busy_channel_changed_calls++; }
+
+/* ---- BUSYDETECT / BUSYRESEED switches ---- */
+
+static bool mock_busy_detect    = false;
+static int  mock_busy_detect_set_calls = 0;
+void modem_set_busy_detect_enabled(bool enabled)
+{
+    mock_busy_detect = enabled;
+    mock_busy_detect_set_calls++;
+}
+bool modem_get_busy_detect_enabled(void) { return mock_busy_detect; }
+
+static bool mock_busy_reseed    = false;
+static int  mock_busy_reseed_set_calls = 0;
+void modem_set_busy_reseed_on_hop(bool enabled)
+{
+    mock_busy_reseed = enabled;
+    mock_busy_reseed_set_calls++;
+}
+bool modem_get_busy_reseed_on_hop(void) { return mock_busy_reseed; }
+
 /* ---- in-flight frame stub (LISTEN OFF diagnostic) ---- */
 
 static bool mock_inflight = false;
 
-bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms,
-                              bool *lost_on_listen_off)
+bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms)
 {
     if (!mock_inflight)
         return false;
-    if (mode_name)          *mode_name = "MFSK";
-    if (for_ms)             *for_ms = 2100;
-    if (lost_on_listen_off) *lost_on_listen_off = true;
+    if (mode_name) *mode_name = "MFSK";
+    if (for_ms)    *for_ms = 2100;
     return true;
 }
 
@@ -365,6 +409,10 @@ void setUp(void)
     write_buffer_call_count = 0;
     mock_kiss_last_command_val = CMD_DATA;
     atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
+    atomic_store(&bcast_beacon_mode, FREEDV_MODE_DATAC16);   /* the default */
+    mock_beacon_calls = 0;
+    mock_beacon_mode = -1;
+    mock_beacon_len = 0;
 
     /* tnc_queue_line() refuses lines until the queue is open */
     atomic_store_explicit(&tnc_txq_open, true, memory_order_release);
@@ -388,6 +436,13 @@ void setUp(void)
     /* Monitor mode */
     mock_monitor_enabled    = false;
     mock_monitor_set_calls  = 0;
+
+    /* Busy detector switches (both off by default) */
+    mock_busy_detect           = false;
+    mock_busy_detect_set_calls = 0;
+    mock_busy_reseed           = false;
+    mock_busy_reseed_set_calls = 0;
+    mock_busy_channel_changed_calls = 0;
 }
 
 void tearDown(void) { }
@@ -463,13 +518,17 @@ void test_cmd_mycall_does_not_register_dropped_secondaries(void)
 
 void test_cmd_listen_on(void)
 {
+    mock_busy_reseed = true;   /* LISTEN ON never re-seeds, even with it on */
     char cmd[] = "LISTEN ON";
     execute_control_command(cmd);
 
     assert_ok_response();
     TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_ON, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_channel_changed_calls);
 }
 
+/* LISTEN OFF starts a scanner's hop.  With BUSYRESEED off (the default) the
+ * busy detector keeps its floor: nothing changes from before the option. */
 void test_cmd_listen_off(void)
 {
     char cmd[] = "LISTEN OFF";
@@ -477,6 +536,19 @@ void test_cmd_listen_off(void)
 
     assert_ok_response();
     TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_OFF, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_channel_changed_calls);
+}
+
+/* With it on, the detector is told the channel may have changed. */
+void test_cmd_listen_off_reseeds_busy_floor_when_enabled(void)
+{
+    mock_busy_reseed = true;
+    char cmd[] = "LISTEN OFF";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_OFF, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(1, mock_busy_channel_changed_calls);
 }
 
 /* A scanner's LISTEN OFF that lands mid-frame is only logged: the command
@@ -653,6 +725,107 @@ void test_cmd_mode_query_reports_index_and_name(void)
     TEST_ASSERT_EQUAL(1, tcp_write_call_count);
     TEST_ASSERT_EQUAL_STRING_LEN("MODE 10 QAM16C2\r", (char *)last_tcp_write_buf, 16);
     TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);
+}
+
+/* BEACONMODE: the mode a client's station messages go on, DATAC16 (index 8)
+ * by default.  Index 7 is DATAC15, 4 DATAC13 (no runtime decoder: refused). */
+void test_cmd_beaconmode_sets_reports_and_refuses(void)
+{
+    char query[] = "BEACONMODE";
+    execute_control_command(query);              /* DATAC16 until told otherwise */
+    TEST_ASSERT_EQUAL_STRING_LEN("BEACONMODE 8 DATAC16\r", (char *)last_tcp_write_buf, 21);
+
+    tcp_write_call_count = 0;
+    char set[] = "BEACONMODE 7";
+    execute_control_command(set);
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, atomic_load(&bcast_beacon_mode));
+
+    tcp_write_call_count = 0;
+    char bad[] = "BEACONMODE 4";
+    execute_control_command(bad);
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, atomic_load(&bcast_beacon_mode));
+
+    tcp_write_call_count = 0;
+    char back[] = "BEACONMODE -1";
+    execute_control_command(back);
+    assert_ok_response();
+    tcp_write_call_count = 0;
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL_STRING_LEN("BEACONMODE -1 LISTEN\r", (char *)last_tcp_write_buf, 21);
+    TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);    /* the listen mode is untouched */
+}
+
+/* ---- BUSYDETECT / BUSYRESEED: the busy detector's run-time switches ---- */
+
+void test_cmd_busydetect_on_off_and_query(void)
+{
+    char on[] = "BUSYDETECT ON";
+    execute_control_command(on);
+    assert_ok_response();
+    TEST_ASSERT_TRUE(mock_busy_detect);
+
+    tcp_write_call_count = 0;
+    char query[] = "BUSYDETECT";
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYDETECT ON\r", (char *)last_tcp_write_buf, 14);
+
+    tcp_write_call_count = 0;
+    char off[] = "BUSYDETECT off";
+    execute_control_command(off);
+    assert_ok_response();
+    TEST_ASSERT_FALSE(mock_busy_detect);
+
+    tcp_write_call_count = 0;
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYDETECT OFF\r", (char *)last_tcp_write_buf, 15);
+    TEST_ASSERT_EQUAL_INT(2, mock_busy_detect_set_calls);   /* the queries set nothing */
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_reseed_set_calls);
+}
+
+void test_cmd_busyreseed_on_off_and_query(void)
+{
+    char on[] = "BUSYRESEED ON";
+    execute_control_command(on);
+    assert_ok_response();
+    TEST_ASSERT_TRUE(mock_busy_reseed);
+
+    tcp_write_call_count = 0;
+    char query[] = "BUSYRESEED";
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYRESEED ON\r", (char *)last_tcp_write_buf, 14);
+
+    tcp_write_call_count = 0;
+    char off[] = "BUSYRESEED OFF";
+    execute_control_command(off);
+    assert_ok_response();
+    TEST_ASSERT_FALSE(mock_busy_reseed);
+
+    tcp_write_call_count = 0;
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYRESEED OFF\r", (char *)last_tcp_write_buf, 15);
+    TEST_ASSERT_EQUAL_INT(2, mock_busy_reseed_set_calls);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_detect_set_calls);
+}
+
+/* A bad argument changes nothing, and the name must be a whole word:
+ * "BUSYRESEEDON" is not "BUSYRESEED ON". */
+void test_cmd_busy_switches_reject_bad_input(void)
+{
+    char bad[] = "BUSYDETECT MAYBE";
+    execute_control_command(bad);
+    assert_wrong_response();
+
+    tcp_write_call_count = 0;
+    char longer[] = "BUSYRESEEDON";
+    execute_control_command(longer);
+    assert_wrong_response();
+
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_detect_set_calls);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_reseed_set_calls);
 }
 
 /* ---- MONITOR: the passive all-modes decoder (VARA-monitor style) ---- */
@@ -1200,6 +1373,67 @@ void test_broadcast_rx_frame_stores_taps_and_feeds_the_client(void)
     TEST_ASSERT_EQUAL_INT(2, feed_count);                        /* stored once a frame */
     atomic_store(&bcast_client_present, false);
     broadcast_set_rx_tap(NULL);
+}
+
+/* A beacon heard at any mode: tapped, queued for the client behind its own
+ * length (not the listen mode's), never stored as chat, and handed up whole
+ * as CMD_MODEM_FRAME. */
+void test_broadcast_rx_station_message_goes_up_whole(void)
+{
+    uint8_t frame[98] = {0};
+    frame[0] = (uint8_t)(PACKET_TYPE_STATION << PACKET_TYPE_SHIFT | 1);
+    memcpy(frame + 1, "N0CALL: hi", 10);       /* would look like chat */
+
+    feed_count = 0; tap_calls = 0;
+    atomic_store(&bcast_client_present, true);
+    broadcast_set_rx_tap(test_tap);
+    broadcast_rx_frame(frame, sizeof(frame), 100 /* MFSK */, -9.0f);
+    TEST_ASSERT_EQUAL_INT(0, feed_count);
+    TEST_ASSERT_EQUAL_INT(1, tap_calls);
+    TEST_ASSERT_EQUAL_size_t(sizeof(frame), tap_len);
+    uint16_t l;
+    memcpy(&l, last_write_buffer_data, BCAST_RX_REC_HDR);
+    TEST_ASSERT_EQUAL_size_t(BCAST_RX_REC_HDR + sizeof(frame), last_write_buffer_len);
+    TEST_ASSERT_EQUAL_UINT16(sizeof(frame), l);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(frame, last_write_buffer_data + BCAST_RX_REC_HDR, sizeof(frame));
+    atomic_store(&bcast_client_present, false);
+    broadcast_set_rx_tap(NULL);
+
+    uint8_t *p; int n;
+    TEST_ASSERT_EQUAL_HEX8(CMD_MODEM_FRAME, bcast_get_tx_payload(frame, sizeof(frame), &p, &n));
+    TEST_ASSERT_EQUAL_PTR(frame, p);
+    TEST_ASSERT_EQUAL_INT(sizeof(frame), n);
+}
+
+/* A client's beacon goes on BEACONMODE's mode, DATAC16 by default; with -1,
+ * like any modem frame, into the listen mode's ring. */
+void test_bcast_tx_station_message_takes_the_beacon_mode(void)
+{
+    const size_t fsz = 30;
+    uint8_t frame[MAX_PAYLOAD] = {0};
+    frame[0] = (uint8_t)(PACKET_TYPE_STATION << PACKET_TYPE_SHIFT);
+
+    atomic_store(&bcast_beacon_mode, -1);
+    TEST_ASSERT_TRUE(bcast_process_decoded_frame(frame, 14, CMD_MODEM_FRAME, fsz));
+    TEST_ASSERT_EQUAL_INT(0, mock_beacon_calls);
+    TEST_ASSERT_EQUAL_INT(1, write_buffer_call_count);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+
+    atomic_store(&bcast_beacon_mode, FREEDV_MODE_DATAC16);
+    TEST_ASSERT_TRUE(bcast_process_decoded_frame(frame, 14, CMD_MODEM_FRAME, fsz));
+    TEST_ASSERT_EQUAL_INT(1, mock_beacon_calls);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, mock_beacon_mode);
+    TEST_ASSERT_EQUAL_size_t(14, mock_beacon_len);
+    TEST_ASSERT_EQUAL_INT(1, write_buffer_call_count);
+
+    /* Too big for the BEACONMODE frame (a full layout on DATAC16): it goes at
+     * the listen mode, as with -1, instead of being dropped. */
+    mock_beacon_rc = MODEM_BEACON_BAD;
+    TEST_ASSERT_TRUE(bcast_process_decoded_frame(frame, 26, CMD_MODEM_FRAME, fsz));
+    TEST_ASSERT_EQUAL_INT(2, mock_beacon_calls);
+    TEST_ASSERT_EQUAL_INT(2, write_buffer_call_count);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    mock_beacon_rc = 0;
 }
 
 void test_bcast_rx_cmd_data_exact_size(void)
@@ -1851,8 +2085,10 @@ static void broadcast_shutdown_case(int client_mode)
         race_reads = 0;
         race_joins = 0;
         data_rx_buffer_broadcast = circular_buf_init(backing, sizeof(backing));
-        uint8_t frame[64] = {0};
-        TEST_ASSERT_EQUAL_INT(0, real_write_buffer(data_rx_buffer_broadcast, frame, sizeof(frame)));
+        uint8_t rec[BCAST_RX_REC_HDR + 62] = {0};
+        uint16_t l = 62;
+        memcpy(rec, &l, BCAST_RX_REC_HDR);
+        TEST_ASSERT_EQUAL_INT(0, real_write_buffer(data_rx_buffer_broadcast, rec, sizeof(rec)));
         race_enabled = true;
     }
     broadcast_frame_size_cfg = 64;
@@ -1896,7 +2132,7 @@ static void broadcast_shutdown_case(int client_mode)
     TEST_ASSERT_TRUE(monotonic_ms() - start < 1000);
     if (client_mode == 3)
     {
-        TEST_ASSERT_EQUAL_INT(1, race_reads);
+        TEST_ASSERT_EQUAL_INT(2, race_reads);   /* the record's length, then its frame */
         TEST_ASSERT_EQUAL_size_t(0, real_size_buffer(data_rx_buffer_broadcast));
         circular_buf_free(data_rx_buffer_broadcast);
         data_rx_buffer_broadcast = NULL;
@@ -2041,6 +2277,7 @@ int main(void)
     RUN_TEST(test_cmd_mycall_does_not_register_dropped_secondaries);
     RUN_TEST(test_cmd_listen_on);
     RUN_TEST(test_cmd_listen_off);
+    RUN_TEST(test_cmd_listen_off_reseeds_busy_floor_when_enabled);
     RUN_TEST(test_cmd_listen_off_mid_frame_still_releases);
     RUN_TEST(test_cmd_public_on);
     RUN_TEST(test_cmd_compression);
@@ -2057,6 +2294,10 @@ int main(void)
     RUN_TEST(test_cmd_mode_busy_is_not_ok);
     RUN_TEST(test_cmd_mode_unsupported_mode_is_wrong);
     RUN_TEST(test_cmd_mode_query_reports_index_and_name);
+    RUN_TEST(test_cmd_beaconmode_sets_reports_and_refuses);
+    RUN_TEST(test_cmd_busydetect_on_off_and_query);
+    RUN_TEST(test_cmd_busyreseed_on_off_and_query);
+    RUN_TEST(test_cmd_busy_switches_reject_bad_input);
     RUN_TEST(test_cmd_monitor_on);
     RUN_TEST(test_cmd_monitor_off);
     RUN_TEST(test_cmd_monitor_query_reports_on);
@@ -2110,6 +2351,8 @@ int main(void)
     /* Broadcast framing helper tests */
     RUN_TEST(test_broadcast_send_message_frames_or_refuses);
     RUN_TEST(test_broadcast_rx_frame_stores_taps_and_feeds_the_client);
+    RUN_TEST(test_broadcast_rx_station_message_goes_up_whole);
+    RUN_TEST(test_bcast_tx_station_message_takes_the_beacon_mode);
     RUN_TEST(test_bcast_rx_cmd_data_exact_size);
     RUN_TEST(test_bcast_rx_cmd_data_0x60_is_not_special);
     RUN_TEST(test_bcast_rx_cmd_data_short_lowercase_wrapped);

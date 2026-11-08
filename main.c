@@ -302,6 +302,7 @@ int main(int argc, char *argv[])
                                 cli.log_file_jsonl);
         HLOGI("main", "Async logger initialized (min_level=%s)",
               cli.cfg.trace ? "TRACE" : cli.cfg.verbose ? "DEBUG" : "INFO");
+        HLOGI("main", "Mercury %s (git %.8s)", MERCURY_VERSION, GIT_HASH);
     }
     else
     {

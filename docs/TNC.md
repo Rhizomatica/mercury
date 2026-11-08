@@ -409,6 +409,48 @@ reception and transmission while idle.
 
 ---
 
+### BEACONMODE
+
+Set the mode a broadcast client's **station messages** go on: frames of
+packet type `0x07` (`PACKET_TYPE_STATION`, the HERMES position beacon), sent
+on the broadcast port with KISS `0x03` (`CMD_MODEM_FRAME`).  The index space
+is `-m`'s, as for `MODE`.  The listen mode stays as it is.
+
+```
+BEACONMODE 8\r     send station messages on DATAC16 (the default)
+BEACONMODE -1\r    send them at the listen mode instead
+BEACONMODE\r       report it
+```
+
+DATAC16 is the default because it is the most robust mode a compact (14-byte)
+beacon fits that every running Mercury decodes: its control decoder is always
+on it.  DATAC15 is as robust, but only stations whose listen mode it is decode
+it.
+
+The query form answers `BEACONMODE <index> <name>\r`, or `BEACONMODE -1
+LISTEN\r`.
+
+**Response:** `OK\r` on success, `WRONG\r` for an index other than 8
+(DATAC16), one `MODE` accepts, or -1.
+
+A station message is sent once, zero-padded to that mode's frame, after any
+ARQ session or carousel has ended, and only when no decoder is on a frame
+(after ~10 s of a busy channel, it is sent anyway).  One that does not fit the
+mode's frame (a full-layout beacon on DATAC16, for example) goes at the listen
+mode instead, as with `BEACONMODE -1`, and the log says so.  Like `MODE`, the
+setting holds for the life of the modem, not of the client that sent it.  The best modes for it are the ones every listening
+Mercury already decodes, whatever its listen mode:
+
+- DATAC16, the control mode (14 bytes, 3.1 s);
+- MFSK (98 bytes, 12.8 s) and MFSK500 (98 bytes, 25.6 s), the call listeners'
+  modes, heard by a station with `LISTEN ON`.
+
+On any other mode, only stations whose listen mode it is will hear it.
+Mercury itself does not read the frame past its header: the layout is the
+host's (hermes-radio-daemon `docs/BEACON-FORMAT.md`).
+
+---
+
 ### MONITOR
 
 Enable or disable **monitor mode** — the VARA-monitor equivalent: decode every
@@ -458,6 +500,51 @@ a small single-board station should enable it deliberately rather than leave it
 running.  Two of the nine decoders (DATAC16 and MFSK) duplicate decoders the
 modem already runs while idle; reusing their output would claw back part of
 that cost and is a possible optimisation.
+
+---
+
+### BUSYDETECT
+
+Turn the channel-busy detector on or off while Mercury runs, without a
+restart.  It starts as `busy_detect` in `mercury.ini` sets it (off by
+default); the command does not save the change.
+
+```
+BUSYDETECT ON\r
+BUSYDETECT OFF\r
+BUSYDETECT\r
+```
+
+**Response:** `OK\r` on success, `WRONG\r` for an unrecognised argument.  The
+bare query answers `BUSYDETECT ON\r` or `BUSYDETECT OFF\r`.
+
+Switched off while it reports the channel busy, the detector sends
+`BUSY OFF\r` first, so the host is not left holding a BUSY.  Switched on again,
+it measures a new noise floor.  The thresholds stay the ones the ini set.  See
+[BUSY ON / BUSY OFF](#busy-on--busy-off).
+
+---
+
+### BUSYRESEED
+
+Choose whether the busy detector measures a new noise floor at each scan hop.
+It starts as `busy_reseed_on_hop` in `mercury.ini` sets it (off by default);
+the command does not save the change.
+
+```
+BUSYRESEED ON\r
+BUSYRESEED OFF\r
+BUSYRESEED\r
+```
+
+**Response:** `OK\r` on success, `WRONG\r` for an unrecognised argument.  The
+bare query answers `BUSYRESEED ON\r` or `BUSYRESEED OFF\r`.
+
+With it on, each `LISTEN OFF` (the start of a scanner's hop) makes the detector
+forget its floor, wait 1 s for the radio to retune, and measure the floor on
+the new channel, keeping its BUSY/CLEAR verdict until the new channel decides
+it.  With it off, one floor serves every channel.  Each way has a cost; see
+[Scanning hosts](#scanning-hosts-bpq32).
 
 ---
 
@@ -590,7 +677,8 @@ MONITOR DATAC16 DISCONNECT SID=42 SNR=18.4\r
 `DATAC4`, `DATAC3`, `DATAC1`, `DATAC17`, `QAM16C2` or `MFSK`).  `<kind>`
 names the frame: `CALL`, `ACCEPT`, `CQ`, `DISCONNECT`, `CONTROL` / `DATA`
 for another protocol version's session frames, `BCAST_CTRL` / `BCAST_DATA`
-for broadcast frames, or `FRAME` when the frame type is unknown.
+for broadcast frames, `STATION` for a station message (the beacon, detail
+`LAYOUT=<n>`), or `FRAME` when the frame type is unknown.
 
 `<detail>` carries what the monitor could recover:
 
@@ -618,7 +706,8 @@ existing VARA-compatible hosts (BPQ32, Winlink) act on them unchanged.
 Edge-triggered: `BUSY ON\r` on clear→busy, `BUSY OFF\r` on busy→clear.
 
 The detector is **disabled by default** and is enabled via the `[channel]`
-section of `mercury.ini` (`busy_detect = true`).  It is off because the hosts
+section of `mercury.ini` (`busy_detect = true`), or while running with
+[`BUSYDETECT ON`](#busydetect).  It is off because the hosts
 that consume these notifications act on them: BPQ32 and Winlink hold
 transmissions while BUSY is asserted, so a false or over-eager BUSY stops the
 station transmitting.  BPQ32's scanner does not hold on it (see "Scanning
@@ -654,11 +743,21 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   stopped once the CALL decoded, including a 32 s connect that needed a
   repeated CALL and a failed one it held for 43 s.
 - **Each hop is `LISTEN OFF`, `LISTEN ON` and a `BW` command.**  The dwell
-  was 10.1-10.2 s.  The DATAC16 decoder keeps decoding through them, but the
-  two MFSK call listeners do not:
-  - a `LISTEN OFF` flushes both: they are fed only while LISTENING or
-    ACCEPTING, so a partly received MFSK CALL is dropped even when
-    `LISTEN ON` follows 0.1 s later on the same frequency;
+  was 10.1-10.2 s.  What the call decoders hold does not survive them:
+  - a `LISTEN OFF` with no session up drops every partly received frame:
+    the DATAC16 decoder's, the payload decoder's and the two MFSK call
+    listeners', sync included.  A partly received CALL is dropped even when
+    `LISTEN ON` follows a moment later on the same frequency; the caller's
+    next CALL is heard as usual.  Up to 1.9.22 such a CALL could still
+    decode, on the next channel, and was answered there, where the caller
+    could not hear it.  BPQ32 then held the wrong channel for about 2 min
+    (six scan intervals) while the caller's repeats went unheard:
+    - MFSK: the flush waited for the receive loop to see the station not
+      listening, and BPQ32's `LISTEN ON` follows within 1 ms (K7EK,
+      2026-11-06: decoded 2.5 s after the hop; 2026-11-07: four calls,
+      0.2-4.2 s after it);
+    - DATAC16: its decoder was not flushed at all (K7EK, 2026-11-07: two
+      calls decoded 1.4 s and 1.9 s after the hop);
   - a `BW` change between `BW500` and `BW2300`/`BW2750` flushes both too: the
     listeners swap floors, and each swap drops what it holds.
 
@@ -684,11 +783,21 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   What BPQ32 does with BUSY is refuse its own outgoing connects ("Sorry, Can't
   Connect - Channel is busy"), and two forwards that night went by AX/IP
   instead.
-- **One noise floor serves every scanned channel.**  Mercury does not know the
-  host retuned, so the busy detector carries its floor and its state from one
-  channel to the next.  At KG9NI every CLEAR came on one of the three channels,
-  and BUSY returned 0.6-5.7 s after the hop to another one, on a band the
-  operator heard as empty.
+- **By default one noise floor serves every scanned channel.**  Mercury is
+  not told the host retuned, so the busy detector carries its floor from one
+  channel to the next.  At KG9NI (2026-11-06) every CLEAR came on one of the
+  three channels, and BUSY returned 0.6-5.7 s after the hop to another one,
+  on a band the operator heard as empty.  With `busy_reseed_on_hop = true` (or
+  [`BUSYRESEED ON`](#busyreseed)) it takes `LISTEN OFF` as the sign of a hop:
+  it waits 1 s for the radio to retune, then measures the floor afresh,
+  keeping its BUSY/CLEAR verdict until the new channel decides it.
+  The trade-off: the floor is taken from the lower-quartile band of the
+  300-2700 Hz passband, so a signal wider than about 1.8 kHz (BW2300 DATAC,
+  VARA 2300) moves it.  A hop onto a channel where such a signal is already
+  under way seeds the floor on it, and the detector misses that signal until
+  it stops; the carried floor reports it BUSY.  So the re-seed swaps false
+  BUSY on noisier channels for missed BUSY on a hop into a wideband
+  transmission, which is why it is the operator's choice.
 - **After a host `DISCONNECT`, a scan hop can cut the teardown short.**
   Mercury answers `DISCONNECTED` straight away and finishes on the air; the
   scanner's next `LISTEN OFF` releases the radio before that is done (#473).
@@ -697,13 +806,12 @@ When `LISTEN OFF` arrives with no session up while a CALL decoder has locked
 onto a frame it has not decoded yet, Mercury logs it:
 
 ```
-[tcp-ctl] LISTEN OFF 2.1 s into a DATAC16 frame not yet decoded: if the host now changes frequency, it is lost (or it was noise)
+[tcp-ctl] LISTEN OFF 2.1 s into a DATAC16 frame not yet decoded: LISTEN OFF drops it (or it was noise)
 [tcp-ctl] LISTEN OFF 6.4 s into a MFSK frame not yet decoded: LISTEN OFF drops it (or it was noise)
 ```
 
-A DATAC16 frame is lost only if the host then retunes; an MFSK one is lost to
-the `LISTEN OFF` itself.  A CALL cut off by a hop shows as one of these lines
-with no `RX_CALL` after it.  The lock can also be noise or another station's
+Either frame is lost to the `LISTEN OFF` itself.  A CALL cut off by a hop
+shows as one of these lines with no `RX_CALL` after it.  The lock can also be noise or another station's
 traffic, so read the line together with the caller's log.
 
 ### DISCONNECTED
@@ -805,6 +913,12 @@ Three client framings are accepted, distinguished by the KISS command byte:
 Payloads larger than the modem frame (minus 3 bytes of header+length)
 are truncated (`0x00`/`0x01`/unformatted-`0x02`) or discarded (raw
 hermes-broadcast `0x02`) — the broadcast plane does not fragment.
+
+**Station messages** (packet type `0x07`, the beacon) are the one exception
+to the listen mode's frame size.  Sent with `0x03`, they go on the
+[`BEACONMODE`](#beaconmode) mode when one is set.  Received, they are handed up
+from whichever decoder heard them, at that mode's frame size, whole and with
+command `0x03`.  They are never stored as chat.
 
 ---
 

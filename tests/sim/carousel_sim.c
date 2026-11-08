@@ -306,6 +306,7 @@ static void io_bind_rx(void *ctx, int mode)
     if (mode != s->rx_mode) { s->rx_mode = mode; s->bound_at = now_ms; }
 }
 static int recv_fallbacks;
+static int app_wait_says;              /* "tx: my application's data waits for" lines */
 static int gated_probes;
 static int dark_polls;
 /* Did the last "rx round" line mark rung lv not allowed?  Its gp list reads
@@ -352,6 +353,8 @@ static void io_trace(void *ctx, const char *line)
         s->poll_at = now_ms;
         if (s->dark_run > dark_polls) dark_polls = s->dark_run;
     }
+    static const char said[] = "tx: my application's data waits for ";
+    if (!strncmp(line, said, sizeof said - 1)) app_wait_says++;
     s->turn_mine = !strncmp(line, "turn: mine", 10);
     if (trace) printf("%9.1f %c   %s\n", now_ms / 1000.0, 'A' + ((station_t *)ctx)->id, line);
 }
@@ -657,6 +660,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     nev = 0;
     collisions = 0;
     recv_fallbacks = 0;
+    app_wait_says = 0;
     gated_probes = 0;
     dark_polls = 0;
     bad_frames = 0;
@@ -812,6 +816,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->keydowns = keydown_no;
     res->kd_overlaps = kd_overlaps;
     res->recv_fallbacks = recv_fallbacks;
+    res->app_wait_says = app_wait_says;
     res->gated_probes = gated_probes;
     res->dark_polls = dark_polls;
     res->kd_unexplained = kd_unexplained;

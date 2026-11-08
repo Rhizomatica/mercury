@@ -151,6 +151,30 @@ void test_retry_rank_degenerate_pair_falls_back(void)
     TEST_ASSERT_EQUAL_INT(-1, arq_protocol_retry_rank("NODE_A", NULL));
 }
 
+/* CONNECTED <src> <dst>: src called, dst was called, on both peers. */
+void test_session_calls_follow_the_side(void)
+{
+    char src[16], dst[16];
+
+    /* We called: the host's CONNECT source, then the peer. */
+    arq_protocol_session_calls(true, "K7EK", "", "KG9NI-1", "KG9NI-7", src, dst, sizeof(src));
+    TEST_ASSERT_EQUAL_STRING("KG9NI-1", src);
+    TEST_ASSERT_EQUAL_STRING("K7EK", dst);
+
+    /* We answered: the peer, then the callsign it dialed. */
+    arq_protocol_session_calls(false, "K7EK", "KG9NI-1", "KG9NI-1", "KG9NI-7", src, dst, sizeof(src));
+    TEST_ASSERT_EQUAL_STRING("K7EK", src);
+    TEST_ASSERT_EQUAL_STRING("KG9NI-1", dst);
+
+    /* Missing source / dialed call: the primary. */
+    arq_protocol_session_calls(true, "K7EK", "", "", "KG9NI-7", src, dst, sizeof(src));
+    TEST_ASSERT_EQUAL_STRING("KG9NI-7", src);
+    TEST_ASSERT_EQUAL_STRING("K7EK", dst);
+    arq_protocol_session_calls(false, "K7EK", NULL, NULL, "KG9NI-7", src, dst, sizeof(src));
+    TEST_ASSERT_EQUAL_STRING("K7EK", src);
+    TEST_ASSERT_EQUAL_STRING("KG9NI-7", dst);
+}
+
 void test_retry_deadline_stagger_is_exact(void)
 {
     mock_set_uptime_ms(1000);
@@ -624,6 +648,7 @@ int main(void)
     RUN_TEST(test_call_max_setter_clamps_to_default);
     RUN_TEST(test_retry_rank_is_antisymmetric_and_deterministic);
     RUN_TEST(test_retry_rank_degenerate_pair_falls_back);
+    RUN_TEST(test_session_calls_follow_the_side);
     RUN_TEST(test_retry_deadline_stagger_is_exact);
     RUN_TEST(test_retry_deadline_stagger_disabled_is_exact);
     RUN_TEST(test_retry_deadline_fallback_is_bounded);

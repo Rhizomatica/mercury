@@ -75,6 +75,11 @@ void modem_set_spectrum_enabled(bool enabled);
  * Opt-in: disabled by default.  When enabled, the RX worker classifies the
  * channel from the spectrum FFT and reports transitions to the host. */
 void modem_set_busy_detect_enabled(bool enabled);
+bool modem_get_busy_detect_enabled(void);
+// busy_reseed_on_hop / BUSYRESEED: take a new noise floor at each scan hop
+// (LISTEN OFF).  Off by default; docs/TNC.md, "Scanning hosts".
+void modem_set_busy_reseed_on_hop(bool enabled);
+bool modem_get_busy_reseed_on_hop(void);
 void modem_set_busy_cfg(float threshold_db, float hysteresis_db,
                         uint32_t on_debounce_ms, uint32_t hang_ms);
 /* Latched debounced occupancy state, for an optional TX-initiation gate. */
@@ -133,6 +138,19 @@ int    modem_get_listen_mode(void);
 bool   modem_listen_mode_switchable(int mode);
 size_t modem_get_broadcast_frame_size(void);
 
+/* A station message (PACKET_TYPE_STATION, the beacon), sent once on `mode`
+ * rather than the listen mode: zero-padded to that mode's frame, held while
+ * an ARQ session is up or a carousel sends, and keyed when no decoder is on a
+ * frame (as a DISCONNECT is: at most ~10 s of waiting).  `mode` is DATAC16
+ * or one MODE accepts.  0 queued; MODEM_BEACON_BAD for the mode, a frame
+ * that is not a station message or does not fit; MODEM_BEACON_FULL while
+ * MODEM_BEACON_QUEUE are waiting.  The bytes are copied. */
+#define MODEM_BEACON_BAD   (-1)
+#define MODEM_BEACON_FULL  (-2)
+#define MODEM_BEACON_QUEUE 4
+int    modem_beacon_send(const uint8_t *frame, size_t len, int mode);
+bool   modem_beacon_mode_ok(int mode);
+
 int   modem_tune_start(float dbfs);
 // Stop the carrier and unkey. Safe to call when not tuning; blocks until the
 // tuning thread has unkeyed.
@@ -150,12 +168,16 @@ float modem_tune_level_dbfs(void);
 void modem_set_monitor_enabled(bool enabled);
 bool modem_get_monitor_enabled(void);
 
+// The host may have moved the radio to another channel (a scanner's LISTEN
+// OFF): the busy detector takes its noise floor afresh there instead of
+// carrying the last channel's (docs/TNC.md, "Scanning hosts").  Callers make
+// it only with modem_get_busy_reseed_on_hop().
+void modem_busy_channel_changed(void);
+
 // True when a CALL decoder (DATAC16 or an MFSK call listener) has locked onto
 // a frame it has not decoded yet: *mode_name names the mode, *for_ms how long
-// the lock has lasted, *lost_on_listen_off whether a LISTEN OFF drops it by
-// itself (the MFSK listeners are flushed when their feed stops; the DATAC16
-// decoder keeps decoding).  Diagnostic only; a lock can be noise.
-bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms,
-                              bool *lost_on_listen_off);
+// the lock has lasted.  A LISTEN OFF with no session after it drops it (all
+// three decoders are flushed).  Diagnostic only; a lock can be noise.
+bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms);
 
 #endif // MODEM_H

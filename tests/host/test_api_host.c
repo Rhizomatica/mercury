@@ -47,6 +47,8 @@ int  modem_get_listen_mode(void) { return s_listen; }
 int  modem_set_listen_mode(int m) { if (s_set_rc == 0) s_listen = m; return s_set_rc; }
 bool modem_listen_mode_switchable(int m) { return m != 0x12; }      /* "DATAC16" is not */
 int  bcast_file_mode_usable(int index) { return index == 0; }      /* only "DATAC1" */
+static int s_beacon_mode, s_beacon_rc;
+int  modem_beacon_send(const uint8_t *f, size_t n, int m) { (void)f; (void)n; s_beacon_mode = m; return s_beacon_rc; }
 
 static bool s_session;
 static int  s_car_rc;
@@ -147,6 +149,24 @@ void test_listen_mode(void)
     TEST_ASSERT_EQUAL_INT(1, mercury_host_listen_mode());
 }
 
+/* A beacon names its mode by index, as MODE does, and the listen mode stays. */
+void test_beacon_send(void)
+{
+    const uint8_t f[14] = { 0xE0 };
+    int listen = mercury_host_listen_mode();
+    s_beacon_rc = 0;
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_OK, mercury_host_beacon_send(f, sizeof(f), 2));
+    TEST_ASSERT_EQUAL_INT(0x12, s_beacon_mode);
+    TEST_ASSERT_EQUAL_INT(listen, mercury_host_listen_mode());
+    s_beacon_rc = MODEM_BEACON_FULL;
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_FULL, mercury_host_beacon_send(f, sizeof(f), 2));
+    s_beacon_rc = MODEM_BEACON_BAD;
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_BAD, mercury_host_beacon_send(f, sizeof(f), 0));
+    s_beacon_mode = -1;
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_BAD, mercury_host_beacon_send(f, sizeof(f), 3));
+    TEST_ASSERT_EQUAL_INT(-1, s_beacon_mode);        /* out of range: never reaches the modem */
+}
+
 /* The carousel: the result codes, its stats, and what holds the modem. */
 void test_bcast_carousel_calls(void)
 {
@@ -216,6 +236,7 @@ int main(void)
     RUN_TEST(test_chat_send_refuses_bad_input);
     RUN_TEST(test_chat_since_passes_the_cursor);
     RUN_TEST(test_listen_mode);
+    RUN_TEST(test_beacon_send);
     RUN_TEST(test_bcast_carousel_calls);
     RUN_TEST(test_bcast_rx_ops);
     return UNITY_END();

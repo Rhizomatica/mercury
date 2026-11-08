@@ -98,6 +98,11 @@ static pthread_mutex_t g_app_tx_mtx = PTHREAD_MUTEX_INITIALIZER;
  * A separate leaf lock has no ordering relationship to maintain. */
 static pthread_mutex_t g_conn_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* The source of the host's last CONNECT, under g_conn_lock.  Kept apart from
+ * arq_conn.src_addr, which an incoming CALL resets (cb_notify_pending), so the
+ * session that CONNECT places still reports the host's source. */
+static char g_connect_src[CALLSIGN_MAX_SIZE];
+
 /* Internal event queue */
 #define ARQ_EV_QUEUE_CAP 64
 static arq_event_t     g_evq[ARQ_EV_QUEUE_CAP];
@@ -267,18 +272,18 @@ static void cb_send_keydown(const arq_keydown_t *kd)
     }
 }
 
-static void cb_notify_connected(const char *remote_call, const char *local_call)
+static void cb_notify_connected(const char *remote_call, const char *local_call,
+                                bool we_called)
 {
     pthread_mutex_lock(&g_conn_lock);
-    if (arq_conn.src_addr[0] == '\0')
-    {
-        /* Callee side: report the caller as src and the SSID they dialed as dst.
-         * local_call is the callsign (primary or secondary) whose DST CRC16
-         * matched the incoming CALL; fall back to the primary if unset. */
-        snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", remote_call);
-        snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s",
-                 (local_call && local_call[0]) ? local_call : arq_conn.my_call_sign);
-    }
+    /* The side comes from the FSM.  It used to be inferred from src_addr (set
+     * meant "we called"), but an incoming CALL handled just before a queued
+     * CONNECT clears src_addr (cb_notify_pending), and the outgoing session
+     * that CONNECT then placed was reported backwards. */
+    arq_protocol_session_calls(we_called, remote_call, local_call,
+                               g_connect_src, arq_conn.my_call_sign,
+                               arq_conn.src_addr, arq_conn.dst_addr,
+                               CALLSIGN_MAX_SIZE);
     arq_conn.TRX = RX;
     pthread_mutex_unlock(&g_conn_lock);
     /* Flush any stale RX bytes from the previous session before notifying
@@ -303,7 +308,11 @@ static void cb_notify_pending(const char *remote_call, const char *local_call)
      * backwards: CONNECTED <our call> <the caller>, which BPQ does not route
      * to the BBS.  On air, KG9NI 1.9.22: CONNECT KG9NI-1 K7EK ended by LISTEN
      * OFF in DISCONNECTING (01:24), then K7EK called in (03:17), and the
-     * session sat silent for 2 min until K7EK hung up. */
+     * session sat silent for 2 min until K7EK hung up.
+     *
+     * cb_notify_connected no longer reads these to tell the side, so the reset
+     * only keeps the UI from showing the old session's calls.  It leaves
+     * g_connect_src alone: a CONNECT may already be queued behind this CALL. */
     pthread_mutex_lock(&g_conn_lock);
     memset(arq_conn.src_addr, 0, sizeof(arq_conn.src_addr));
     memset(arq_conn.dst_addr, 0, sizeof(arq_conn.dst_addr));
@@ -593,6 +602,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         pthread_mutex_lock(&g_conn_lock);
         snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
+        snprintf(g_connect_src, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         arq_conn.session_bw = 0;
         pthread_mutex_unlock(&g_conn_lock);
         /* The FSM defers a CONNECT that arrives while the previous session is
@@ -747,6 +757,21 @@ static void *arq_payload_bridge_worker(void *arg)
  * Main ARQ event loop
  * ====================================================================== */
 
+/* Spells of listening for calls that have ended (arq_fsm_dispatch_ends_listening),
+ * for the modem's MFSK call listeners (listen_spells_ended in the snapshot),
+ * and those that ended with no session after them (listen_releases), for its
+ * control and payload decoders.  Guarded by g_sess_lock. */
+static uint32_t g_listen_spells_ended;
+static uint32_t g_listen_releases;
+
+static void count_listen_end(arq_listen_end_t end)
+{
+    if (end != ARQ_LISTEN_GOES_ON)
+        g_listen_spells_ended++;
+    if (end == ARQ_LISTEN_ENDS_RELEASED)
+        g_listen_releases++;
+}
+
 static void *arq_event_loop_worker(void *arg)
 {
     (void)arg;
@@ -783,7 +808,7 @@ static void *arq_event_loop_worker(void *arg)
 
         pthread_mutex_lock(&g_sess_lock);
         for (size_t i = 0; i < n; i++)
-            arq_fsm_dispatch(&g_sess, &events[i]);
+            count_listen_end(arq_fsm_dispatch_ends_listening(&g_sess, &events[i]));
 
         /* Fire deadline */
         now = time_now_ms();
@@ -791,7 +816,7 @@ static void *arq_event_loop_worker(void *arg)
         {
             g_sess.deadline_ms = UINT64_MAX;
             arq_event_t tev = { .id = g_sess.deadline_event };
-            arq_fsm_dispatch(&g_sess, &tev);
+            count_listen_end(arq_fsm_dispatch_ends_listening(&g_sess, &tev));
         }
         pthread_mutex_unlock(&g_sess_lock);
     }
@@ -1056,6 +1081,7 @@ int arq_init(size_t frame_size, int mode)
 
     /* single-threaded: before worker threads start -- no lock needed */
     memset(&arq_conn, 0, sizeof(arq_conn));
+    g_connect_src[0] = '\0';
     arq_conn.frame_size      = frame_size;
     arq_conn.mode            = mode;
     arq_conn.call_burst_size = 1;
@@ -1188,6 +1214,22 @@ bool arq_session_active(void)
     pthread_mutex_unlock(&g_sess_lock);
     return st == ARQ_CONN_CALLING || st == ARQ_CONN_ACCEPTING ||
            st == ARQ_CONN_CONNECTED || st == ARQ_CONN_DISCONNECTING;
+}
+
+bool arq_channel_heard(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    bool heard = arq_fsm_channel_keyed(&g_sess) != 0;
+    pthread_mutex_unlock(&g_sess_lock);
+    return heard;
+}
+
+bool arq_link_has_peer(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    bool has_peer = arq_conn_state_has_peer(g_sess.conn_state);
+    pthread_mutex_unlock(&g_sess_lock);
+    return has_peer;
 }
 
 bool arq_is_link_connected(void)
@@ -1363,6 +1405,8 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
      * MFSK CALLs arrived mid-ACCEPTING, and the call never connected. */
     snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING ||
                                      g_sess.conn_state == ARQ_CONN_ACCEPTING);
+    snapshot->listen_spells_ended = g_listen_spells_ended;
+    snapshot->listen_releases     = g_listen_releases;
     snapshot->listen_floor_mode = arq_floor_mode(normalize_bandwidth_hz(own_bw));
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;

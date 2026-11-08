@@ -120,6 +120,16 @@ int mercury_host_set_listen_mode(int index)
     return rc == 0 ? MERCURY_HOST_OK : rc == MODEM_LISTEN_MODE_BUSY ? MERCURY_HOST_BUSY : MERCURY_HOST_BAD;
 }
 
+/* ---- station messages (the beacon) ---- */
+
+int mercury_host_beacon_send(const uint8_t *frame, size_t len, int mode_index)
+{
+    if (mode_index < 0 || mode_index >= mercury_cli_mode_count())
+        return MERCURY_HOST_BAD;
+    int rc = modem_beacon_send(frame, len, freedv_modes[mode_index]);
+    return rc == 0 ? MERCURY_HOST_OK : rc == MODEM_BEACON_FULL ? MERCURY_HOST_FULL : MERCURY_HOST_BAD;
+}
+
 /* ---- the broadcast carousel ---- */
 
 int mercury_host_bcast_send(const char *name, const uint8_t *data, size_t len, int cycles,

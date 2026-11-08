@@ -32,7 +32,7 @@ extern void mock_set_uptime_ms(uint64_t ms);
 /* ---- FFF Fakes for arq_fsm_callbacks_t ---- */
 
 FAKE_VOID_FUNC(fake_send_tx_frame, int, int, size_t, const uint8_t *, int);
-FAKE_VOID_FUNC(fake_notify_connected, const char *, const char *);
+FAKE_VOID_FUNC(fake_notify_connected, const char *, const char *, bool);
 FAKE_VOID_FUNC(fake_notify_pending, const char *, const char *);
 FAKE_VOID_FUNC(fake_notify_pending_again, const char *);
 FAKE_VOID_FUNC(fake_notify_cancelpending);
@@ -224,6 +224,7 @@ void test_incoming_call_records_dialed_secondary(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
     TEST_ASSERT_EQUAL_STRING("KO0OOO-2", fake_notify_connected_fake.arg1_val);
+    TEST_ASSERT_FALSE(fake_notify_connected_fake.arg2_val);   /* we answered */
 }
 
 /* Helper: drive LISTENING -> ACCEPTING via an incoming CALL. */
@@ -432,6 +433,76 @@ void test_accept_transitions_to_connected(void)
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
+    TEST_ASSERT_TRUE(fake_notify_connected_fake.arg2_val);    /* we called */
+}
+
+/* An outgoing call does not inherit the callsign the last incoming CALL
+ * dialed: it fed the next outgoing call's retry rank, while the CALL itself
+ * goes out from the primary. */
+void test_connect_clears_the_dialed_callsign(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "W1ABC", CALLSIGN_MAX_SIZE);
+    strncpy(ev.local_call,  "KO0OOO-2", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_STRING("KO0OOO-2", sess.local_call);
+
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL_STRING("", sess.local_call);
+}
+
+/* The busy detector is muted while the link has a peer (modem.c), and that
+ * includes the teardown: in DISCONNECTING the energy is still the peer, and a
+ * BUSY there held our DISCONNECT frame up to the deferral cap.  Before the
+ * link exists (CALLING, ACCEPTING) BUSY still counts: it is the listen before
+ * a call. */
+void test_peer_states_are_connected_and_disconnecting(void)
+{
+    TEST_ASSERT_TRUE(arq_conn_state_has_peer(ARQ_CONN_CONNECTED));
+    TEST_ASSERT_TRUE(arq_conn_state_has_peer(ARQ_CONN_DISCONNECTING));
+    TEST_ASSERT_FALSE(arq_conn_state_has_peer(ARQ_CONN_DISCONNECTED));
+    TEST_ASSERT_FALSE(arq_conn_state_has_peer(ARQ_CONN_LISTENING));
+    TEST_ASSERT_FALSE(arq_conn_state_has_peer(ARQ_CONN_CALLING));
+    TEST_ASSERT_FALSE(arq_conn_state_has_peer(ARQ_CONN_ACCEPTING));
+}
+
+/* The host's CONNECT queued behind an incoming CALL: the CALL is answered
+ * first (PENDING, which resets arq.c's addresses), then the CONNECT aborts it
+ * and places our call.  That call's CONNECTED must say we called; arq.c used
+ * to infer the side from the addresses the PENDING had just cleared, and
+ * reported the session backwards. */
+void test_connect_behind_incoming_call_connects_as_caller(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "W1ABC", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_pending_fake.call_count);
+
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_connected_fake.call_count);
+    TEST_ASSERT_EQUAL_STRING("DST1", fake_notify_connected_fake.arg0_val);
+    TEST_ASSERT_TRUE(fake_notify_connected_fake.arg2_val);
 }
 
 /* A connect that got through only on MFSK starts the session deaf to the
@@ -1568,6 +1639,69 @@ void test_listen_off_drops_outgoing_call(void)
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
 }
 
+/* A scanning host's hop is LISTEN OFF then LISTEN ON, 1 ms apart: the end of
+ * the listening spell must be reported per event, or the MFSK call listeners
+ * keep a CALL heard on the last channel and it is answered on this one. */
+void test_listen_off_ends_listening_even_when_listen_on_follows(void)
+{
+    arq_event_t on  = make_event(ARQ_EV_APP_LISTEN);
+    arq_event_t off = make_event(ARQ_EV_APP_STOP_LISTEN);
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, &on));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    TEST_ASSERT_TRUE(arq_fsm_dispatch_ends_listening(&sess, &off));
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, &on));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    /* LISTEN OFF with nothing to stop ends nothing */
+    TEST_ASSERT_TRUE(arq_fsm_dispatch_ends_listening(&sess, &off));
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, &off));
+}
+
+/* Answering a CALL keeps listening (the caller's MFSK CALLs must still be
+ * heard while ACCEPTING).  A LISTEN OFF inside the grace is held, so nothing
+ * ends yet; the timer that honours it does -- a deadline event, which arq.c
+ * counts too. */
+void test_accepting_listens_until_listen_off_is_honoured(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    mock_set_uptime_ms(1010);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "W1ABC", CALLSIGN_MAX_SIZE);
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, &ev));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, &ev));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    mock_set_uptime_ms(4000);
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    /* no session after it: the control decoder is flushed too */
+    TEST_ASSERT_EQUAL_INT(ARQ_LISTEN_ENDS_RELEASED, arq_fsm_dispatch_ends_listening(&sess, &ev));
+    TEST_ASSERT_FALSE(arq_fsm_dispatch_ends_listening(&sess, NULL));
+}
+
+/* How listening ends decides which decoders drop what they hold.  A scan
+ * hop's LISTEN OFF gives the radio back with no session: every decoder,
+ * the DATAC16 one included, or a CALL that straddled the hop is answered on
+ * the next channel (K7EK, 2026-11-07).  A CONNECT starts a session, whose
+ * control decoder must keep running: only the MFSK listeners. */
+void test_listen_off_releases_but_connect_starts_a_session(void)
+{
+    arq_event_t on  = make_event(ARQ_EV_APP_LISTEN);
+    arq_event_t off = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &on);
+    TEST_ASSERT_EQUAL_INT(ARQ_LISTEN_ENDS_RELEASED, arq_fsm_dispatch_ends_listening(&sess, &off));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+
+    arq_fsm_dispatch(&sess, &on);
+    arq_event_t call = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(call.remote_call, "TEST1", CALLSIGN_MAX_SIZE);
+    TEST_ASSERT_EQUAL_INT(ARQ_LISTEN_ENDS_IN_SESSION, arq_fsm_dispatch_ends_listening(&sess, &call));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+}
+
 /* LISTEN OFF received within ARQ_LISTEN_OFF_GRACE_MS of entering ACCEPTING
  * must be deferred, not acted on immediately — a scanning host (BPQ32) sends
  * LISTEN OFF at dwell expiry and needs time to process the just-sent PENDING
@@ -1930,6 +2064,9 @@ int main(void)
     RUN_TEST(test_incoming_call_transitions_to_accepting);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
+    RUN_TEST(test_connect_behind_incoming_call_connects_as_caller);
+    RUN_TEST(test_connect_clears_the_dialed_callsign);
+    RUN_TEST(test_peer_states_are_connected_and_disconnecting);
     RUN_TEST(test_mfsk_only_connect_starts_deaf_on_the_floor);
     RUN_TEST(test_floor_accept_to_a_control_mode_call_is_not_deafness);
     RUN_TEST(test_repeat_on_control_mode_is_answered_on_the_floor);
@@ -1951,6 +2088,9 @@ int main(void)
     RUN_TEST(test_listen_off_drops_pending_accept);
     RUN_TEST(test_listen_off_drops_outgoing_call);
     RUN_TEST(test_listen_off_deferred_within_grace_accepting);
+    RUN_TEST(test_listen_off_ends_listening_even_when_listen_on_follows);
+    RUN_TEST(test_accepting_listens_until_listen_off_is_honoured);
+    RUN_TEST(test_listen_off_releases_but_connect_starts_a_session);
     RUN_TEST(test_listen_off_in_calling_is_immediate);
     RUN_TEST(test_deferred_listen_off_survives_connect);
     RUN_TEST(test_held_disconnect_does_not_outlive_its_session);

@@ -69,9 +69,13 @@ jobs:
   # actions/checkout is a node action and node does not run in an i386 image.
   # linux32 gives the process the i386 personality, so `uname -m` says i686
   # instead of leaking the host kernel's x86_64 -- as on a real buildd.
+  #
+  # Pinned to ubuntu-24.04: on the ubuntu-26.04 image (ubuntu-latest since
+  # Nov 2026) the `docker run` container cannot resolve DNS, even with
+  # --network host, so apt-get fails before anything builds.
   unit-tests-i386:
     name: Unit Tests (Linux i386, Debian 13)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     steps:

@@ -28,7 +28,7 @@ void setUp(void) {}
 void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
-    unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX");
+    unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -183,6 +183,20 @@ static void test_carousel_request_response_completes(void)
         TEST_ASSERT_EQUAL_MESSAGE(2000, r.b2a, what);
         TEST_ASSERT_NOT_EQUAL_MESSAGE(0, r.done_ms, what);
     }
+}
+
+/* Typed lines, as an operator's at a BBS: one that comes while M waits out
+ * the peer's answer slot, or while a keydown is on the air, cannot go at once,
+ * and the log says what it waits for (car_on_app_data).  On air nothing did:
+ * N3JXB's commands took 2-11 s to key and the log was silent about it. */
+static void test_carousel_app_wait_is_said(void)
+{
+    car_sim_result_t r;
+    setenv("CAR_KBD", "10:40:15", 1);
+    carousel_sim_run(3, "clean", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT(0, r.collisions);
+    TEST_ASSERT_GREATER_THAN_INT(0, r.app_wait_says);
 }
 
 /* Idle on a lossy link, with patterns (the floor's continuation slots): each
@@ -457,6 +471,7 @@ int main(void)
     RUN_TEST(test_carousel_mfsk_tx_only);
     RUN_TEST(test_carousel_max_keydown);
     RUN_TEST(test_carousel_request_response_completes);
+    RUN_TEST(test_carousel_app_wait_is_said);
     RUN_TEST(test_carousel_drop_below_control_mode);
     RUN_TEST(test_carousel_no_reprobe_below_gate);
     RUN_TEST(test_carousel_dark_rounds_drop_the_rung);
