@@ -400,20 +400,28 @@ How a version is published to AltStore PAL: ios/ALTSTORE.md.
 
 ### Install on Sailfish OS (technology preview)
 
-You need a 64-bit ARM (aarch64) phone with Sailfish OS 5.  The package was
-built and its `make test` passed on a Jolla phone with Sailfish OS 5.2.0.18;
-it has not been used with a radio there yet (see below).  It is the
-command-line modem only: there is no GUI app on the phone, but `-G` serves
-the WebSocket UI as on Linux.
+You need a 64-bit ARM (aarch64) phone with Sailfish OS 5.  There are two
+packages, built and tested on a Jolla phone with Sailfish OS 5.2; neither
+has been used with a radio there yet (see below):
+- `mercury`, the command-line modem.  `-G` serves the WebSocket UI as on
+  Linux.
+- `mercury-ui`, the GUI (Fyne, on Wayland with GLES2 through libhybris),
+  with the modem built in: it does not need the `mercury` package.  It is in
+  the app list as **Mercury**.
+
+The repository carries a snapshot of the development branch, not a release
+(versions such as `1.9.22+git20261108.1432.57fb7a15`: the last release, the
+date and the commit).
 
 1. Turn on **Developer mode** (Settings → Developer tools), open
    **Terminal**, and become root with `devel-su`.
-2. Add the HERMES repository and install Mercury:
+2. Add the HERMES repository and install Mercury, the GUI, or both:
 
     ```bash
     ssu ar hermes http://debian.hermes.radio/sailfish/aarch64/
     pkcon refresh
-    pkcon install mercury
+    pkcon install mercury        # the command-line modem
+    pkcon install mercury-ui     # the GUI
     ```
 
     This also installs HERMES's Hamlib 5, which can drive a radio's USB
@@ -433,6 +441,10 @@ the WebSocket UI as on Linux.
     Mercury also reads `./mercury.ini` and `/etc/mercury/mercury.ini` (see
     `-C`).  The package installs `/usr/bin/mercury` and its man page, but no
     service: start it yourself.
+
+    The GUI starts from its icon, as your user, with its audio through
+    PulseAudio (`mercury-ui -x pulse`).  Opening a radio's USB CAT needs
+    root (below), so from the icon it has audio but no CAT or PTT yet.
 
 **Using it with a radio (untested with Mercury).**  These are the settings
 the HERMES radio daemon uses on the same phone:
@@ -488,10 +500,16 @@ rpmbuild -ba ../SPECS/mercury.spec
 
 Install that file as root with `pkcon install-local`.
 
-The other HERMES packages (radiod and the libraries it needs) are built the
-same way from `packaging/sailfish` in
+That spec builds the command-line modem only.  The GUI builds from a source
+tree with [`sailfish/build-mercury-ui.sh`](sailfish/build-mercury-ui.sh),
+which lists what it needs besides the modem's dependencies (Go, the Wayland
+and xkbcommon headers, and the Khronos EGL and GLES2 headers).
+
+The packages in the repository, `mercury` and `mercury-ui` among them, are
+built from `packaging/sailfish` in
 [hermes-radio-daemon](https://github.com/Rhizomatica/hermes-radio-daemon)
-(`fetch-sources.sh`, `build-all.sh`).  Source RPMs are in
+(`fetch-sources.sh`, `build-all.sh`), with the other HERMES packages
+(radiod and the libraries it needs).  Source RPMs are in
 `http://debian.hermes.radio/sailfish/source/`.
 
 ## Configuration File
