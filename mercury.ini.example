@@ -242,10 +242,11 @@ max_keydown_s = 0
 ; It is the earliest warning Mercury can give (a connect request takes 3.7 s
 ; to decode, an MFSK one 13.5 s), but BPQ32's scanner does not hold on it: on
 ; air it kept hopping through BUSY, and only refused its own outgoing connects
-; ("Channel is busy").  On a scanning station it also keeps one noise floor for
-; every channel, so a noisier channel reads BUSY (docs/TNC.md, "Scanning
-; hosts").  Leave it off with BPQ32 scanning.  Expect to tune the thresholds
-; below per band and noise environment before trusting it.
+; ("Channel is busy").  On a scanning station it keeps one noise floor for
+; every channel unless busy_reseed_on_hop is set, so a noisier channel reads
+; BUSY (docs/TNC.md, "Scanning hosts").  Leave it off with BPQ32 scanning.
+; Expect to tune the thresholds below per band and noise environment before
+; trusting it.  A host can switch it while running with BUSYDETECT ON|OFF.
 ;
 ; It needs a receive filter at least ~1.8 kHz wide.  It measures 300-2700 Hz
 ; and takes its noise floor from the quieter bands there; a narrower filter
@@ -274,6 +275,16 @@ busy_on_debounce_ms = 300
 ; Milliseconds the peak must stay below the release level before declaring CLEAR
 ; (hang time; default 1500, range 0..10000).
 busy_hang_ms = 1500
+
+; Take a new noise floor at each scan hop (default false).  Mercury is not
+; told when a scanning host retunes, so it takes LISTEN OFF as the sign: the
+; detector waits 1 s for the radio to retune, then measures the floor on the
+; new channel.  It trades one error for another (docs/TNC.md, "Scanning
+; hosts"): off, a channel noisier than the last reads BUSY; on, a hop onto a
+; channel already carrying a signal wider than about 1.8 kHz (BW2300 DATAC,
+; VARA 2300) seeds the floor on it, and that signal is missed until it stops.
+; A host can switch it while running with BUSYRESEED ON|OFF.
+busy_reseed_on_hop = false
 
 [tnc]
 ; IAMALIVE interval sent on the TNC control port to tell connected clients

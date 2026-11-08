@@ -75,6 +75,11 @@ void modem_set_spectrum_enabled(bool enabled);
  * Opt-in: disabled by default.  When enabled, the RX worker classifies the
  * channel from the spectrum FFT and reports transitions to the host. */
 void modem_set_busy_detect_enabled(bool enabled);
+bool modem_get_busy_detect_enabled(void);
+// busy_reseed_on_hop / BUSYRESEED: take a new noise floor at each scan hop
+// (LISTEN OFF).  Off by default; docs/TNC.md, "Scanning hosts".
+void modem_set_busy_reseed_on_hop(bool enabled);
+bool modem_get_busy_reseed_on_hop(void);
 void modem_set_busy_cfg(float threshold_db, float hysteresis_db,
                         uint32_t on_debounce_ms, uint32_t hang_ms);
 /* Latched debounced occupancy state, for an optional TX-initiation gate. */
@@ -162,6 +167,12 @@ float modem_tune_level_dbfs(void);
 // account of a monitored frame.
 void modem_set_monitor_enabled(bool enabled);
 bool modem_get_monitor_enabled(void);
+
+// The host may have moved the radio to another channel (a scanner's LISTEN
+// OFF): the busy detector takes its noise floor afresh there instead of
+// carrying the last channel's (docs/TNC.md, "Scanning hosts").  Callers make
+// it only with modem_get_busy_reseed_on_hop().
+void modem_busy_channel_changed(void);
 
 // True when a CALL decoder (DATAC16 or an MFSK call listener) has locked onto
 // a frame it has not decoded yet: *mode_name names the mode, *for_ms how long

@@ -78,6 +78,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->busy_hysteresis_db          = 3;
     cfg->busy_on_debounce_ms         = 300;
     cfg->busy_hang_ms                = 1500;
+    cfg->busy_reseed_on_hop          = false;
     cfg->store_enabled               = true;
     cfg->store_path[0]               = '\0';
     cfg->store_max_messages          = MSG_STORE_DEFAULT_MAX_LINES;
@@ -452,6 +453,9 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_BUSY_HANG_MS, cfg->busy_hang_ms);
     if (i >= 0 && i <= 10000)   cfg->busy_hang_ms = i;
 
+    cfg->busy_reseed_on_hop = (bool) iniparser_getboolean(ini, CFG_KEY_BUSY_RESEED_ON_HOP,
+                                                          cfg->busy_reseed_on_hop ? 1 : 0);
+
     double d = iniparser_getdouble(ini, CFG_KEY_TX_GAIN_DB, (double)cfg->tx_gain_db);
     if (!isfinite(d)) d = 0.0;  /* malformed/non-finite INI value -> default */
     if (d < -20.0) d = -20.0;
@@ -596,6 +600,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "busy_hysteresis_db = %d\n", cfg->busy_hysteresis_db);
     fprintf(f, "busy_on_debounce_ms = %d\n", cfg->busy_on_debounce_ms);
     fprintf(f, "busy_hang_ms = %d\n", cfg->busy_hang_ms);
+    fprintf(f, "busy_reseed_on_hop = %s\n", cfg->busy_reseed_on_hop ? "true" : "false");
 
     fprintf(f, "\n[audio]\n");
     fprintf(f, "tx_gain_db = %.2f\n", cfg->tx_gain_db);

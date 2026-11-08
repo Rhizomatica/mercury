@@ -447,6 +447,11 @@ static void execute_control_command(char *buffer)
                   (double)inflight_ms / 1000.0, inflight_mode ? inflight_mode : "?",
                   lost_now ? "LISTEN OFF drops it"
                            : "if the host now changes frequency, it is lost");
+        /* Each hop starts with LISTEN OFF, and Mercury is told nothing else
+         * of it: the busy detector's floor belongs to the channel it left.
+         * Re-seeding is the operator's choice (BUSYRESEED). */
+        if (cmd.type == ARQ_CMD_LISTEN_OFF && modem_get_busy_reseed_on_hop())
+            modem_busy_channel_changed();
         if (cmd.type != ARQ_CMD_NONE && arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
@@ -488,6 +493,47 @@ static void execute_control_command(char *buffer)
                       on ? 11 : 12);
         }
         return;
+    }
+
+    /* BUSYDETECT ON|OFF  -- the channel-busy detector (ini busy_detect);
+     * BUSYRESEED ON|OFF  -- its new noise floor at each scan hop (ini
+     * busy_reseed_on_hop).  Bare, each reports its state.  Neither is saved:
+     * the ini sets them again at the next start. */
+    {
+        static const struct {
+            const char *name;
+            void      (*set)(bool);
+            bool      (*get)(void);
+        } busy_switches[] = {
+            { "BUSYDETECT", modem_set_busy_detect_enabled, modem_get_busy_detect_enabled },
+            { "BUSYRESEED", modem_set_busy_reseed_on_hop,  modem_get_busy_reseed_on_hop  },
+        };
+        for (size_t k = 0; k < sizeof(busy_switches) / sizeof(busy_switches[0]); k++)
+        {
+            size_t len = strlen(busy_switches[k].name);
+            if (strncmp(buffer, busy_switches[k].name, len) ||
+                (buffer[len] != '\0' && buffer[len] != ' '))
+                continue;
+            char arg[16] = {0};
+            if (sscanf(buffer + len, " %15s", arg) == 1)
+            {
+                if (!strcasecmp(arg, "ON") || !strcasecmp(arg, "OFF"))
+                {
+                    busy_switches[k].set(!strcasecmp(arg, "ON"));
+                    tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+                }
+                else
+                    reply_wrong(received);
+            }
+            else
+            {
+                char reply[32];
+                int n = snprintf(reply, sizeof(reply), "%s %s\r", busy_switches[k].name,
+                                 busy_switches[k].get() ? "ON" : "OFF");
+                tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)n);
+            }
+            return;
+        }
     }
 
     if (!strncmp(buffer, "PUBLIC", strlen("PUBLIC")))

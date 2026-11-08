@@ -398,6 +398,7 @@ arq:max_keydown_s	0	Longest transmission, s (0: the protocol's 30 s; else 5\-30)
 audio:tx_gain_db	0.0	Modulator gain
 audio:tx_delay_ms	10	Delay from PTT on to audio
 channel:busy_detect	false	Channel-busy (BUSY ON/OFF) detector
+channel:busy_reseed_on_hop	false	Busy detector takes a new noise floor at each scan hop (LISTEN OFF)
 .TE
 .PP
 Keys that older versions read and this one ignores (the stop-and-wait ARQ's
@@ -493,6 +494,17 @@ alone reports it.
 Passive monitor: report every frame decoded on the air as a
 .B MONITOR
 line, without answering or keying.
+.TP
+.B BUSYDETECT ON|OFF
+Switch the channel-busy detector while running (not saved).
+.B BUSYDETECT
+alone reports it.
+.TP
+.B BUSYRESEED ON|OFF
+Switch the busy detector's new noise floor at each scan hop while running
+(not saved).
+.B BUSYRESEED
+alone reports it.
 .TP
 .B BUFFER
 Query the number of bytes pending in the transmit buffer.

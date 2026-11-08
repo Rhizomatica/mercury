@@ -199,6 +199,7 @@ int mercury_engine_init(const mercury_config *cfg,
                        (uint32_t)cfg->busy_on_debounce_ms,
                        (uint32_t)cfg->busy_hang_ms);
     modem_set_busy_detect_enabled(cfg->busy_detect);
+    modem_set_busy_reseed_on_hop(cfg->busy_reseed_on_hop);
 
     /* ---- pick audio subsystem ---- */
     g_audio_system = audio_system;

@@ -81,6 +81,7 @@
 #define CFG_KEY_BUSY_HYSTERESIS_DB            "channel:busy_hysteresis_db"
 #define CFG_KEY_BUSY_ON_DEBOUNCE_MS           "channel:busy_on_debounce_ms"
 #define CFG_KEY_BUSY_HANG_MS                  "channel:busy_hang_ms"
+#define CFG_KEY_BUSY_RESEED_ON_HOP            "channel:busy_reseed_on_hop"
 #define CFG_KEY_STORE_ENABLED                 "store:enabled"
 #define CFG_KEY_STORE_PATH                    "store:path"
 #define CFG_KEY_STORE_MAX_MESSAGES            "store:max_messages"
@@ -159,6 +160,8 @@ typedef struct {
                                     * Default 300, clamped 0..5000.           */
     int      busy_hang_ms;          /* Sustain below release before CLEAR.
                                      * Default 1500, clamped 0..10000.         */
+    bool     busy_reseed_on_hop;    /* New noise floor at each scan hop (LISTEN
+                                     * OFF). Default false.                    */
     bool     store_enabled;         /* Persist ARQ/broadcast chat messages to
                                      * disk. Default true.                     */
     char     store_path[512];       /* JSONL message-store path; empty = auto
