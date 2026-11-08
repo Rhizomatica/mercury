@@ -103,6 +103,8 @@ typedef struct {
     uint64_t air_ms;               /* on the air, all keydowns */
     uint64_t max_kd_ms;   /* longest keydown, PTT on to off */
     uint64_t heard_at, silent_ms;  /* the peer last heard (frame or pattern); the longest gap */
+    uint64_t poll_at;              /* my last poll above the floor (dark_polls) */
+    int      dark_run;             /* ...polls in a row above it, nothing of the peer heard between */
 } station_t;
 
 static station_t S[2];
@@ -306,6 +308,7 @@ static void io_bind_rx(void *ctx, int mode)
 static int recv_fallbacks;
 static int app_wait_says;              /* "tx: my application's data waits for" lines */
 static int gated_probes;
+static int dark_polls;
 /* Did the last "rx round" line mark rung lv not allowed?  Its gp list reads
  * " 0:5/0.83 2:4/0.87 3:0/0.00x". */
 static bool round_marked_out(const station_t *s, int lv)
@@ -339,6 +342,16 @@ static void io_trace(void *ctx, const char *line)
     } else if (!strncmp(line, "rx -> poll lv=", 14) && s->round_snr_ok) {
         int lv = atoi(line + 14);
         if (lv > 0 && round_marked_out(s, lv) && s->round_snr < car_rung_gate_db(lv)) gated_probes++;
+    }
+    /* Polls above the floor in a row with nothing of the peer heard between
+     * them, the asks again included: on air (NW8L, IONOS MPP +5 -> -5 dB)
+     * seven, DATAC3 and DATAC4, before the watchdog ended the session. */
+    int plv = !strncmp(line, "rx -> poll lv=", 14) ? atoi(line + 14)
+            : !strncmp(line, "rx round lv=", 12) && strstr(line, "unheard: asking again") ? atoi(line + 12) : 0;
+    if (plv > 0) {
+        s->dark_run = s->poll_at && s->heard_at < s->poll_at ? s->dark_run + 1 : 1;
+        s->poll_at = now_ms;
+        if (s->dark_run > dark_polls) dark_polls = s->dark_run;
     }
     static const char said[] = "tx: my application's data waits for ";
     if (!strncmp(line, said, sizeof said - 1)) app_wait_says++;
@@ -649,6 +662,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     recv_fallbacks = 0;
     app_wait_says = 0;
     gated_probes = 0;
+    dark_polls = 0;
     bad_frames = 0;
     slot_breaches = 0;
     frame_no = 0;
@@ -804,6 +818,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->recv_fallbacks = recv_fallbacks;
     res->app_wait_says = app_wait_says;
     res->gated_probes = gated_probes;
+    res->dark_polls = dark_polls;
     res->kd_unexplained = kd_unexplained;
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;

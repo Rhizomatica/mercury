@@ -48,8 +48,9 @@ lost); otherwise the silence is scored against the mode.
 **Link adaptation**, run by the receiver on what it received: the rung with
 the best measured goodput (raw rate times delivered fraction); probes only of
 rungs that could beat it; a rung's round is capped at one frame more than it
-recently delivered; 4 frames lost in a row is a dead verdict, re-probed after
-60 s, doubling to 8 min.  A direction starts on the rung the connect's SNR
+recently delivered; 4 frames lost in a row is a dead verdict (2 near the rung's
+SNR threshold, or once two rounds in a row brought nothing of the peer at all),
+re-probed after 60 s, doubling to 8 min.  A direction starts on the rung the connect's SNR
 supports (`ARQ_SNR_MIN_*`), as a one-frame probe.  The session's bandwidth caps the
 ladder in both directions: BW500 uses its own MFSK floor, DATAC15, DATAC4
 and DATAC3; BW2300 and BW2750 use every rung (nothing is wider than 2.1 kHz

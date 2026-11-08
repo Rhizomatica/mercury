@@ -8,7 +8,9 @@
 (*   The poll names a rung, and M binds its payload decoder there as it   *)
 (*   keys.  The rung is the one asked last (poll_level), or lower when    *)
 (*   choose_level says so -- never higher on an ask -- and one lower      *)
-(*   than a rung that has had M's asks and delivered nothing.             *)
+(*   than a rung that has had M's asks and delivered nothing, or that     *)
+(*   has had K scored asks in a row go unanswered (level_dead: K is       *)
+(*   DEAD_RUN, 4, or 2 near the threshold or once the link is dark).      *)
 (*                                                                         *)
 (*   S, hearing the poll, answers in its slot with its round on the rung  *)
 (*   named (m_on_ctl: tx_level from the poll's level).  S keys only to    *)
@@ -18,9 +20,14 @@
 (* loses any keydown, at most L in a row each way; a rung in Dead carries *)
 (* nothing (a rung the connect's SNR put the session on, that the channel *)
 (* does not support: sim, nvis, DATAC1).  The floor (0) is never dead.    *)
+(* Mid-session the channel may also kill a live rung, at most Kills       *)
+(* times, delivered on or not (NW8L, IONOS MPP +5 -> -5 dB: DATAC3 had    *)
+(* delivered, then carried nothing).                                      *)
 (*                                                                         *)
 (* Not modelled: the MFSK floor's slots and patterns (FloorSilence), the  *)
-(* lost-peer watchdog (240 s), rounds lost in part.                       *)
+(* lost-peer watchdog (240 s), rounds lost in part, time: K = 2 against 4 *)
+(* is a matter of how soon (the sim's measure), not whether.  The ask     *)
+(* again (silent_polls) is unscored, so it is not a step here.            *)
 (*                                                                         *)
 (* Properties:                                                            *)
 (*   Agree      S's rounds go on the rung M listens on (invariant);       *)
@@ -31,11 +38,15 @@ EXTENDS Integers
 CONSTANTS Rungs,   \* 0..n: the floor and the rungs above it
           N,       \* messages S sends
           L,       \* most keydowns the channel loses in a row
+          K,       \* unanswered scored asks in a row that step the next ask down
+          Kills,   \* most live rungs the channel kills mid-session
           Mutant   \* "none", or one rule broken (to show the model can fail):
                    \*   "noscore": every ask names the rung asked last (the
                    \*              code before 2026-10-18)
                    \*   "stale":   S answers on its own last rung, not the one named
-ASSUME 0 \in Rungs /\ N \in Nat \ {0} /\ L \in Nat
+                   \*   "nodrop":  no K rule: M may stay on a rung that once
+                   \*              delivered, however many asks go unanswered
+ASSUME 0 \in Rungs /\ N \in Nat \ {0} /\ L \in Nat /\ K \in Nat \ {0} /\ Kills \in Nat
 
 VARIABLES
     dead,      \* the channel: rungs that carry nothing
@@ -46,9 +57,11 @@ VARIABLES
     sTx,       \* S: the rung of its rounds (tx_level)
     lossP,     \* the channel: M's polls lost in a row
     lossR,     \* ...and S's rounds on a live rung
+    miss,      \* M: scored asks in a row on mLv that drew nothing (dead_run)
+    kills,     \* the channel: rungs killed mid-session
     apart      \* ghost: S sent a round where M was not listening
 
-vars == <<dead, mLv, mBind, delivered, got, sTx, lossP, lossR, apart>>
+vars == <<dead, mLv, mBind, delivered, got, sTx, lossP, lossR, miss, kills, apart>>
 
 Lossy(lr) == IF lr >= L THEN {FALSE} ELSE BOOLEAN
 
@@ -57,6 +70,7 @@ Init ==
     /\ mLv \in Rungs /\ mBind = mLv            \* where the connect's SNR put it
     /\ sTx \in Rungs                           \* whatever S last had
     /\ delivered = {} /\ got = 0 /\ lossP = 0 /\ lossR = 0 /\ apart = FALSE
+    /\ miss = 0 /\ kills = 0
 
 \* M asks on rung r; S answers if it heard.
 Ask ==
@@ -69,8 +83,12 @@ Ask ==
             live    == tx \notin dead
             decoded == heard /\ tx = r /\ live /\ ~lostR
             dlv     == IF decoded THEN delivered \cup {r} ELSE delivered
+            \* this ask scored: a run of unanswered asks, capped at K (the
+            \* floor never steps down, so its run would grow for ever)
+            miss1   == IF decoded THEN 0 ELSE IF miss < K THEN miss + 1 ELSE K
+            drop    == Mutant \notin {"noscore", "nodrop"} /\ miss1 >= K
             \* the rung of the next ask, before choose_level may lower it
-            next    == IF Mutant # "noscore" /\ r > 0 /\ r \notin dlv THEN r - 1 ELSE r
+            next    == IF Mutant # "noscore" /\ r > 0 /\ (r \notin dlv \/ drop) THEN r - 1 ELSE r
         IN
         /\ lossP' = IF lostP THEN lossP + 1 ELSE 0
         /\ lossR' = IF heard /\ live THEN (IF lostR THEN lossR + 1 ELSE 0) ELSE lossR
@@ -78,12 +96,20 @@ Ask ==
         /\ apart' = (apart \/ (heard /\ tx # r))
         /\ got' = IF decoded THEN got + 1 ELSE got
         /\ delivered' = dlv
-        /\ mLv' \in 0 .. next
-        /\ UNCHANGED dead
+        \* a run is the rung's own: a new rung starts at none
+        /\ \E nl \in 0 .. next : mLv' = nl /\ miss' = IF nl = r THEN miss1 ELSE 0
+        /\ UNCHANGED <<dead, kills>>
+
+\* The channel stops carrying a live rung (not the floor), whatever it delivered.
+Kill ==
+    /\ got < N /\ kills < Kills
+    /\ \E d \in Rungs \ ({0} \cup dead) : dead' = dead \cup {d}
+    /\ kills' = kills + 1
+    /\ UNCHANGED <<mLv, mBind, delivered, got, sTx, lossP, lossR, miss, apart>>
 
 Done == got = N /\ UNCHANGED vars
 
-Next == Ask \/ Done
+Next == Ask \/ Kill \/ Done
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Ask)
 
@@ -93,6 +119,7 @@ TypeOK ==
     /\ mLv \in Rungs /\ mBind \in Rungs /\ sTx \in Rungs
     /\ delivered \subseteq Rungs /\ got \in 0 .. N
     /\ lossP \in 0 .. L /\ lossR \in 0 .. L
+    /\ miss \in 0 .. K /\ kills \in 0 .. Kills
 Agree == ~apart
 Delivered == <>(got = N)
 =============================================================================
