@@ -179,7 +179,7 @@ listed).
 | `round_seen`, `round_frames` | frames of the expected round decoded / announced total | 0 |
 | `round_heard` | anything of the round heard (frame, status, or carrier during sense) | false |
 | `status_seen` | STATUS answering my current poll id | false |
-| `silent_polls` | 1 after one unscored re-poll, until something is heard | 0 |
+| `silent_polls` | bit 0 (`ASKED`): this round's poll was asked again, cleared at each round start; above it, +2 per scored round in a row with nothing of the peer heard (the `dark` run, capped at 4), cleared when anything of the peer is heard (frame, control, pattern) | 0 |
 | `peer_unopened` | the peer has data not yet cut into blocks | false |
 | `peer_hi`, `peer_hi_known` | highest block id the peer has opened (resolved) | — |
 | `drive_start` | when I started driving this turn | — |
@@ -201,9 +201,8 @@ listed).
 Per rung `lv`: `rung[lv].sent`, `rung[lv].lost` (decayed frame counts), `rung[lv].rounds`,
 `rung[lv].dead_run`, `rung[lv].probe_fails`, `rung[lv].round_at` (value of `polls` when last
 measured), `rung[lv].probe_at` (ms), `rung[lv].backoff_ms` (H:145-149). All 0 at init.
-`dark_rounds`, `dark_ms`: scored rounds in a row with nothing of the peer heard (the
-"one loss, not the round's" case), and when the last was scored; a round counts on the run only
-if nothing was heard since the one before (`heard_ms < dark_ms`).
+The dark run (scored rounds in a row with nothing of the peer heard, the "one loss, not the
+round's" case) is kept in `silent_polls` above bit 0, not in a field of its own (§2.4).
 
 ---
 
@@ -465,7 +464,7 @@ If `retired > 0` → `io.tx_confirmed(retired)` (F:1450-1456 updates BUFFER).
 |---|---|---|
 | D0 | `lv != rx_level` | drop (only `last_carrier_ms`, SNR, ctl_deaf already updated by `car_on_frame`). |
 | D1 | `sending` | the peer took the turn with a handover I missed: `start_driving(m.poll_id, lv, m.left+1, now - A(lv) - H, now)`. My open blocks stay suspended. |
-| D2 | always (after D1) | `idle = false; round_heard = true; silent_polls = 0`; `take_pieces(m)` (P6). |
+| D2 | always (after D1) | `idle = false; round_heard = true; silent_polls &= ASKED`; `take_pieces(m)` (P6). |
 | D3 | `lv == 0 && poll_level == 0 && io.pattern` (floor_frame) | `floor_streaming = true`. |
 | D4 | `m.poll_id == my_poll_id && polled_since_handover` | `polls_unheard = 0`. |
 | D5 | `m.poll_id == poll_id || floor_frame` | `round_seen++; round_frames = round_seen + m.left`. (At the floor frames keep the id of the last poll the sender heard, so any floor frame counts.) |
@@ -482,7 +481,7 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 | # | Guard | Actions |
 |---|---|---|
 | ST1 | `sending` | ignore. |
-| ST2 | else | if `m.poll_id == poll_id` → `status_seen = true`; `round_heard = true; silent_polls = 0; peer_hi = resolve16(rbase, m.hi); peer_hi_known = true; peer_unopened = false`; `T_POLL := now + G`. |
+| ST2 | else | if `m.poll_id == poll_id` → `status_seen = true`; `round_heard = true; silent_polls &= ASKED; peer_hi = resolve16(rbase, m.hi); peer_hi_known = true; peer_unopened = false`; `T_POLL := now + G`. |
 
 **HANDOVER** (C:1476-1491) — accepted in **any** state (idle, driving, sending)
 
@@ -524,7 +523,7 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 | T4 | **floor fallback**: `probe_off_floor && !floor_fallback && !round_seen && !status_seen && !round_heard` | `floor_fallback = true; poll_level = 0; poll_n = 2`; Bind(0); `round_seen = 0; round_frames = 2; round_heard = false; done_in_round = 0`; disarm SENSE; `T_POLL := max(now + 13700, probe_after_ms + peer_floor_wait_max + H) + 3000`; return. |
 | T5 | **floor hold**: `poll_level == 0 && io.pattern && !floor_hold && !floor_fallback && !peer_ctl_deaf && !round_seen && !status_seen && !round_heard` and `until = floor_round_end + peer_floor_wait_max + 3000 > now` | `floor_hold = true; T_POLL := until`; return. |
 | T6 | always | `floor_hold = false`. |
-| T7 | **unscored re-poll**: `!floor_fallback && poll_level > 0 && !round_seen && !status_seen && !round_heard && round_frames > 0 && silent_polls == 0 && rung[lv].sent[poll_level] ≥ 2 && level_delivery(poll_level) ≥ 0.5` | `silent_polls = 1`; `send_poll_as(poll_level, poll_n, repeat = true)` (same poll id); return. |
+| T7 | **unscored re-poll**: `!floor_fallback && poll_level > 0 && !round_seen && !status_seen && !round_heard && round_frames > 0 && !(silent_polls & ASKED) && rung[lv].sent[poll_level] ≥ 2 && level_delivery(poll_level) ≥ 0.5` | `silent_polls |= ASKED`; `send_poll_as(poll_level, poll_n, repeat = true)` (same poll id); return. |
 | T8 | measure | `probe_failed = floor_fallback && !round_seen && !status_seen && !round_heard`; `probe_off_floor = floor_fallback = false`. If probe_failed: `loss_est = 0.5*loss_est + 0.5`; `measure_level(probe_lv, probe_n, 1.0)`. Else if `!status_seen`: `frames = max(round_frames,1)`; `loss = max(0, 1 - round_seen/frames)`; `loss_est = 0.5*loss_est + 0.5*loss`; `measure_level(poll_level, frames, loss)`. |
 | T9 | always | `deliver_in_order()`. |
 | T10 | **handover**: `has_data && (done || quantum)` where `done = peer_direction_done`, `held = now - drive_start`, `quantum = (done_in_round > 0 && held ≥ 30000) || held ≥ 45000` | `send_start_ms = now; send_handover()`; return. |
@@ -548,7 +547,7 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 |---|---|---|
 | SE1 | `sending || idle || round_seen > 0` | return. |
 | SE2 | `poll_level == 0 && io.pattern` | return (never at the floor). |
-| SE3 | `peer_keyed()` | `round_heard = true; silent_polls = 0; T_SENSE := now + 250`. |
+| SE3 | `peer_keyed()` | `round_heard = true; silent_polls &= ASKED; T_SENSE := now + 250`. |
 | SE4 | else if `round_heard` (carrier was seen, now dropped) | `T_POLL := now + G`. |
 | SE5 | else | nothing (the window T_POLL decides). |
 
@@ -586,7 +585,7 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 
 Predicates (`marginal = snr_valid && snr_ema < min_db + 3`, C:797-800):
 - `delivery(lv)` = marginal ? `(sent - lost)/(sent + 1)` : `1 - (lost + 0.5)/(sent + 2)` (C:737-742).
-- `dark` = `dark_rounds ≥ 2 && heard_ms < dark_ms`: two scored rounds in a row with nothing of the peer heard,
+- `dark` = `silent_polls ≥ 4`: two scored rounds in a row with nothing of the peer heard,
   each asked again; the SNR and the rungs' scores are then as old as the last frame.
 - `dead(lv)` = dark ? `dead_run ≥ 2` : `dead_run ≥ max(marginal ? 2 : 4, ⌈ln 0.02 / ln(1 - min(p_ok, 0.95))⌉)`,
   `p_ok` the delivery the rung showed when it last delivered (0: none, no floor).

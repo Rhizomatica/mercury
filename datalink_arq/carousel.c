@@ -987,9 +987,19 @@ static double level_delivery(const car_t *c, int lv)
  * outright once dark was faster on the step, but on NVIS the floor kept the
  * session (nvis bidir, 30 seeds: 20 done -> 9). */
 #define DARK_ROUNDS 2
+#define SILENT_ASKED 1     /* silent_polls bit 0: this round's poll asked again */
+#define SILENT_ROUND 2     /* ...and each dark round scored adds this; hearing the peer clears it */
 static bool level_dark(const car_t *c)
 {
-    return c->dark_rounds >= DARK_ROUNDS && c->heard_ms < c->dark_ms;
+    return c->silent_polls >= DARK_ROUNDS * SILENT_ROUND;
+}
+
+/* Anything of the peer: a frame, a control, a pattern.  Ends a dark run;
+ * this round's ask-again bit stays. */
+static void peer_heard(car_t *c, uint64_t now)
+{
+    c->heard_ms = now;
+    c->silent_polls &= SILENT_ASKED;
 }
 
 static bool level_dead(const car_t *c, int lv)
@@ -2360,7 +2370,7 @@ static size_t m_peer_expect(const car_t *c)
 static void m_start_recv(car_t *c, uint64_t now)
 {
     m_enter(c, PH_RECV, now);
-    c->silent_polls = 0;
+    c->silent_polls &= ~SILENT_ASKED;
     int lv = deaf_rung(c, choose_level(c, now));
     int n = poll_size(c, lv, now);
     int sl = short_rung(c, lv, m_peer_expect(c), &n);
@@ -2423,7 +2433,7 @@ static bool offer_both(car_t *c, uint64_t now)
     if (c->ctl_deaf && c->io.pattern) lv = 0;
     if (!both_ok(c, lv)) return false;
     m_enter(c, PH_RECV, now);
-    c->silent_polls = 0;
+    c->silent_polls &= ~SILENT_ASKED;
     c->offered = true;
     int n = poll_size(c, lv, now);
     lv = short_rung(c, lv, m_peer_expect(c), &n);
@@ -2518,14 +2528,14 @@ static void m_decide_recv(car_t *c, uint64_t now)
      * rung is dead.  On a rung that has delivered, ask again once, unscored:
      * two lost polls scored in a row threw DATAC17 away at 12 dB (sim,
      * awgn:0.25: 169 s -> 719 s). */
-    if (!c->m_heard && c->poll_level > 0 && c->round_frames > 0 && c->silent_polls == 0 &&
+    if (!c->m_heard && c->poll_level > 0 && c->round_frames > 0 && !(c->silent_polls & SILENT_ASKED) &&
         c->rung[c->poll_level].sent >= 2.0 && level_delivery(c, c->poll_level) >= 0.5) {
-        c->silent_polls = 1;
+        c->silent_polls |= SILENT_ASKED;
         car_trace(c, "rx round lv=%d unheard: asking again", c->poll_level);
         m_plan(c, KD_POLL, c->poll_level, c->poll_n);
         return;
     }
-    c->silent_polls = 0;
+    c->silent_polls &= ~SILENT_ASKED;
     /* Still nothing: one loss, not the round's.  The poll or the whole round
      * went, and which is not known; scored as all n frames lost, one lost
      * poll declared a marginal rung dead (two frames) on a rung with one
@@ -2534,9 +2544,9 @@ static void m_decide_recv(car_t *c, uint64_t now)
      * s, awgn:0.25 301 -> 287, fade:-5 6031 -> 5879 (40-60 seeds); the rest
      * within 1 %. */
     if (!c->m_heard && !c->status_seen) {
-        /* in a row only with nothing of the peer heard since the last */
-        c->dark_rounds = c->dark_ms && c->heard_ms < c->dark_ms ? c->dark_rounds + 1 : 1;
-        c->dark_ms = now;
+        /* in a row only with nothing of the peer heard since the last:
+         * hearing it clears the count (peer_heard) */
+        if (c->silent_polls < DARK_ROUNDS * SILENT_ROUND) c->silent_polls += SILENT_ROUND;
         c->loss_est = 0.5 * c->loss_est + 0.5;
         measure_level(c, c->poll_level, 1, 1.0, now);
     } else if (!c->status_seen) rx_measure(c, c->poll_level, now);
@@ -3126,7 +3136,7 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
         ctl = decode_ctl(c, bytes + 1, len - 1, &m);
     if (control || ctl) {
         if (!ctl) return false;
-        c->heard_ms = now;
+        peer_heard(c, now);
         note_peer_ctl_deaf(c, m.ctl_deaf);
         c->peer_short = m.short_rung; c->peer_backlog = m.backlog;
         if (c->master) m_on_ctl(c, now, &m);
@@ -3136,7 +3146,7 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     int lv = level_of_mode(mode);
     if (lv < 0 || !decode_data(bytes, len, &m, piece_of(c))) return false;
     if (m.left >= peer_keydown_cap(c, lv)) return false;   /* corrupt: no keydown on the rung is that long */
-    c->heard_ms = now;
+    peer_heard(c, now);
     note_peer_ctl_deaf(c, m.ctl_deaf);
     msg_t k;
     bool ending = false;
@@ -3217,7 +3227,7 @@ static bool pattern_in_time(const car_t *c, uint64_t now)
 void car_on_pattern(car_t *c, uint64_t now, int kind)
 {
     c->last_carrier_ms = now;
-    c->heard_ms = now;
+    peer_heard(c, now);
     c->rx_late = false;
     if (c->tx_busy || !(c->floor_waiting || c->pat_waiting)) return;
     if (!pattern_in_time(c, now)) {
