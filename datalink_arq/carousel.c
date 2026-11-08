@@ -2021,10 +2021,17 @@ static void rx_trace(car_t *c)
  * and a NVIS round of 7 that brought 3 read as "3 of 3, whole" (sim, nvis
  * seed 3: a "same again" pattern, and the loss unscored).  Without the tail,
  * the round is taken to be what I asked for. */
+static void rx_score(car_t *c, int lv, int frames, uint64_t now);
 static void rx_measure(car_t *c, int lv, uint64_t now)
 {
     int frames = c->round_frames > 0 ? c->round_frames : 1;
     if (!c->rx_tail && c->poll_n > frames) frames = c->poll_n;
+    rx_score(c, lv, frames, now);
+}
+
+/* ...or what M said it was: a REQ names the frames M sent. */
+static void rx_score(car_t *c, int lv, int frames, uint64_t now)
+{
     double loss = 1.0 - (double)c->round_seen / frames;
     if (loss < 0) loss = 0;
     c->loss_est = 0.5 * c->loss_est + 0.5 * loss;
@@ -2740,10 +2747,16 @@ static int s_idle_rung(car_t *c, uint64_t now)
 static void s_answer(car_t *c, uint64_t now, bool req)
 {
     if (req) {
-        /* M's round had no answer from me.  None of it came: score it lost. */
+        /* M's round had no answer from me.  None of it came: score it lost,
+         * as the frames M says it sent.  Taken as my last poll's size (the
+         * tail unheard), one frame M sent on its own turn after my "done"
+         * scored as the 8 that poll had asked for: QAM16C2, delivering 90 %
+         * near its threshold, was dead at once, and the rest of the file went
+         * on DATAC17 at half the goodput (NW8L-KA8RYU, IONOS MPD 35 dB,
+         * 1.9.22: 299 s against 240 s at 25 dB, #502). */
         if (c->req_mk != c->rx_mk && c->req_n > 0) {
             c->round_seen = 0; c->round_frames = c->req_n;
-            rx_measure(c, c->req_lv, now);
+            rx_score(c, c->req_lv, c->req_n, now);
         }
     } else {
         rx_measure(c, c->round_lv, now);

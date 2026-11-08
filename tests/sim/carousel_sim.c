@@ -309,6 +309,7 @@ static int recv_fallbacks;
 static int app_wait_says;              /* "tx: my application's data waits for" lines */
 static int gated_probes;
 static int dark_polls;
+static int one_frame_kills;
 /* Did the last "rx round" line mark rung lv not allowed?  Its gp list reads
  * " 0:5/0.83 2:4/0.87 3:0/0.00x". */
 static bool round_marked_out(const station_t *s, int lv)
@@ -338,6 +339,12 @@ static void io_trace(void *ctx, const char *line)
             s->round_snr = strtof(p + 5, &end);
             s->round_snr_ok = *end != '?';
             snprintf(s->round_gp, sizeof s->round_gp, "%s", g + 16);
+        }
+        /* one frame, none heard: one loss, and no rung has a dead verdict at
+         * one loss outside the dark rule */
+        if (g && strstr(line, " seen=0/1 ")) {
+            snprintf(s->round_gp, sizeof s->round_gp, "%s", g + 16);
+            if (round_marked_out(s, atoi(line + 12))) one_frame_kills++;
         }
     } else if (!strncmp(line, "rx -> poll lv=", 14) && s->round_snr_ok) {
         int lv = atoi(line + 14);
@@ -663,6 +670,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     app_wait_says = 0;
     gated_probes = 0;
     dark_polls = 0;
+    one_frame_kills = 0;
     bad_frames = 0;
     slot_breaches = 0;
     frame_no = 0;
@@ -819,6 +827,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->app_wait_says = app_wait_says;
     res->gated_probes = gated_probes;
     res->dark_polls = dark_polls;
+    res->one_frame_kills = one_frame_kills;
     res->kd_unexplained = kd_unexplained;
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;

@@ -302,6 +302,29 @@ static void test_carousel_dark_rounds_drop_the_rung(void)
     unsetenv("CAR_SCRIPT");
 }
 
+/* M's own round of one frame, after my "done", lost whole: M asks (REQ)
+ * about the one frame it sent.  Scored as the 8 my last poll had asked for,
+ * one lost frame took QAM16C2 out at 20 dB (on air at its threshold: NW8L-
+ * KA8RYU, IONOS MPD 35 dB, and the rest of the file on DATAC17, #502).  The
+ * frames: A's first round (0), B's poll for 8 (1), A's 5 (2-6), B's "done"
+ * (7), A's poll and B's ack (8, 9), A's ack (10), A's 300 bytes (11). */
+static void test_carousel_req_scores_the_frames_sent(void)
+{
+    static const int lost[] = { 11 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A6000,B59+500,A300+3000", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(12, r.frames, "the frame order changed: pick the lost frame again (CAR_TRACE=1)");
+    carousel_sim_force_losses(lost, 1);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.one_frame_kills, "one lost frame took a rung out");
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -475,6 +498,7 @@ int main(void)
     RUN_TEST(test_carousel_drop_below_control_mode);
     RUN_TEST(test_carousel_no_reprobe_below_gate);
     RUN_TEST(test_carousel_dark_rounds_drop_the_rung);
+    RUN_TEST(test_carousel_req_scores_the_frames_sent);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }
