@@ -28,6 +28,7 @@ typedef struct {
                                      (control included; CAR_MFSK_TX) */
     int      keydowns;            /* keydowns, both stations */
     int      kd_overlaps;         /* keydowns that started while the peer was on the air */
+    int      app_wait_says;       /* the application's data said what it waits for (car_on_app_data) */
     int      recv_fallbacks;      /* falls back to ok_lv as the turn passed to a station that heard
                                      nothing (fall_back_unconfirmed in m_decide_recv, #448) */
     int      gated_probes;        /* polls naming a rung out of the running (dead or locked

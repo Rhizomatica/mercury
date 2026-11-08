@@ -3223,6 +3223,19 @@ bool car_expect_pattern(const car_t *c)
     return (c->floor_waiting || c->pat_waiting) && !c->tx_busy;
 }
 
+/* What data the application gives me waits for when it cannot go at once.
+ * On air a command typed at N3JXB took 2-11 s to key and the log said
+ * nothing: it came while M waited out K7EK's answer slot, and was planned only
+ * when that ended, so no hold was logged (#495).  The keydown that carries it
+ * is in the log, so the wait reads off the timestamps. */
+static const char *app_wait_why(const car_t *c)
+{
+    if (!c->master)              return "the peer's next keydown: I key only in its slots";
+    if (c->tx_busy)              return "my keydown on the air, then the peer's answer slot";
+    if (c->m_state == MS_WAIT)   return "the peer's answer slot";
+    return "a time clear of the peer's slots";
+}
+
 void car_on_app_data(car_t *c, uint64_t now)
 {
     c->idle = false;
@@ -3232,7 +3245,11 @@ void car_on_app_data(car_t *c, uint64_t now)
     if (c->master && c->m_state == MS_IDLE && !c->tx_busy) {
         c->m_state = MS_WAIT;
         arm(c, CAR_T_M, now);
+        return;
     }
+    /* Only for data that starts a send: not for each piece of a stream
+     * already going out in blocks. */
+    if (!c->nsb) car_trace(c, "tx: my application's data waits for %s", app_wait_why(c));
 }
 
 void car_on_time(car_t *c, uint64_t now)
