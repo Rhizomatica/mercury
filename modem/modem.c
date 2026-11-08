@@ -3614,8 +3614,18 @@ void *rx_thread(void *g_modem)
                         atomic_store_explicit(&g_channel_busy, now_busy,
                                               memory_order_relaxed);
                         tnc_send_busy(now_busy);
-                        HLOGI("modem-rx", "channel %s (floor=%.1f dB)",
-                              now_busy ? "BUSY" : "CLEAR", g_busy_state.noise_floor_db);
+                        /* What made the verdict: one loud band is a tone,
+                         * many a signal; a very quiet band at an edge is a
+                         * receive filter narrower than the passband. */
+                        const busy_state_t *bs = &g_busy_state;
+                        HLOGI("modem-rx", "channel %s (floor=%.1f dB; peak %.1f dB "
+                              "at %.0f Hz, %+.1f dB over the floor; quietest %.1f dB "
+                              "at %.0f Hz; %d/%d bands over the threshold)",
+                              now_busy ? "BUSY" : "CLEAR", bs->noise_floor_db,
+                              bs->peak_db, bs->peak_hz,
+                              bs->peak_db - bs->noise_floor_db,
+                              bs->quiet_db, bs->quiet_hz,
+                              bs->bands_over, bs->bands);
                     }
                 }
             }
