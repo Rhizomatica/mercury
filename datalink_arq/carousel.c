@@ -734,6 +734,7 @@ static void open_block(car_t *c, int max_k)
     uint8_t buf[CAR_MAX_K * CAR_PIECE];
     size_t len = c->io.tx_read(c->io.ctx, buf, (size_t)max_k * P - BLOCK_CHECK);
     if (!len) return;
+    c->app_taken = true;                      /* say_app_wait, once it is keyed */
     car_sblock_t *s = &c->sb[c->nsb++];
     s->id = c->next_blk_id++;
     s->app_len = (int)len;
@@ -2244,6 +2245,31 @@ static bool ack_can_carry(const car_t *c, uint64_t now)
     return both_ok(c, lv);
 }
 
+/* How long the application's data waited to go out, said when the keydown
+ * that carries it is keyed: on air a command typed at N3JXB took 2-11 s to
+ * key, and nothing in the log said why -- it came while M waited out K7EK's
+ * answer slot, and was planned only when that ended, so no hold was logged
+ * (#495).  Only waits of APP_WAIT_SAY_MS or more: a free channel keys at once. */
+#define APP_WAIT_SAY_MS 1000
+static const char *app_wait_why(const car_t *c)
+{
+    if (!c->master)              return "the peer's next keydown: I key only in its slots";
+    if (c->tx_busy)              return "my keydown on the air, then the peer's answer slot";
+    if (c->m_state == MS_WAIT)   return "the peer's answer slot";
+    return "a time clear of the peer's slots";
+}
+static void say_app_wait(car_t *c, uint64_t now)
+{
+    if (!c->app_taken) return;
+    c->app_taken = false;
+    if (c->app_since && now >= c->app_since + APP_WAIT_SAY_MS)
+        car_trace(c, "tx: my application's data waited %llu ms to go (%s)",
+                  (unsigned long long)(now - c->app_since), c->app_why ? c->app_why : "?");
+    /* What it left unread waits from now on. */
+    c->app_since = unopened(c) ? now : 0;
+    c->app_why = c->app_since ? app_wait_why(c) : NULL;
+}
+
 /* Key the planned keydown now if no slot of S's is in the way; else when. */
 static void m_try(car_t *c, uint64_t now)
 {
@@ -2312,6 +2338,7 @@ static void m_try(car_t *c, uint64_t now)
     if (defer_if_busy(c, CAR_T_M, now)) return;     /* another station on the channel */
     c->held = HELD_NONE;
     m_key_plan(c);
+    say_app_wait(c, now);
 }
 
 /* Both directions in one exchange only above the floor, with the control
@@ -2799,6 +2826,7 @@ static void s_slot(car_t *c, uint64_t now)
             break;
         }
     }
+    say_app_wait(c, now);
     if (++c->anc.i > c->anc.k) { c->anc.on = false; return; }
     arm(c, CAR_T_S, c->anc.eh + TG_MS + (uint64_t)c->anc.i * c->anc.p);
 }
@@ -3226,6 +3254,7 @@ bool car_expect_pattern(const car_t *c)
 void car_on_app_data(car_t *c, uint64_t now)
 {
     c->idle = false;
+    if (!c->app_since) { c->app_since = now ? now : 1; c->app_why = app_wait_why(c); }
     /* An ack or an answer waiting for my application: it came. */
     if (c->master && c->plan == KD_DONE && !c->tx_busy) { c->plan_not_before = 0; m_try(c, now); return; }
     if (!c->master && c->anc.on && c->anc.waited && c->anc.i == 0 && !c->tx_busy) { s_slot(c, now); return; }

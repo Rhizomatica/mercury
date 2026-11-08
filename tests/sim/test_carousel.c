@@ -28,7 +28,7 @@ void setUp(void) {}
 void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
-    unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX");
+    unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -158,6 +158,21 @@ static void test_carousel_sender_holds_for_peer_turn(void)
  * block the callee never heard got "done" for an answer -- the callee had
  * not taken M's block state from it -- and the session went on for ever on
  * a rung the callee had left (these seeds, before the fix). */
+/* Typed lines, as an operator's at a BBS: one that comes while M waits out
+ * the peer's answer slot, or while a keydown is on the air, waits to go, and
+ * the log says how long and for what (say_app_wait).  On air nothing did:
+ * N3JXB's commands took 2-11 s to key and the log was silent about it. */
+static void test_carousel_app_wait_is_said(void)
+{
+    car_sim_result_t r;
+    setenv("CAR_KBD", "10:40:15", 1);
+    carousel_sim_run(3, "clean", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT(0, r.collisions);
+    TEST_ASSERT_GREATER_THAN_INT(0, r.app_wait_says);
+    TEST_ASSERT_TRUE_MESSAGE(r.app_wait_min_ms >= 1000, "a wait under APP_WAIT_SAY_MS was said");
+}
+
 static void test_carousel_request_response_completes(void)
 {
     static const struct { const char *chan; uint64_t seed; } RUNS[] = {
@@ -433,6 +448,7 @@ int main(void)
     RUN_TEST(test_carousel_mfsk_tx_only);
     RUN_TEST(test_carousel_max_keydown);
     RUN_TEST(test_carousel_request_response_completes);
+    RUN_TEST(test_carousel_app_wait_is_said);
     RUN_TEST(test_carousel_drop_below_control_mode);
     RUN_TEST(test_carousel_no_reprobe_below_gate);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
