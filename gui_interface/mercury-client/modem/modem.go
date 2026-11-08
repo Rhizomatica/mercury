@@ -185,18 +185,15 @@ func (mc *ModemClient) Connect() (err error) {
 		mc.ARQDataConn = mc.ARQControlConn
 	}
 
-	// No broadcast address: the caller does not use the broadcast port.
-	if mc.BroadcastAddr != "" {
-		broadcastTCPAddr, err := net.ResolveTCPAddr("tcp", mc.BroadcastAddr)
-		if err != nil {
-			return fmt.Errorf("resolve Broadcast address: %w", err)
-		}
-		mc.BroadcastConn, err = net.DialTCP("tcp", nil, broadcastTCPAddr)
-		if err != nil {
-			return fmt.Errorf("connect to Broadcast port %s: %w", mc.BroadcastAddr, err)
-		}
-		logLines = append(logLines, fmt.Sprintf("Connected to Broadcast: %s", mc.BroadcastAddr))
+	broadcastTCPAddr, err := net.ResolveTCPAddr("tcp", mc.BroadcastAddr)
+	if err != nil {
+		return fmt.Errorf("resolve Broadcast address: %w", err)
 	}
+	mc.BroadcastConn, err = net.DialTCP("tcp", nil, broadcastTCPAddr)
+	if err != nil {
+		return fmt.Errorf("connect to Broadcast port %s: %w", mc.BroadcastAddr, err)
+	}
+	logLines = append(logLines, fmt.Sprintf("Connected to Broadcast: %s", mc.BroadcastAddr))
 
 	go mc.readARQControl()
 	go mc.readARQData()
@@ -419,7 +416,7 @@ func (mc *ModemClient) IsConnected() bool {
 	}
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
-	return mc.ARQControlConn != nil && (mc.BroadcastAddr == "" || mc.BroadcastConn != nil)
+	return mc.ARQControlConn != nil && mc.BroadcastConn != nil
 }
 
 func (mc *ModemClient) Disconnect() {

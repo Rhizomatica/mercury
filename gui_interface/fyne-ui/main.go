@@ -887,6 +887,10 @@ func main() {
 				if telemetry.ClientTCPConnected {
 					bindings.tcpText.Text = "On"
 					bindings.tcpText.Color = theme.Color(theme.ColorNameSuccess)
+				} else if engineTNCHeld() {
+					// The chat window holds the TNC in-process, not over TCP.
+					bindings.tcpText.Text = "In app"
+					bindings.tcpText.Color = theme.Color(theme.ColorNameSuccess)
 				} else {
 					bindings.tcpText.Text = "Off"
 					bindings.tcpText.Color = theme.Color(theme.ColorNameError)
@@ -1797,6 +1801,9 @@ func main() {
 				if cancel != nil {
 					cancel()
 				}
+				// The chat window's in-process TNC reads the engine's ring,
+				// which mercuryStop frees.
+				engineTNCShutdown()
 				mercuryStop()
 				if uiLog != nil {
 					_ = uiLog.Close()

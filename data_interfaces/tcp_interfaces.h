@@ -74,6 +74,19 @@ void broadcast_rx_frame(const uint8_t *frame, size_t len, int mode, float snr);
 /* The host program's tap on those frames (NULL: none).  Called on the
  * modem's RX thread: copy and return. */
 void broadcast_set_rx_tap(void (*tap)(const uint8_t *frame, size_t len, int mode, float snr));
+/* The host program as the TNC's client, in the control client's slot while
+ * no TCP control client holds it (mercury_host_tnc_command):
+ * tnc_host_command runs one control-port line (no "\r"): 0, -1 for none
+ * or one answered WRONG, -2 while a TCP control client is attached.
+ * tnc_host_release gives the slot back, as that client's leaving would;
+ * tnc_host_holds says whether the host still holds it (a TCP client's
+ * connecting takes it).  tnc_host_arq_read takes the
+ * session's received bytes while the host holds the slot and no TCP data
+ * client does: up to len, what there is now. */
+int    tnc_host_command(const char *line);
+void   tnc_host_release(void);
+bool   tnc_host_holds(void);
+size_t tnc_host_arq_read(uint8_t *buf, size_t len);
 /* Is a periodic BUFFER report due: the count changed, or -- in a session,
  * with bytes still to confirm -- no BUFFER line went for
  * TNC_BUFFER_REPEAT_MS (50 s)?  (#397) */

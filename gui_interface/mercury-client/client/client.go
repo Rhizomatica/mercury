@@ -22,9 +22,6 @@ type Config struct {
 	ARQPort        int
 	BroadcastPort  int
 	BandwidthHz    int
-	// NoBroadcastPort leaves the broadcast port alone: the caller carries
-	// broadcast another way (the UI, through the engine in its own process).
-	NoBroadcastPort bool
 }
 
 // ChatMessage is a single chat line emitted for display.
@@ -56,8 +53,22 @@ type Client struct {
 	bcastFilter BroadcastFrameFilter
 
 	remoteCall  string
-	chatRx      lineAssembler
-	broadcastRx lineAssembler
+	chatRx      LineAssembler
+	broadcastRx LineAssembler
+}
+
+// Events are the client's event channels, for a caller holding the client
+// behind an interface.
+type Events struct {
+	Log           <-chan string
+	ARQChat       <-chan ChatMessage
+	BroadcastChat <-chan ChatMessage
+	Status        <-chan string
+}
+
+// Events returns the client's event channels.
+func (c *Client) Events() Events {
+	return Events{Log: c.LogCh, ARQChat: c.ARQChatCh, BroadcastChat: c.BroadcastChatCh, Status: c.StatusCh}
 }
 
 // New returns a Client configured with the given parameters.
@@ -90,9 +101,6 @@ func (c *Client) Connect() error {
 	arqControlAddr := fmt.Sprintf("%s:%d", c.cfg.IP, c.cfg.ARQPort)
 	arqDataAddr := fmt.Sprintf("%s:%d", c.cfg.IP, c.cfg.ARQPort+1)
 	broadcastAddr := fmt.Sprintf("%s:%d", c.cfg.IP, c.cfg.BroadcastPort)
-	if c.cfg.NoBroadcastPort {
-		broadcastAddr = ""
-	}
 
 	mc := modem.NewModemClient(arqControlAddr, arqDataAddr, broadcastAddr)
 	if err := mc.Connect(); err != nil {
@@ -447,7 +455,7 @@ func (c *Client) updateRemoteCall(connectedLine string, done <-chan struct{}) bo
 // as a chat message.  A line ends at "\n", "\r" or "\r\n": many HF chat
 // programs end lines with a bare CR, and with only "\n" accepted their text
 // never reached the chat pane (issue #340).  Text with no ending at all is
-// shown once the link has been quiet for chatPartialFlush, or at DISCONNECTED.
+// shown once the link has been quiet for ChatPartialFlush, or at DISCONNECTED.
 func (c *Client) handleIncomingARQData() {
 	c.mu.Lock()
 	mc := c.modem
@@ -456,7 +464,7 @@ func (c *Client) handleIncomingARQData() {
 	if mc == nil || done == nil {
 		return
 	}
-	idle := time.NewTimer(chatPartialFlush)
+	idle := time.NewTimer(ChatPartialFlush)
 	idle.Stop()
 	defer idle.Stop()
 	emit := func(lines []string) bool {
@@ -483,18 +491,18 @@ func (c *Client) handleIncomingARQData() {
 				return
 			}
 			c.mu.Lock()
-			lines := c.chatRx.push(data)
-			pending := c.chatRx.pending()
+			lines := c.chatRx.Push(data)
+			pending := c.chatRx.Pending()
 			c.mu.Unlock()
 			if pending {
-				idle.Reset(chatPartialFlush)
+				idle.Reset(ChatPartialFlush)
 			}
 			if !emit(lines) {
 				return
 			}
 		case <-idle.C:
 			c.mu.Lock()
-			line := c.chatRx.flush()
+			line := c.chatRx.Flush()
 			c.mu.Unlock()
 			if line != "" && !emit([]string{line}) {
 				return
@@ -534,7 +542,7 @@ func (c *Client) handleIncomingBroadcast() {
 			}
 			c.mu.Lock()
 			var lines []ChatMessage
-			for _, line := range c.broadcastRx.push(data) {
+			for _, line := range c.broadcastRx.Push(data) {
 				lines = append(lines, ChatMessage{Text: line, Broadcast: true, Time: time.Now()})
 			}
 			c.mu.Unlock()
@@ -579,9 +587,9 @@ func (c *Client) handleStatus() {
 				if call == "" {
 					call = c.cfg.TargetCallsign
 				}
-				last := c.chatRx.flush()
+				last := c.chatRx.Flush()
 				c.remoteCall = ""
-				c.broadcastRx.flush()
+				c.broadcastRx.Flush()
 				c.mu.Unlock()
 				if last != "" && !sendOrStop(c.ARQChatCh, ChatMessage{Call: call, Text: last, Time: time.Now()}, done) {
 					return
@@ -593,22 +601,22 @@ func (c *Client) handleStatus() {
 	}
 }
 
-// chatPartialFlush is how long text with no line ending waits for the rest of
+// ChatPartialFlush is how long text with no line ending waits for the rest of
 // its line before it is shown as it is.  Long, because at the MFSK floor one
 // line can arrive in pieces more than 13 s apart.
-const chatPartialFlush = 30 * time.Second
+const ChatPartialFlush = 30 * time.Second
 
 // chatRxMax bounds the text held while waiting for a line ending.
 const chatRxMax = 65536
 
-// lineAssembler cuts a received byte stream into chat lines.  A line ends at
+// LineAssembler cuts a received byte stream into chat lines.  A line ends at
 // "\n", "\r" or "\r\n" (also split across two pushes); blank lines are
 // dropped.  Not safe for concurrent use: the Client holds c.mu around it.
-type lineAssembler struct {
+type LineAssembler struct {
 	buf string
 }
 
-func (a *lineAssembler) push(data []byte) []string {
+func (a *LineAssembler) Push(data []byte) []string {
 	a.buf += string(data)
 	var lines []string
 	for {
@@ -629,10 +637,10 @@ func (a *lineAssembler) push(data []byte) []string {
 }
 
 // pending reports whether text without a line ending is waiting.
-func (a *lineAssembler) pending() bool { return strings.TrimSpace(a.buf) != "" }
+func (a *LineAssembler) Pending() bool { return strings.TrimSpace(a.buf) != "" }
 
 // flush returns the waiting text as a line ("" if none) and forgets it.
-func (a *lineAssembler) flush() string {
+func (a *LineAssembler) Flush() string {
 	line := a.buf
 	a.buf = ""
 	if strings.TrimSpace(line) == "" {
