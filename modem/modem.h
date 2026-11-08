@@ -176,10 +176,8 @@ void modem_busy_channel_changed(void);
 
 // True when a CALL decoder (DATAC16 or an MFSK call listener) has locked onto
 // a frame it has not decoded yet: *mode_name names the mode, *for_ms how long
-// the lock has lasted, *lost_on_listen_off whether a LISTEN OFF drops it by
-// itself (the MFSK listeners are flushed at every LISTEN OFF; the DATAC16
-// decoder keeps decoding).  Diagnostic only; a lock can be noise.
-bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms,
-                              bool *lost_on_listen_off);
+// the lock has lasted.  A LISTEN OFF with no session after it drops it (all
+// three decoders are flushed).  Diagnostic only; a lock can be noise.
+bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms);
 
 #endif // MODEM_H

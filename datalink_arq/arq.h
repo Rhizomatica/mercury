@@ -139,6 +139,12 @@ typedef struct
      * misses a LISTEN OFF whose LISTEN ON follows 1 ms later (BPQ32's scan
      * hop): the modem reads it once per 20 ms. */
     uint32_t listen_spells_ended;
+    /* How many of them ended with the radio back to the host, no session
+     * after (LISTEN OFF, or a host DISCONNECT while answering): the control
+     * and payload decoders drop what they hold too.  A DATAC16 CALL straddling
+     * a scan hop otherwise decodes on the next channel and is answered there
+     * (K7EK, 2026-11-07: decoded 1.4 and 1.9 s after the hop). */
+    uint32_t listen_releases;
     /* The MFSK floor of my own bandwidth (arq_floor_mode), which callers at
      * it escalate to: the one the MFSK call listener decodes. */
     int listen_floor_mode;
