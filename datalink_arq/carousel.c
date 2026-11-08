@@ -974,8 +974,27 @@ static double level_delivery(const car_t *c, int lv)
  * sent the session to DATAC4 and the floor (sim, nvis seed 2: 2975 s, where
  * staying on DATAC3 takes ~1800). */
 #define DEAD_P 0.02
+/* Dark: two rounds in a row with nothing of the peer at all, each asked
+ * again.  The SNR is as old as the last frame then, and so is what a rung
+ * delivered: two losses make a rung dead, as near its threshold, whatever it
+ * delivered before.  On air (NW8L, IONOS MPP, +5 -> -5 dB within a session,
+ * 1.9.22) the receiver read 4.2 dB throughout and polled seven DATAC3 frames
+ * at a time; each dark round scored one loss, four made DATAC3 dead, and that
+ * took 230 s -- the lost-peer watchdog ended the session 7 s after the poll
+ * went to the floor.  Sim, 100 seeds each: nvis bidir 56 -> 58 done, +5 %
+ * bytes, 240 s silences 20 -> 12; step:5:-5:60 bidir 79 -> 84 done;
+ * awgn:0.25 bidir +1.5 % time; the rest unchanged.  Going to the floor
+ * outright once dark was faster on the step, but on NVIS the floor kept the
+ * session (nvis bidir, 30 seeds: 20 done -> 9). */
+#define DARK_ROUNDS 2
+static bool level_dark(const car_t *c)
+{
+    return c->dark_rounds >= DARK_ROUNDS && c->heard_ms < c->dark_ms;
+}
+
 static bool level_dead(const car_t *c, int lv)
 {
+    if (level_dark(c)) return c->rung[lv].dead_run >= 2;
     int run = level_marginal(c, lv) ? 2 : DEAD_RUN;
     double p = c->rung[lv].p_ok;
     if (p > 0.0) {
@@ -2515,6 +2534,9 @@ static void m_decide_recv(car_t *c, uint64_t now)
      * s, awgn:0.25 301 -> 287, fade:-5 6031 -> 5879 (40-60 seeds); the rest
      * within 1 %. */
     if (!c->m_heard && !c->status_seen) {
+        /* in a row only with nothing of the peer heard since the last */
+        c->dark_rounds = c->dark_ms && c->heard_ms < c->dark_ms ? c->dark_rounds + 1 : 1;
+        c->dark_ms = now;
         c->loss_est = 0.5 * c->loss_est + 0.5;
         measure_level(c, c->poll_level, 1, 1.0, now);
     } else if (!c->status_seen) rx_measure(c, c->poll_level, now);

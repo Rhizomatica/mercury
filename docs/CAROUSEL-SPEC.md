@@ -201,6 +201,9 @@ listed).
 Per rung `lv`: `rung[lv].sent`, `rung[lv].lost` (decayed frame counts), `rung[lv].rounds`,
 `rung[lv].dead_run`, `rung[lv].probe_fails`, `rung[lv].round_at` (value of `polls` when last
 measured), `rung[lv].probe_at` (ms), `rung[lv].backoff_ms` (H:145-149). All 0 at init.
+`dark_rounds`, `dark_ms`: scored rounds in a row with nothing of the peer heard (the
+"one loss, not the round's" case), and when the last was scored; a round counts on the run only
+if nothing was heard since the one before (`heard_ms < dark_ms`).
 
 ---
 
@@ -583,7 +586,10 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 
 Predicates (`marginal = snr_valid && snr_ema < min_db + 3`, C:797-800):
 - `delivery(lv)` = marginal ? `(sent - lost)/(sent + 1)` : `1 - (lost + 0.5)/(sent + 2)` (C:737-742).
-- `dead(lv)` = `dead_run ≥ (marginal ? 2 : 4)` (C:746-749).
+- `dark` = `dark_rounds ≥ 2 && heard_ms < dark_ms`: two scored rounds in a row with nothing of the peer heard,
+  each asked again; the SNR and the rungs' scores are then as old as the last frame.
+- `dead(lv)` = dark ? `dead_run ≥ 2` : `dead_run ≥ max(marginal ? 2 : 4, ⌈ln 0.02 / ln(1 - min(p_ok, 0.95))⌉)`,
+  `p_ok` the delivery the rung showed when it last delivered (0: none, no floor).
 - `gated(lv)` = `snr_valid && snr_ema < min_db - 3 && !(sent ≥ 3 && delivery ≥ 0.7)` (C:802-806).
 - `allowed(lv)` = `!dead && !gated` and, if any lower rung is dead, `sent - lost ≥ 0.5` (C:808-815).
 - `reprobe_due(lv)` = `!(rounds == 0 && gated)` and `now - probe_at ≥ (backoff ? backoff : 60000)` (C:821-829).

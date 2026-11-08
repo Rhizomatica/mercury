@@ -32,6 +32,8 @@ typedef struct {
                                      nothing (fall_back_unconfirmed in m_decide_recv, #448) */
     int      gated_probes;        /* polls naming a rung out of the running (dead or locked
                                      out) whose SNR gate the smoothed SNR is below */
+    int      dark_polls;          /* the most polls above the floor in a row, by one station,
+                                     with nothing of the peer heard between them */
     int      kd_unexplained;      /* ... over a keydown of the peer that could be sensed */
     const char *failed;           /* a station failed the session (car_failed), or NULL */
     uint64_t air_ms[2];           /* each station on the air */
