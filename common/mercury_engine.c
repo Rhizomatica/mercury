@@ -33,6 +33,7 @@
 #include "mercury_engine.h"
 #include "virtual_clock.h"
 #include "message_store.h"
+#include "mercury_version.h"
 
 /* cfg_utils.h and arq.h each define their own callsign size; they must stay
  * equal or the config could hold a callsign longer than the ARQ slot it is
@@ -237,6 +238,8 @@ int mercury_engine_init(const mercury_config *cfg,
                                 log_jsonl);
         HLOGI("engine", "Logger initialised (min_level=%s)",
               cfg->trace ? "TRACE" : verbose ? "DEBUG" : "INFO");
+        /* Testers' logs are often all we get: say which build wrote them. */
+        HLOGI("engine", "Mercury %s (git %.8s)", MERCURY_VERSION, GIT_HASH);
     }
     if (log_rc >= 0)
     {
