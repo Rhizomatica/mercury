@@ -106,6 +106,12 @@ void car_set_nav_ms(uint32_t ms) { g_nav_ms = ms; }
  * older peer leaves zero: it is never asked to do anything new. */
 static bool g_short_rung = true;
 void car_set_short_rung(bool on) { g_short_rung = on; }
+/* PROTOTYPE (#495): M takes an empty response slot as over once S's keydown,
+ * had it come, would have been sensed -- instead of waiting out its whole
+ * length.  Breaks the turn rules' "safe under any loss" (specs/turns): an S
+ * keydown M fails to sense is keyed over.  Off by default; sim: CAR_EARLY=1. */
+static bool g_early_slot = false;
+void car_set_early_slot(bool on) { g_early_slot = on; }
 enum { BL_NONE, BL_SMALL, BL_MEDIUM, BL_LARGE };
 #define BL_SMALL_BYTES  90    /* one DATAC3 frame's pieces, with the check and a margin */
 #define BL_MEDIUM_BYTES 460   /* ...one DATAC1 frame's */
@@ -2155,6 +2161,44 @@ static void m_note(car_t *c, int kind, uint32_t r, uint32_t d, int k, uint32_t r
 }
 static uint32_t my_ctl_d(const car_t *c) { return ctl_on_floor(c) ? D_MFSK_MS : D_OFDM_MS; }
 
+/* PROTOTYPE (#495).  How long after its response slot opens an empty one is
+ * taken as over (0: never).  S keys in that slot at once (s_slot checks no
+ * carrier), at most d late, behind at most LEAD_MAX_MS of lead; a decoder is
+ * in sync on its first frame EARLY_SENSE_MS after that.  Only where S's
+ * answer opens with a control frame (DATAC16), which my control decoder
+ * syncs on and which outlasts the check: an ack, a REQ, my round, both ways.
+ * Not at the floor, whose answers may be a 1.1 s pattern no OFDM decoder
+ * syncs on, nor where control goes on MFSK. */
+#ifndef EARLY_SENSE_MS
+#define EARLY_SENSE_MS 1000
+#endif
+static uint32_t m_early_ms(const car_t *c, int kind, int lv)
+{
+    if (!g_early_slot || c->m_kd.k || c->m_kd.d != D_OFDM_MS) return 0;
+    if (c->ctl_deaf || ctl_on_floor(c) || peer_ctl_on_floor(c)) return 0;
+#ifndef EARLY_WITH_REQS
+    /* ...nor while my asks go unanswered: the link is going, and S's
+     * answers with it -- unsensed, they are keyed over (sim, bw500 floor
+     * test, step:5:-14: the sixth ask over S's poll at -14 dB). */
+    if (c->reqs > 0) return 0;
+#endif
+    switch (kind) {
+    case KD_DONE:  break;                                  /* S: a status, if it has data */
+    /* Not a poll: S answers it with its round alone, on lv, which a decoder
+     * of mine senses only when it decodes it -- lost, it was keyed over, and
+     * my next keydown with it (sim, CAR_CS_DECODABLE, both ways: 351
+     * collisions in 240 runs with polls, 51 without).  Gating on the SNR or
+     * the loss instead did worse: nvis reads 10 dB where DATAC1 fails. */
+    case KD_REQ:
+    case KD_ROUND: if (c->tx_level <= 0) return 0; break;   /* its poll: no pattern above the floor */
+    /* Nor both ways: S's poll may ride inline in its first data frame, on a
+     * rung my payload decoder is not bound to (sim, CAR_CS_DECODABLE, chat
+     * fade:5:0.5: a DATAC3 answer keyed over). */
+    default:       return 0;                               /* patterns, KD_POLL, KD_BOTH */
+    }
+    return c->m_kd.d + LEAD_MAX_MS + EARLY_SENSE_MS;
+}
+
 static void m_key_plan(car_t *c)
 {
     int kind = c->plan;
@@ -2226,6 +2270,7 @@ static void m_key_plan(car_t *c)
         break;
     }
     if (c->m_kind != KD_BOTH) c->offered = false;   /* it went as something else */
+    c->m_kd.early = m_early_ms(c, c->m_kind, c->plan_lv);
 }
 
 /* A request/response application answers a delivery within a second (on
@@ -2244,10 +2289,32 @@ static bool ack_can_carry(const car_t *c, uint64_t now)
     return both_ok(c, lv);
 }
 
+/* PROTOTYPE (#495).  Take each response slot whose early time has come as
+ * over if nothing of S's was sensed since it opened; return the next early
+ * time still to come (UINT64_MAX: none). */
+static uint64_t m_early_close(car_t *c, uint64_t now)
+{
+    uint64_t next = UINT64_MAX;
+    for (int j = 0; j < c->nmlog; j++) {
+        car_mlog_t *l = &c->mlog[j];
+        if (!l->early || (l->done & 1u)) continue;
+        uint64_t lo = mslot_lo(c, l, 0), t = lo + l->early;
+        if (now < t) { if (t < next) next = t; continue; }
+        if (now >= mslot_hi(c, l, 0) + TURN_G_MS) continue;   /* over anyway */
+        if (peer_keyed(c, now) || c->last_carrier_ms >= lo) { l->early = 0; continue; }
+        l->done |= 1u;
+        c->early_closes++;
+        car_trace(c, "tx: the peer's slot after keydown %d is empty -- taken as over (%llu ms early)",
+                  l->mk, (unsigned long long)(mslot_hi(c, l, 0) + TURN_G_MS - now));
+    }
+    return next;
+}
+
 /* Key the planned keydown now if no slot of S's is in the way; else when. */
 static void m_try(car_t *c, uint64_t now)
 {
     if (c->tx_busy || c->plan == KD_NONE) return;
+    uint64_t early_next = g_early_slot ? m_early_close(c, now) : UINT64_MAX;
     /* Data of mine came after I chose to ack the peer's direction: the ack
      * goes with my round, both ways in one exchange.  A request/response
      * application answers within a few hundred ms of a delivery, inside the
@@ -2308,7 +2375,11 @@ static void m_try(car_t *c, uint64_t now)
             at = best;
         }
     }
-    if (at > now) { note_held(c, HELD_SLOTS, 0, now, at - now); arm(c, CAR_T_M, at); return; }
+    if (at > now) {
+        note_held(c, HELD_SLOTS, 0, now, at - now);
+        arm(c, CAR_T_M, early_next < at ? early_next : at);   /* re-tried there (#495) */
+        return;
+    }
     if (defer_if_busy(c, CAR_T_M, now)) return;     /* another station on the channel */
     c->held = HELD_NONE;
     m_key_plan(c);
@@ -2565,6 +2636,16 @@ static void m_decide(car_t *c, uint64_t now)
 static void m_timer(car_t *c, uint64_t now)
 {
     if (c->tx_busy) return;                      /* car_on_tx_done takes over */
+    /* #495 prototype: woken at the response slot's early time with nothing
+     * heard -- decide now only if the slot is taken as empty. */
+    if (g_early_slot && c->m_state == MS_WAIT && !c->m_heard && c->nmlog) {
+        car_mlog_t *l = &c->mlog[c->nmlog - 1];
+        uint64_t over = mslot_hi(c, l, 0) + TURN_G_MS;
+        if (now < over && !(l->done & 1u)) {
+            if (l->early) m_early_close(c, now);
+            if (!(l->done & 1u)) { arm(c, CAR_T_M, over); return; }
+        }
+    }
     if (c->m_state == MS_PLAN) { m_try(c, now); return; }
     if (c->m_state == MS_IDLE) {
         /* Idle: ask whether S has data, for one frame on its rung. */
@@ -3169,8 +3250,12 @@ void car_on_tx_done(car_t *c, uint64_t now)
     }
     m_log_add(c, now);
     c->m_state = MS_WAIT;
-    /* Decide when S's response slot is over, or once its answer is heard. */
-    arm(c, CAR_T_M, mslot_hi(c, &c->mlog[c->nmlog - 1], 0) + TURN_G_MS);
+    /* Decide when S's response slot is over, or once its answer is heard --
+     * or, empty, at its early time (#495 prototype: m_timer checks). */
+    const car_mlog_t *l = &c->mlog[c->nmlog - 1];
+    uint64_t over = mslot_hi(c, l, 0) + TURN_G_MS;
+    if (l->early && mslot_lo(c, l, 0) + l->early < over) over = mslot_lo(c, l, 0) + l->early;
+    arm(c, CAR_T_M, over);
 }
 
 /* A pattern carries no id and a detector can false-alarm, so one is taken

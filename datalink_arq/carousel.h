@@ -142,6 +142,9 @@ typedef struct {
     uint8_t  done;                  /* slots I heard S's keydown in, end to end */
     uint8_t  mk;                    /* its id */
     bool     pat;                   /* a pattern: S's answers name no id */
+    uint32_t early;                 /* car_set_early_slot: the response slot is
+                                     * taken as over this long after it opens
+                                     * if nothing of S's was sensed (0: never) */
 } car_mlog_t;
 
 typedef struct {
@@ -188,6 +191,7 @@ typedef struct {
     bool     offered;               /* M: my round offered S its turn as well (offer_both) */
     uint64_t kd_allowed;            /* M: the length my keydown was checked against FreeFor at */
     int      overruns;              /* M: keydowns longer than that (a bug: see keydown()) */
+    int      early_closes;          /* M: response slots taken as empty (car_set_early_slot) */
     int      piece;                 /* the session's piece size (0: CAR_PIECE) */
     uint32_t deliver_seq;           /* deliveries to my application so far */
     uint32_t seq_at_ask;            /* ...when I last asked or answered */
@@ -380,6 +384,7 @@ bool car_slot_reserved(const car_t *m, uint64_t start, uint64_t end);
  * car_wants_nav() says the peer may not sense it otherwise (car_set_nav_below_db). */
 void car_set_nav_ms(uint32_t ms);
 void car_set_short_rung(bool on);   /* small backlogs on the shortest rung (default on) */
+void car_set_early_slot(bool on);   /* PROTOTYPE (#495): end an empty response slot early (default off) */
 /* The longest keydown this station keys, in ms (0: the protocol's 30 s
  * round); rounds it accepts stay at 30 s (arq:max_keydown_s, #445).  A
  * session takes it at car_init unless its car_io_t sets one. */

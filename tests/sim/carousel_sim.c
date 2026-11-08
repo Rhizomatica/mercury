@@ -636,6 +636,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
     nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
     car_set_nav_ms(nav_air);
+    car_set_early_slot(getenv("CAR_EARLY") && strcmp(getenv("CAR_EARLY"), "0"));   /* #495 prototype */
     car_set_short_rung(!(getenv("CAR_SHORT") && !strcmp(getenv("CAR_SHORT"), "0")));   /* A/B */
     car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
     car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
@@ -793,6 +794,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     for (int k = 0; k < res->msgs; k++)
         res->msg_delay_ms[k] = sc[k].delivered ? sc[k].delivered - sc[k].written : UINT64_MAX;
     res->collisions = collisions;
+    res->early_closes = S[0].car.early_closes + S[1].car.early_closes;
     res->frames = frame_no;
     res->non_mfsk[0] = non_mfsk[0]; res->non_mfsk[1] = non_mfsk[1];
     res->keydowns = keydown_no;
