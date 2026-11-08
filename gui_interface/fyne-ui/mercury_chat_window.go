@@ -53,12 +53,14 @@ func embeddedClientMayConnect(alreadyOurs bool, tel telemetryState) (bool, strin
 	return false, "Another client (uucp, VarAC, RNS...) is attached to the TNC ports."
 }
 
-func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string, persistCallsign func(string)) {
+// localEngine says, when asked, whether the UI runs the engine in its own
+// process now (not Remote mode), and that engine's ARQ and broadcast ports.
+func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string, localEngine func() (bool, int, int), persistCallsign func(string)) {
 	if mercuryClientSingleton != nil {
 		mercuryClientSingleton.win.RequestFocus()
 		return
 	}
-	cw := &chatWindow{}
+	cw := &chatWindow{localEngine: localEngine}
 	cw.build(app, telemetry, arqPort, broadcastPort, history, tcpHost, persistCallsign)
 	mercuryClientSingleton = cw
 }
@@ -67,7 +69,14 @@ type chatWindow struct {
 	win  fyne.Window
 	mc   *client.Client
 	done chan struct{}
-	log  *widget.Label
+	// localEngine: whether the UI runs the engine in its own process, and its
+	// ports (asked at each connect: the mode can change while the window is
+	// open).  inEngine: this connection is to it, so broadcast goes through
+	// the engine's host calls (broadcast_engine.go), not its broadcast TCP
+	// port.  Set at connect.
+	localEngine func() (bool, int, int)
+	inEngine    bool
+	log         *widget.Label
 	// logLines is the bounded ring (newest first) backing the log label,
 	// so appending never re-splits the widget's own text.
 	logLines []string
@@ -250,7 +259,12 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 			}
 			return cw.mc
 		},
+		func() bool { return cw.inEngine && cw.mc != nil && cw.mc.IsConnected() },
 		func(f func([]byte) bool) {
+			if cw.inEngine {
+				engineSetBroadcastFilter(f)
+				return
+			}
 			if cw.mc == nil {
 				return
 			}
@@ -315,6 +329,7 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		if cw.mc != nil {
 			cw.mc.Disconnect()
 		}
+		cw.leaveEngine()
 		if cw.done != nil {
 			close(cw.done)
 		}
@@ -532,6 +547,7 @@ func (cw *chatWindow) onConnect() {
 		cw.mc.Disconnect()
 		cw.mc = nil
 	}
+	cw.leaveEngine()
 	if cw.done != nil {
 		close(cw.done)
 		cw.done = nil
@@ -557,6 +573,12 @@ func (cw *chatWindow) onConnect() {
 		BroadcastPort:  bcastPort,
 		BandwidthHz:    bandwidthFromLabel(cw.bandwidth.Selected),
 	}
+	local, engARQ, engBcast := false, 0, 0
+	if cw.localEngine != nil {
+		local, engARQ, engBcast = cw.localEngine()
+	}
+	cw.inEngine = local && engineIsLocal(cfg.IP) && cfg.ARQPort == engARQ && cfg.BroadcastPort == engBcast
+	cfg.NoBroadcastPort = cw.inEngine
 	// Remember the callsign for the next start: the operator set it here, and
 	// without this it falls back to "NOCALL" every time (issue #381).
 	if cw.persistCallsign != nil && strings.TrimSpace(cw.myCall.Text) != "" {
@@ -576,7 +598,11 @@ func (cw *chatWindow) onConnect() {
 
 	go cw.forwardLog()
 	go cw.forwardARQChat()
-	go cw.forwardBroadcastChat()
+	if cw.inEngine {
+		go cw.forwardEngineBroadcastChat(engineChatLastSeq())
+	} else {
+		go cw.forwardBroadcastChat()
+	}
 	go cw.forwardStatus()
 	go cw.watchLink()
 
@@ -610,6 +636,7 @@ func (cw *chatWindow) onDisconnect() {
 		mc.Disconnect()
 		cw.mc = nil
 	}
+	cw.leaveEngine()
 	if cw.done != nil {
 		close(cw.done)
 		cw.done = nil
@@ -621,6 +648,17 @@ func (cw *chatWindow) onDisconnect() {
 	// instead of stacking the same messages on top of what is already shown.
 	cw.clearChat()
 	cw.logMsg("Disconnected.")
+}
+
+// leaveEngine undoes what a connection to the UI's own engine set in it: the
+// broadcast RX tap goes, and inEngine with it, so a filter installed while
+// disconnected, or for a later connection to another engine, is not taken to
+// the engine.
+func (cw *chatWindow) leaveEngine() {
+	if cw.inEngine {
+		engineSetBroadcastFilter(nil)
+		cw.inEngine = false
+	}
 }
 
 // clearChat empties the ARQ and broadcast chat panes on the UI thread.
@@ -755,6 +793,16 @@ func (cw *chatWindow) onSendBroadcast() {
 	if msg == "" {
 		return
 	}
+	if cw.inEngine {
+		// The engine stores the line as sent, and forwardEngineBroadcastChat
+		// shows it from there, as the client echoes its own.
+		if err := engineSendBroadcastChat(strings.TrimSpace(cw.myCall.Text) + ": " + msg); err != nil {
+			dialog.ShowError(err, cw.win)
+			return
+		}
+		cw.bcastMsg.SetText("")
+		return
+	}
 	if err := mc.SendBroadcast(msg); err != nil {
 		dialog.ShowError(err, cw.win)
 		return
@@ -820,6 +868,36 @@ func (cw *chatWindow) forwardBroadcastChat() {
 	}
 }
 
+// forwardEngineBroadcastChat shows the broadcast chat lines the engine stores
+// after seq, sent and received, while connected to it.  Twice a second it asks
+// for the newest seq, and for the lines only when that moved.
+func (cw *chatWindow) forwardEngineBroadcastChat(seq uint64) {
+	done := cw.done
+	if done == nil {
+		return
+	}
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-tick.C:
+			if engineChatLastSeq() == seq {
+				continue
+			}
+			var msgs []HistoryMessage
+			msgs, seq = engineChatSince(seq)
+			for _, m := range msgs {
+				if m.Plane == "bcast" {
+					call, text := splitCallText(m.Text)
+					cw.appendRichChat(cw.bcastBox, call, text, historyTimestamp(m))
+				}
+			}
+		}
+	}
+}
+
 // watchLink notices when the TNC hangs up on us.
 //
 // The other direction of the same hazard the connect interlock guards: the TNC
@@ -854,6 +932,7 @@ func (cw *chatWindow) watchLink() {
 				cw.logMsg("Disconnected by the modem: another client has taken the TNC ports.")
 				mc.Disconnect()
 				cw.mc = nil
+				cw.leaveEngine()
 				if cw.done != nil {
 					close(cw.done)
 					cw.done = nil
