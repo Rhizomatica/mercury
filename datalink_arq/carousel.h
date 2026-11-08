@@ -188,9 +188,6 @@ typedef struct {
     bool     offered;               /* M: my round offered S its turn as well (offer_both) */
     uint64_t kd_allowed;            /* M: the length my keydown was checked against FreeFor at */
     int      overruns;              /* M: keydowns longer than that (a bug: see keydown()) */
-    uint64_t app_since;             /* the application's unsent data came then (0: none) */
-    const char *app_why;            /* ...and what it waits for, as it came */
-    bool     app_taken;             /* a block took some of it since (open_block) */
     int      piece;                 /* the session's piece size (0: CAR_PIECE) */
     uint32_t deliver_seq;           /* deliveries to my application so far */
     uint32_t seq_at_ask;            /* ...when I last asked or answered */

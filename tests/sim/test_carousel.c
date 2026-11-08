@@ -158,21 +158,6 @@ static void test_carousel_sender_holds_for_peer_turn(void)
  * block the callee never heard got "done" for an answer -- the callee had
  * not taken M's block state from it -- and the session went on for ever on
  * a rung the callee had left (these seeds, before the fix). */
-/* Typed lines, as an operator's at a BBS: one that comes while M waits out
- * the peer's answer slot, or while a keydown is on the air, waits to go, and
- * the log says how long and for what (say_app_wait).  On air nothing did:
- * N3JXB's commands took 2-11 s to key and the log was silent about it. */
-static void test_carousel_app_wait_is_said(void)
-{
-    car_sim_result_t r;
-    setenv("CAR_KBD", "10:40:15", 1);
-    carousel_sim_run(3, "clean", false, LIMIT_MS, &r);
-    TEST_ASSERT_TRUE(r.intact);
-    TEST_ASSERT_EQUAL_INT(0, r.collisions);
-    TEST_ASSERT_GREATER_THAN_INT(0, r.app_wait_says);
-    TEST_ASSERT_TRUE_MESSAGE(r.app_wait_min_ms >= 1000, "a wait under APP_WAIT_SAY_MS was said");
-}
-
 static void test_carousel_request_response_completes(void)
 {
     static const struct { const char *chan; uint64_t seed; } RUNS[] = {
@@ -198,6 +183,20 @@ static void test_carousel_request_response_completes(void)
         TEST_ASSERT_EQUAL_MESSAGE(2000, r.b2a, what);
         TEST_ASSERT_NOT_EQUAL_MESSAGE(0, r.done_ms, what);
     }
+}
+
+/* Typed lines, as an operator's at a BBS: one that comes while M waits out
+ * the peer's answer slot, or while a keydown is on the air, cannot go at once,
+ * and the log says what it waits for (car_on_app_data).  On air nothing did:
+ * N3JXB's commands took 2-11 s to key and the log was silent about it. */
+static void test_carousel_app_wait_is_said(void)
+{
+    car_sim_result_t r;
+    setenv("CAR_KBD", "10:40:15", 1);
+    carousel_sim_run(3, "clean", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT(0, r.collisions);
+    TEST_ASSERT_GREATER_THAN_INT(0, r.app_wait_says);
 }
 
 /* Idle on a lossy link, with patterns (the floor's continuation slots): each

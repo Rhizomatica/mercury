@@ -304,8 +304,7 @@ static void io_bind_rx(void *ctx, int mode)
     if (mode != s->rx_mode) { s->rx_mode = mode; s->bound_at = now_ms; }
 }
 static int recv_fallbacks;
-static int app_wait_says;              /* "tx: my application's data waited" lines */
-static uint64_t app_wait_min_ms;        /* ...the shortest wait one said */
+static int app_wait_says;              /* "tx: my application's data waits for" lines */
 static int gated_probes;
 /* Did the last "rx round" line mark rung lv not allowed?  Its gp list reads
  * " 0:5/0.83 2:4/0.87 3:0/0.00x". */
@@ -341,11 +340,8 @@ static void io_trace(void *ctx, const char *line)
         int lv = atoi(line + 14);
         if (lv > 0 && round_marked_out(s, lv) && s->round_snr < car_rung_gate_db(lv)) gated_probes++;
     }
-    static const char said[] = "tx: my application's data waited ";
-    if (!strncmp(line, said, sizeof said - 1)) {
-        uint64_t ms = strtoull(line + sizeof said - 1, NULL, 10);
-        if (!app_wait_says++ || ms < app_wait_min_ms) app_wait_min_ms = ms;
-    }
+    static const char said[] = "tx: my application's data waits for ";
+    if (!strncmp(line, said, sizeof said - 1)) app_wait_says++;
     s->turn_mine = !strncmp(line, "turn: mine", 10);
     if (trace) printf("%9.1f %c   %s\n", now_ms / 1000.0, 'A' + ((station_t *)ctx)->id, line);
 }
@@ -651,7 +647,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     nev = 0;
     collisions = 0;
     recv_fallbacks = 0;
-    app_wait_says = 0; app_wait_min_ms = 0;
+    app_wait_says = 0;
     gated_probes = 0;
     bad_frames = 0;
     slot_breaches = 0;
@@ -807,7 +803,6 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->kd_overlaps = kd_overlaps;
     res->recv_fallbacks = recv_fallbacks;
     res->app_wait_says = app_wait_says;
-    res->app_wait_min_ms = app_wait_min_ms;
     res->gated_probes = gated_probes;
     res->kd_unexplained = kd_unexplained;
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
