@@ -128,7 +128,7 @@
     \begin{tikzpicture}[node distance=0.32cm,
         box/.style={draw=hdkgreen,fill=white,rounded corners=2pt,minimum width=4.6cm,minimum height=0.62cm,font=\small,line width=0.8pt},
         acc/.style={box,fill=hgreen!45,font=\small\bfseries}]
-      \node[box] (app) {UUCP \,·\, NNCP \,·\, JNOS \,·\, Reticulum};
+      \node[box,font=\footnotesize] (app) {UUCP \,·\, NNCP \,·\, JNOS \,·\, BPQ \,·\, Reticulum};
       \node[box,below=of app] (tnc) {TNC \,/\, KISS \,/\, WebSocket UI};
       \node[acc,below=of tnc] (arq) {Carousel ARQ \,·\, broadcast};
       \node[acc,below=of arq] (mod) {Modem: OFDM ladder + MFSK};
@@ -145,9 +145,9 @@
     \column{0.5\textwidth}
     \centering
     \begin{tikzpicture}
-      \foreach \v/\l/\y in {1398/{commits on trunk since the C rewrite (2026-03-05)}/0,
-                            783/{commits since 1 September}/-1.35,
-                            8/{releases since September (1.9.15 \textrightarrow{} 1.9.22)}/-2.7}{
+      \foreach \v/\l/\y in {1468/{commits on trunk since the C rewrite (2026-03-05)}/0,
+                            858/{commits since 1 September}/-1.35,
+                            9/{releases since September (1.9.15 \textrightarrow{} 1.9.23)}/-2.7}{
         \node[anchor=east,font=\fontsize{30}{30}\selectfont\bfseries,text=horange] at (0,\y) {\v};
         \node[anchor=west,text width=4.6cm,font=\small] at (0.25,\y) {\l};
       }
@@ -157,15 +157,16 @@
       Linux (amd64, arm64, armhf, i386), Raspberry Pi 4/5, Windows (signed), macOS (universal, notarised); \textbf{iOS on the App Store}; Android and Sailfish OS as technology previews
     \end{block}
     \begin{block}{Releases}
-      \footnotesize
+      \scriptsize
       \textbf{1.9.18} (12 Oct): the carousel data plane\\
       \textbf{1.9.19} (13 Oct): MFSK centred on 1500 Hz; JNOS 2.0\\
       \textbf{1.9.20} (22 Oct): the ladder starts high and falls back fast; a 500 Hz MFSK floor; new connect frames, so no link to 1.9.19\\
       \textbf{1.9.21} (24 Oct): MFSK-only transmit; Hermes-Lite 2\\
-      \textbf{1.9.22} (3 Nov): MFSK calls heard across bandwidths
+      \textbf{1.9.22} (3 Nov): MFSK calls heard across bandwidths\\
+      \textbf{1.9.23} (Nov): scanning BPQ32 gateways; teardowns that end
     \end{block}
   \end{columns}
-  \src{Source: git history of \texttt{mercuryv2}; docs/RELEASE-1.9.18.md to docs/RELEASE-1.9.22.md}
+  \src{Source: git history of \texttt{mercuryv2}; docs/RELEASE-1.9.18.md to docs/RELEASE-1.9.23.md}
 \end{frame}
 
 \begin{frame}{Release 1.9.18 compared with 1.9.17: a 2 KB transfer}
@@ -703,11 +704,11 @@
   \begin{columns}[T]
     \column{0.33\textwidth}
     \begin{block}{\faEnvelope\ Mail and files}
-      UUCP is the HERMES default; NNCP works too; JNOS 2.0 BBS-to-BBS; Winlink through Pat and scanning BPQ32 gateways; vARIM (\texttt{max\_keydown\_s})
+      UUCP is the HERMES default; NNCP works too; JNOS 2.0 BBS-to-BBS; Winlink through Pat; \textbf{BPQ32 and LinBPQ} gateways, scanning too (next slide); vARIM (\texttt{max\_keydown\_s} only before vARIM 1.13)
     \end{block}
     \column{0.33\textwidth}
     \begin{block}{\faProjectDiagram\ Networks}
-      Reticulum over KISS on the broadcast port; broadcast files by a RaptorQ fountain, wire-compatible with hermes-broadcast; HERMES station beacons (in review, \#480)
+      Reticulum over KISS on the broadcast port; broadcast files by a RaptorQ fountain, wire-compatible with hermes-broadcast; HERMES station beacons (packet type 0x07, \#480)
     \end{block}
     \column{0.33\textwidth}
     \begin{block}{\faLock\ Encryption (in review)}
@@ -715,6 +716,33 @@
     \end{block}
   \end{columns}
   \src{Source: docs/JNOS.md, docs/RETICULUM.md, docs/BROADCAST-FILE.md, docs/TNC.md; PRs \#410, \#480}
+\end{frame}
+
+\begin{frame}{BPQ32 and LinBPQ: Winlink gateways that scan}
+  \scriptsize
+  \begin{columns}[T]
+    \column{0.42\textwidth}
+    \begin{block}{What a scanning BPQ32 does}
+      \begin{itemize}
+        \item Drives Mercury as a VARA TNC: init line \texttt{RETRIES=20}, then \texttt{CONNECT}, \texttt{DISCONNECT}
+        \item Hops every 10--15 s: \texttt{LISTEN OFF}, retune, \texttt{LISTEN ON}, \texttt{BW500|2300|2750}
+        \item Holds its channel six scan intervals per \texttt{PENDING}
+        \item Scans again once it hears \texttt{DISCONNECTED}
+      \end{itemize}
+    \end{block}
+    \column{0.56\textwidth}
+    \begin{block}{What 1.9.23 changes}
+      \begin{itemize}
+        \item \texttt{RETRIES=20} is applied; before, it was answered \texttt{WRONG} (\#479)
+        \item A call stops after \hl{300 s} (\texttt{call\_max\_s}): 20 of K7EK's 21 connects came within it; failed calls keyed 8 min (\#476)
+        \item \texttt{PENDING} again on each repeated CALL renews the hold: 5 connects had been cut by a hop (\#477)
+        \item A hop drops every partly heard CALL, so none is answered on the wrong channel: 6 of K7EK's 10 failed incoming calls on 7 Nov (\#492, \#498)
+        \item \texttt{CONNECTED} names the stations in the right order (\#483); the log is capped at 20 MB (\#478)
+      \end{itemize}
+    \end{block}
+    \textbf{Next:} \texttt{DISCONNECTED} at the session's real end, as VARA does (\#493)
+  \end{columns}
+  \src{Source: docs/TNC.md (``Scanning hosts''), docs/RELEASE-1.9.23.md; field logs from K7EK, KG9NI, N3JXB and VE4KLM on 1.9.22}
 \end{frame}
 
 \begin{frame}{Interfaces and platforms}
@@ -730,10 +758,10 @@
     \end{itemize}
     \column{0.5\textwidth}
     \begin{itemize}
-      \item \textbf{Fyne GUI} with the engine linked in
+      \item \textbf{Fyne GUI} with the engine linked in; its chat window drives the engine directly, leaving the TNC ports free
       \item \textbf{Windows}: Authenticode-signed (Certum)
       \item \textbf{macOS}: universal x86\_64 + arm64, static Hamlib, notarised; a Mac App Store package
-      \item \textbf{iOS}: on the App Store; \textbf{Android} (.apk) and \textbf{Sailfish OS}: technology previews
+      \item \textbf{iOS}: on the App Store; \textbf{Android} (.apk) and \textbf{Sailfish OS} (\texttt{mercury} and \texttt{mercury-ui} packages): technology previews
       \item \textbf{Raspberry Pi} 4 and 5, the HERMES station computers
     \end{itemize}
   \end{columns}
@@ -750,8 +778,8 @@
       Encrypted sessions on the carousel plane, off by default (Noise\_KK, PR \#410)
     \end{block}
     \column{0.31\textwidth}
-    \begin{block}{\faMapMarker*\ Station beacons}
-      HERMES position and status beacons on DATAC16, heard by every listening station (PR \#480, received 6 of 6 on air)
+    \begin{block}{\faBroadcastTower\ Scanning gateways}
+      \texttt{DISCONNECTED} when the session has closed, as VARA does, so a scanning BPQ32 waits for the teardown (PR \#493)
     \end{block}
     \column{0.31\textwidth}
     \begin{block}{\faMobile*\ Mobile apps}
