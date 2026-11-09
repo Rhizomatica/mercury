@@ -274,6 +274,8 @@ Functions</h2></td></tr>
 <tr class="separator:aa64cc650744a01af21782948c753d309"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4e5268ebe96f786e067bf2b7160ecbfd" id="r_a4e5268ebe96f786e067bf2b7160ecbfd"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8h.html#a4e5268ebe96f786e067bf2b7160ecbfd">car_rung_geometry</a> (int lv, bool floor_patterns, int *bytes_per_frame, int *frames, uint64_t *round_air_ms, uint64_t *overhead_ms)</td></tr>
 <tr class="separator:a4e5268ebe96f786e067bf2b7160ecbfd"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:af27b1ac05f44fb2baf0cbc68f3ba5b7d" id="r_af27b1ac05f44fb2baf0cbc68f3ba5b7d"><td class="memItemLeft" align="right" valign="top">float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8h.html#af27b1ac05f44fb2baf0cbc68f3ba5b7d">car_rung_gate_db</a> (int lv)</td></tr>
+<tr class="separator:af27b1ac05f44fb2baf0cbc68f3ba5b7d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a26081ba549bd61b63fbd45a4e7c5ea64" id="r_a26081ba549bd61b63fbd45a4e7c5ea64"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8h.html#a26081ba549bd61b63fbd45a4e7c5ea64">car_is_master</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:a26081ba549bd61b63fbd45a4e7c5ea64"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af8c83f7cb1be90ff282c7f8300425880" id="r_af8c83f7cb1be90ff282c7f8300425880"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8h.html#af8c83f7cb1be90ff282c7f8300425880">car_free_at</a> (const <a class="el" href="structcar__t.html">car_t</a> *c, uint64_t now, uint64_t len)</td></tr>
@@ -284,8 +286,12 @@ Functions</h2></td></tr>
 <tr class="separator:aed7fdd71c6d81fe48f41a04e942f4c4c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a118f407767fad15e1038a01e4f116137" id="r_a118f407767fad15e1038a01e4f116137"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8h.html#a118f407767fad15e1038a01e4f116137">car_wish_end</a> (<a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:a118f407767fad15e1038a01e4f116137"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac74bb588c344237dec087ecf10897dbc" id="r_ac74bb588c344237dec087ecf10897dbc"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8h.html#ac74bb588c344237dec087ecf10897dbc">car_owes_ack</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:ac74bb588c344237dec087ecf10897dbc"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a7055ff69b863f53bdc5677507eceaa6a" id="r_a7055ff69b863f53bdc5677507eceaa6a"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8h.html#a7055ff69b863f53bdc5677507eceaa6a">car_drain_budget_ms</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:a7055ff69b863f53bdc5677507eceaa6a"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a903fde9995ff21e98c39c335192c180d" id="r_a903fde9995ff21e98c39c335192c180d"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8h.html#a903fde9995ff21e98c39c335192c180d">car_peer_ending</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
+<tr class="separator:a903fde9995ff21e98c39c335192c180d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a65217c9340661614a570048513f33858" id="r_a65217c9340661614a570048513f33858"><td class="memItemLeft" align="right" valign="top">size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="carousel_8h.html#a65217c9340661614a570048513f33858">car_tx_inflight</a> (const <a class="el" href="structcar__t.html">car_t</a> *c)</td></tr>
 <tr class="separator:a65217c9340661614a570048513f33858"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
@@ -985,6 +991,24 @@ Functions</h2></td></tr>
 
 </div>
 </div>
+<a id="ac74bb588c344237dec087ecf10897dbc" name="ac74bb588c344237dec087ecf10897dbc"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac74bb588c344237dec087ecf10897dbc">&#9670;&#160;</a></span>car_owes_ack()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool car_owes_ack </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a73eee34a307aa0067986ea3de3fafd4e" name="a73eee34a307aa0067986ea3de3fafd4e"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a73eee34a307aa0067986ea3de3fafd4e">&#9670;&#160;</a></span>car_peer_ctl_deaf()</h2>
 
@@ -993,6 +1017,24 @@ Functions</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">bool car_peer_ctl_deaf </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
+          <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a903fde9995ff21e98c39c335192c180d" name="a903fde9995ff21e98c39c335192c180d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a903fde9995ff21e98c39c335192c180d">&#9670;&#160;</a></span>car_peer_ending()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool car_peer_ending </td>
           <td>(</td>
           <td class="paramtype">const <a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
           <td class="paramname"><em>c</em></td><td>)</td>
@@ -1050,6 +1092,24 @@ Functions</h2></td></tr>
           <td>(</td>
           <td class="paramtype"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td>
           <td class="paramname"><em>c</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="af27b1ac05f44fb2baf0cbc68f3ba5b7d" name="af27b1ac05f44fb2baf0cbc68f3ba5b7d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af27b1ac05f44fb2baf0cbc68f3ba5b7d">&#9670;&#160;</a></span>car_rung_gate_db()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">float car_rung_gate_db </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>lv</em></td><td>)</td>
           <td></td>
         </tr>
       </table>

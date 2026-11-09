@@ -42,6 +42,7 @@ to each other, but not to 1.9.19 or older in either direction: their connect
 frames have a packet type of their own (and 1.9.18 and 1.9.19 did not connect
 to each other either).  A station with `mfsk_tx_only` set needs 1.9.21 or
 later at the other end.  See
+[docs/RELEASE-1.9.23.md](docs/RELEASE-1.9.23.md),
 [docs/RELEASE-1.9.22.md](docs/RELEASE-1.9.22.md),
 [docs/RELEASE-1.9.21.md](docs/RELEASE-1.9.21.md),
 [docs/RELEASE-1.9.20.md](docs/RELEASE-1.9.20.md),
@@ -122,7 +123,7 @@ Mode behavior notes:
   is preserved in `CONNECTED ... BW` only when both peers advertise it.
 - `FSK_LDPC` is currently **experimental** (mainly for lab/test usage), may have longer decode/sync latency depending on setup, and is not recommended for production links yet.
 - `[arq] mfsk_tx_only = true` makes the station transmit MFSK only (CALL/ACCEPT, control and payload) for radios that can only key FSK — the QRP Labs QDX, QRPguys AFSK III and similar.  Its peers keep its transmit direction on the MFSK floor rung for the whole session; receive is unaffected, so the cost is throughput, not reach.  Such a station connects only to releases after 1.9.20; the others still connect to 1.9.20.
-- `[arq] max_keydown_s = 16` holds every transmission of the station to 16 s, a poll sent before a round included, for TCP clients that abort when PTT stays on too long — vARIM gives up after about 20 s keyed, and a full DATAC3 round is 25-30 s (#445).  Set it on every station that runs vARIM: it holds the station's own transmissions and asks the peer for short rounds, but a peer without it can still key longer (a poll before a round, its own floor rounds).  The peer needs no update to talk to it.  The cost is throughput: in the simulator, about 0-6 % on fast channels and 13-30 % on slow ones and at BW500 (8 KB both ways).  `0`, the default, keeps the protocol's 30 s; the MFSK floor's single frame (13.5 s, 27 s on the BW500 floor) is never split, so a BW500 session that falls to its floor still keys for 27 s.
+- `[arq] max_keydown_s = 16` holds every transmission of the station to 16 s, a poll sent before a round included, for TCP clients that abort when PTT stays on too long.  **vARIM 1.13 and later need no setting:** they allow 35 s keyed, longer than any Mercury transmission (30 s at most).  vARIM before 1.13 gives up after about 20 s keyed, and a full DATAC3 round is 25-30 s (#445).  With such a vARIM, set it on every station that runs it: it holds the station's own transmissions and asks the peer for short rounds, but a peer without it can still key longer (a poll before a round, its own floor rounds).  The peer needs no update to talk to it.  The cost is throughput: in the simulator, about 0-6 % on fast channels and 13-30 % on slow ones and at BW500 (8 KB both ways).  `0`, the default, keeps the protocol's 30 s; the MFSK floor's single frame (13.5 s, 27 s on the BW500 floor) is never split, so a BW500 session that falls to its floor still keys for 27 s.
 
 PTT control notes:
 - The default method is `none`; Mercury then leaves radio keying to the TCP client.
@@ -592,6 +593,8 @@ Rendered HTML: https://rhizomatica.github.io/mercury/
 - `./mercury -v -L /tmp/session.log` — write full DEBUG+TIMING log to file.
 - `./mercury -v -L /tmp/session.log -J` — same, but in **JSONL** format for machine parsing with `jq`.
 - Text log lines start with the date and time, `2026-11-02 23:15:57.123`, in local time; `[main] log_utc = true` writes them in UTC with a `Z` (`2026-11-02 23:15:57.123Z`), to line them up with BPQ32's or another station's log.
+- Right after the logger starts, a line names the build: `Mercury 1.9.23 (git 1234abcd)`.
+- The log file is capped at `[main] log_max_mb` (default 20 MB; 0: no cap).  Past it the file moves to `<file>.1`, replacing the one before, and a new file starts, so at most twice the cap is on disk.  Each file has a line naming the other.
 - TX state transitions are logged with timestamps at INFO level as:
   - `TX enabled (PTT ON)`
   - `TX disabled (PTT OFF)`
@@ -650,7 +653,11 @@ operate.
 The engine and the interface are one binary: no separate modem process to
 start, no ports to wire up. Waterfall and spectrum, telemetry, radio and audio
 settings, and a **Mercury Client** chat window for ARQ and broadcast messaging
-built straight in. Ships as an installer on Windows, a universal `.dmg` on
+built straight in.  With the engine in the same program, the chat window
+drives it directly, so the TNC ports (8300, 8301, 8100) stay free for uucp,
+VarAC or another TCP client; one that connects takes the TNC from the window,
+as it would from another TCP client.  The main window's TCP indicator then
+reads **In app**. Ships as an installer on Windows, a universal `.dmg` on
 macOS, and `make fyne-ui` on Linux.
 
 **Web interface** — runs in a browser, nothing to install, and works against a

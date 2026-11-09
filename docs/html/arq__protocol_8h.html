@@ -231,6 +231,10 @@ Macros</h2></td></tr>
 <tr class="separator:ad93c0e9d8f15e4c60165aaa6ab002231"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a45c19ffdd73a18b4bf96258f2e0d37f7" id="r_a45c19ffdd73a18b4bf96258f2e0d37f7"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#a45c19ffdd73a18b4bf96258f2e0d37f7">ARQ_SILENCE_FALLBACK_S_MAX</a>&#160;&#160;&#160;600</td></tr>
 <tr class="separator:a45c19ffdd73a18b4bf96258f2e0d37f7"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abf03565459d378dd844837f5b2ddb68d" id="r_abf03565459d378dd844837f5b2ddb68d"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#abf03565459d378dd844837f5b2ddb68d">ARQ_CALL_MAX_S_DEFAULT</a>&#160;&#160;&#160;300</td></tr>
+<tr class="separator:abf03565459d378dd844837f5b2ddb68d"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abc6cbe16f11757c74262ad869a915526" id="r_abc6cbe16f11757c74262ad869a915526"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#abc6cbe16f11757c74262ad869a915526">ARQ_CALL_MAX_S_MAX</a>&#160;&#160;&#160;3600</td></tr>
+<tr class="separator:abc6cbe16f11757c74262ad869a915526"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a19e52bd3e0c3ff9e9b82da0304f0b906" id="r_a19e52bd3e0c3ff9e9b82da0304f0b906"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#a19e52bd3e0c3ff9e9b82da0304f0b906">ARQ_CALL_RETRY_SLOTS</a>&#160;&#160;&#160;atomic_load(&amp;<a class="el" href="arq__protocol_8c.html#a56dbc408aa04f622705c8cf3c748b00b">arq_call_retry_slots</a>)</td></tr>
 <tr class="separator:a19e52bd3e0c3ff9e9b82da0304f0b906"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a1e972e5132627a672437d43aa8160387" id="r_a1e972e5132627a672437d43aa8160387"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#a1e972e5132627a672437d43aa8160387">ARQ_ACCEPT_RETRY_SLOTS</a>&#160;&#160;&#160;atomic_load(&amp;<a class="el" href="arq__protocol_8c.html#a49caba983c5fb186896430e5ce12ed34">arq_accept_retry_slots</a>)</td></tr>
@@ -302,10 +306,14 @@ Functions</h2></td></tr>
 <tr class="separator:a794cb4d6826b0b08ad83d8489c1ff4ac"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a83f5f6f95c16ce01f3e6aaa2a1eaa68b" id="r_a83f5f6f95c16ce01f3e6aaa2a1eaa68b"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#a83f5f6f95c16ce01f3e6aaa2a1eaa68b">arq_protocol_set_silence_fallback_s</a> (int seconds)</td></tr>
 <tr class="separator:a83f5f6f95c16ce01f3e6aaa2a1eaa68b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a867a6d725e56b5432fa265f73846fac4" id="r_a867a6d725e56b5432fa265f73846fac4"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#a867a6d725e56b5432fa265f73846fac4">arq_protocol_set_call_max_s</a> (int seconds)</td></tr>
+<tr class="separator:a867a6d725e56b5432fa265f73846fac4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:acff4ae06650178845cfd6d40d33817b0" id="r_acff4ae06650178845cfd6d40d33817b0"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#acff4ae06650178845cfd6d40d33817b0">arq_protocol_retry_rank</a> (const char *local_call, const char *remote_call)</td></tr>
 <tr class="separator:acff4ae06650178845cfd6d40d33817b0"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:abdd963053b13ecb241768822eb0b42af" id="r_abdd963053b13ecb241768822eb0b42af"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#abdd963053b13ecb241768822eb0b42af">arq_protocol_retry_deadline_ms</a> (float seconds, int rank)</td></tr>
 <tr class="separator:abdd963053b13ecb241768822eb0b42af"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac7e6d07f2404b7a5d61d64ab0a2b8e0e" id="r_ac7e6d07f2404b7a5d61d64ab0a2b8e0e"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#ac7e6d07f2404b7a5d61d64ab0a2b8e0e">arq_protocol_session_calls</a> (bool we_called, const char *remote_call, const char *local_call, const char *connect_src, const char *my_call, char *src, char *dst, size_t bufsz)</td></tr>
+<tr class="separator:ac7e6d07f2404b7a5d61d64ab0a2b8e0e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:afe60c366691ce231c54afc595ccbc8ef" id="r_afe60c366691ce231c54afc595ccbc8ef"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#afe60c366691ce231c54afc595ccbc8ef">arq_protocol_encode_hdr</a> (uint8_t *buf, size_t buf_len, const <a class="el" href="structarq__frame__hdr__t.html">arq_frame_hdr_t</a> *hdr)</td></tr>
 <tr class="memdesc:afe60c366691ce231c54afc595ccbc8ef"><td class="mdescLeft">&#160;</td><td class="mdescRight">Encode a parsed header into the first ARQ_FRAME_HDR_SIZE bytes of buf.  <br /></td></tr>
 <tr class="separator:afe60c366691ce231c54afc595ccbc8ef"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -389,6 +397,8 @@ Variables</h2></td></tr>
 <tr class="separator:a3cbdcd847dc0583c5d0f8654e72aac22"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a5f364fe2df15f0eeb64edab4d7d89071" id="r_a5f364fe2df15f0eeb64edab4d7d89071"><td class="memItemLeft" align="right" valign="top">_Atomic int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#a5f364fe2df15f0eeb64edab4d7d89071">arq_silence_fallback_s</a></td></tr>
 <tr class="separator:a5f364fe2df15f0eeb64edab4d7d89071"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a39a32c45377c4965420d1e4255515672" id="r_a39a32c45377c4965420d1e4255515672"><td class="memItemLeft" align="right" valign="top">_Atomic int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#a39a32c45377c4965420d1e4255515672">arq_call_max_s</a></td></tr>
+<tr class="separator:a39a32c45377c4965420d1e4255515672"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ada5174729d7fb5b2ef01c433c974f131" id="r_ada5174729d7fb5b2ef01c433c974f131"><td class="memItemLeft" align="right" valign="top">_Atomic int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#ada5174729d7fb5b2ef01c433c974f131">arq_disconnect_drain_timeout_s</a></td></tr>
 <tr class="separator:ada5174729d7fb5b2ef01c433c974f131"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae3b39cb2906c1cffb735aa42d5843db4" id="r_ae3b39cb2906c1cffb735aa42d5843db4"><td class="memItemLeft" align="right" valign="top">const <a class="el" href="structarq__mode__timing__t.html">arq_mode_timing_t</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8h.html#ae3b39cb2906c1cffb735aa42d5843db4">arq_mode_table</a> []</td></tr>
@@ -678,6 +688,34 @@ Variables</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">#define ARQ_CALL_FAST_SLOTS_MAX&#160;&#160;&#160;4</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="abf03565459d378dd844837f5b2ddb68d" name="abf03565459d378dd844837f5b2ddb68d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abf03565459d378dd844837f5b2ddb68d">&#9670;&#160;</a></span>ARQ_CALL_MAX_S_DEFAULT</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define ARQ_CALL_MAX_S_DEFAULT&#160;&#160;&#160;300</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="abc6cbe16f11757c74262ad869a915526" name="abc6cbe16f11757c74262ad869a915526"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abc6cbe16f11757c74262ad869a915526">&#9670;&#160;</a></span>ARQ_CALL_MAX_S_MAX</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define ARQ_CALL_MAX_S_MAX&#160;&#160;&#160;3600</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -2259,6 +2297,70 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="ac7e6d07f2404b7a5d61d64ab0a2b8e0e" name="ac7e6d07f2404b7a5d61d64ab0a2b8e0e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac7e6d07f2404b7a5d61d64ab0a2b8e0e">&#9670;&#160;</a></span>arq_protocol_session_calls()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_protocol_session_calls </td>
+          <td>(</td>
+          <td class="paramtype">bool&#160;</td>
+          <td class="paramname"><em>we_called</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>remote_call</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>local_call</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>connect_src</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>my_call</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">char *&#160;</td>
+          <td class="paramname"><em>src</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">char *&#160;</td>
+          <td class="paramname"><em>dst</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>bufsz</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a794cb4d6826b0b08ad83d8489c1ff4ac" name="a794cb4d6826b0b08ad83d8489c1ff4ac"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a794cb4d6826b0b08ad83d8489c1ff4ac">&#9670;&#160;</a></span>arq_protocol_set_call_fast_slots()</h2>
 
@@ -2270,6 +2372,24 @@ Variables</h2></td></tr>
           <td>(</td>
           <td class="paramtype">int&#160;</td>
           <td class="paramname"><em>retries</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a867a6d725e56b5432fa265f73846fac4" name="a867a6d725e56b5432fa265f73846fac4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a867a6d725e56b5432fa265f73846fac4">&#9670;&#160;</a></span>arq_protocol_set_call_max_s()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_protocol_set_call_max_s </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>seconds</em></td><td>)</td>
           <td></td>
         </tr>
       </table>
@@ -2329,6 +2449,28 @@ Variables</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">_Atomic int arq_call_fast_slots</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">extern</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a39a32c45377c4965420d1e4255515672" name="a39a32c45377c4965420d1e4255515672"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a39a32c45377c4965420d1e4255515672">&#9670;&#160;</a></span>arq_call_max_s</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">_Atomic int arq_call_max_s</td>
         </tr>
       </table>
   </td>
