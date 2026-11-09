@@ -26,4 +26,7 @@
 	<!-- The TNC and status ports, for the email, chat and file applications. -->
 	<uses-permission android:name="android.permission.INTERNET" />
 	<uses-feature android:name="android.hardware.microphone" android:required="false" />
+	<!-- CAT and PTT over the radio's USB-serial chip (usb_android.go): the
+	     operator grants each device at run time; no permission to declare. -->
+	<uses-feature android:name="android.hardware.usb.host" android:required="false" />
 </manifest>

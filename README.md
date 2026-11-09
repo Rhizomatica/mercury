@@ -209,16 +209,21 @@ make fyne-ui
 ./mercury-ui
 ```
 
-### Build the Android .apk (technology preview)
+### Build the Android .apk or .aab (technology preview)
 
 ```sh
-# Android NDK r27d, the Android SDK (platform 34, build-tools 34) and the
-# fyne CLI (see "GUI build prerequisites" below)
+# Android NDK r27d, the Android SDK (platform 34, build-tools 34) and Go.
+# The Makefile builds its own copy of the fyne CLI, at Android 8 (API 26)
+# as the minimum (.fyne-android/).
 T=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 make fyne-ui-android ANDROID_NDK_HOME=$ANDROID_NDK_HOME ANDROID_HOME=$ANDROID_HOME \
      CC=$T/aarch64-linux-android26-clang AR=$T/llvm-ar
 # -> Mercury-<version>.apk (arm64, debug-signed; ANDROID_RELEASE=1 with
 #    ANDROID_KEYSTORE signs it with a release key)
+
+# For Google Play: bundletool on PATH, and the Play upload key
+make fyne-ui-android-aab ANDROID_UPLOAD_KEYSTORE=upload.jks ...   # same NDK settings
+# -> Mercury-<version>.aab (target SDK 36), the password in ANDROID_UPLOAD_KEYSTORE_PASS
 ```
 
 The GUI with the modem inside, on AAudio, with a vendored Hamlib
