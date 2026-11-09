@@ -111,7 +111,9 @@ enum { CAR_PATTERN_ACK = 0, CAR_PATTERN_BREAK = 1 };
 
 enum { CAR_T_M, CAR_T_S, CAR_T_F, CAR_T_W, CAR_NTIMERS };   /* M's next decision or keydown; S's next slot;
                                                     * S's fallback to the floor, and its watch
-                                                    * for the round it asked for (listening only) */
+                                                    * for the round it asked for (listening only);
+                                                    * on M, CAR_T_W watches the air in S's answer
+                                                    * slot (carousel.c, m_watch) */
 
 typedef struct {
     uint8_t  id;

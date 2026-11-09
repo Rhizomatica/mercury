@@ -35,6 +35,8 @@ typedef struct {
                                      out) whose SNR gate the smoothed SNR is below */
     int      dark_polls;          /* the most polls above the floor in a row, by one station,
                                      with nothing of the peer heard between them */
+    uint64_t slot_hold_ms;        /* the longest wait of a planned keydown of M's to be clear of
+                                     the peer's slots ("tx: held ... clear of the peer's slots") */
     int      kd_unexplained;      /* ... over a keydown of the peer that could be sensed */
     const char *failed;           /* a station failed the session (car_failed), or NULL */
     uint64_t air_ms[2];           /* each station on the air */

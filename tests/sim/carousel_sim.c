@@ -309,6 +309,7 @@ static int recv_fallbacks;
 static int app_wait_says;              /* "tx: my application's data waits for" lines */
 static int gated_probes;
 static int dark_polls;
+static uint64_t slot_hold_ms;            /* the longest "held N ms, clear of the peer's slots" */
 /* Did the last "rx round" line mark rung lv not allowed?  Its gp list reads
  * " 0:5/0.83 2:4/0.87 3:0/0.00x". */
 static bool round_marked_out(const station_t *s, int lv)
@@ -352,6 +353,11 @@ static void io_trace(void *ctx, const char *line)
         s->dark_run = s->poll_at && s->heard_at < s->poll_at ? s->dark_run + 1 : 1;
         s->poll_at = now_ms;
         if (s->dark_run > dark_polls) dark_polls = s->dark_run;
+    }
+    static const char held[] = "tx: held ";
+    if (!strncmp(line, held, sizeof held - 1) && strstr(line, "clear of the peer's slots")) {
+        uint64_t ms = strtoull(line + sizeof held - 1, NULL, 10);
+        if (ms > slot_hold_ms) slot_hold_ms = ms;
     }
     static const char said[] = "tx: my application's data waits for ";
     if (!strncmp(line, said, sizeof said - 1)) app_wait_says++;
@@ -663,6 +669,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     app_wait_says = 0;
     gated_probes = 0;
     dark_polls = 0;
+    slot_hold_ms = 0;
     bad_frames = 0;
     slot_breaches = 0;
     frame_no = 0;
@@ -819,6 +826,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->app_wait_says = app_wait_says;
     res->gated_probes = gated_probes;
     res->dark_polls = dark_polls;
+    res->slot_hold_ms = slot_hold_ms;
     res->kd_unexplained = kd_unexplained;
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;
