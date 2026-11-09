@@ -131,6 +131,13 @@ type for the HERMES beacon, which older releases ignore.
   and be answered there, holding BPQ32 on the wrong channel for about 2
   minutes: 6 of K7EK's 10 failed incoming calls on 7 November. The caller's
   next CALL is answered instead.
+- **A DISCONNECT no longer keys over the peer's answer to a long round**
+  (#500, NW8L). The DISCONNECT waits for the channel in 0.5 s steps, at most
+  10 s, and the steps while the station was still keyed counted toward that.
+  A 27 s MFSK floor round used up the 10 s, and the DISCONNECT went out
+  22 ms after the round, over the peer's ACK: both were lost, and the
+  teardown took 46 s and two retries. The 10 s now counts from the end of
+  the station's own transmission.
 - **The busy detector stays muted until a session's teardown is over**
   (#487), so it no longer delays a DISCONNECT with a false BUSY (11 s in one
   K7EK session).
@@ -144,7 +151,7 @@ type for the HERMES beacon, which older releases ignore.
 | Protocol models | TLA+ (`specs/`), each with deliberately broken variants that must fail. Teardown: #468's owed ack, #471's second DISCONNECT and redial, #472's silence after M_END. Rungs: #497's rule, with a rung that dies mid-session (`Kill`) and the step-down after K unanswered asks (K = 4 and 2) | `SessionTeardown` lossless and lossy: no error. All 13 teardown mutants fail, including the code before each fix (`Mut_ackless`, `Mut_rearm`, `Mut_redialwait`, `Mut_endsilence`). All 23 rung configurations give their documented results, and the mutant without the step-down (`Mut_nodrop`) fails `Delivered` |
 | Simulator | `tests/sim`, AWGN, cliffs, fading, NVIS, steps, on fixed seeds | #497: the longest run of unanswered polls 9-12 -> 5-8, NVIS two-way 56 -> 58 of 100 done. #468: the end of a session 2-5 s longer on good channels, the same at the floor. #499: output identical to the build before |
 | Acquisition | `utils/acq_tuning_sweep`, AWGN, 100 trials per point | #455: DATAC16 at -12 dB 19 -> 51 of 100 acquired, no false syncs |
-| Mixed versions | Two daemons in the Go harness, 1.9.22 against this release, each as station A and as station B: a transfer, a two-way session, and both cross-bandwidth connects | All pass in both mixes. Across bandwidths, connects in 51 and 77 s either way; transfers connect in 8 s |
+| Mixed versions | Two daemons in the Go harness, 1.9.22 against this release, each as station A and as station B: a transfer, a two-way session, both cross-bandwidth connects, and a DISCONNECT to a peer on the floor | All pass in both mixes. Across bandwidths, connects in 51 and 77 s either way; transfers connect in 8 s |
 | GUI chat window | The window's in-process TNC against a CLI Mercury over FIFO audio, under Go's race detector | Connect in 8.5 s, chat both ways, 12 KB through the 8 KB receive ring, eviction by a TCP client, and a clean shutdown with the TNC held. No data race |
 | On air | Field reports with logs: K7EK, KG9NI, N3JXB, VE4KLM and NW8L, on 1.9.22 | Each fix above reproduces the report it cites. #455: 16 runs between our two sBitx stations, a tie |
 | Continuous integration | Every merged change | Unit tests (also on i386), two-daemon integration tests, ASan/UBSan, TSan. Builds for Linux amd64, arm64 and armhf, Windows x64, macOS arm64, Android, and the Fyne GUI with and without the engine |

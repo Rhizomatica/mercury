@@ -938,7 +938,7 @@ updated where they stand: S0 in §5.2, and the silence and BW500 floor rows of
 
 ---
 
-## 21. After 1.9.22 (#468 to #499)
+## 21. After 1.9.22 (#468 to #500)
 
 No connect, poll or data frame changed: 1.9.22 and later connect both ways.
 The one addition on the air is a broadcast frame type, below.  #497 (two dark
@@ -957,5 +957,6 @@ predicate.
 | While ACCEPTING, a repeat of the CALL being answered sends `PENDING` again (`notify_pending_again`), which renews a scanning BPQ32's channel hold (six scan intervals per `PENDING`); another station's CALL sends nothing (#477). | `fsm_accepting` | other VARA hosts get one more `PENDING` per repeated CALL |
 | A rung the SNR gates is never re-probed, tried or not (`reprobe_due`); a rung that delivered well stays exempt through `level_gated` (#475, VE4KLM-K7EK). | `reprobe_due` | a rung gated by a low SNR reading waits for the reading to rise |
 | The end of a spell of listening for calls (`arq_fsm_dispatch_ends_listening`, now an `arq_listen_end_t`) flushes the MFSK call listeners (#492); one that ends with no session after it (`ARQ_LISTEN_ENDS_RELEASED`: LISTEN OFF, a scanner's hop) also flushes and unsyncs the DATAC16 control and payload decoders (#498).  A CALL partly heard before the hop is not answered on the next channel. | `arq_fsm.c`, `arq.c` (`listen_spells_ended`, `listen_releases`), `modem.c` (`unsync_req`) | a CALL straddling a LISTEN OFF on the same frequency is dropped, and the caller's next CALL (about 12 s later) is answered |
+| The DISCONNECT's deferral (`disconnect_must_wait`, 0.5 s steps) counts its 10 s cap (`ARQ_CHANNEL_DEFER_MAX`) from the end of my own keydown: steps while I am keyed have a cap of their own (`ARQ_CHANNEL_DEFER_KEYED_MAX`, 32 s, for a `TX_COMPLETE` that never comes), and `TX_COMPLETE` in DISCONNECTING resets the count.  Before, a 27 s floor round used up the 10 s and the DISCONNECT keyed 22 ms after it, over the peer's ACK (#500, NW8L). | `disconnect_must_wait`, `fsm_disconnecting`; `arq_protocol.h` | none known: it restores what `specs/turns` (`DISC`) already assumes, a DISCONNECT clear of the peer's slots |
 | The busy detector stays muted through DISCONNECTING as in CONNECTED (`arq_link_has_peer`), so a teardown's listen-before-talk reads the decoders (#487).  `BUSYDETECT ON\|OFF` switches it while running; `BUSYRESEED ON\|OFF` (ini `busy_reseed_on_hop`, default off) takes a new noise floor at each scan hop (#490). | `modem.c`, `arq.c`; `tcp_interfaces.c` | no `BUSY ON` for a third station during a teardown (a callee's can last 180 s); a re-seed on a channel already carrying a signal wider than about 1.8 kHz misses it until it stops |
 | A station message, `PACKET_TYPE_STATION` 0x07 (the HERMES beacon), is sent on the mode the host asks for (DATAC16, MFSK or MFSK500, which every listening Mercury decodes) and delivered from any decoder at its own frame size, after the channel is heard clear (`arq_channel_heard`).  Older releases drop the type (#480). | `framer.h`, `modem.c`, `arq.c`; `host/api_host.c` | the broadcast RX ring holds `[u16 length][frame]` records now |
