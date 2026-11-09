@@ -415,9 +415,8 @@ has been used with a radio there yet (see below):
   with the modem built in: it does not need the `mercury` package.  It is in
   the app list as **Mercury**.
 
-The repository carries a snapshot of the development branch, not a release
-(versions such as `1.9.22+git20261108.1432.57fb7a15`: the last release, the
-date and the commit).
+The repository carries the releases, from 1.9.23 (`pkcon refresh && pkcon
+update` moves an install of the earlier `1.9.22+git…` snapshot to it).
 
 1. Turn on **Developer mode** (Settings → Developer tools), open
    **Terminal**, and become root with `devel-su`.
