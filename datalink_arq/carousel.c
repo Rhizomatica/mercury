@@ -2016,26 +2016,26 @@ static void rx_trace(car_t *c)
               c->snr_valid ? "" : "?", gp);
 }
 
-/* A round's size is what its frames say -- but only its last frame says it
- * all: with the tail lost, seen + left counted the lost frames as never sent,
- * and a NVIS round of 7 that brought 3 read as "3 of 3, whole" (sim, nvis
- * seed 3: a "same again" pattern, and the loss unscored).  Without the tail,
- * the round is taken to be what I asked for. */
-static void rx_score(car_t *c, int lv, int frames, uint64_t now);
-static void rx_measure(car_t *c, int lv, uint64_t now)
-{
-    int frames = c->round_frames > 0 ? c->round_frames : 1;
-    if (!c->rx_tail && c->poll_n > frames) frames = c->poll_n;
-    rx_score(c, lv, frames, now);
-}
-
-/* ...or what M said it was: a REQ names the frames M sent. */
+/* A round of M's scored as so many frames: rx_measure's count, or the one a
+ * REQ names (s_answer). */
 static void rx_score(car_t *c, int lv, int frames, uint64_t now)
 {
     double loss = 1.0 - (double)c->round_seen / frames;
     if (loss < 0) loss = 0;
     c->loss_est = 0.5 * c->loss_est + 0.5 * loss;
     measure_level(c, lv, frames, loss, now);
+}
+
+/* A round's size is what its frames say -- but only its last frame says it
+ * all: with the tail lost, seen + left counted the lost frames as never sent,
+ * and a NVIS round of 7 that brought 3 read as "3 of 3, whole" (sim, nvis
+ * seed 3: a "same again" pattern, and the loss unscored).  Without the tail,
+ * the round is taken to be what I asked for. */
+static void rx_measure(car_t *c, int lv, uint64_t now)
+{
+    int frames = c->round_frames > 0 ? c->round_frames : 1;
+    if (!c->rx_tail && c->poll_n > frames) frames = c->poll_n;
+    rx_score(c, lv, frames, now);
 }
 
 /* What to ask the sender next: KD_POLL (lv, n), a pattern, or KD_DONE. */
