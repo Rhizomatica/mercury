@@ -971,6 +971,8 @@ void _glfwTerminateWayland(void)
         wl_pointer_destroy(_glfw.wl.pointer);
     if (_glfw.wl.keyboard)
         wl_keyboard_destroy(_glfw.wl.keyboard);
+    if (_glfw.wl.touch)
+        wl_touch_destroy(_glfw.wl.touch);
     if (_glfw.wl.seat)
         wl_seat_destroy(_glfw.wl.seat);
     if (_glfw.wl.relativePointerManager)

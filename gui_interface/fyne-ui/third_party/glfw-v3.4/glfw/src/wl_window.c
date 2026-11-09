@@ -1879,6 +1879,114 @@ static const struct wl_keyboard_listener keyboardListener =
     keyboardHandleRepeatInfo,
 };
 
+// Touch, as the left mouse button: a phone's compositor (Sailfish OS) sends
+// taps as wl_touch only, with no pointer.  The first touch point moves the
+// cursor to where it goes down and presses the button, moves it as it moves,
+// and releases it when it lifts or the compositor cancels it; further points
+// are ignored.  Only the window's own surface, not the fallback decorations.
+static void touchHandleDown(void* userData,
+                            struct wl_touch* touch,
+                            uint32_t serial,
+                            uint32_t time,
+                            struct wl_surface* surface,
+                            int32_t id,
+                            wl_fixed_t sx,
+                            wl_fixed_t sy)
+{
+    if (!surface || _glfw.wl.touchFocus)
+        return;
+
+    if (wl_proxy_get_tag((struct wl_proxy*) surface) != &_glfw.wl.tag)
+        return;
+
+    _GLFWwindow* window = wl_surface_get_user_data(surface);
+    if (!window || surface != window->wl.surface)
+        return;
+
+    _glfw.wl.serial = serial;
+    _glfw.wl.touchFocus = window;
+    _glfw.wl.touchId = id;
+
+    window->wl.cursorPosX = wl_fixed_to_double(sx);
+    window->wl.cursorPosY = wl_fixed_to_double(sy);
+    _glfwInputCursorPos(window, window->wl.cursorPosX, window->wl.cursorPosY);
+    _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS,
+                         _glfw.wl.xkb.modifiers);
+}
+
+static void touchHandleUp(void* userData,
+                          struct wl_touch* touch,
+                          uint32_t serial,
+                          uint32_t time,
+                          int32_t id)
+{
+    _GLFWwindow* window = _glfw.wl.touchFocus;
+    if (!window || id != _glfw.wl.touchId)
+        return;
+
+    _glfw.wl.serial = serial;
+    _glfw.wl.touchFocus = NULL;
+    _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE,
+                         _glfw.wl.xkb.modifiers);
+}
+
+static void touchHandleMotion(void* userData,
+                              struct wl_touch* touch,
+                              uint32_t time,
+                              int32_t id,
+                              wl_fixed_t sx,
+                              wl_fixed_t sy)
+{
+    _GLFWwindow* window = _glfw.wl.touchFocus;
+    if (!window || id != _glfw.wl.touchId)
+        return;
+
+    window->wl.cursorPosX = wl_fixed_to_double(sx);
+    window->wl.cursorPosY = wl_fixed_to_double(sy);
+    _glfwInputCursorPos(window, window->wl.cursorPosX, window->wl.cursorPosY);
+}
+
+static void touchHandleFrame(void* userData, struct wl_touch* touch)
+{
+}
+
+static void touchHandleCancel(void* userData, struct wl_touch* touch)
+{
+    _GLFWwindow* window = _glfw.wl.touchFocus;
+    if (!window)
+        return;
+
+    _glfw.wl.touchFocus = NULL;
+    _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE,
+                         _glfw.wl.xkb.modifiers);
+}
+
+static void touchHandleShape(void* userData,
+                             struct wl_touch* touch,
+                             int32_t id,
+                             wl_fixed_t major,
+                             wl_fixed_t minor)
+{
+}
+
+static void touchHandleOrientation(void* userData,
+                                   struct wl_touch* touch,
+                                   int32_t id,
+                                   wl_fixed_t orientation)
+{
+}
+
+static const struct wl_touch_listener touchListener =
+{
+    touchHandleDown,
+    touchHandleUp,
+    touchHandleMotion,
+    touchHandleFrame,
+    touchHandleCancel,
+    touchHandleShape,
+    touchHandleOrientation,
+};
+
 static void seatHandleCapabilities(void* userData,
                                    struct wl_seat* seat,
                                    enum wl_seat_capability caps)
@@ -1903,6 +2011,19 @@ static void seatHandleCapabilities(void* userData,
     {
         wl_keyboard_destroy(_glfw.wl.keyboard);
         _glfw.wl.keyboard = NULL;
+    }
+
+    if ((caps & WL_SEAT_CAPABILITY_TOUCH) && !_glfw.wl.touch)
+    {
+        _glfw.wl.touch = wl_seat_get_touch(seat);
+        wl_touch_add_listener(_glfw.wl.touch, &touchListener, NULL);
+    }
+    else if (!(caps & WL_SEAT_CAPABILITY_TOUCH) && _glfw.wl.touch)
+    {
+        // A press still held is released, as a cancel would
+        touchHandleCancel(NULL, _glfw.wl.touch);
+        wl_touch_destroy(_glfw.wl.touch);
+        _glfw.wl.touch = NULL;
     }
 }
 
@@ -2184,6 +2305,9 @@ void _glfwDestroyWindowWayland(_GLFWwindow* window)
 
     if (window == _glfw.wl.keyboardFocus)
         _glfw.wl.keyboardFocus = NULL;
+
+    if (window == _glfw.wl.touchFocus)
+        _glfw.wl.touchFocus = NULL;
 
     if (window->wl.activationToken)
         xdg_activation_token_v1_destroy(window->wl.activationToken);
