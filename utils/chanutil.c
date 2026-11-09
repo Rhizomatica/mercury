@@ -135,6 +135,12 @@ static void warm_up(watterson_t *w)
 
 chanutil_t *chanutil_open(int preset, float no_dbhz, unsigned seed)
 {
+    return chanutil_open_offset(preset, no_dbhz, seed, 0.0f);
+}
+
+chanutil_t *chanutil_open_offset(int preset, float no_dbhz, unsigned seed,
+                                  float offset_hz)
+{
     chanutil_t *c = calloc(1, sizeof(*c));
     if (!c) return NULL;
     if (watterson_init(&c->w, CHAN_FS) != 0) { free(c); return NULL; }
@@ -146,6 +152,7 @@ chanutil_t *chanutil_open(int preset, float no_dbhz, unsigned seed)
     }
     watterson_set_noise(&c->w, no_dbhz);
     watterson_reset_meas(&c->w);
+    watterson_set_carrier_offset(&c->w, offset_hz);
 
     /* The fading realisation is driven by the model's own RNG, which is
      * per-instance -- so seed THAT, not libc's global rand().  srand() here
@@ -161,6 +168,18 @@ void chanutil_close(chanutil_t *c)
     if (!c) return;
     watterson_dispose(&c->w);
     free(c);
+}
+
+void chanutil_set_carrier_offset(chanutil_t *c, float hz)
+{
+    if (!c) return;
+    watterson_set_carrier_offset(&c->w, hz);
+}
+
+float chanutil_get_carrier_offset(const chanutil_t *c)
+{
+    if (!c) return 0.0f;
+    return watterson_get_carrier_offset(&c->w);
 }
 
 int chanutil_run(chanutil_t *c, int16_t *pb, int n, float *snr3k_out)
