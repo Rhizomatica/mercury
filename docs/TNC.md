@@ -634,7 +634,10 @@ transmitting so VARA clients can treat CQ send as an in-progress operation.
 ### CANCELPENDING
 
 Sent when a previously pending incoming connect request does not complete and
-Mercury returns to the idle/listening state.
+Mercury returns to the idle/listening state: its `ACCEPT`s ran out, the host
+sent `DISCONNECT` or `LISTEN OFF`, or the caller sent a `DISCONNECT` for that
+call (it gave up calling before our `ACCEPT` reached it).  A scanning host
+then resumes its scan at once rather than holding the channel.
 
 Mercury also sends `CANCELPENDING\r` when an outgoing `CQFRAME` transmission
 finishes, which matches the lifecycle expected by VARA clients such as varim.
