@@ -28,7 +28,7 @@ void setUp(void) {}
 void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
-    unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX");
+    unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -185,6 +185,20 @@ static void test_carousel_request_response_completes(void)
     }
 }
 
+/* Typed lines, as an operator's at a BBS: one that comes while M waits out
+ * the peer's answer slot, or while a keydown is on the air, cannot go at once,
+ * and the log says what it waits for (car_on_app_data).  On air nothing did:
+ * N3JXB's commands took 2-11 s to key and the log was silent about it. */
+static void test_carousel_app_wait_is_said(void)
+{
+    car_sim_result_t r;
+    setenv("CAR_KBD", "10:40:15", 1);
+    carousel_sim_run(3, "clean", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT(0, r.collisions);
+    TEST_ASSERT_GREATER_THAN_INT(0, r.app_wait_says);
+}
+
 /* Idle on a lossy link, with patterns (the floor's continuation slots): each
  * station keeps hearing the other within the 240 s after which the FSM's
  * lost-peer watchdog ends the session.  An unanswered idle poll was asked
@@ -262,6 +276,30 @@ static void test_carousel_no_reprobe_below_gate(void)
             TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
             TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.gated_probes, what);
         }
+}
+
+/* Rounds that bring nothing of the peer at all leave the SNR as old as the
+ * last frame.  On air (NW8L, IONOS MPP, +5 -> -5 dB within a vARIM session,
+ * 1.9.22) the receiver read 4.2 dB throughout and polled DATAC3 and DATAC4
+ * seven times with nothing heard in between; the lost-peer watchdog ended the
+ * session.  The same shape: vARIM's blocks one way, its short acks back, and
+ * the step.  Two dark rounds now let two losses kill a rung.  Before the fix
+ * these runs reached 9 such polls in a row; with it, 5 (200 seeds). */
+static void test_carousel_dark_rounds_drop_the_rung(void)
+{
+    static const char *CHAN[] = { "step:5:-5:60", "step:5:-6:60" };
+    setenv("CAR_SCRIPT", "A1500,B59+500,A1500+500,B59+500,A1500+500,B59+500,"
+                         "A1500+500,B59+500,A1500+500,B59+500", 1);
+    for (size_t k = 0; k < sizeof(CHAN) / sizeof(CHAN[0]); k++)
+        for (uint64_t seed = 1; seed <= 40; seed++) {
+            car_sim_result_t r;
+            char what[64];
+            carousel_sim_run(seed, CHAN[k], false, LIMIT_MS, &r);
+            snprintf(what, sizeof(what), "seed %llu %s", (unsigned long long)seed, CHAN[k]);
+            TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
+            TEST_ASSERT_LESS_OR_EQUAL_INT_MESSAGE(6, r.dark_polls, what);
+        }
+    unsetenv("CAR_SCRIPT");
 }
 
 static void test_carousel_drain_budget_fits_the_floor(void)
@@ -433,8 +471,10 @@ int main(void)
     RUN_TEST(test_carousel_mfsk_tx_only);
     RUN_TEST(test_carousel_max_keydown);
     RUN_TEST(test_carousel_request_response_completes);
+    RUN_TEST(test_carousel_app_wait_is_said);
     RUN_TEST(test_carousel_drop_below_control_mode);
     RUN_TEST(test_carousel_no_reprobe_below_gate);
+    RUN_TEST(test_carousel_dark_rounds_drop_the_rung);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }

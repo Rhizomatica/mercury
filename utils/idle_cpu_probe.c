@@ -58,6 +58,14 @@ static double now_wall_s(void) {
 int main(int argc, char **argv) {
   const char *modename = (argc > 1) ? argv[1] : "DATAC16";
   double audio_seconds = (argc > 2) ? atof(argv[2]) : 600.0;
+  /* Optional 4th: the coarse frequency search span in Hz (0 = stock, +-50).
+   * A wider span buys capture of a further-mistuned carrier and costs one
+   * correlation pass per 5 Hz of span, on every listening second. */
+  double span = (argc > 4) ? atof(argv[4]) : 0.0;
+  /* Optional 5th/6th: the coarse grid step (Hz) and the fine stage's
+   * half-window (Hz), both 0 = stock. */
+  double step_hz = (argc > 5) ? atof(argv[5]) : 0.0;
+  double fine_hz = (argc > 6) ? atof(argv[6]) : 0.0;
   float thresh_list[8];
   int nthresh = 0;
   if (argc > 3) {
@@ -104,6 +112,11 @@ int main(int argc, char **argv) {
   printf("%s idle, %.0f s of noise per setting (sigma %.0f); CPU is process\n"
          "time, CPU%% is that per real-time audio second on one core\n\n",
          modename, audio_seconds, NOISE_SIGMA);
+  if (span > 0.0)
+    printf("coarse frequency search span +-%.0f Hz (stock +-50)\n", span);
+  if (step_hz > 0.0)
+    printf("coarse grid step %.1f Hz (stock 5), fine window +-%.1f Hz\n",
+           step_hz, fine_hz > 0.0 ? fine_hz : 3.0);
   printf("  thresh  CPU%%   cpu s   syncs   syncs/h  frames  frames/h\n");
 
   for (int it = 0; it < nthresh; it++) {
@@ -111,6 +124,10 @@ int main(int argc, char **argv) {
     if (!rx) return 1;
     freedv_set_frames_per_burst(rx, 1);
     freedv_set_timing_mx_thresh(rx, thresh_list[it]);
+    if (span > 0.0)
+      freedv_set_freq_search_range(rx, (float)-span, (float)span);
+    if (step_hz > 0.0) freedv_set_freq_search_step(rx, (float)step_hz);
+    if (fine_hz > 0.0) freedv_set_freq_search_fine(rx, (float)fine_hz);
 
     double cpu0 = now_cpu_s(), wall0 = now_wall_s();
     long fed = 0, sync_edges = 0, frames = 0;

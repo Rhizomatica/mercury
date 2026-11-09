@@ -19,7 +19,7 @@ var searchData=
   ['floor_5fmode_16',['floor_mode',['../structcar__t.html#a4108cace7eef69e1bdcd918f8da92047',1,'car_t::floor_mode'],['../structarq__session__t.html#a8b36be5ec98ea15cba2242a669b18d2f',1,'arq_session_t::floor_mode']]],
   ['floor_5foverhead_5fms_17',['FLOOR_OVERHEAD_MS',['../carousel_8c.html#acb2dbd608bdc4928a11cc77220d94087',1,'carousel.c']]],
   ['floor_5fpatterns_18',['floor_patterns',['../structcar__t.html#af620d386ed7f1f152d36d0a52e794f5c',1,'car_t']]],
-  ['floor_5fpoll_5fevery_19',['floor_poll_every',['../carousel_8c.html#a3ad618a9364a6c382f0630c569909f1d',1,'FLOOR_POLL_EVERY:&#160;carousel.c'],['../carousel_8c.html#a544f9f31ee7f4c16c2d0192eb97a9944',1,'floor_poll_every(const car_t *c):&#160;carousel.c']]],
+  ['floor_5fpoll_5fevery_19',['floor_poll_every',['../carousel_8c.html#a544f9f31ee7f4c16c2d0192eb97a9944',1,'floor_poll_every(const car_t *c):&#160;carousel.c'],['../carousel_8c.html#a3ad618a9364a6c382f0630c569909f1d',1,'FLOOR_POLL_EVERY:&#160;carousel.c']]],
   ['floor_5fpoll_5fevery_5fdeep_20',['FLOOR_POLL_EVERY_DEEP',['../carousel_8c.html#a2c1970d41aea42c0e270f8a648f43d14',1,'carousel.c']]],
   ['floor_5fsense_5fms_21',['FLOOR_SENSE_MS',['../carousel_8c.html#a402c65f601ba01c7be590c440f217259',1,'carousel.c']]],
   ['floor_5fsilent_22',['floor_silent',['../structcar__t.html#a025fcb992d56116d23bfd53085e2c987',1,'car_t']]],

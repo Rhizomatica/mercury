@@ -39,6 +39,12 @@
  * margin. */
 #define BUSY_TX_HOLDOFF_MS  300
 
+/* After the host moves the radio (a scan hop), no verdicts for this long: the
+ * radio retunes after the host's commands, not before, and the FFT window
+ * must hold only the new channel before its floor is taken.  The same wait
+ * follows a switch-on (BUSYDETECT ON), for the spectrum average to settle. */
+#define BUSY_HOP_HOLDOFF_MS 1000
+
 typedef struct {
     float    threshold_db;     /* BUSY when passband peak >= floor + threshold_db     */
     float    hysteresis_db;    /* CLEAR only when peak < floor + threshold - hyst      */
@@ -52,6 +58,16 @@ typedef struct {
     bool     inited;           /* false until the first update seeds the floor         */
     uint64_t above_since_ms;   /* 0 = not currently above the assert threshold         */
     uint64_t below_since_ms;   /* 0 = not currently below the release threshold        */
+
+    /* The last update's passband, for the log line on each transition: what
+     * made the verdict (a single loud band reads as a tone, many as a signal,
+     * a very quiet edge band as a receive filter narrower than the passband). */
+    float    peak_db;          /* loudest band                                         */
+    float    peak_hz;          /* its centre                                           */
+    float    quiet_db;         /* quietest band                                        */
+    float    quiet_hz;         /* its centre                                           */
+    int      bands_over;       /* bands at or over floor + threshold_db                */
+    int      bands;            /* bands measured                                       */
 } busy_state_t;
 
 /* Sensible defaults for HF NVIS.  Detector is opt-in (disabled unless a config
@@ -65,6 +81,12 @@ static const busy_cfg_t BUSY_CFG_DEFAULT = {
 
 /* Reset a detector to the pre-seed state. */
 void channel_busy_init(busy_state_t *st);
+
+/* The channel changed (a scan hop): forget the noise floor, keep the verdict.
+ * The next update seeds the floor from the new channel, and the debounce and
+ * hang decide BUSY/CLEAR from there, so a host sees a transition only when the
+ * new channel differs from the old. */
+void channel_busy_reseed(busy_state_t *st);
 
 /* Feed one RX power-spectrum frame.
  *

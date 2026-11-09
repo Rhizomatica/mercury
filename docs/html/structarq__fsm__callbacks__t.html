@@ -83,12 +83,15 @@ Data Fields</h2></td></tr>
 <tr class="memitem:af7e700fbf4a22aa24f8e58c8225b0608" id="r_af7e700fbf4a22aa24f8e58c8225b0608"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#af7e700fbf4a22aa24f8e58c8225b0608">send_tx_frame</a> )(int packet_type, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, size_t frame_size, const uint8_t *frame, int burst_remaining)</td></tr>
 <tr class="memdesc:af7e700fbf4a22aa24f8e58c8225b0608"><td class="mdescLeft">&#160;</td><td class="mdescRight">Enqueue a complete TX frame to the modem action queue.  <br /></td></tr>
 <tr class="separator:af7e700fbf4a22aa24f8e58c8225b0608"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ab25f6b751e0897f30d139a27dfb8b110" id="r_ab25f6b751e0897f30d139a27dfb8b110"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#ab25f6b751e0897f30d139a27dfb8b110">notify_connected</a> )(const char *remote_call, const char *local_call)</td></tr>
-<tr class="memdesc:ab25f6b751e0897f30d139a27dfb8b110"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface that a connection is established.  <br /></td></tr>
-<tr class="separator:ab25f6b751e0897f30d139a27dfb8b110"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a22b23ed540f910801b74566c8aa9f92a" id="r_a22b23ed540f910801b74566c8aa9f92a"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a22b23ed540f910801b74566c8aa9f92a">notify_connected</a> )(const char *remote_call, const char *local_call, bool we_called)</td></tr>
+<tr class="memdesc:a22b23ed540f910801b74566c8aa9f92a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface that a connection is established.  <br /></td></tr>
+<tr class="separator:a22b23ed540f910801b74566c8aa9f92a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a40578e49703a388b2d77e2095fc1b1cb" id="r_a40578e49703a388b2d77e2095fc1b1cb"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a40578e49703a388b2d77e2095fc1b1cb">notify_pending</a> )(const char *remote_call, const char *local_call)</td></tr>
 <tr class="memdesc:a40578e49703a388b2d77e2095fc1b1cb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface of an incoming call that is pending acceptance.  <br /></td></tr>
 <tr class="separator:a40578e49703a388b2d77e2095fc1b1cb"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a407dbd399823caca0546fe0763202e80" id="r_a407dbd399823caca0546fe0763202e80"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a407dbd399823caca0546fe0763202e80">notify_pending_again</a> )(const char *remote_call)</td></tr>
+<tr class="memdesc:a407dbd399823caca0546fe0763202e80"><td class="mdescLeft">&#160;</td><td class="mdescRight">Send PENDING again for the call already pending: a repeat of the CALL we are answering renews a scanning host's hold (BPQ32: six scan intervals per PENDING).  <br /></td></tr>
+<tr class="separator:a407dbd399823caca0546fe0763202e80"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3862caf333e5001120cfd807db8e1dc0" id="r_a3862caf333e5001120cfd807db8e1dc0"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a3862caf333e5001120cfd807db8e1dc0">notify_cancelpending</a> )(void)</td></tr>
 <tr class="memdesc:a3862caf333e5001120cfd807db8e1dc0"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface that a pending incoming call did not complete.  <br /></td></tr>
 <tr class="separator:a3862caf333e5001120cfd807db8e1dc0"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -172,14 +175,14 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="ab25f6b751e0897f30d139a27dfb8b110" name="ab25f6b751e0897f30d139a27dfb8b110"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ab25f6b751e0897f30d139a27dfb8b110">&#9670;&#160;</a></span>notify_connected</h2>
+<a id="a22b23ed540f910801b74566c8aa9f92a" name="a22b23ed540f910801b74566c8aa9f92a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a22b23ed540f910801b74566c8aa9f92a">&#9670;&#160;</a></span>notify_connected</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">void(* arq_fsm_callbacks_t::notify_connected) (const char *remote_call, const char *local_call)</td>
+          <td class="memname">void(* arq_fsm_callbacks_t::notify_connected) (const char *remote_call, const char *local_call, bool we_called)</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -187,8 +190,9 @@ Data Fields</h2></td></tr>
 <p>Notify TCP interface that a connection is established. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">remote_call</td><td>the peer (caller) callsign </td></tr>
-    <tr><td class="paramname">local_call</td><td>our dialed callsign/SSID (empty =&gt; use primary) </td></tr>
+    <tr><td class="paramname">remote_call</td><td>the peer's callsign </td></tr>
+    <tr><td class="paramname">local_call</td><td>callee: our dialed callsign/SSID (empty =&gt; primary) </td></tr>
+    <tr><td class="paramname">we_called</td><td>true when we placed the call (an ACCEPT was heard), false when we answered one. The receiver must take the side from here, not from its own state: an incoming CALL can reset that state after the host queued a CONNECT. </td></tr>
   </table>
   </dd>
 </dl>
@@ -234,6 +238,28 @@ Data Fields</h2></td></tr>
   <table class="params">
     <tr><td class="paramname">remote_call</td><td>the peer (caller) callsign </td></tr>
     <tr><td class="paramname">local_call</td><td>our dialed callsign/SSID (empty =&gt; use primary) </td></tr>
+  </table>
+  </dd>
+</dl>
+
+</div>
+</div>
+<a id="a407dbd399823caca0546fe0763202e80" name="a407dbd399823caca0546fe0763202e80"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a407dbd399823caca0546fe0763202e80">&#9670;&#160;</a></span>notify_pending_again</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void(* arq_fsm_callbacks_t::notify_pending_again) (const char *remote_call)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Send PENDING again for the call already pending: a repeat of the CALL we are answering renews a scanning host's hold (BPQ32: six scan intervals per PENDING). </p>
+<p>Only the notice: unlike notify_pending, it must not reset the connection's addresses, since a host CONNECT may have written them while the repeat sat in the queue. </p><dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">remote_call</td><td>the peer (caller) callsign </td></tr>
   </table>
   </dd>
 </dl>

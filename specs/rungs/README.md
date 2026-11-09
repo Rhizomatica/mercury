@@ -179,6 +179,9 @@ Which model covers the other 2.0 changes:
   `FloorSilence` does not depend on;
 - an unanswered ask scored, and the next ask one rung lower when the rung
   asked has delivered nothing (`m_timer`, `m_decide_recv`): `PollRung`;
+- a rung dead after 2 unanswered asks, not 4, once two rounds in a row
+  brought nothing of the peer (dark, #497): `PollRung` with `K = 2`
+  (`PollRung_dark.cfg`), a rung killed mid-session;
 - full rounds at once on a rung well above its threshold that has lost
   nothing (`level_earned`): it changes only how many frames a poll asks
   for, within the 1 .. `keydown_cap` that `poll_size` already gave, which
@@ -204,14 +207,28 @@ The other direction: on which rung the callee's rounds go when the caller
 asks for them (`PollRung.tla`).  Each poll names a rung, the caller binds
 its decoder there as it keys, and the callee answers on the rung named.  The
 rung is the one asked last, or lower (`choose_level`), and one lower than a
-rung that has had the caller's asks and delivered nothing.  Some rungs may
-carry nothing at all; the floor always carries.
+rung that has had the caller's asks and delivered nothing, or that has had
+`K` unanswered scored asks in a row (`level_dead`).  Some rungs may carry
+nothing at all, and the channel may kill a live rung mid-session (`Kill`, at
+most `Kills` times), one that has delivered or not; the floor always
+carries.
 
     java -cp /opt/TLA+Toolbox/tla2tools.jar tlc2.TLC -workers 4 \
         -metadir /tmp/tlc-pollrung -config PollRung.cfg PollRung.tla
 
-- `PollRung.cfg`: the code's rules.  `Agree` and `Delivered` hold: no
-  error, 1477 distinct states (4 rungs, 2 messages, `L = 2`).
+- `PollRung.cfg`: the code's rules, `K = 4` (`DEAD_RUN`), up to two rungs
+  killed mid-session.  `Agree` and `Delivered` hold: no error, 12487
+  distinct states (4 rungs, 3 messages, `L = 2`).
+- `PollRung_dark.cfg`: `K = 2`, the run near a rung's threshold and, since
+  #497, once two rounds in a row brought nothing of the peer (dark).  `Agree`
+  and `Delivered` hold: 8413 states.  Also checked: every `K` in 1..4 with
+  `Kills` in 1..3, `L = 3`, and 5 rungs with 3 kills (up to 57379 states),
+  all no error.  The model does not show what #497 gains, which is time
+  (DATAC3 dead at the third dark round, not the fourth or later: the sim
+  and the NW8L log); it shows that stepping down after a rung dies cannot
+  stall, for any `K`.  The model had no mid-session death before #497: its
+  dead rungs were fixed at `Init`, so a rung that once delivered was live
+  for ever.
 - `Mut_noscore.cfg`: every ask names the rung asked last, as the code did
   before 2026-10-18.  Violates `Delivered`: a session that starts on a rung
   the channel does not carry asks there for ever.  In the sim (nvis, the
@@ -219,5 +236,9 @@ carry nothing at all; the floor always carries.
   lost-peer watchdog ended them; with the rule, 1.
 - `Mut_stale.cfg`: the callee answers on its own last rung, not the one
   named.  Violates `Agree`.
+- `Mut_nodrop.cfg`: no `K` rule, so M may ask on a rung that once delivered
+  for ever.  Violates `Delivered` with one kill: rung 1 delivers, dies, and
+  M asks there again and again (NW8L, IONOS MPP +5 -> -5 dB, DATAC3).  With
+  `Kills = 0` it holds (3597 states), so the kill is what the rule is for.
 
 Give each TLC run its own `-metadir`.

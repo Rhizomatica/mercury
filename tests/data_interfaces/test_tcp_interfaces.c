@@ -157,7 +157,8 @@ ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size)
 }
 
 void net_set_status(int pt, int st) { (void)pt; (void)st; }
-int net_get_status(int pt) { (void)pt; return NET_CONNECTED; }
+static int mock_net_status[8];   /* NET_CONNECTED for every port: setUp */
+int net_get_status(int pt) { return (pt >= 0 && pt < 8) ? mock_net_status[pt] : NET_CONNECTED; }
 ssize_t tcp_send_some(int port_type, const uint8_t *buffer, size_t len)
 {
     (void)port_type; (void)buffer;
@@ -243,18 +244,41 @@ void modem_set_monitor_enabled(bool enabled)
 }
 bool modem_get_monitor_enabled(void) { return mock_monitor_enabled; }
 
+/* ---- busy detector channel change (LISTEN OFF) ---- */
+
+static int mock_busy_channel_changed_calls = 0;
+void modem_busy_channel_changed(void) { mock_busy_channel_changed_calls++; }
+
+/* ---- BUSYDETECT / BUSYRESEED switches ---- */
+
+static bool mock_busy_detect    = false;
+static int  mock_busy_detect_set_calls = 0;
+void modem_set_busy_detect_enabled(bool enabled)
+{
+    mock_busy_detect = enabled;
+    mock_busy_detect_set_calls++;
+}
+bool modem_get_busy_detect_enabled(void) { return mock_busy_detect; }
+
+static bool mock_busy_reseed    = false;
+static int  mock_busy_reseed_set_calls = 0;
+void modem_set_busy_reseed_on_hop(bool enabled)
+{
+    mock_busy_reseed = enabled;
+    mock_busy_reseed_set_calls++;
+}
+bool modem_get_busy_reseed_on_hop(void) { return mock_busy_reseed; }
+
 /* ---- in-flight frame stub (LISTEN OFF diagnostic) ---- */
 
 static bool mock_inflight = false;
 
-bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms,
-                              bool *lost_on_listen_off)
+bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms)
 {
     if (!mock_inflight)
         return false;
-    if (mode_name)          *mode_name = "MFSK";
-    if (for_ms)             *for_ms = 2100;
-    if (lost_on_listen_off) *lost_on_listen_off = true;
+    if (mode_name) *mode_name = "MFSK";
+    if (for_ms)    *for_ms = 2100;
     return true;
 }
 
@@ -365,6 +389,9 @@ arq_info arq_conn = {0};
 
 void setUp(void)
 {
+    for (int i = 0; i < 8; i++)
+        mock_net_status[i] = NET_CONNECTED;
+    atomic_store(&host_holds_tnc, false);
     memset(last_tcp_write_buf, 0, sizeof(last_tcp_write_buf));
     last_tcp_write_len = 0;
     tcp_write_call_count = 0;
@@ -413,6 +440,13 @@ void setUp(void)
     /* Monitor mode */
     mock_monitor_enabled    = false;
     mock_monitor_set_calls  = 0;
+
+    /* Busy detector switches (both off by default) */
+    mock_busy_detect           = false;
+    mock_busy_detect_set_calls = 0;
+    mock_busy_reseed           = false;
+    mock_busy_reseed_set_calls = 0;
+    mock_busy_channel_changed_calls = 0;
 }
 
 void tearDown(void) { }
@@ -488,13 +522,17 @@ void test_cmd_mycall_does_not_register_dropped_secondaries(void)
 
 void test_cmd_listen_on(void)
 {
+    mock_busy_reseed = true;   /* LISTEN ON never re-seeds, even with it on */
     char cmd[] = "LISTEN ON";
     execute_control_command(cmd);
 
     assert_ok_response();
     TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_ON, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_channel_changed_calls);
 }
 
+/* LISTEN OFF starts a scanner's hop.  With BUSYRESEED off (the default) the
+ * busy detector keeps its floor: nothing changes from before the option. */
 void test_cmd_listen_off(void)
 {
     char cmd[] = "LISTEN OFF";
@@ -502,6 +540,19 @@ void test_cmd_listen_off(void)
 
     assert_ok_response();
     TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_OFF, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_channel_changed_calls);
+}
+
+/* With it on, the detector is told the channel may have changed. */
+void test_cmd_listen_off_reseeds_busy_floor_when_enabled(void)
+{
+    mock_busy_reseed = true;
+    char cmd[] = "LISTEN OFF";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_OFF, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(1, mock_busy_channel_changed_calls);
 }
 
 /* A scanner's LISTEN OFF that lands mid-frame is only logged: the command
@@ -708,6 +759,77 @@ void test_cmd_beaconmode_sets_reports_and_refuses(void)
     execute_control_command(query);
     TEST_ASSERT_EQUAL_STRING_LEN("BEACONMODE -1 LISTEN\r", (char *)last_tcp_write_buf, 21);
     TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);    /* the listen mode is untouched */
+}
+
+/* ---- BUSYDETECT / BUSYRESEED: the busy detector's run-time switches ---- */
+
+void test_cmd_busydetect_on_off_and_query(void)
+{
+    char on[] = "BUSYDETECT ON";
+    execute_control_command(on);
+    assert_ok_response();
+    TEST_ASSERT_TRUE(mock_busy_detect);
+
+    tcp_write_call_count = 0;
+    char query[] = "BUSYDETECT";
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYDETECT ON\r", (char *)last_tcp_write_buf, 14);
+
+    tcp_write_call_count = 0;
+    char off[] = "BUSYDETECT off";
+    execute_control_command(off);
+    assert_ok_response();
+    TEST_ASSERT_FALSE(mock_busy_detect);
+
+    tcp_write_call_count = 0;
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYDETECT OFF\r", (char *)last_tcp_write_buf, 15);
+    TEST_ASSERT_EQUAL_INT(2, mock_busy_detect_set_calls);   /* the queries set nothing */
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_reseed_set_calls);
+}
+
+void test_cmd_busyreseed_on_off_and_query(void)
+{
+    char on[] = "BUSYRESEED ON";
+    execute_control_command(on);
+    assert_ok_response();
+    TEST_ASSERT_TRUE(mock_busy_reseed);
+
+    tcp_write_call_count = 0;
+    char query[] = "BUSYRESEED";
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYRESEED ON\r", (char *)last_tcp_write_buf, 14);
+
+    tcp_write_call_count = 0;
+    char off[] = "BUSYRESEED OFF";
+    execute_control_command(off);
+    assert_ok_response();
+    TEST_ASSERT_FALSE(mock_busy_reseed);
+
+    tcp_write_call_count = 0;
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSYRESEED OFF\r", (char *)last_tcp_write_buf, 15);
+    TEST_ASSERT_EQUAL_INT(2, mock_busy_reseed_set_calls);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_detect_set_calls);
+}
+
+/* A bad argument changes nothing, and the name must be a whole word:
+ * "BUSYRESEEDON" is not "BUSYRESEED ON". */
+void test_cmd_busy_switches_reject_bad_input(void)
+{
+    char bad[] = "BUSYDETECT MAYBE";
+    execute_control_command(bad);
+    assert_wrong_response();
+
+    tcp_write_call_count = 0;
+    char longer[] = "BUSYRESEEDON";
+    execute_control_command(longer);
+    assert_wrong_response();
+
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_detect_set_calls);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_reseed_set_calls);
 }
 
 /* ---- MONITOR: the passive all-modes decoder (VARA-monitor style) ---- */
@@ -2143,6 +2265,45 @@ void test_bcast_shutdown_backpressured_send(void)
     mercury_stop = false;
 }
 
+/* The host as the TNC's client: refused while a TCP control client holds the
+ * slot, a control line otherwise, and its release is that client's leaving. */
+void test_host_tnc_command_busy_while_a_tcp_client_is_attached(void)
+{
+    TEST_ASSERT_EQUAL_INT(-2, tnc_host_command("LISTEN ON"));
+    TEST_ASSERT_EQUAL_INT(0, captured_cmd_count);
+    TEST_ASSERT_FALSE(atomic_load(&host_holds_tnc));
+}
+
+void test_host_tnc_command_runs_a_control_line(void)
+{
+    mock_net_status[CTL_TCP_PORT] = NET_LISTENING;
+    TEST_ASSERT_EQUAL_INT(0, tnc_host_command("CONNECT KO0OOO W1ABC\r"));
+    TEST_ASSERT_EQUAL_INT(1, captured_cmd_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_CONNECT, captured_cmd.type);
+    TEST_ASSERT_EQUAL_STRING("KO0OOO", captured_cmd.arg0);
+    TEST_ASSERT_EQUAL_STRING("W1ABC", captured_cmd.arg1);
+    TEST_ASSERT_EQUAL_INT(-1, tnc_host_command("\r\n"));
+    TEST_ASSERT_EQUAL_INT(-1, tnc_host_command("CONNECT KO0OOO")); /* WRONG */
+    TEST_ASSERT_EQUAL_INT(1, captured_cmd_count);
+}
+
+void test_host_tnc_release_is_a_client_leaving_once(void)
+{
+    mock_net_status[CTL_TCP_PORT] = NET_LISTENING;
+    tnc_host_release();                      /* not holding: nothing */
+    TEST_ASSERT_EQUAL_INT(0, captured_cmd_count);
+    TEST_ASSERT_EQUAL_INT(0, tnc_host_command("LISTEN ON"));
+    TEST_ASSERT_TRUE(tnc_host_holds());
+    mock_monitor_enabled = true;
+    tnc_host_release();
+    TEST_ASSERT_FALSE(tnc_host_holds());
+    TEST_ASSERT_EQUAL_INT(2, captured_cmd_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_CLIENT_DISCONNECT, captured_cmd.type);
+    TEST_ASSERT_FALSE(mock_monitor_enabled);
+    tnc_host_release();
+    TEST_ASSERT_EQUAL_INT(2, captured_cmd_count);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -2159,6 +2320,7 @@ int main(void)
     RUN_TEST(test_cmd_mycall_does_not_register_dropped_secondaries);
     RUN_TEST(test_cmd_listen_on);
     RUN_TEST(test_cmd_listen_off);
+    RUN_TEST(test_cmd_listen_off_reseeds_busy_floor_when_enabled);
     RUN_TEST(test_cmd_listen_off_mid_frame_still_releases);
     RUN_TEST(test_cmd_public_on);
     RUN_TEST(test_cmd_compression);
@@ -2176,6 +2338,9 @@ int main(void)
     RUN_TEST(test_cmd_mode_unsupported_mode_is_wrong);
     RUN_TEST(test_cmd_mode_query_reports_index_and_name);
     RUN_TEST(test_cmd_beaconmode_sets_reports_and_refuses);
+    RUN_TEST(test_cmd_busydetect_on_off_and_query);
+    RUN_TEST(test_cmd_busyreseed_on_off_and_query);
+    RUN_TEST(test_cmd_busy_switches_reject_bad_input);
     RUN_TEST(test_cmd_monitor_on);
     RUN_TEST(test_cmd_monitor_off);
     RUN_TEST(test_cmd_monitor_query_reports_on);
@@ -2253,5 +2418,8 @@ int main(void)
     RUN_TEST(test_bcast_data_lenprefix_roundtrip);
     RUN_TEST(test_sn_query_is_always_answered);
     RUN_TEST(test_bitrate_query_is_always_answered);
+    RUN_TEST(test_host_tnc_command_busy_while_a_tcp_client_is_attached);
+    RUN_TEST(test_host_tnc_command_runs_a_control_line);
+    RUN_TEST(test_host_tnc_release_is_a_client_leaving_once);
     return UNITY_END();
 }

@@ -54,7 +54,9 @@ iniparser/dictionary.o: iniparser/dictionary.c iniparser/dictionary.h
 watterson.o: watterson.c watterson.h
 	$(CC) $(CFLAGS) -I.. -c watterson.c
 
-mercury_engine.o: mercury_engine.c mercury_engine.h
+# mercury_engine.c logs MERCURY_VERSION and GIT_HASH at startup, so it is
+# rebuilt when the hash changes, like mercury_cli.o below.
+mercury_engine.o: mercury_engine.c mercury_engine.h ../.git_hash_stamp
 	$(CC) $(ENGINE_CFLAGS) -c mercury_engine.c
 
 # mercury_cli.c embeds GIT_HASH (via mercury_version.h's -V banner), so it must

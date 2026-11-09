@@ -269,7 +269,8 @@ typedef struct {
     int      round_lv;              /* the rung the frames came on */
     bool     rx_tail;               /* ...and its last frame among them */
     bool     status_seen;
-    int      silent_polls;
+    int      silent_polls;          /* bit 0: asked again this round; above it, 2 per scored
+                                     * round in a row with nothing of the peer heard */
     bool     peer_unopened;
     bool     peer_short;            /* the peer speaks the backlog hint (car_set_short_rung) */
     uint8_t  peer_backlog;          /* ...and what it last said it holds (BL_*) */

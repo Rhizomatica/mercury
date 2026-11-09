@@ -65,7 +65,21 @@ const char *chanutil_preset_name(int preset);
 typedef struct chanutil chanutil_t;
 
 chanutil_t *chanutil_open(int preset, float no_dbhz, unsigned seed);
+
+/* As chanutil_open, with a carrier offset in Hz: the transmitter's
+ * frequency error as the receiver sees it, so the whole burst moves by that
+ * much in the passband.  Zero is the same channel as chanutil_open. */
+chanutil_t *chanutil_open_offset(int preset, float no_dbhz, unsigned seed,
+                                  float offset_hz);
 void        chanutil_close(chanutil_t *c);
+
+/* Carrier offset in Hz: the transmitter's frequency error as the receiver
+ * sees it, i.e. the whole burst moves by that much in the passband.  This
+ * is what a mistuned radio does to a receiver's acquisition search, and it
+ * is a channel property (every path moves together), not a path's own
+ * Doppler shift.  Zero (the default) leaves the signal where it was. */
+void chanutil_set_carrier_offset(chanutil_t *c, float hz);
+float chanutil_get_carrier_offset(const chanutil_t *c);
 
 /* Fade + noise one burst through an already-warmed channel. */
 int chanutil_run(chanutil_t *c, int16_t *pb, int n, float *snr3k_out);

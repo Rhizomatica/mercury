@@ -211,6 +211,11 @@ Enumerations</h2></td></tr>
 <br />
  }</td></tr>
 <tr class="separator:a02a9b78e1abd4197b7f990aa12670d64"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aacbe2e0f69896e6aff06f563e01ae2eb" id="r_aacbe2e0f69896e6aff06f563e01ae2eb"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#aacbe2e0f69896e6aff06f563e01ae2eb">arq_listen_end_t</a> { <a class="el" href="arq__fsm_8h.html#aacbe2e0f69896e6aff06f563e01ae2ebab966af7c97abd9d2a7cb68e60da5123f">ARQ_LISTEN_GOES_ON</a> = 0
+, <a class="el" href="arq__fsm_8h.html#aacbe2e0f69896e6aff06f563e01ae2eba58e622259ac7264223fd41046f3cb88d">ARQ_LISTEN_ENDS_IN_SESSION</a>
+, <a class="el" href="arq__fsm_8h.html#aacbe2e0f69896e6aff06f563e01ae2eba9733852625af3a6458c9d57fe8924a7d">ARQ_LISTEN_ENDS_RELEASED</a>
+ }</td></tr>
+<tr class="separator:aacbe2e0f69896e6aff06f563e01ae2eb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
@@ -228,6 +233,9 @@ Functions</h2></td></tr>
 <tr class="memitem:aa8a39e4480edd0bb7ace7a11177397fb" id="r_aa8a39e4480edd0bb7ace7a11177397fb"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#aa8a39e4480edd0bb7ace7a11177397fb">arq_fsm_dispatch</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, const <a class="el" href="structarq__event__t.html">arq_event_t</a> *event)</td></tr>
 <tr class="memdesc:aa8a39e4480edd0bb7ace7a11177397fb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Dispatch an event through both FSM levels.  <br /></td></tr>
 <tr class="separator:aa8a39e4480edd0bb7ace7a11177397fb"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a02dd068a48a158ce3a552629846a6f7f" id="r_a02dd068a48a158ce3a552629846a6f7f"><td class="memItemLeft" align="right" valign="top"><a class="el" href="arq__fsm_8h.html#aacbe2e0f69896e6aff06f563e01ae2eb">arq_listen_end_t</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a02dd068a48a158ce3a552629846a6f7f">arq_fsm_dispatch_ends_listening</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, const <a class="el" href="structarq__event__t.html">arq_event_t</a> *event)</td></tr>
+<tr class="memdesc:a02dd068a48a158ce3a552629846a6f7f"><td class="mdescLeft">&#160;</td><td class="mdescRight"><a class="el" href="arq__fsm_8h.html#aa8a39e4480edd0bb7ace7a11177397fb" title="Dispatch an event through both FSM levels.">arq_fsm_dispatch()</a>, and whether that one event ended a spell of listening for calls (LISTENING or ACCEPTING, to any other state), and how.  <br /></td></tr>
+<tr class="separator:a02dd068a48a158ce3a552629846a6f7f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a71ae0bec573cab0a4dd3a9be1df15a14" id="r_a71ae0bec573cab0a4dd3a9be1df15a14"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a71ae0bec573cab0a4dd3a9be1df15a14">arq_fsm_timeout_ms</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, uint64_t now)</td></tr>
 <tr class="memdesc:a71ae0bec573cab0a4dd3a9be1df15a14"><td class="mdescLeft">&#160;</td><td class="mdescRight">Return milliseconds until the next deadline, or INT_MAX if idle.  <br /></td></tr>
 <tr class="separator:a71ae0bec573cab0a4dd3a9be1df15a14"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -237,9 +245,15 @@ Functions</h2></td></tr>
 <tr class="memitem:a0c049f25bdfda3cc5435c41036ae1113" id="r_a0c049f25bdfda3cc5435c41036ae1113"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a0c049f25bdfda3cc5435c41036ae1113">arq_fsm_expect_pattern</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, uint64_t now)</td></tr>
 <tr class="memdesc:a0c049f25bdfda3cc5435c41036ae1113"><td class="mdescLeft">&#160;</td><td class="mdescRight">Whether a pattern can arrive now (the modem's detector runs only then).  <br /></td></tr>
 <tr class="separator:a0c049f25bdfda3cc5435c41036ae1113"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aaf6bb41b9d714d22ba2d88e0306c078a" id="r_aaf6bb41b9d714d22ba2d88e0306c078a"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#aaf6bb41b9d714d22ba2d88e0306c078a">arq_fsm_channel_keyed</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
+<tr class="memdesc:aaf6bb41b9d714d22ba2d88e0306c078a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Why the channel is busy now (a CAR_KEYED_* sign), 0 when clear: the listen-before-talk test the FSM keys by.  <br /></td></tr>
+<tr class="separator:aaf6bb41b9d714d22ba2d88e0306c078a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3edd3ffe6bb5f0eddd1e0939ef47b3ca" id="r_a3edd3ffe6bb5f0eddd1e0939ef47b3ca"><td class="memItemLeft" align="right" valign="top">const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a3edd3ffe6bb5f0eddd1e0939ef47b3ca">arq_conn_state_name</a> (<a class="el" href="arq__fsm_8h.html#a6bbb8ea99f0ecd4d61510e943c890c32">arq_conn_state_t</a> s)</td></tr>
 <tr class="memdesc:a3edd3ffe6bb5f0eddd1e0939ef47b3ca"><td class="mdescLeft">&#160;</td><td class="mdescRight">Human-readable name for a connection state (for log output).  <br /></td></tr>
 <tr class="separator:a3edd3ffe6bb5f0eddd1e0939ef47b3ca"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7c11c1d88a89c0adb221ad1dbef00c30" id="r_a7c11c1d88a89c0adb221ad1dbef00c30"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a7c11c1d88a89c0adb221ad1dbef00c30">arq_conn_state_has_peer</a> (<a class="el" href="arq__fsm_8h.html#a6bbb8ea99f0ecd4d61510e943c890c32">arq_conn_state_t</a> s)</td></tr>
+<tr class="memdesc:a7c11c1d88a89c0adb221ad1dbef00c30"><td class="mdescLeft">&#160;</td><td class="mdescRight">The link to the peer exists: CONNECTED, or DISCONNECTING (the teardown is still an exchange with that peer).  <br /></td></tr>
+<tr class="separator:a7c11c1d88a89c0adb221ad1dbef00c30"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ad395f9caf0eb20b3bac052ed0aae664d" id="r_ad395f9caf0eb20b3bac052ed0aae664d"><td class="memItemLeft" align="right" valign="top">const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#ad395f9caf0eb20b3bac052ed0aae664d">arq_event_name</a> (<a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64">arq_event_id_t</a> ev)</td></tr>
 <tr class="memdesc:ad395f9caf0eb20b3bac052ed0aae664d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Human-readable name for an event (for log output).  <br /></td></tr>
 <tr class="separator:ad395f9caf0eb20b3bac052ed0aae664d"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -300,6 +314,25 @@ Functions</h2></td></tr>
 
 </div>
 </div>
+<a id="aacbe2e0f69896e6aff06f563e01ae2eb" name="aacbe2e0f69896e6aff06f563e01ae2eb"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aacbe2e0f69896e6aff06f563e01ae2eb">&#9670;&#160;</a></span>arq_listen_end_t</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum <a class="el" href="arq__fsm_8h.html#aacbe2e0f69896e6aff06f563e01ae2eb">arq_listen_end_t</a></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<table class="fieldtable">
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="aacbe2e0f69896e6aff06f563e01ae2ebab966af7c97abd9d2a7cb68e60da5123f" name="aacbe2e0f69896e6aff06f563e01ae2ebab966af7c97abd9d2a7cb68e60da5123f"></a>ARQ_LISTEN_GOES_ON&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="aacbe2e0f69896e6aff06f563e01ae2eba58e622259ac7264223fd41046f3cb88d" name="aacbe2e0f69896e6aff06f563e01ae2eba58e622259ac7264223fd41046f3cb88d"></a>ARQ_LISTEN_ENDS_IN_SESSION&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="aacbe2e0f69896e6aff06f563e01ae2eba9733852625af3a6458c9d57fe8924a7d" name="aacbe2e0f69896e6aff06f563e01ae2eba9733852625af3a6458c9d57fe8924a7d"></a>ARQ_LISTEN_ENDS_RELEASED&#160;</td><td class="fielddoc"></td></tr>
+</table>
+
+</div>
+</div>
 <a id="a7c2aa6f9a626fff694f7929397bb6e50" name="a7c2aa6f9a626fff694f7929397bb6e50"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a7c2aa6f9a626fff694f7929397bb6e50">&#9670;&#160;</a></span>arq_teardown_t</h2>
 
@@ -343,6 +376,27 @@ Functions</h2></td></tr>
 
 </div>
 </div>
+<a id="a7c11c1d88a89c0adb221ad1dbef00c30" name="a7c11c1d88a89c0adb221ad1dbef00c30"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7c11c1d88a89c0adb221ad1dbef00c30">&#9670;&#160;</a></span>arq_conn_state_has_peer()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_conn_state_has_peer </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="arq__fsm_8h.html#a6bbb8ea99f0ecd4d61510e943c890c32">arq_conn_state_t</a>&#160;</td>
+          <td class="paramname"><em>s</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>The link to the peer exists: CONNECTED, or DISCONNECTING (the teardown is still an exchange with that peer). </p>
+<p>Energy on the channel in these states is the peer, not occupancy (the busy detector's mute, modem.c). </p>
+
+</div>
+</div>
 <a id="a3edd3ffe6bb5f0eddd1e0939ef47b3ca" name="a3edd3ffe6bb5f0eddd1e0939ef47b3ca"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a3edd3ffe6bb5f0eddd1e0939ef47b3ca">&#9670;&#160;</a></span>arq_conn_state_name()</h2>
 
@@ -383,6 +437,26 @@ Functions</h2></td></tr>
 
 </div>
 </div>
+<a id="aaf6bb41b9d714d22ba2d88e0306c078a" name="aaf6bb41b9d714d22ba2d88e0306c078a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aaf6bb41b9d714d22ba2d88e0306c078a">&#9670;&#160;</a></span>arq_fsm_channel_keyed()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_fsm_channel_keyed </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Why the channel is busy now (a CAR_KEYED_* sign), 0 when clear: the listen-before-talk test the FSM keys by. </p>
+
+</div>
+</div>
 <a id="aa8a39e4480edd0bb7ace7a11177397fb" name="aa8a39e4480edd0bb7ace7a11177397fb"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aa8a39e4480edd0bb7ace7a11177397fb">&#9670;&#160;</a></span>arq_fsm_dispatch()</h2>
 
@@ -418,6 +492,38 @@ Functions</h2></td></tr>
   </table>
   </dd>
 </dl>
+
+</div>
+</div>
+<a id="a02dd068a48a158ce3a552629846a6f7f" name="a02dd068a48a158ce3a552629846a6f7f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a02dd068a48a158ce3a552629846a6f7f">&#9670;&#160;</a></span>arq_fsm_dispatch_ends_listening()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="arq__fsm_8h.html#aacbe2e0f69896e6aff06f563e01ae2eb">arq_listen_end_t</a> arq_fsm_dispatch_ends_listening </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const <a class="el" href="structarq__event__t.html">arq_event_t</a> *&#160;</td>
+          <td class="paramname"><em>event</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p><a class="el" href="arq__fsm_8h.html#aa8a39e4480edd0bb7ace7a11177397fb" title="Dispatch an event through both FSM levels.">arq_fsm_dispatch()</a>, and whether that one event ended a spell of listening for calls (LISTENING or ACCEPTING, to any other state), and how. </p>
+<p>The MFSK call listeners must drop what they hold when such a spell ends &ndash; above all at a scanning host's LISTEN OFF, whose LISTEN ON follows within a millisecond, often in the same batch of events, and usually on another channel. Checked per event, so a spell that ends and restarts at once is still seen (<a class="el" href="arq_8c.html">arq.c</a> counts them for the modem).</p>
+<p>ARQ_LISTEN_ENDS_RELEASED is the hop itself: no session goes on, so the control and payload decoders can drop what they hold as well. In a session they cannot: the control decoder is carrying it. </p>
 
 </div>
 </div>

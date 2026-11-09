@@ -27,8 +27,12 @@ At 0.30 the trade collapses: 30-40% of noise-only windows declare sync. The
 UW budget buys nothing loose and costs real frames tight — with the pairing
 fixed, the acquisition counts are *identical* across UW budgets (the proof
 the pairs are now honest), while delivery degrades monotonically as the
-budget tightens. Under a true frequency shift, ±20 Hz destroys acquisition at
-every threshold measured; lowering the threshold does not repair it.
+budget tightens. The frequency offset is a separate problem, and the
+sentence this document used to end with — that ±20 Hz destroys acquisition
+at every threshold — was an instrument bug (see the correction below, and
+[OFFSET-ACQUISITION-FINDINGS.md](OFFSET-ACQUISITION-FINDINGS.md)): a ±20 Hz
+offset is nearly free, and what bounds the offset is the acquisition
+search's ±55 Hz capture window.
 
 ## Method
 
@@ -131,6 +135,21 @@ falls monotonically as the budget tightens: −12 dB delivers 17/16 frames at
 
 ## Frequency offset: retracted, and re-measured as a negative result
 
+> **CORRECTED 2026-11-04.** This section was wrong, and so was the sentence
+> in the Answer above it. The offset rows below were measured with a
+> defective instrument: `bench_freq_shift_real` produced a **half-amplitude**
+> copy of the burst (-6.02 dB), so every offset row was 6 dB below its
+> labelled SNR. Re-measured with the fixed instrument, **a ±20 Hz offset
+> costs DATAC16 almost nothing**: 50/50 acquired and 50/50 delivered at
+> -9 dB, the same as no offset. The conclusion "a ±20 Hz mistune destroys
+> acquisition at every threshold" does not hold and is withdrawn. The
+> offset question is answered properly in
+> [OFFSET-ACQUISITION-FINDINGS.md](OFFSET-ACQUISITION-FINDINGS.md): the
+> acquisition captures ±55 Hz, that window is the search's geometry rather
+> than the threshold's, and the instrument now has a self-test
+> (`utils/shift_selftest.c`). The rows below are kept as the record of what
+> was measured and why it was wrong.
+
 The first version of this document claimed the lower threshold recovers most
 of the acquisition lost to ±20 Hz of offset, on the strength of a sweep that
 mixed the real burst with cos(2πft) — which does not shift a signal; it makes
@@ -161,8 +180,10 @@ for exactly this class of radio-to-radio spread.)
    price that trade, but the default should not carry it.
 2. Leave `bad_uw_errors` and `nuwbits` alone — loose is a no-op, tight
    costs deliveries.
-3. Frequency-offset acquisition is an open problem the threshold does not
-   touch; it needs its own investigation of the search stages.
+3. Frequency-offset acquisition is a separate problem the threshold does not
+   touch. (Corrected 2026-11-04: the investigation has been done, and the
+   threshold was never the issue — the search captures ±55 Hz, and ±20 Hz
+   costs almost nothing. See OFFSET-ACQUISITION-FINDINGS.md.)
 4. datac13/datac14 keep 0.45: same geometry, not measured here, no longer on
    the ARQ ladder.
 5. **Idle CPU measured on x86** (`utils/idle_cpu_probe`, 600 s of noise per
@@ -179,6 +200,9 @@ for exactly this class of radio-to-radio spread.)
 
 - AWGN only. Fading confounds acquisition loss with payload loss; the fading
   answer is OTA territory.
+- **The offset rows in this document were superseded on 2026-11-04** by a
+  corrected instrument; see the correction notice in the offset section and
+  OFFSET-ACQUISITION-FINDINGS.md.
 - 100 trials on the finals; the collapse grid (40/60) is directional. Cell
   sizes move by more than run noise everywhere the verdict reads on them.
 - Simulation only, and the false-sync cost column is a bench proxy for what

@@ -179,7 +179,7 @@ listed).
 | `round_seen`, `round_frames` | frames of the expected round decoded / announced total | 0 |
 | `round_heard` | anything of the round heard (frame, status, or carrier during sense) | false |
 | `status_seen` | STATUS answering my current poll id | false |
-| `silent_polls` | 1 after one unscored re-poll, until something is heard | 0 |
+| `silent_polls` | bit 0 (`ASKED`): this round's poll was asked again, cleared at each round start; above it, +2 per scored round in a row with nothing of the peer heard (the `dark` run, capped at 4), cleared when anything of the peer is heard (frame, control, pattern) | 0 |
 | `peer_unopened` | the peer has data not yet cut into blocks | false |
 | `peer_hi`, `peer_hi_known` | highest block id the peer has opened (resolved) | — |
 | `drive_start` | when I started driving this turn | — |
@@ -201,6 +201,8 @@ listed).
 Per rung `lv`: `rung[lv].sent`, `rung[lv].lost` (decayed frame counts), `rung[lv].rounds`,
 `rung[lv].dead_run`, `rung[lv].probe_fails`, `rung[lv].round_at` (value of `polls` when last
 measured), `rung[lv].probe_at` (ms), `rung[lv].backoff_ms` (H:145-149). All 0 at init.
+The dark run (scored rounds in a row with nothing of the peer heard, the "one loss, not the
+round's" case) is kept in `silent_polls` above bit 0, not in a field of its own (§2.4).
 
 ---
 
@@ -462,7 +464,7 @@ If `retired > 0` → `io.tx_confirmed(retired)` (F:1450-1456 updates BUFFER).
 |---|---|---|
 | D0 | `lv != rx_level` | drop (only `last_carrier_ms`, SNR, ctl_deaf already updated by `car_on_frame`). |
 | D1 | `sending` | the peer took the turn with a handover I missed: `start_driving(m.poll_id, lv, m.left+1, now - A(lv) - H, now)`. My open blocks stay suspended. |
-| D2 | always (after D1) | `idle = false; round_heard = true; silent_polls = 0`; `take_pieces(m)` (P6). |
+| D2 | always (after D1) | `idle = false; round_heard = true; silent_polls &= ASKED`; `take_pieces(m)` (P6). |
 | D3 | `lv == 0 && poll_level == 0 && io.pattern` (floor_frame) | `floor_streaming = true`. |
 | D4 | `m.poll_id == my_poll_id && polled_since_handover` | `polls_unheard = 0`. |
 | D5 | `m.poll_id == poll_id || floor_frame` | `round_seen++; round_frames = round_seen + m.left`. (At the floor frames keep the id of the last poll the sender heard, so any floor frame counts.) |
@@ -479,7 +481,7 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 | # | Guard | Actions |
 |---|---|---|
 | ST1 | `sending` | ignore. |
-| ST2 | else | if `m.poll_id == poll_id` → `status_seen = true`; `round_heard = true; silent_polls = 0; peer_hi = resolve16(rbase, m.hi); peer_hi_known = true; peer_unopened = false`; `T_POLL := now + G`. |
+| ST2 | else | if `m.poll_id == poll_id` → `status_seen = true`; `round_heard = true; silent_polls &= ASKED; peer_hi = resolve16(rbase, m.hi); peer_hi_known = true; peer_unopened = false`; `T_POLL := now + G`. |
 
 **HANDOVER** (C:1476-1491) — accepted in **any** state (idle, driving, sending)
 
@@ -521,7 +523,7 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 | T4 | **floor fallback**: `probe_off_floor && !floor_fallback && !round_seen && !status_seen && !round_heard` | `floor_fallback = true; poll_level = 0; poll_n = 2`; Bind(0); `round_seen = 0; round_frames = 2; round_heard = false; done_in_round = 0`; disarm SENSE; `T_POLL := max(now + 13700, probe_after_ms + peer_floor_wait_max + H) + 3000`; return. |
 | T5 | **floor hold**: `poll_level == 0 && io.pattern && !floor_hold && !floor_fallback && !peer_ctl_deaf && !round_seen && !status_seen && !round_heard` and `until = floor_round_end + peer_floor_wait_max + 3000 > now` | `floor_hold = true; T_POLL := until`; return. |
 | T6 | always | `floor_hold = false`. |
-| T7 | **unscored re-poll**: `!floor_fallback && poll_level > 0 && !round_seen && !status_seen && !round_heard && round_frames > 0 && silent_polls == 0 && rung[lv].sent[poll_level] ≥ 2 && level_delivery(poll_level) ≥ 0.5` | `silent_polls = 1`; `send_poll_as(poll_level, poll_n, repeat = true)` (same poll id); return. |
+| T7 | **unscored re-poll**: `!floor_fallback && poll_level > 0 && !round_seen && !status_seen && !round_heard && round_frames > 0 && !(silent_polls & ASKED) && rung[lv].sent[poll_level] ≥ 2 && level_delivery(poll_level) ≥ 0.5` | `silent_polls |= ASKED`; `send_poll_as(poll_level, poll_n, repeat = true)` (same poll id); return. |
 | T8 | measure | `probe_failed = floor_fallback && !round_seen && !status_seen && !round_heard`; `probe_off_floor = floor_fallback = false`. If probe_failed: `loss_est = 0.5*loss_est + 0.5`; `measure_level(probe_lv, probe_n, 1.0)`. Else if `!status_seen`: `frames = max(round_frames,1)`; `loss = max(0, 1 - round_seen/frames)`; `loss_est = 0.5*loss_est + 0.5*loss`; `measure_level(poll_level, frames, loss)`. |
 | T9 | always | `deliver_in_order()`. |
 | T10 | **handover**: `has_data && (done || quantum)` where `done = peer_direction_done`, `held = now - drive_start`, `quantum = (done_in_round > 0 && held ≥ 30000) || held ≥ 45000` | `send_start_ms = now; send_handover()`; return. |
@@ -545,7 +547,7 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 |---|---|---|
 | SE1 | `sending || idle || round_seen > 0` | return. |
 | SE2 | `poll_level == 0 && io.pattern` | return (never at the floor). |
-| SE3 | `peer_keyed()` | `round_heard = true; silent_polls = 0; T_SENSE := now + 250`. |
+| SE3 | `peer_keyed()` | `round_heard = true; silent_polls &= ASKED; T_SENSE := now + 250`. |
 | SE4 | else if `round_heard` (carrier was seen, now dropped) | `T_POLL := now + G`. |
 | SE5 | else | nothing (the window T_POLL decides). |
 
@@ -583,7 +585,10 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 
 Predicates (`marginal = snr_valid && snr_ema < min_db + 3`, C:797-800):
 - `delivery(lv)` = marginal ? `(sent - lost)/(sent + 1)` : `1 - (lost + 0.5)/(sent + 2)` (C:737-742).
-- `dead(lv)` = `dead_run ≥ (marginal ? 2 : 4)` (C:746-749).
+- `dark` = `silent_polls ≥ 4`: two scored rounds in a row with nothing of the peer heard,
+  each asked again; the SNR and the rungs' scores are then as old as the last frame.
+- `dead(lv)` = dark ? `dead_run ≥ 2` : `dead_run ≥ max(marginal ? 2 : 4, ⌈ln 0.02 / ln(1 - min(p_ok, 0.95))⌉)`,
+  `p_ok` the delivery the rung showed when it last delivered (0: none, no floor).
 - `gated(lv)` = `snr_valid && snr_ema < min_db - 3 && !(sent ≥ 3 && delivery ≥ 0.7)` (C:802-806).
 - `allowed(lv)` = `!dead && !gated` and, if any lower rung is dead, `sent - lost ≥ 0.5` (C:808-815).
 - `reprobe_due(lv)` = `!(rounds == 0 && gated)` and `now - probe_at ≥ (backoff ? backoff : 60000)` (C:821-829).
@@ -930,3 +935,28 @@ updated where they stand: S0 in §5.2, and the silence and BW500 floor rows of
 |---|---|---|
 | A probe round chained to my poll (`KD_BOTH`) that drew nothing falls back as an unanswered round does: when the turn then passes to me (`m_decide_recv`, "turn: mine") with nothing heard (`!m_heard`), my next round goes on `ok_lv`, the rung S last had my rounds on, once (`fell_back`), as `m_decide_send` already did for a `KD_ROUND`.  Before, that round went out again on the unconfirmed rung, at a peer that had gone back to `ok_lv` (2026-10-27, K7EK-VE4KLM on 10.143 MHz: an 11 s DATAC4 round keyed at a peer back on MFSK, ~30-40 s lost). | `fall_back_unconfirmed`, called from `m_decide_send` and `m_decide_recv`; TLA+ `specs/rungs/RungAgreement.tla` (`KD_BOTH` on any rung, its round lost alone; `WastedF` with `W = 1`, `FallbacksAgree`; mutant `Mut_norecvfb` needs `W = 2`); `tests/sim/test_carousel.c` and `car_explore` (the Oct 27 loss set) | after a silent `KD_BOTH` the caller cannot tell its round lost from the callee's answer lost; with the poll naming the callee's rung lost too (`ok_lv` stale at 0) the fall-back lands on the floor, and `FLOOR_SILENT_MAX` keeps it sending blind (sim: 4 of 360 paired runs fired it, 2 right, 2 wrong, means identical; `specs/rungs/README.md`) |
 | `arq:max_keydown_s` (0 or 5..30 s; 0 is `MAX_KEYDOWN_MS`, 30 s): a station holds its own keydowns shorter, for TCP clients that abort when PTT stays on (vARIM, about 20 s, #445).  The cap is on the whole keydown, lead and tail (`kd_frame_extra`) and a control frame before a round (`behind_ctl_n`) included: what the station asks for in its polls (`keydown_cap`, via `level_earned` and `poll_size`) and what it sends.  What it accepts, and how long it waits for a peer's round (`peer_keydown_cap`), stay at 30 s: a peer without the option keys as before, and a receiver learns a round's length from its frames, so a shorter round is not counted as loss.  No wire change.  A BW500 floor frame (27 s) is never split.  Per session from `car_set_max_keydown_ms` at `car_init`, unless `car_io_t.max_keydown_ms` names one. | `keydown_cap`, `behind_ctl_n`, `peer_keydown_cap`, `car_set_max_keydown_ms`; `arq_set_max_keydown_s` (A) | option off: identical; with 16 s at both ends, 8 KiB both ways: 0-6 % slower on fast channels, 13-30 % on slow ones and at BW500 (sim); not in any TLA+ model (it changes round sizes, not turns or rungs) |
+
+---
+
+## 21. After 1.9.22 (#468 to #500)
+
+No connect, poll or data frame changed: 1.9.22 and later connect both ways.
+The one addition on the air is a broadcast frame type, below.  #497 (two dark
+rounds make a rung dead at two losses) changed rules that are updated where
+they stand: `silent_polls` in §2.4, D2, ST2, T7 and SE3, and the `dead(lv)`
+predicate.
+
+| Change | Where | Risks |
+|---|---|---|
+| A callee whose application hangs up while it owes the caller an ack (`car_owes_ack`: it has delivered data of the caller's that no answer of its own has acknowledged, `deliver_seq != seq_at_ask`) hangs up through M_END: an M_END ack answers the caller's last data, then the caller's DISCONNECT and the callee's pattern reply.  Before, the callee's DISCONNECT answered it, and the caller logged its last bytes undelivered (#468). | `car_owes_ack`; `fsm_connected_carousel` (`APP_DISCONNECT`); TLA+ `specs/teardown` (`Confirmed`, mutant `Mut_ackless`) | one more control keydown: `conn_bench` hang-up to both ends idle, cliff:10 6.4 -> 11.5 s, cliff:0 7.2 -> 11.4 s, fade:8:1 9.0 -> 11.2 s, nvis 50.3 -> 53.5 s, the floor unchanged (30.5 s) |
+| A drain after the host's DISCONNECT ends at once on a second DISCONNECT or a CONNECT (the redial), dropping what it has not delivered, as ABORT does; before, a second DISCONNECT re-armed the drain and a CONNECT waited behind it.  The drain also ends once the peer has been silent `ARQ_CAR_PEER_QUIET_MS`, and a DISCONNECT to a quiet peer does not wait for its slots (#471, N3JXB). | `fsm_connected_carousel` (`ARQ_TD_DRAINING`), `car_disconnect_must_wait`; TLA+ `specs/teardown` (`HostAgain`, `Released`; mutants `Mut_rearm`, `Mut_redialwait`) | a host that sends DISCONNECT twice gives up its undelivered data |
+| A caller that has heard M_END in the callee's poll (`end_req = CAR_END_WISH`, read with `car_peer_ending`) ends with one DISCONNECT once the callee has been silent as long as its own drain would last (`max(ARQ_DISCONNECT_DRAIN_TIMEOUT_S, car_drain_budget_ms)`, at most 120 s), counted from the last frame heard.  Before, it polled until the 240 s lost-peer watchdog (#472, N3JXB-KG9NI). | `fsm_connected_carousel`, `car_peer_ending`, `car_peer_end_wait_ms`; TLA+ `specs/teardown` (`NoCut`, mutant `Mut_endsilence`) | only the callee's last frame is at stake, which the watchdog dropped too; a silent peer that sent no M_END is still left to the watchdog |
+| LISTEN OFF in CONNECTED (draining) or DISCONNECTING still releases the radio with no drain and no DISCONNECT frame, and now says so (a WRN with the bytes dropped; reason `listen_off`).  In DISCONNECTING it ends through `notify_session_ended`, so the connection's addresses are cleared; an incoming CALL going pending clears them too (#473). | `fsm_connected_carousel`, `fsm_disconnecting`; `arq.c` (`cb_notify_pending`) | none on the air |
+| The side a session reports in `CONNECTED` comes from the FSM (`notify_connected(we_called)`: `fsm_calling` true, `car_connect_callee` false), not from `src_addr`; the host's CONNECT source is kept apart (`g_connect_src`), and `arq_protocol_session_calls` builds both callsigns from the side (#483).  A call placed from DISCONNECTED clears the last incoming CALL's dialed callsign (`local_call`), so both ends rank retries from the same callsigns (#485). | `arq_fsm.c`, `arq.c`, `arq_protocol.c` | none on the air |
+| `arq:call_max_s` (default 300 s, 0 none, at most 3600): once a call has spent that long in CALLING, no new CALL is keyed; the CALL on the air keeps its ACCEPT window.  A host's `RETRIES 20` (BPQ32) no longer means about 8 minutes of CALLs (#476).  `RETRIES=n` and `CALLINT=n` are accepted as well as `RETRIES n` (#479). | `call_over_time` (CALLING); `arq_protocol.[ch]`; `tcp_interfaces.c` | a call that would have connected after 300 s fails (K7EK, Nov 3-6: 20 of 21 connects within 300 s, one at 321 s) |
+| While ACCEPTING, a repeat of the CALL being answered sends `PENDING` again (`notify_pending_again`), which renews a scanning BPQ32's channel hold (six scan intervals per `PENDING`); another station's CALL sends nothing (#477). | `fsm_accepting` | other VARA hosts get one more `PENDING` per repeated CALL |
+| A rung the SNR gates is never re-probed, tried or not (`reprobe_due`); a rung that delivered well stays exempt through `level_gated` (#475, VE4KLM-K7EK). | `reprobe_due` | a rung gated by a low SNR reading waits for the reading to rise |
+| The end of a spell of listening for calls (`arq_fsm_dispatch_ends_listening`, now an `arq_listen_end_t`) flushes the MFSK call listeners (#492); one that ends with no session after it (`ARQ_LISTEN_ENDS_RELEASED`: LISTEN OFF, a scanner's hop) also flushes and unsyncs the DATAC16 control and payload decoders (#498).  A CALL partly heard before the hop is not answered on the next channel. | `arq_fsm.c`, `arq.c` (`listen_spells_ended`, `listen_releases`), `modem.c` (`unsync_req`) | a CALL straddling a LISTEN OFF on the same frequency is dropped, and the caller's next CALL (about 12 s later) is answered |
+| The DISCONNECT's deferral (`disconnect_must_wait`, 0.5 s steps) counts its 10 s cap (`ARQ_CHANNEL_DEFER_MAX`) from the end of my own keydown: steps while I am keyed have a cap of their own (`ARQ_CHANNEL_DEFER_KEYED_MAX`, 32 s, for a `TX_COMPLETE` that never comes), and `TX_COMPLETE` in DISCONNECTING resets the count.  Before, a 27 s floor round used up the 10 s and the DISCONNECT keyed 22 ms after it, over the peer's ACK (#500, NW8L). | `disconnect_must_wait`, `fsm_disconnecting`; `arq_protocol.h` | none known: it restores what `specs/turns` (`DISC`) already assumes, a DISCONNECT clear of the peer's slots |
+| The busy detector stays muted through DISCONNECTING as in CONNECTED (`arq_link_has_peer`), so a teardown's listen-before-talk reads the decoders (#487).  `BUSYDETECT ON\|OFF` switches it while running; `BUSYRESEED ON\|OFF` (ini `busy_reseed_on_hop`, default off) takes a new noise floor at each scan hop (#490). | `modem.c`, `arq.c`; `tcp_interfaces.c` | no `BUSY ON` for a third station during a teardown (a callee's can last 180 s); a re-seed on a channel already carrying a signal wider than about 1.8 kHz misses it until it stops |
+| A station message, `PACKET_TYPE_STATION` 0x07 (the HERMES beacon), is sent on the mode the host asks for (DATAC16, MFSK or MFSK500, which every listening Mercury decodes) and delivered from any decoder at its own frame size, after the channel is heard clear (`arq_channel_heard`).  Older releases drop the type (#480). | `framer.h`, `modem.c`, `arq.c`; `host/api_host.c` | the broadcast RX ring holds `[u16 length][frame]` records now |

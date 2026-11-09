@@ -46,6 +46,11 @@ const char *arq_conn_state_name(arq_conn_state_t s)
     return "UNKNOWN";
 }
 
+bool arq_conn_state_has_peer(arq_conn_state_t s)
+{
+    return s == ARQ_CONN_CONNECTED || s == ARQ_CONN_DISCONNECTING;
+}
+
 const char *arq_event_name(arq_event_id_t ev)
 {
     static const char *names[] = {
@@ -312,6 +317,22 @@ static int accept_carrier(const arq_session_t *sess, const arq_event_t *ev)
     return floor;
 }
 
+/* Say why the ACCEPT to this CALL goes where it does, when that is the floor:
+ * the CALL came on it, or it repeated one on the control mode, which
+ * accept_carrier answers on the floor, where such a caller listens.  Logged
+ * here, where the CALL is at hand; the ACCEPT goes out one guard later. */
+static void log_accept_carrier(const arq_session_t *sess, const arq_event_t *ev)
+{
+    if (!mercury_mode_is_mfsk(sess->call_rx_mode))
+        return;
+    if (mercury_mode_is_mfsk(ev->mode))
+        HLOGI(LOG_COMP, "CALL from %s on the MFSK floor: the ACCEPT goes there too",
+              ev->remote_call);
+    else
+        HLOGI(LOG_COMP, "CALL from %s repeated on the control mode: the ACCEPT goes "
+              "on the MFSK floor, where a repeating caller listens", ev->remote_call);
+}
+
 /* Does the ACCEPT go out, on the carrier chosen for it (call_rx_mode)?  Not
  * from a station that transmits only MFSK where that is the control mode:
  * it stays silent there, and answers the caller's next CALL, which the
@@ -396,9 +417,16 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
             if (mercury_mode_is_mfsk(answer))
                 sess->peer_tx_mode = answer;
         }
+        /* Why an ACCEPT goes on the floor is logged where the CALL is at
+         * hand (log_accept_carrier): the CALL came on it, or a repeat on the
+         * control mode moved it there. */
         if (mode != sess->control_mode)
-            HLOGI(LOG_COMP, "%s on the MFSK floor (%s)", is_accept ? "ACCEPT" : "CALL",
-                  is_accept ? "the CALL came on it" : "the fast CALLs went unanswered");
+        {
+            if (is_accept)
+                HLOGI(LOG_COMP, "ACCEPT on the MFSK floor");
+            else
+                HLOGI(LOG_COMP, "CALL on the MFSK floor (the fast CALLs went unanswered)");
+        }
         send_frame(PACKET_TYPE_ARQ_CALL2, mode, (size_t)n, frame, 0);
     }
     else
@@ -976,6 +1004,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = ev->session_id;
         /* a repeat after our ACCEPTs ran out: answered as in ACCEPTING */
         sess->call_rx_mode    = same_session ? accept_carrier(sess, ev) : ev->mode;
+        log_accept_carrier(sess, ev);
         if (!same_session)
         {
             /* A new session takes the CALL's bandwidth; a repeat keeps the
@@ -1284,6 +1313,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * kept on DATAC16 kept failing the same way (#235).  A repeat on
          * DATAC16 says the same thing, sooner: the floor (accept_carrier). */
         sess->call_rx_mode      = accept_carrier(sess, ev);
+        log_accept_carrier(sess, ev);
         sess->accept_tx_pending = accept_keys(sess);   /* answering a CALL we just heard */
         /* And PENDING again.  A scanning host holds its channel for a fixed
          * time per PENDING -- BPQ32 six scan intervals (VARA.c: "Time out
@@ -1440,11 +1470,12 @@ static void fire_deferred_connect(arq_session_t *sess)
  * reply window has passed, by which time an invited frame has started and a
  * decoder holds sync on it; and not until the peer has been quiet for one
  * reply guard, so its radio is back on receive.  Bounded like the other
- * deferrals: after ARQ_CHANNEL_DEFER_MAX steps we key regardless. */
+ * deferrals: after ARQ_CHANNEL_DEFER_MAX steps we key regardless -- counted
+ * from the end of our own keydown (ARQ_CHANNEL_DEFER_KEYED_MAX). */
 static bool disconnect_must_wait(arq_session_t *sess)
 {
     uint64_t now = time_now_ms();
-    if (sess->defer_count >= ARQ_CHANNEL_DEFER_MAX)
+    if (sess->defer_count >= (sess->tx_active ? ARQ_CHANNEL_DEFER_KEYED_MAX : ARQ_CHANNEL_DEFER_MAX))
     {
         HLOGW(LOG_COMP, "DISCONNECT deferral cap reached (%u) - keying anyway",
               (unsigned)sess->defer_count);
@@ -1482,6 +1513,11 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 {
     const arq_mode_timing_t *tm;
     uint64_t now = time_now_ms();
+
+    /* Our keydown is over: the DISCONNECT's deferral budget starts now
+     * (ARQ_CHANNEL_DEFER_KEYED_MAX). */
+    if (ev->id == ARQ_EV_TX_COMPLETE)
+        sess->defer_count = 0;
 
     /* The callee ending a carousel session: the carousel keeps its slots, and
      * its next one carries our DISCONNECT (car_io_end). */
@@ -1809,9 +1845,14 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
      * the host has disconnected (K7EK "Mercury kept hanging on"). */
     if (sess->teardown == ARQ_TD_DRAINING && time_now_ms() >= sess->teardown_deadline_ms)
     {
+        /* the budget it had, not the configured least: the carousel's for
+         * its rung may be longer (148 s at the floor) */
+        uint64_t budget = sess->disc_req_ms && sess->teardown_deadline_ms > sess->disc_req_ms
+                              ? sess->teardown_deadline_ms - sess->disc_req_ms
+                              : (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000ULL;
         HLOGW(LOG_COMP,
-              "Deferred DISCONNECT drain timeout (%ds) — forcing teardown",
-              ARQ_DISCONNECT_DRAIN_TIMEOUT_S);
+              "Deferred DISCONNECT drain timeout (%llu s) — forcing teardown",
+              (unsigned long long)((budget + 500) / 1000));
         car_begin_disconnect(sess, time_now_ms());
         return;
     }
@@ -2079,4 +2120,21 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
         sess->deadline_ms    = d;
         sess->deadline_event = ARQ_EV_TIMER_CAROUSEL;
     }
+}
+
+static bool listening_for_calls(arq_conn_state_t s)
+{
+    return s == ARQ_CONN_LISTENING || s == ARQ_CONN_ACCEPTING;
+}
+
+arq_listen_end_t arq_fsm_dispatch_ends_listening(arq_session_t *sess, const arq_event_t *ev)
+{
+    if (!sess)
+        return ARQ_LISTEN_GOES_ON;
+    bool was = listening_for_calls(sess->conn_state);
+    arq_fsm_dispatch(sess, ev);
+    if (!was || listening_for_calls(sess->conn_state))
+        return ARQ_LISTEN_GOES_ON;
+    return sess->conn_state == ARQ_CONN_DISCONNECTED ? ARQ_LISTEN_ENDS_RELEASED
+                                                     : ARQ_LISTEN_ENDS_IN_SESSION;
 }

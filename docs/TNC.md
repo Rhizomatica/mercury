@@ -511,6 +511,51 @@ that cost and is a possible optimisation.
 
 ---
 
+### BUSYDETECT
+
+Turn the channel-busy detector on or off while Mercury runs, without a
+restart.  It starts as `busy_detect` in `mercury.ini` sets it (off by
+default); the command does not save the change.
+
+```
+BUSYDETECT ON\r
+BUSYDETECT OFF\r
+BUSYDETECT\r
+```
+
+**Response:** `OK\r` on success, `WRONG\r` for an unrecognised argument.  The
+bare query answers `BUSYDETECT ON\r` or `BUSYDETECT OFF\r`.
+
+Switched off while it reports the channel busy, the detector sends
+`BUSY OFF\r` first, so the host is not left holding a BUSY.  Switched on again,
+it measures a new noise floor.  The thresholds stay the ones the ini set.  See
+[BUSY ON / BUSY OFF](#busy-on--busy-off).
+
+---
+
+### BUSYRESEED
+
+Choose whether the busy detector measures a new noise floor at each scan hop.
+It starts as `busy_reseed_on_hop` in `mercury.ini` sets it (off by default);
+the command does not save the change.
+
+```
+BUSYRESEED ON\r
+BUSYRESEED OFF\r
+BUSYRESEED\r
+```
+
+**Response:** `OK\r` on success, `WRONG\r` for an unrecognised argument.  The
+bare query answers `BUSYRESEED ON\r` or `BUSYRESEED OFF\r`.
+
+With it on, each `LISTEN OFF` (the start of a scanner's hop) makes the detector
+forget its floor, wait 1 s for the radio to retune, and measure the floor on
+the new channel, keeping its BUSY/CLEAR verdict until the new channel decides
+it.  With it off, one floor serves every channel.  Each way has a cost; see
+[Scanning hosts](#scanning-hosts-bpq32).
+
+---
+
 ### TUNE
 
 Key the transmitter and hold a steady **1000 Hz tone**, so an antenna tuner
@@ -602,10 +647,11 @@ Mercury returns to the idle/listening state.
 Mercury also sends `CANCELPENDING\r` when an outgoing `CQFRAME` transmission
 finishes, which matches the lifecycle expected by VARA clients such as varim.
 
-varim also sends `ABORT` when `PTT ON` lasts about 20 s with no `PTT OFF`,
-whatever else the TNC says meanwhile (#445).  A carousel round can be one
-keydown of 25-30 s; set `[arq] max_keydown_s = 16` on every station that
-runs varim.  It holds each of that station's keydowns, a poll before a round
+varim before 1.13 also sends `ABORT` when `PTT ON` lasts about 20 s with no
+`PTT OFF`, whatever else the TNC says meanwhile (#445).  varim 1.13 and later
+allow 35 s, longer than any Mercury keydown (30 s at most), and need nothing
+set.  With an older varim: a carousel round can be one keydown of 25-30 s, so
+set `[arq] max_keydown_s = 16` on every station that runs it.  It holds each of that station's keydowns, a poll before a round
 included, to 16 s; a peer without it can still key longer.  The BW500
 floor's single MFSK frame is 27 s and is never split, so varim may still
 abort a BW500 session that falls to its floor.
@@ -669,7 +715,8 @@ existing VARA-compatible hosts (BPQ32, Winlink) act on them unchanged.
 Edge-triggered: `BUSY ON\r` on clear→busy, `BUSY OFF\r` on busy→clear.
 
 The detector is **disabled by default** and is enabled via the `[channel]`
-section of `mercury.ini` (`busy_detect = true`).  It is off because the hosts
+section of `mercury.ini` (`busy_detect = true`), or while running with
+[`BUSYDETECT ON`](#busydetect).  It is off because the hosts
 that consume these notifications act on them: BPQ32 and Winlink hold
 transmissions while BUSY is asserted, so a false or over-eager BUSY stops the
 station transmitting.  BPQ32's scanner does not hold on it (see "Scanning
@@ -705,11 +752,21 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   stopped once the CALL decoded, including a 32 s connect that needed a
   repeated CALL and a failed one it held for 43 s.
 - **Each hop is `LISTEN OFF`, `LISTEN ON` and a `BW` command.**  The dwell
-  was 10.1-10.2 s.  The DATAC16 decoder keeps decoding through them, but the
-  two MFSK call listeners do not:
-  - a `LISTEN OFF` flushes both: they are fed only while LISTENING or
-    ACCEPTING, so a partly received MFSK CALL is dropped even when
-    `LISTEN ON` follows 0.1 s later on the same frequency;
+  was 10.1-10.2 s.  What the call decoders hold does not survive them:
+  - a `LISTEN OFF` with no session up drops every partly received frame:
+    the DATAC16 decoder's, the payload decoder's and the two MFSK call
+    listeners', sync included.  A partly received CALL is dropped even when
+    `LISTEN ON` follows a moment later on the same frequency; the caller's
+    next CALL is heard as usual.  Up to 1.9.22 such a CALL could still
+    decode, on the next channel, and was answered there, where the caller
+    could not hear it.  BPQ32 then held the wrong channel for about 2 min
+    (six scan intervals) while the caller's repeats went unheard:
+    - MFSK: the flush waited for the receive loop to see the station not
+      listening, and BPQ32's `LISTEN ON` follows within 1 ms (K7EK,
+      2026-11-06: decoded 2.5 s after the hop; 2026-11-07: four calls,
+      0.2-4.2 s after it);
+    - DATAC16: its decoder was not flushed at all (K7EK, 2026-11-07: two
+      calls decoded 1.4 s and 1.9 s after the hop);
   - a `BW` change between `BW500` and `BW2300`/`BW2750` flushes both too: the
     listeners swap floors, and each swap drops what it holds.
 
@@ -735,11 +792,21 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   What BPQ32 does with BUSY is refuse its own outgoing connects ("Sorry, Can't
   Connect - Channel is busy"), and two forwards that night went by AX/IP
   instead.
-- **One noise floor serves every scanned channel.**  Mercury does not know the
-  host retuned, so the busy detector carries its floor and its state from one
-  channel to the next.  At KG9NI every CLEAR came on one of the three channels,
-  and BUSY returned 0.6-5.7 s after the hop to another one, on a band the
-  operator heard as empty.
+- **By default one noise floor serves every scanned channel.**  Mercury is
+  not told the host retuned, so the busy detector carries its floor from one
+  channel to the next.  At KG9NI (2026-11-06) every CLEAR came on one of the
+  three channels, and BUSY returned 0.6-5.7 s after the hop to another one,
+  on a band the operator heard as empty.  With `busy_reseed_on_hop = true` (or
+  [`BUSYRESEED ON`](#busyreseed)) it takes `LISTEN OFF` as the sign of a hop:
+  it waits 1 s for the radio to retune, then measures the floor afresh,
+  keeping its BUSY/CLEAR verdict until the new channel decides it.
+  The trade-off: the floor is taken from the lower-quartile band of the
+  300-2700 Hz passband, so a signal wider than about 1.8 kHz (BW2300 DATAC,
+  VARA 2300) moves it.  A hop onto a channel where such a signal is already
+  under way seeds the floor on it, and the detector misses that signal until
+  it stops; the carried floor reports it BUSY.  So the re-seed swaps false
+  BUSY on noisier channels for missed BUSY on a hop into a wideband
+  transmission, which is why it is the operator's choice.
 - **After a host `DISCONNECT`, a scan hop can cut the teardown short.**
   It did up to 1.9.22, when Mercury answered `DISCONNECTED` straight away:
   the scanner's next `LISTEN OFF` released the radio before the peer had the
@@ -753,13 +820,12 @@ When `LISTEN OFF` arrives with no session up while a CALL decoder has locked
 onto a frame it has not decoded yet, Mercury logs it:
 
 ```
-[tcp-ctl] LISTEN OFF 2.1 s into a DATAC16 frame not yet decoded: if the host now changes frequency, it is lost (or it was noise)
+[tcp-ctl] LISTEN OFF 2.1 s into a DATAC16 frame not yet decoded: LISTEN OFF drops it (or it was noise)
 [tcp-ctl] LISTEN OFF 6.4 s into a MFSK frame not yet decoded: LISTEN OFF drops it (or it was noise)
 ```
 
-A DATAC16 frame is lost only if the host then retunes; an MFSK one is lost to
-the `LISTEN OFF` itself.  A CALL cut off by a hop shows as one of these lines
-with no `RX_CALL` after it.  The lock can also be noise or another station's
+Either frame is lost to the `LISTEN OFF` itself.  A CALL cut off by a hop
+shows as one of these lines with no `RX_CALL` after it.  The lock can also be noise or another station's
 traffic, so read the line together with the caller's log.
 
 ### DISCONNECTED

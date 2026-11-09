@@ -158,7 +158,7 @@ typedef struct
     uint8_t  session_id;               /* random byte chosen by caller         */
     int      call_sends_done;          /* CALLs sent this attempt (escalation) */
     int      call_carrier;             /* the carrier the last CALL went out on */
-    int      call_rx_mode;             /* the carrier the CALL we answer came on */
+    int      call_rx_mode;             /* the carrier we ACCEPT on (accept_carrier) */
     char     remote_call[CALLSIGN_MAX_SIZE];
     char     local_call[CALLSIGN_MAX_SIZE];  /* our dialed callsign/SSID for an
                                               * accepted incoming CALL (empty =>
@@ -394,6 +394,31 @@ void arq_fsm_release(arq_session_t *sess);
  */
 void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *event);
 
+/* How a spell of listening for calls (LISTENING or ACCEPTING) ended, if the
+ * event ended one.  Zero when it did not, so the result reads as a bool. */
+typedef enum {
+    ARQ_LISTEN_GOES_ON = 0,   /* still listening, or was not                 */
+    ARQ_LISTEN_ENDS_IN_SESSION,  /* a session takes over: CALLING, CONNECTED */
+    ARQ_LISTEN_ENDS_RELEASED, /* to DISCONNECTED: the host has the radio,
+                               * and a scanning host retunes it now         */
+} arq_listen_end_t;
+
+/**
+ * @brief arq_fsm_dispatch(), and whether that one event ended a spell of
+ * listening for calls (LISTENING or ACCEPTING, to any other state), and how.
+ *
+ * The MFSK call listeners must drop what they hold when such a spell ends --
+ * above all at a scanning host's LISTEN OFF, whose LISTEN ON follows within a
+ * millisecond, often in the same batch of events, and usually on another
+ * channel.  Checked per event, so a spell that ends and restarts at once is
+ * still seen (arq.c counts them for the modem).
+ *
+ * ARQ_LISTEN_ENDS_RELEASED is the hop itself: no session goes on, so the
+ * control and payload decoders can drop what they hold as well.  In a session
+ * they cannot: the control decoder is carrying it.
+ */
+arq_listen_end_t arq_fsm_dispatch_ends_listening(arq_session_t *sess, const arq_event_t *event);
+
 /**
  * @brief Return milliseconds until the next deadline, or INT_MAX if idle.
  *
@@ -418,6 +443,11 @@ int arq_fsm_channel_keyed(const arq_session_t *sess);
  * @brief Human-readable name for a connection state (for log output).
  */
 const char *arq_conn_state_name(arq_conn_state_t s);
+
+/** The link to the peer exists: CONNECTED, or DISCONNECTING (the teardown is
+ *  still an exchange with that peer).  Energy on the channel in these states
+ *  is the peer, not occupancy (the busy detector's mute, modem.c). */
+bool arq_conn_state_has_peer(arq_conn_state_t s);
 
 /**
  * @brief Human-readable name for an event (for log output).

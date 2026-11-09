@@ -134,6 +134,17 @@ typedef struct
     /* Listening or accepting: a CALL can arrive on MFSK, and only the
      * modem's MFSK call listener would decode it. */
     bool listening_for_calls;
+    /* How many spells of listening for calls have ended: the MFSK call
+     * listeners drop what they hold when it moves.  listening_for_calls alone
+     * misses a LISTEN OFF whose LISTEN ON follows 1 ms later (BPQ32's scan
+     * hop): the modem reads it once per 20 ms. */
+    uint32_t listen_spells_ended;
+    /* How many of them ended with the radio back to the host, no session
+     * after (LISTEN OFF, or a host DISCONNECT while answering): the control
+     * and payload decoders drop what they hold too.  A DATAC16 CALL straddling
+     * a scan hop otherwise decodes on the next channel and is answered there
+     * (K7EK, 2026-11-07: decoded 1.4 and 1.9 s after the hop). */
+    uint32_t listen_releases;
     /* The MFSK floor of my own bandwidth (arq_floor_mode), which callers at
      * it escalate to: the one the MFSK call listener decodes. */
     int listen_floor_mode;
@@ -212,6 +223,9 @@ bool arq_is_link_connected(void);
 /** A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED,
  *  DISCONNECTING): what stops a broadcast carousel. */
 bool arq_session_active(void);
+/** The link to the peer exists: CONNECTED or DISCONNECTING.  What mutes the
+ *  busy detector (modem.c): the energy then is the peer, not occupancy. */
+bool arq_link_has_peer(void);
 /** Whether another station is keyed, by the FSM's listen-before-talk test:
  *  what a station message waits on before it keys (modem_beacon_send). */
 bool arq_channel_heard(void);

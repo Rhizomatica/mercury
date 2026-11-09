@@ -50,6 +50,13 @@ int  bcast_file_mode_usable(int index) { return index == 0; }      /* only "DATA
 static int s_beacon_mode, s_beacon_rc;
 int  modem_beacon_send(const uint8_t *f, size_t n, int m) { (void)f; (void)n; s_beacon_mode = m; return s_beacon_rc; }
 
+static int  s_tnc_rc, s_tnc_released;
+static char s_tnc_line[64];
+int  tnc_host_command(const char *l) { snprintf(s_tnc_line, sizeof(s_tnc_line), "%s", l ? l : ""); return s_tnc_rc; }
+void tnc_host_release(void) { s_tnc_released++; }
+bool tnc_host_holds(void) { return s_tnc_released == 0; }
+size_t tnc_host_arq_read(uint8_t *b, size_t n) { if (n) b[0] = 'x'; return n ? 1 : 0; }
+
 static bool s_session;
 static int  s_car_rc;
 static bool s_car_stopped;
@@ -228,6 +235,24 @@ void test_bcast_rx_ops(void)
     TEST_ASSERT_NULL(s_rx_frame);
 }
 
+/* The TNC calls pass through, with tnc_host_command's codes mapped. */
+void test_tnc_calls(void)
+{
+    s_tnc_rc = 0;
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_OK, mercury_host_tnc_command("LISTEN ON"));
+    TEST_ASSERT_EQUAL_STRING("LISTEN ON", s_tnc_line);
+    s_tnc_rc = -2;
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_BUSY, mercury_host_tnc_command("LISTEN ON"));
+    s_tnc_rc = -1;
+    TEST_ASSERT_EQUAL_INT(MERCURY_HOST_BAD, mercury_host_tnc_command(""));
+    TEST_ASSERT_EQUAL_INT(1, mercury_host_tnc_held());
+    mercury_host_tnc_release();
+    TEST_ASSERT_EQUAL_INT(1, s_tnc_released);
+    TEST_ASSERT_EQUAL_INT(0, mercury_host_tnc_held());
+    uint8_t b[4];
+    TEST_ASSERT_EQUAL_size_t(1, mercury_host_arq_read(b, sizeof(b)));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -239,5 +264,6 @@ int main(void)
     RUN_TEST(test_beacon_send);
     RUN_TEST(test_bcast_carousel_calls);
     RUN_TEST(test_bcast_rx_ops);
+    RUN_TEST(test_tnc_calls);
     return UNITY_END();
 }

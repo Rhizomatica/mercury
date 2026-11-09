@@ -22,10 +22,11 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// broadcastFilePanel is the UI half; broadcastFileTx is the engine half.
+// broadcastFilePanel is the UI half; broadcastFileTx (over TCP) or the
+// engine's own carousel (engineBroadcastFile) is the sending half.
 type broadcastFilePanel struct {
-	mu sync.Mutex
-	tx *broadcastFileTx
+	mu   sync.Mutex
+	stop func() // stops the transfer running; nil when none is
 
 	path     string
 	pathLbl  *widget.Label
@@ -50,6 +51,9 @@ type broadcastFilePanel struct {
 	prefs  fyne.Preferences
 	win    fyne.Window
 	sender func() broadcastSender // resolved at send time: the chat client
+	// inEngine: the chat window is attached to this UI's own engine, which
+	// then sends the file itself (broadcast_engine.go).
+	inEngine func() bool
 	// setFilter installs (or clears, with nil) the raw-frame filter on the
 	// client.  Supplied by the chat window, which owns the connection.
 	setFilter func(func([]byte) bool)
@@ -72,10 +76,10 @@ func cyclesFromChoice(s string) int {
 }
 
 func newBroadcastFilePanel(win fyne.Window, prefs fyne.Preferences,
-	sender func() broadcastSender, setFilter func(func([]byte) bool),
+	sender func() broadcastSender, inEngine func() bool, setFilter func(func([]byte) bool),
 	logf func(string, ...any)) *broadcastFilePanel {
 
-	p := &broadcastFilePanel{win: win, prefs: prefs, sender: sender,
+	p := &broadcastFilePanel{win: win, prefs: prefs, sender: sender, inEngine: inEngine,
 		setFilter: setFilter, logf: logf}
 
 	p.pathLbl = widget.NewLabel("(no file chosen)")
@@ -148,12 +152,15 @@ func (p *broadcastFilePanel) content() fyne.CanvasObject {
 	)
 }
 
-// setConnected enables the panel only while the broadcast socket is up: the
-// frames go out over the chat client's connection.
+// setConnected enables the panel only while the chat client is connected.
+// A transfer still running when it disconnects is stopped.
 func (p *broadcastFilePanel) setConnected(on bool) {
+	if !on {
+		p.stopSending()
+	}
 	fyne.Do(func() {
 		p.mu.Lock()
-		running := p.tx != nil
+		running := p.stop != nil
 		p.mu.Unlock()
 		if on && !running && p.path != "" {
 			p.sendBtn.Enable()
@@ -331,8 +338,9 @@ func (p *broadcastFilePanel) onSend() {
 	if p.path == "" {
 		return
 	}
+	inEngine := p.inEngine != nil && p.inEngine()
 	s := p.sender()
-	if s == nil {
+	if s == nil && !inEngine {
 		dialog.ShowError(fmt.Errorf("connect to the modem first"), p.win)
 		return
 	}
@@ -344,26 +352,21 @@ func (p *broadcastFilePanel) onSend() {
 	}
 
 	cycles := cyclesFromChoice(p.cycles.Selected)
-	tx, err := newBroadcastFileTx(p.path, mode, cycles)
-	if err != nil {
-		dialog.ShowError(err, p.win)
-		return
+	var tx *broadcastFileTx
+	if !inEngine {
+		var err error
+		if tx, err = newBroadcastFileTx(p.path, mode, cycles); err != nil {
+			dialog.ShowError(err, p.win)
+			return
+		}
 	}
 
-	p.mu.Lock()
-	p.tx = tx
-	p.mu.Unlock()
-
-	p.sendBtn.Disable()
-	p.chooseBt.Disable()
-	p.stopBtn.Enable()
-	p.logf("Broadcasting %s (mode %d, %s)", filepath.Base(p.path), mode, p.cycles.Selected)
-
-	go tx.Run(s, func(pr broadcastFileProgress) {
+	progress := func(pr broadcastFileProgress) {
 		if !pr.Done {
 			// Only repaint every few frames: a fast mode can produce these
-			// faster than the UI can usefully redraw.
-			if pr.FramesSent%5 != 0 {
+			// faster than the UI can usefully redraw.  The engine's carousel
+			// is sampled twice a second already.
+			if !inEngine && pr.FramesSent%5 != 0 {
 				return
 			}
 			fyne.Do(func() {
@@ -373,7 +376,7 @@ func (p *broadcastFilePanel) onSend() {
 			return
 		}
 		p.mu.Lock()
-		p.tx = nil
+		p.stop = nil
 		p.mu.Unlock()
 		fyne.Do(func() {
 			if pr.Err != nil {
@@ -388,7 +391,32 @@ func (p *broadcastFilePanel) onSend() {
 			p.chooseBt.Enable()
 			p.sendBtn.Enable()
 		})
-	})
+	}
+
+	// Set before the transfer starts: its first report may come at once.
+	p.mu.Lock()
+	if inEngine {
+		p.stop = engineStopBroadcastFile
+	} else {
+		p.stop = tx.Stop
+	}
+	p.mu.Unlock()
+	if inEngine {
+		if err := engineBroadcastFile(p.path, cycles, progress); err != nil {
+			p.mu.Lock()
+			p.stop = nil
+			p.mu.Unlock()
+			dialog.ShowError(err, p.win)
+			return
+		}
+	} else {
+		go tx.Run(s, progress)
+	}
+
+	p.sendBtn.Disable()
+	p.chooseBt.Disable()
+	p.stopBtn.Enable()
+	p.logf("Broadcasting %s (mode %d, %s)", filepath.Base(p.path), mode, p.cycles.Selected)
 }
 
 func cycleText(pr broadcastFileProgress) string {
@@ -399,24 +427,27 @@ func cycleText(pr broadcastFileProgress) string {
 }
 
 func (p *broadcastFilePanel) onStop() {
-	p.mu.Lock()
-	tx := p.tx
-	p.mu.Unlock()
-	if tx != nil {
-		tx.Stop() // takes effect at the next frame boundary
+	if p.stopSending() {
 		p.status.SetText("stopping...")
 	}
+}
+
+// stopSending stops the transfer running, at the next frame boundary, and
+// says whether there was one.
+func (p *broadcastFilePanel) stopSending() bool {
+	p.mu.Lock()
+	stop := p.stop
+	p.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+	return stop != nil
 }
 
 // stopForShutdown ends any transfer when the window closes, so the goroutine
 // does not go on writing to a socket the window is about to drop.
 func (p *broadcastFilePanel) stopForShutdown() {
-	p.mu.Lock()
-	tx := p.tx
-	p.mu.Unlock()
-	if tx != nil {
-		tx.Stop()
-	}
+	p.stopSending()
 	p.stopReceiving()
 }
 

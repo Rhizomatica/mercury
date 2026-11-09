@@ -6,7 +6,7 @@
 %global commit $Format:%h$
 %global git_hash %(c='%{commit}'; test "${c#?Format}" = "$c" && echo "GIT_HASH=$c" || :)
 Name:           mercury
-Version:        1.9.22
+Version:        1.9.23
 Release:        1
 Summary:        HF modem for store-and-forward communication
 License:        GPL-3.0-or-later

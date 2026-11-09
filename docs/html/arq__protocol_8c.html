@@ -157,6 +157,8 @@ Functions</h2></td></tr>
 <tr class="separator:ae665f3500d005489a967b8b696cfcbf2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a83f5f6f95c16ce01f3e6aaa2a1eaa68b" id="r_a83f5f6f95c16ce01f3e6aaa2a1eaa68b"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#a83f5f6f95c16ce01f3e6aaa2a1eaa68b">arq_protocol_set_silence_fallback_s</a> (int seconds)</td></tr>
 <tr class="separator:a83f5f6f95c16ce01f3e6aaa2a1eaa68b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a867a6d725e56b5432fa265f73846fac4" id="r_a867a6d725e56b5432fa265f73846fac4"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#a867a6d725e56b5432fa265f73846fac4">arq_protocol_set_call_max_s</a> (int seconds)</td></tr>
+<tr class="separator:a867a6d725e56b5432fa265f73846fac4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a794cb4d6826b0b08ad83d8489c1ff4ac" id="r_a794cb4d6826b0b08ad83d8489c1ff4ac"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#a794cb4d6826b0b08ad83d8489c1ff4ac">arq_protocol_set_call_fast_slots</a> (int retries)</td></tr>
 <tr class="separator:a794cb4d6826b0b08ad83d8489c1ff4ac"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3f8af3e24c8dbbf8e542cf6209f8b328" id="r_a3f8af3e24c8dbbf8e542cf6209f8b328"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#a3f8af3e24c8dbbf8e542cf6209f8b328">arq_floor_mode</a> (int <a class="el" href="carousel_8c.html#a30c888e8758f5c25df50cf62f461d58e">bw_hz</a>)</td></tr>
@@ -165,6 +167,10 @@ Functions</h2></td></tr>
 <tr class="separator:acff4ae06650178845cfd6d40d33817b0"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:abdd963053b13ecb241768822eb0b42af" id="r_abdd963053b13ecb241768822eb0b42af"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#abdd963053b13ecb241768822eb0b42af">arq_protocol_retry_deadline_ms</a> (float seconds, int rank)</td></tr>
 <tr class="separator:abdd963053b13ecb241768822eb0b42af"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa29cdc60c32de7513f73d5acc0a5df62" id="r_aa29cdc60c32de7513f73d5acc0a5df62"><td class="memItemLeft" align="right" valign="top">static const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#aa29cdc60c32de7513f73d5acc0a5df62">call_or</a> (const char *call, const char *fallback)</td></tr>
+<tr class="separator:aa29cdc60c32de7513f73d5acc0a5df62"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac7e6d07f2404b7a5d61d64ab0a2b8e0e" id="r_ac7e6d07f2404b7a5d61d64ab0a2b8e0e"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#ac7e6d07f2404b7a5d61d64ab0a2b8e0e">arq_protocol_session_calls</a> (bool we_called, const char *remote_call, const char *local_call, const char *connect_src, const char *my_call, char *src, char *dst, size_t bufsz)</td></tr>
+<tr class="separator:ac7e6d07f2404b7a5d61d64ab0a2b8e0e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:afe60c366691ce231c54afc595ccbc8ef" id="r_afe60c366691ce231c54afc595ccbc8ef"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#afe60c366691ce231c54afc595ccbc8ef">arq_protocol_encode_hdr</a> (uint8_t *buf, size_t buf_len, const <a class="el" href="structarq__frame__hdr__t.html">arq_frame_hdr_t</a> *hdr)</td></tr>
 <tr class="memdesc:afe60c366691ce231c54afc595ccbc8ef"><td class="mdescLeft">&#160;</td><td class="mdescRight">Encode a parsed header into the first ARQ_FRAME_HDR_SIZE bytes of buf.  <br /></td></tr>
 <tr class="separator:afe60c366691ce231c54afc595ccbc8ef"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -249,6 +255,8 @@ Variables</h2></td></tr>
 <tr class="separator:a23ad658669e8dcc0b27832a8d087439f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a5f364fe2df15f0eeb64edab4d7d89071" id="r_a5f364fe2df15f0eeb64edab4d7d89071"><td class="memItemLeft" align="right" valign="top">_Atomic int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#a5f364fe2df15f0eeb64edab4d7d89071">arq_silence_fallback_s</a> = <a class="el" href="arq__protocol_8h.html#a84d607bb4d05737ca1b56b2878afa7a1">ARQ_SILENCE_FALLBACK_S_DEFAULT</a></td></tr>
 <tr class="separator:a5f364fe2df15f0eeb64edab4d7d89071"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a39a32c45377c4965420d1e4255515672" id="r_a39a32c45377c4965420d1e4255515672"><td class="memItemLeft" align="right" valign="top">_Atomic int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#a39a32c45377c4965420d1e4255515672">arq_call_max_s</a> = <a class="el" href="arq__protocol_8h.html#abf03565459d378dd844837f5b2ddb68d">ARQ_CALL_MAX_S_DEFAULT</a></td></tr>
+<tr class="separator:a39a32c45377c4965420d1e4255515672"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3cbdcd847dc0583c5d0f8654e72aac22" id="r_a3cbdcd847dc0583c5d0f8654e72aac22"><td class="memItemLeft" align="right" valign="top">_Atomic int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#a3cbdcd847dc0583c5d0f8654e72aac22">arq_retry_stagger_ms</a> = <a class="el" href="arq__protocol_8h.html#a4cc58d52f33706e2e1b9584c3d2589c1">ARQ_RETRY_STAGGER_MS_DEFAULT</a></td></tr>
 <tr class="separator:a3cbdcd847dc0583c5d0f8654e72aac22"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ada5174729d7fb5b2ef01c433c974f131" id="r_ada5174729d7fb5b2ef01c433c974f131"><td class="memItemLeft" align="right" valign="top">_Atomic int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__protocol_8c.html#ada5174729d7fb5b2ef01c433c974f131">arq_disconnect_drain_timeout_s</a> = <a class="el" href="arq__protocol_8h.html#a5c5bb5777824dcf1a155a5da9b22e3af">ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT</a></td></tr>
@@ -1131,6 +1139,70 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="ac7e6d07f2404b7a5d61d64ab0a2b8e0e" name="ac7e6d07f2404b7a5d61d64ab0a2b8e0e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac7e6d07f2404b7a5d61d64ab0a2b8e0e">&#9670;&#160;</a></span>arq_protocol_session_calls()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_protocol_session_calls </td>
+          <td>(</td>
+          <td class="paramtype">bool&#160;</td>
+          <td class="paramname"><em>we_called</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>remote_call</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>local_call</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>connect_src</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>my_call</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">char *&#160;</td>
+          <td class="paramname"><em>src</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">char *&#160;</td>
+          <td class="paramname"><em>dst</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>bufsz</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a794cb4d6826b0b08ad83d8489c1ff4ac" name="a794cb4d6826b0b08ad83d8489c1ff4ac"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a794cb4d6826b0b08ad83d8489c1ff4ac">&#9670;&#160;</a></span>arq_protocol_set_call_fast_slots()</h2>
 
@@ -1142,6 +1214,24 @@ Variables</h2></td></tr>
           <td>(</td>
           <td class="paramtype">int&#160;</td>
           <td class="paramname"><em>retries</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a867a6d725e56b5432fa265f73846fac4" name="a867a6d725e56b5432fa265f73846fac4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a867a6d725e56b5432fa265f73846fac4">&#9670;&#160;</a></span>arq_protocol_set_call_max_s()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_protocol_set_call_max_s </td>
+          <td>(</td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>seconds</em></td><td>)</td>
           <td></td>
         </tr>
       </table>
@@ -1163,6 +1253,42 @@ Variables</h2></td></tr>
           <td></td>
         </tr>
       </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="aa29cdc60c32de7513f73d5acc0a5df62" name="aa29cdc60c32de7513f73d5acc0a5df62"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa29cdc60c32de7513f73d5acc0a5df62">&#9670;&#160;</a></span>call_or()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">static const char * call_or </td>
+          <td>(</td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>call</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const char *&#160;</td>
+          <td class="paramname"><em>fallback</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span></span>  </td>
+  </tr>
+</table>
 </div><div class="memdoc">
 
 </div>
@@ -1578,6 +1704,20 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="a39a32c45377c4965420d1e4255515672" name="a39a32c45377c4965420d1e4255515672"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a39a32c45377c4965420d1e4255515672">&#9670;&#160;</a></span>arq_call_max_s</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">_Atomic int arq_call_max_s = <a class="el" href="arq__protocol_8h.html#abf03565459d378dd844837f5b2ddb68d">ARQ_CALL_MAX_S_DEFAULT</a></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a56dbc408aa04f622705c8cf3c748b00b" name="a56dbc408aa04f622705c8cf3c748b00b"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a56dbc408aa04f622705c8cf3c748b00b">&#9670;&#160;</a></span>arq_call_retry_slots</h2>
 
@@ -1675,7 +1815,7 @@ Variables</h2></td></tr>
 </div><div class="memdoc">
 <b>Initial value:</b><div class="fragment"><div class="line">=</div>
 <div class="line">    (int)(<span class="keyword">sizeof</span>(<a class="code hl_variable" href="arq__protocol_8c.html#ae3b39cb2906c1cffb735aa42d5843db4">arq_mode_table</a>) / <span class="keyword">sizeof</span>(<a class="code hl_variable" href="arq__protocol_8c.html#ae3b39cb2906c1cffb735aa42d5843db4">arq_mode_table</a>[0]))</div>
-<div class="ttc" id="aarq__protocol_8c_html_ae3b39cb2906c1cffb735aa42d5843db4"><div class="ttname"><a href="arq__protocol_8c.html#ae3b39cb2906c1cffb735aa42d5843db4">arq_mode_table</a></div><div class="ttdeci">const arq_mode_timing_t arq_mode_table[]</div><div class="ttdef"><b>Definition</b> arq_protocol.c:60</div></div>
+<div class="ttc" id="aarq__protocol_8c_html_ae3b39cb2906c1cffb735aa42d5843db4"><div class="ttname"><a href="arq__protocol_8c.html#ae3b39cb2906c1cffb735aa42d5843db4">arq_mode_table</a></div><div class="ttdeci">const arq_mode_timing_t arq_mode_table[]</div><div class="ttdef"><b>Definition</b> arq_protocol.c:61</div></div>
 </div><!-- fragment -->
 </div>
 </div>

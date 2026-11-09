@@ -335,9 +335,14 @@ static bool parse_int_command(const char *buffer, const char *name, int *out)
     return true;
 }
 
+/* Commands answered WRONG so far: how tnc_host_command, which gets no
+ * reply, tells a rejected line. */
+static atomic_uint wrong_replies = 0;
+
 /* Answer WRONG, and say so in the log: the host may never show it. */
 static void reply_wrong(const char *command)
 {
+    atomic_fetch_add(&wrong_replies, 1);
     HLOGW("tcp-ctl", "Command rejected (WRONG): %s", command);
     tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
 }
@@ -434,19 +439,20 @@ static void execute_control_command(char *buffer)
         /* A scanning host (BPQ32) sends LISTEN OFF at every hop.  If a CALL
          * is half received at that moment, nothing else would show it is
          * lost: say so, with no session up (a LISTEN OFF in a session is
-         * logged by the ARQ layer).  An MFSK listener is flushed by the
-         * LISTEN OFF itself; a DATAC16 frame is lost only if the host then
-         * changes frequency. */
+         * logged by the ARQ layer).  The LISTEN OFF itself drops it: the
+         * decoders are flushed when listening ends with no session after. */
         const char *inflight_mode = NULL;
         uint64_t inflight_ms = 0;
-        bool lost_now = false;
         if (cmd.type == ARQ_CMD_LISTEN_OFF && !arq_is_link_connected() &&
-            modem_rx_frame_in_flight(&inflight_mode, &inflight_ms, &lost_now))
-            HLOGI("tcp-ctl", "LISTEN OFF %.1f s into a %s frame not yet decoded: %s "
-                  "(or it was noise)",
-                  (double)inflight_ms / 1000.0, inflight_mode ? inflight_mode : "?",
-                  lost_now ? "LISTEN OFF drops it"
-                           : "if the host now changes frequency, it is lost");
+            modem_rx_frame_in_flight(&inflight_mode, &inflight_ms))
+            HLOGI("tcp-ctl", "LISTEN OFF %.1f s into a %s frame not yet decoded: "
+                  "LISTEN OFF drops it (or it was noise)",
+                  (double)inflight_ms / 1000.0, inflight_mode ? inflight_mode : "?");
+        /* Each hop starts with LISTEN OFF, and Mercury is told nothing else
+         * of it: the busy detector's floor belongs to the channel it left.
+         * Re-seeding is the operator's choice (BUSYRESEED). */
+        if (cmd.type == ARQ_CMD_LISTEN_OFF && modem_get_busy_reseed_on_hop())
+            modem_busy_channel_changed();
         if (cmd.type != ARQ_CMD_NONE && arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
@@ -488,6 +494,47 @@ static void execute_control_command(char *buffer)
                       on ? 11 : 12);
         }
         return;
+    }
+
+    /* BUSYDETECT ON|OFF  -- the channel-busy detector (ini busy_detect);
+     * BUSYRESEED ON|OFF  -- its new noise floor at each scan hop (ini
+     * busy_reseed_on_hop).  Bare, each reports its state.  Neither is saved:
+     * the ini sets them again at the next start. */
+    {
+        static const struct {
+            const char *name;
+            void      (*set)(bool);
+            bool      (*get)(void);
+        } busy_switches[] = {
+            { "BUSYDETECT", modem_set_busy_detect_enabled, modem_get_busy_detect_enabled },
+            { "BUSYRESEED", modem_set_busy_reseed_on_hop,  modem_get_busy_reseed_on_hop  },
+        };
+        for (size_t k = 0; k < sizeof(busy_switches) / sizeof(busy_switches[0]); k++)
+        {
+            size_t len = strlen(busy_switches[k].name);
+            if (strncmp(buffer, busy_switches[k].name, len) ||
+                (buffer[len] != '\0' && buffer[len] != ' '))
+                continue;
+            char arg[16] = {0};
+            if (sscanf(buffer + len, " %15s", arg) == 1)
+            {
+                if (!strcasecmp(arg, "ON") || !strcasecmp(arg, "OFF"))
+                {
+                    busy_switches[k].set(!strcasecmp(arg, "ON"));
+                    tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+                }
+                else
+                    reply_wrong(received);
+            }
+            else
+            {
+                char reply[32];
+                int n = snprintf(reply, sizeof(reply), "%s %s\r", busy_switches[k].name,
+                                 busy_switches[k].get() ? "ON" : "OFF");
+                tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)n);
+            }
+            return;
+        }
     }
 
     if (!strncmp(buffer, "PUBLIC", strlen("PUBLIC")))
@@ -864,6 +911,87 @@ static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notif
     close_data_client(data_client_fd);
 }
 
+/* The host program as the TNC's client (tnc_host_command).  A host in this
+ * process (the UI's chat window) drives the TNC with the control port's own
+ * lines, in the one client slot, while no TCP control client is attached.
+ * Its replies and state lines go where an absent client's go (nowhere:
+ * drain_tnc_queue_to_ctl); it follows the session from the status instead.
+ * A TCP client that connects takes the slot from it as from another TCP
+ * client, ending its session (host_release_tnc from the accept).
+ * host_tnc_lock makes the host's check-and-run and the accept's taking of
+ * the slot one step each, so the two never hold it together. */
+static atomic_bool host_holds_tnc = false;
+static pthread_mutex_t host_tnc_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* What a TCP control client's leaving does (close_ctl_client), for the host. */
+static bool host_release_tnc(void)
+{
+    if (!atomic_exchange(&host_holds_tnc, false))
+        return false;
+    modem_set_monitor_enabled(false);
+    arq_cmd_msg_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = ARQ_CMD_CLIENT_DISCONNECT;
+    (void)arq_submit_tcp_cmd(&cmd);
+    return true;
+}
+
+int tnc_host_command(const char *line)
+{
+    if (!line)
+        return -1;
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%s", line);
+    size_t n = strlen(buf);
+    while (n > 0 && (buf[n - 1] == '\r' || buf[n - 1] == '\n'))
+        buf[--n] = '\0';
+    if (n == 0)
+        return -1;
+    pthread_mutex_lock(&host_tnc_lock);
+    if (net_get_status(CTL_TCP_PORT) == NET_CONNECTED)
+    {
+        pthread_mutex_unlock(&host_tnc_lock);
+        return -2;
+    }
+    atomic_store(&host_holds_tnc, true);
+    unsigned wrong = atomic_load(&wrong_replies);
+    execute_control_command(buf);
+    bool refused = atomic_load(&wrong_replies) != wrong;
+    pthread_mutex_unlock(&host_tnc_lock);
+    return refused ? -1 : 0;
+}
+
+bool tnc_host_holds(void)
+{
+    return atomic_load(&host_holds_tnc);
+}
+
+void tnc_host_release(void)
+{
+    pthread_mutex_lock(&host_tnc_lock);
+    (void)host_release_tnc();
+    pthread_mutex_unlock(&host_tnc_lock);
+}
+
+/* The session's received bytes go to the data client when one is attached
+ * (arq_reactor_thread); otherwise to the host, so the ring never fills and
+ * holds up the ARQ thread (cb_deliver_rx_data waits on a full one). */
+size_t tnc_host_arq_read(uint8_t *buf, size_t len)
+{
+    /* Not under host_tnc_lock: a read under way may end just after the
+     * reactor gives the slot to a TCP client, which is harmless, since that
+     * eviction ends the session anyway. */
+    if (!buf || len == 0 || !atomic_load(&host_holds_tnc) ||
+        net_get_status(DATA_TCP_PORT) == NET_CONNECTED)
+        return 0;
+    size_t n = size_buffer(data_rx_buffer_arq);
+    if (n > len)
+        n = len;
+    if (n == 0 || read_buffer(data_rx_buffer_arq, buf, n) != 0)
+        return 0;
+    return n;
+}
+
 /* The queued lines to the control client, never dropping a byte: what the
  * socket does not take now (it is full) is kept, and goes first on the next
  * pass; the reactor never waits on it.  With no client connected there is no
@@ -988,9 +1116,13 @@ void *arq_reactor_thread(void *port)
                     arq_cmd_msg_t cmd;
                     if (ctl_client >= 0)
                         close_ctl_client(&ctl_client, &data_client, true);
+                    pthread_mutex_lock(&host_tnc_lock);
+                    if (host_release_tnc())
+                        HLOGI("tcp-ctl", "Control client connected: it takes the TNC from the host program");
                     ctl_client = fd;
                     cli_ctl_sockfd = fd;
                     net_set_status(CTL_TCP_PORT, NET_CONNECTED);
+                    pthread_mutex_unlock(&host_tnc_lock);
                     memset(&cmd, 0, sizeof(cmd));
                     cmd.type = ARQ_CMD_CLIENT_CONNECT;
                     (void)arq_submit_tcp_cmd(&cmd);

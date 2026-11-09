@@ -128,6 +128,21 @@ int watterson_set_spectrum(watterson_t *w, int spectrum)
     return 0;
 }
 
+void watterson_set_carrier_offset(watterson_t *w, float hz)
+{
+    assert(w != NULL);
+    if (!isfinite(hz)) return;
+    w->carrier_offset_hz = hz;
+    w->carrier_phase_inc = 2.0 * M_PI * (double)hz / (double)w->sample_rate;
+    if (hz == 0.0f) w->carrier_phase = 0.0;
+}
+
+float watterson_get_carrier_offset(const watterson_t *w)
+{
+    assert(w != NULL);
+    return w->carrier_offset_hz;
+}
+
 /* Range limits for watterson_add_path(), see the contract in watterson.h.
  *
  * The Gaussian tap is produced once every R = floor(fs / (64 * doppler_hz))
@@ -536,6 +551,25 @@ void watterson_process(watterson_t *w, COMP *samples, int n)
     assert(w != NULL);
     assert(samples != NULL);
     assert(n > 0);
+
+    /* Carrier offset: rotate the input before the paths are summed, so the
+     * whole burst moves in the passband and the fade is untouched.  The
+     * accumulator is carried across calls and wrapped, so a long burst does
+     * not lose precision in the angle. */
+    if (w->carrier_offset_hz != 0.0f)
+    {
+        const double two_pi = 2.0 * M_PI;
+        for (i = 0; i < n; i++)
+        {
+            double c = cos(w->carrier_phase), s = sin(w->carrier_phase);
+            COMP  r = samples[i];
+            samples[i].real = (float)(r.real * c - r.imag * s);
+            samples[i].imag = (float)(r.real * s + r.imag * c);
+            w->carrier_phase += w->carrier_phase_inc;
+            if (w->carrier_phase >  two_pi) w->carrier_phase -= two_pi;
+            if (w->carrier_phase < -two_pi) w->carrier_phase += two_pi;
+        }
+    }
 
     if (w->num_paths == 0)
     {
