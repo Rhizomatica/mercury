@@ -13,7 +13,7 @@ having — they are not updated as the code moves on.
 
 | Document | What it covers |
 |---|---|
-| [RELEASE-1.9.23.md](RELEASE-1.9.23.md) | **1.9.23 talks to 1.9.22, 1.9.21 and 1.9.20.** Fixes for scanning hosts and teardowns from BPQ32, LinBPQ, JNOS and QTermTCP field reports, `call_max_s` and `log_max_mb`, `RETRIES=n`, the GUI's chat window driving its own engine, busy-detector switches, and HERMES beacon frames. |
+| [RELEASE-1.9.23.md](RELEASE-1.9.23.md) | **1.9.23 talks to 1.9.22, 1.9.21 and 1.9.20.** Fixes for scanning hosts and teardowns from BPQ32, LinBPQ, JNOS and QTermTCP field reports, `call_max_s` and `log_max_mb`, `RETRIES=n`, the GUI's chat window driving its own engine, busy-detector switches, HERMES beacon frames, and each mode's tolerance to a mistuned carrier, measured. |
 | [RELEASE-1.9.22.md](RELEASE-1.9.22.md) | **1.9.22 talks to 1.9.21 and 1.9.20.** Stations on different bandwidths connect on the MFSK floor, `max_keydown_s` for vARIM, the receiver unsync fix (a crash, and a search of old audio), the unanswered-probe fall-back, `silence_fallback_s` and the fast CALL count, and log dates and UTC. |
 | [RELEASE-1.9.21.md](RELEASE-1.9.21.md) | **1.9.21 talks to 1.9.20.** The fix for a session whose link falls below the control mode (Pat stalling at `FF>`, #431), MFSK-only transmit for FSK-only radios, the Hermes-Lite 2 backend, and the Mac App Store package. |
 | [RELEASE-1.9.20.md](RELEASE-1.9.20.md) | **1.9.20 does not talk to 1.9.19 on the air.** The 2.0 architecture: a ladder that starts where the SNR says and falls back fast, quicker connect and teardown, a 500 Hz MFSK floor, high-Doppler channels, and what was tested. Android and iOS as technology previews. |

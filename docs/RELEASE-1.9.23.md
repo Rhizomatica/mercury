@@ -78,6 +78,20 @@ type for the HERMES beacon, which older releases ignore.
   [ACQ-TUNING-FINDINGS.md](ACQ-TUNING-FINDINGS.md); a study of QAM16C2 under
   peak-limited radios, not yet enabled, is in
   [CLIPPED-QAM16C2-FINDINGS.md](CLIPPED-QAM16C2-FINDINGS.md) (#464).
+- **How far off frequency a station can be, measured** (#470). Every OFDM
+  mode acquires a carrier up to about ±50 Hz off, and next to none past
+  ±55 Hz; MFSK up to ±100 Hz. The edge comes from the modem's frequency search, the
+  same for every mode, not from its threshold. See
+  [ACQUISITION-WINDOWS.md](ACQUISITION-WINDOWS.md) and
+  [OFFSET-ACQUISITION-FINDINGS.md](OFFSET-ACQUISITION-FINDINGS.md). For
+  testing:
+  - the channel model can carry a carrier offset
+    (`watterson_set_carrier_offset`, and `MERCURY_CH_FREQ` in the Go harness);
+  - the bench's frequency shift was 6 dB low, so earlier offset measurements
+    ran 6 dB below their labelled SNR. It is fixed, and the published tables
+    were reproduced with the fixed tools first.
+
+  Nothing changes in how Mercury runs.
 - **The carousel logs what an application's data waits for** when it can't
   go at once (#499), such as the peer's answer slot. On air, N3JXB's
   commands took 2-11 s to key, and the log didn't say why.
@@ -170,5 +184,8 @@ type for the HERMES beacon, which older releases ignore.
 - **On Sailfish OS the GUI started from its icon has no CAT or PTT:** a
   radio's USB device needs root on the phone. Neither package has been used
   with a radio there yet.
+- **A radio more than about 50 Hz off frequency** doesn't connect on the OFDM
+  modes (the MFSK floor tolerates ±100 Hz). This was true before 1.9.23 too;
+  it is now measured (#470).
 - **The busy re-seed** (`BUSYRESEED`) misses a wideband signal already on a
   channel the hop lands on, until it stops. It is off by default.
