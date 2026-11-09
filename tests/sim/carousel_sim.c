@@ -310,6 +310,7 @@ static int app_wait_says;              /* "tx: my application's data waits for" 
 static int gated_probes;
 static int dark_polls;
 static int one_frame_kills;
+static int over_scored;
 /* Did the last "rx round" line mark rung lv not allowed?  Its gp list reads
  * " 0:5/0.83 2:4/0.87 3:0/0.00x". */
 static bool round_marked_out(const station_t *s, int lv)
@@ -346,6 +347,14 @@ static void io_trace(void *ctx, const char *line)
             snprintf(s->round_gp, sizeof s->round_gp, "%s", g + 16);
             if (round_marked_out(s, atoi(line + 12))) one_frame_kills++;
         }
+    } else if (!strncmp(line, "rx: the round's tail unheard -- scored as the ", 46)) {
+        /* ...as more frames than the peer's keydown carried: frames never
+         * sent, scored as lost (#507: the size of a poll before a "done") */
+        const station_t *p = &S[s->id ^ 1];
+        int data = 0;
+        for (int i = 0; i < p->kd_n; i++)
+            if (p->kd[i].mode != ARQ_CONTROL_MODE && p->kd[i].mode != SIM_MODE_PATTERN) data++;
+        if (atoi(line + 46) > data) over_scored++;
     } else if (!strncmp(line, "rx -> poll lv=", 14) && s->round_snr_ok) {
         int lv = atoi(line + 14);
         if (lv > 0 && round_marked_out(s, lv) && s->round_snr < car_rung_gate_db(lv)) gated_probes++;
@@ -671,6 +680,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     gated_probes = 0;
     dark_polls = 0;
     one_frame_kills = 0;
+    over_scored = 0;
     bad_frames = 0;
     slot_breaches = 0;
     frame_no = 0;
@@ -828,6 +838,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->gated_probes = gated_probes;
     res->dark_polls = dark_polls;
     res->one_frame_kills = one_frame_kills;
+    res->over_scored = over_scored;
     res->kd_unexplained = kd_unexplained;
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;
