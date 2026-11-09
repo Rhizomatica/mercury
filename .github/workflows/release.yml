@@ -155,7 +155,11 @@ jobs:
   sign:
     name: Sign Windows binaries
     needs: build
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: on the ubuntu-26.04 host, wineserver inside
+    # the signer container fails at startup ("wineserver: socket: Function not
+    # implemented"), so the Inno Setup step dies.  Same container and Wine
+    # package work on ubuntu-24.04 (the 1.9.22 run).
+    runs-on: ubuntu-24.04
     container:
       # Pinned, not :latest.  code-signing/sign-lib.sh logs in to SimplySign
       # Desktop by clicking at positions calibrated for 2.9.14; the image's
