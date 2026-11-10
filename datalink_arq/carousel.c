@@ -2037,19 +2037,41 @@ static void rx_score(car_t *c, int lv, int frames, uint64_t now)
     measure_level(c, lv, frames, loss, now);
 }
 
+/* S: the most frames M's round on lv can have held -- what fits between the
+ * end of my keydown, which M answered, and the round's end as its frames
+ * said (anc.eh), to the nearest frame.  0: not known. */
+static int s_round_fit(const car_t *c, int lv)
+{
+    if (c->master || !c->s_tx_end || !c->anc.on || c->anc.kind != ANC_ROUND ||
+        c->anc.eh <= c->s_tx_end + TAIL_MS)
+        return 0;
+    uint64_t gap = burst_gap_ms(c, lv), per = level_air(c, lv) + gap;
+    return (int)((c->anc.eh - TAIL_MS - c->s_tx_end + gap + per / 2) / per);
+}
+
 /* A round's size is what its frames say -- but only its last frame says it
  * all: with the tail lost, seen + left counted the lost frames as never sent,
  * and a NVIS round of 7 that brought 3 read as "3 of 3, whole" (sim, nvis
  * seed 3: a "same again" pattern, and the loss unscored).  Without the tail,
  * the round is taken to be what I asked for -- if I asked for frames: after
- * a "done" poll, poll_n is negative (asked_n). */
-static void rx_measure(car_t *c, int lv, uint64_t now)
+ * a "done" poll, poll_n is negative (asked_n) -- and no more than fits in
+ * its time (s_round_fit): a sender with less than I asked for sends a
+ * shorter round, and with its last frame lost, a round of 3 asked as 6 was
+ * scored 1 of 6, the frames never sent as lost (#516). */
+static int rx_round_size(const car_t *c, int lv)
 {
     int frames = c->round_frames > 0 ? c->round_frames : 1;
-    if (!c->rx_tail && c->poll_n > frames) {
-        car_trace(c, "rx: the round's tail unheard -- scored as the %d frames I asked for", c->poll_n);
-        frames = c->poll_n;
-    }
+    if (c->rx_tail || c->poll_n <= frames) return frames;
+    int fit = s_round_fit(c, lv);
+    if (!fit || fit >= c->poll_n) return c->poll_n;
+    return fit > frames ? fit : frames;
+}
+
+static void rx_measure(car_t *c, int lv, uint64_t now)
+{
+    int frames = rx_round_size(c, lv);
+    if (!c->rx_tail && c->poll_n > (c->round_frames > 0 ? c->round_frames : 1))
+        car_trace(c, "rx: the round's tail unheard -- scored as %d frames (asked %d)", frames, c->poll_n);
     rx_score(c, lv, frames, now);
 }
 
@@ -2129,8 +2151,7 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
      * that it lost no more than my last poll told the sender, which credits
      * the round with that loss -- so a worse round is polled.  Not to a
      * sender whose window is full (only a poll retires its blocks). */
-    int frames = c->round_frames > 0 ? c->round_frames : 1;
-    if (!c->rx_tail && c->poll_n > frames) frames = c->poll_n;
+    int frames = rx_round_size(c, c->round_lv);
     double loss = 1.0 - (double)c->round_seen / frames;
     /* ...a round that came on the rung I asked for: a sender that missed my
      * poll keeps on where it was, and a pattern to that kept it there (sim,

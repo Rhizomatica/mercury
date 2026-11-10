@@ -348,6 +348,35 @@ static void test_carousel_done_poll_asks_for_nothing(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "a round scored as more frames than were sent");
 }
 
+/* My poll asked for 8; M had 5 to send.  With the round's last frame lost,
+ * it was scored as the 8 asked: 4 of 8, QAM16C2 read 0.58 delivered instead
+ * of 0.81 (#516).  It is the 5 that fit between my poll and the round's end.
+ * Its first frame lost too, the frames heard say 4 (seen + left): the time
+ * still says 5, so the lost one is scored.  The frames: A's first round (0),
+ * B's poll for 8 (1), A's 5 (2-6). */
+static void test_carousel_short_round_scored_as_sent(void)
+{
+    static const int tail[] = { 6 }, both[] = { 2, 6 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A6000,B59+500,A1500+3000", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(13, r.frames, "the frame order changed: pick the lost frames again (CAR_TRACE=1)");
+    carousel_sim_force_losses(tail, 1);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "the tail lost: scored as more frames than were sent");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "the tail lost: scored as fewer frames than were sent");
+    carousel_sim_force_losses(both, 2);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "head and tail lost: scored as more frames than were sent");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "head and tail lost: scored as fewer frames than were sent");
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -523,6 +552,7 @@ int main(void)
     RUN_TEST(test_carousel_dark_rounds_drop_the_rung);
     RUN_TEST(test_carousel_req_scores_the_frames_sent);
     RUN_TEST(test_carousel_done_poll_asks_for_nothing);
+    RUN_TEST(test_carousel_short_round_scored_as_sent);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }
