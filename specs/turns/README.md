@@ -100,7 +100,8 @@ response slot, and `CarouselTurns.cfg` with the rule added gives a
 
 - `CarouselTurns_watch.cfg`: the slot-closing rules with `MWatch`, at
   `H = 16` (the full `H = 24` does not exhaust, as for
-  `CarouselTurns_close.cfg`).  No error, 2.15 M distinct states (4 min, 4 workers).
+  `CarouselTurns_close.cfg`).  No error, 2.15 M distinct states (4 min,
+  4 workers).
 - `Mut_csmiss.cfg`: M's carrier sense misses S's round in the response
   slot.  Violates `NoOverlap`: M frees the slots, then keys over S's
   continuation.  This is the residual risk, next to `FalsePattern`'s.  With
