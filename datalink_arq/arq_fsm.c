@@ -986,6 +986,17 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
 }
 
 
+/* Stop hearing a caller we answered until our ACCEPTs ran out (fsm_accepting,
+ * TIMER_RETRY): its seed drops every plain frame, broadcast included. */
+static void end_accept_fallback(arq_session_t *sess)
+{
+    if (!sess->accept_fallback || !sess->crc_seed)
+        return;
+    sess->accept_fallback = false;
+    car_set_seed(sess, 0);
+    sess->peer_tx_mode = sess->initial_payload_mode;   /* back to broadcast */
+}
+
 static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
 {
     switch (ev->id)
@@ -1077,11 +1088,16 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_TIMER_RETRY:
         /* The ACCEPT-exhaustion fallback ran out: the caller never came. */
-        if (sess->accept_fallback && sess->crc_seed)
+        end_accept_fallback(sess);
+        break;
+
+    case ARQ_EV_RX_DISCONNECT:
+        /* The caller we stopped answering has given up: no frame of that
+         * session is coming, so stop waiting for one (see fsm_accepting). */
+        if (sess->accept_fallback && sess->crc_seed && ev->session_id == sess->session_id)
         {
-            sess->accept_fallback = false;
-            car_set_seed(sess, 0);
-            sess->peer_tx_mode = sess->initial_payload_mode;   /* back to broadcast */
+            HLOGI(LOG_COMP, "DISCONNECT from the caller we answered: no longer waiting for it");
+            end_accept_fallback(sess);
         }
         break;
 
@@ -1405,6 +1421,27 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
                 sess->deadline_ms = time_now_ms() + ARQ_CAR_PEER_LOST_MS;
             }
         }
+        break;
+
+    case ARQ_EV_RX_DISCONNECT:
+        /* The caller has given up on this call.  Its host hung up while it was
+         * still CALLING, and our ACCEPT reached it afterwards: it answers that
+         * stale ACCEPT with a DISCONNECT (fsm_listening, RX_ACCEPT).  Nothing
+         * more is coming, so release the channel now, as a host DISCONNECT
+         * would.  On air (K7EK <- KG9NI-7, 2026-11-07 06:06 and 2026-11-08
+         * 10:43) the DISCONNECT was decoded and ignored, and the callee held a
+         * scanning host's channel 47 s and 104 s more, until BPQ32's PENDING
+         * hold ran out.  No reply: the caller is back in LISTENING, expecting
+         * none.  Only for this session: another station's DISCONNECT, or an
+         * older session's, says nothing about this call. */
+        if (ev->session_id != sess->session_id)
+            break;
+        HLOGI(LOG_COMP, "DISCONNECT from %s while answering its CALL: the caller gave up",
+              sess->remote_call);
+        if (g_cbs.notify_cancelpending)
+            g_cbs.notify_cancelpending();
+        notify_session_ended(sess);
+        enter_idle_after_call(sess);
         break;
 
     case ARQ_EV_APP_CONNECT:
