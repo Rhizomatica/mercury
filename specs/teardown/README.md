@@ -77,6 +77,11 @@ Properties:
   second DISCONNECT or a redial while the caller drains).
 - `Released`: once the host has asked again while the caller drains, the
   caller no longer holds its DISCONNECT.
+- `ToldOnce`: each end's host hears DISCONNECTED at most once per session.
+- `ToldAtEnd`: it hears it only once that end has left the session (idle,
+  its reply to the peer's DISCONNECT out), never while the drain or the
+  DISCONNECT exchange goes on.  An ABORTed session is the exception: ABORT
+  is answered at once.
 
 M_END (2026-10-18): a callee whose application hangs up while its
 DISCONNECT waits for its data to drain says so in its answers (poll type 3,
@@ -143,8 +148,31 @@ not when it hangs up.  Until then arq.c said it at once, and BPQ32, which
 restarts its scan 15 s after DISCONNECTED, moved the radio mid-teardown: its
 LISTEN OFF ended the session before the peer had the DISCONNECT, and the peer
 waited out its 240 s watchdog (on air, K7EK and KG9NI, 1.9.22).  BPQ32 keeps
-the radio while it waits, and ABORTs after 30 s.  The model is unchanged: the
-host may still ask again during the drain (`HostAgain`), told or not.
+the radio while it waits, and ABORTs after 30 s.  The host may still ask
+again during the drain (`HostAgain`), told or not.
+
+The notice is modelled (#493 review): `told` counts the DISCONNECTED each
+end's host has had per session, and `FSMNotice` adds one when an end leaves
+its session (idle, after its reply if it owed one, or taking a new CALL
+mid-teardown: `notify_session_ended`).  The constant `HOST` says what else
+the hosts may do:
+
+- `"abort"`: the caller's host ABORTs (`MAbort`).  It is answered at once
+  and the session's end then says nothing more (`htold`, arq.c
+  `g_host_told`).  Before, the end said it again: on air, VE4KLM and K7EK,
+  5 Nov, 1.9.22, a JNOS ABORT was answered, and a second DISCONNECTED came
+  58 s later, after the unanswered DISCONNECT frames.
+- `"race"`: a host DISCONNECT with no notice owed is answered at once and
+  still queued for the FSM (`HostDisc`, `hq`), and a CALL may be taken
+  before the FSM has it (`HostDiscTaken`, the ghost `raced`).  That notice
+  comes before the PENDING of the session the CALL opens, so it is no
+  session's and is not counted; the session then ends on that DISCONNECT
+  with its own.  `Race.cfg` shows the race is reached.
+
+"No notice owed" is `arq_fsm_notice_owed`: no session, and no reply to the
+peer's DISCONNECT still to go.  `arq_session_active()` alone, the first
+cut of #493, also answered at once in that reply window, and the end then
+said it a second time (`Mut_activeonly.cfg`).
 
 Silence after an M_END (2026-11-05): the callee's M_END says its
 application has hung up, but the caller acts on it only holding everything
@@ -225,6 +253,16 @@ Results:
   violates `Answered`.  On air, a UUCP session's teardown lost the
   callee's answer, and the gateway's NNCP, calling as PU2UIT-3 where UUCP
   had called as PU2UIT, was ignored for the callee's 180 s end wait.
+- `Mut_toldearly.cfg`: lossless, the caller's host is told DISCONNECTED
+  when it hangs up, its session still up (1.9.22, before #493).  It
+  violates `ToldAtEnd`.
+- `Mut_aborttwice.cfg`: lossless, the end of an ABORTed session tells the
+  host again (1.9.22).  It violates `ToldOnce`.
+- `Mut_activeonly.cfg`: lossless, a host DISCONNECT answered at once
+  whenever no session is active, its reply to the peer's DISCONNECT still
+  to go.  It violates `ToldOnce`.
+- `Race.cfg`: a witness, expected to fail `NoRace`: the race above is
+  reached.  `SessionTeardown.cfg` checks `ToldOnce` through it.
 - `Foreign.cfg`: another station's DISCONNECT with a matching 6-bit session
   id.  It violates `NoKill`.  This is a residual risk: 1 in 64 foreign
   DISCONNECTs heard ends the session.  A DISCONNECT seeded like the

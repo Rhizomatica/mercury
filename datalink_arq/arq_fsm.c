@@ -503,6 +503,22 @@ static int peer_is_transmitting(const arq_session_t *sess)
 
 int arq_fsm_channel_keyed(const arq_session_t *sess) { return peer_is_transmitting(sess); }
 
+bool arq_fsm_notice_owed(const arq_session_t *sess)
+{
+    switch (sess->conn_state)
+    {
+    case ARQ_CONN_CALLING:
+    case ARQ_CONN_ACCEPTING:
+    case ARQ_CONN_CONNECTED:
+    case ARQ_CONN_DISCONNECTING:
+        return true;
+    default:
+        /* DISCONNECTED, answering the peer's DISCONNECT: the notice goes once
+         * the reply is out (TX_COMPLETE in fsm_disconnected). */
+        return answering_peer_end(sess);
+    }
+}
+
 /* The first signal alone: one of our decoders is on a frame. */
 static int decoder_hears_frame(const arq_session_t *sess)
 {

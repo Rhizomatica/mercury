@@ -227,6 +227,10 @@ Mercury first delivers what is still queued or unconfirmed, for up to three
 exchanges at the session's rung (minutes at the MFSK floor), then sends
 DISCONNECT frames to the peer and waits for its answer.  With no session up,
 `DISCONNECTED\r` is sent at once.  A host that cannot wait sends `ABORT`.
+Either way the host hears one `DISCONNECTED\r` per session.  A session
+the peer has just ended still owes its notice until Mercury's reply to the
+peer's DISCONNECT is on the air, so a `DISCONNECT` then waits for that
+notice too.
 
 Up to 1.9.22 `DISCONNECTED\r` was sent at once, before the air side ended.
 A scanning BPQ32 restarts its scan 15 s after it, and its next `LISTEN OFF`
@@ -261,7 +265,8 @@ the unsent TX data, the unconfirmed pieces and received data not yet read,
 then sends the
 DISCONNECT frames straight away (after any frame already on the air), so
 the peer is told rather than left to time out.  `DISCONNECTED\r` is sent
-on the control port at once, as for `DISCONNECT`.
+on the control port at once, and it is the session's only one: the end of
+the teardown that follows sends no second `DISCONNECTED\r`.
 
 ---
 
