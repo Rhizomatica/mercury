@@ -250,10 +250,16 @@ ABORT\r
 `DISCONNECT` first delivers what is still queued: unsent bytes, and the
 pieces the peer has not yet confirmed.  `ABORT` does not wait.  It discards
 the unsent TX data, the unconfirmed pieces and received data not yet read,
-then sends the
-DISCONNECT frames straight away (after any frame already on the air), so
-the peer is told rather than left to time out.  `DISCONNECTED\r` is sent
-on the control port at once, as for `DISCONNECT`.
+then sends one DISCONNECT frame straight away (after any frame already on
+the air, and clear of the peer's reply window), so the peer is told rather
+than left to time out.  It is not retried: the caller is free once the
+peer answers or one retry interval passes, and the callee once its
+DISCONNECT has gone in its next slot (30 s at most waiting for one).
+`DISCONNECTED\r` is sent on the control port at once, as for `DISCONNECT`.
+
+An `ABORT` during a teardown already under way (after a `DISCONNECT`) cuts
+it short the same way: no more retries, and if our DISCONNECT has already
+gone out the session ends at once.
 
 ---
 
