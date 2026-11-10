@@ -1815,6 +1815,8 @@ static void m_close_spent(car_t *c, uint64_t te, int mk)
 static void m_watch(car_t *c, uint64_t now)
 {
     if (!c->master) return;
+    /* Sample first: the fire at a slot's end decides on last_carrier_ms, and
+     * a carrier still on the air then must keep the slots. */
     (void)peer_keyed(c, now);                    /* sets last_carrier_ms */
     uint64_t next = 0;
     bool freed = false;
