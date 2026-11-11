@@ -72,7 +72,12 @@ static volatile sig_atomic_t g_signal_count = 0;
  * request delivered twice, and is ignored.  A later one -- someone insisting --
  * still forces the exit, but through a thread that drops PTT first: unkeying
  * takes locks (radio_cmd's shared mutexes, hamlib), which a signal handler must
- * not touch, while sem_post() is async-signal-safe.
+ * not touch, while write() is async-signal-safe.
+ *
+ * The handler wakes the thread through a pipe, not an unnamed semaphore:
+ * macOS declares sem_init() but does not implement it (it returns -1 with
+ * ENOSYS), so with a semaphore the thread was never started there and a forced
+ * exit on a Mac left PTT as it stood.
  *
  * alarm() is the backstop if even the unkey hangs, and it BOUNDS the hang: it
  * does not guarantee the unkey.  SIGALRM's default action ends the process as
@@ -80,14 +85,14 @@ static volatile sig_atomic_t g_signal_count = 0;
  * that may be what is stuck.  The grace is therefore long enough for a slow
  * CAT unkey with hamlib retries, the same bound main() gives an orderly
  * shutdown. */
-#include <semaphore.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <time.h>
 
 #define DUPLICATE_WINDOW_MS 1000
 #define FORCED_EXIT_GRACE_S 10
 
-static sem_t                 g_force_exit_sem;
+static int                   g_force_exit_pipe[2] = { -1, -1 };
 static struct timespec       g_first_signal_ts;
 static volatile sig_atomic_t g_force_exit_ready = 0;  /* the unkey thread is up */
 static volatile sig_atomic_t g_forcing          = 0;  /* a forced exit is under way */
@@ -95,7 +100,8 @@ static volatile sig_atomic_t g_forcing          = 0;  /* a forced exit is under 
 static void *forced_exit_thread(void *arg)
 {
     (void)arg;
-    while (sem_wait(&g_force_exit_sem) != 0)
+    char c;
+    while (read(g_force_exit_pipe[0], &c, 1) != 1)
         ;                                   /* EINTR */
     if (radio_io_enabled())
         radio_io_key_off();
@@ -110,11 +116,15 @@ static void start_forced_exit_thread(void)
     pthread_t th;
     if (g_force_exit_ready)
         return;
-    if (sem_init(&g_force_exit_sem, 0, 0) != 0)
+    if (pipe(g_force_exit_pipe) != 0)
         return;
+    (void)fcntl(g_force_exit_pipe[0], F_SETFD, FD_CLOEXEC);
+    (void)fcntl(g_force_exit_pipe[1], F_SETFD, FD_CLOEXEC);
     if (pthread_create(&th, NULL, forced_exit_thread, NULL) != 0)
     {
-        sem_destroy(&g_force_exit_sem);
+        close(g_force_exit_pipe[0]);
+        close(g_force_exit_pipe[1]);
+        g_force_exit_pipe[0] = g_force_exit_pipe[1] = -1;
         return;
     }
     pthread_detach(th);
@@ -156,7 +166,7 @@ static void handle_termination_signal(int sig)
         if (!g_force_exit_ready)
         {
             /* No unkey thread (it could not be created): the old behaviour,
-             * rather than sem_post() on a semaphore that may not exist. */
+             * rather than write() to a pipe that may not exist. */
             static const char msg[] = "Caught second signal, forcing exit.\n";
             (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
             _exit(1);
@@ -164,7 +174,7 @@ static void handle_termination_signal(int sig)
         static const char msg[] = "Caught second signal, unkeying and forcing exit.\n";
         (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
         alarm(FORCED_EXIT_GRACE_S);
-        sem_post(&g_force_exit_sem);
+        (void)!write(g_force_exit_pipe[1], "x", 1);
         return;
 #else
         /* Windows still exits here with PTT as it stands. */
