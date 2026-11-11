@@ -221,10 +221,22 @@ DISCONNECT\r
 
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
-`DISCONNECTED\r` is sent on the control port at once (the VARA
-convention); the air side ends after it.  Mercury first delivers what is
-still queued or unconfirmed, for up to three exchanges at the session's
-rung (minutes at the MFSK floor), then sends DISCONNECT frames to the peer.
+`DISCONNECTED\r` is sent on the control port when the session has
+closed, as VARA does ("Disconnect the link, once the TX buffer is empty").
+Mercury first delivers what is still queued or unconfirmed, for up to three
+exchanges at the session's rung (minutes at the MFSK floor), then sends
+DISCONNECT frames to the peer and waits for its answer.  With no session up,
+`DISCONNECTED\r` is sent at once.  A host that cannot wait sends `ABORT`.
+Either way the host hears one `DISCONNECTED\r` per session.  A session
+the peer has just ended still owes its notice until Mercury's reply to the
+peer's DISCONNECT is on the air, so a `DISCONNECT` then waits for that
+notice too.
+
+Up to 1.9.22 `DISCONNECTED\r` was sent at once, before the air side ended.
+A scanning BPQ32 restarts its scan 15 s after it, and its next `LISTEN OFF`
+ended the session before the peer had heard the DISCONNECT, leaving the
+peer to time out (240 s).  BPQ32 keeps the radio while it waits for
+`DISCONNECTED`, and sends `ABORT` after 30 s.
 It does not wait to deliver when nothing has been heard from the peer
 for 120 s, and a delivery under way stops once that silence is reached.
 
@@ -255,12 +267,15 @@ the air, and clear of the peer's reply window), so the peer is told rather
 than left to time out.  It is not retried: the caller is free once the
 peer answers or one retry interval passes, and the callee once its
 DISCONNECT has gone in its next slot (30 s at most waiting for one).
-`DISCONNECTED\r` is sent on the control port at once, as for `DISCONNECT`.
+`DISCONNECTED\r` is sent on the control port at once, and it is the
+session's only one: the end of the teardown that follows sends no second
+`DISCONNECTED\r`.
 
 An `ABORT` during a teardown already under way (after a `DISCONNECT`) cuts
 it short the same way: no more retries.  With its DISCONNECT already out,
 the caller is free when the retry interval running ends (or the peer
-answers), and the callee at once.
+answers), and the callee at once.  Its `DISCONNECTED\r` too comes at once
+and is the session's only one.
 
 ---
 
@@ -810,8 +825,13 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   BUSY on noisier channels for missed BUSY on a hop into a wideband
   transmission, which is why it is the operator's choice.
 - **After a host `DISCONNECT`, a scan hop can cut the teardown short.**
-  Mercury answers `DISCONNECTED` straight away and finishes on the air; the
-  scanner's next `LISTEN OFF` releases the radio before that is done (#473).
+  It did up to 1.9.22, when Mercury answered `DISCONNECTED` straight away:
+  the scanner's next `LISTEN OFF` released the radio before the peer had the
+  DISCONNECT (#473).  On K7EK and KG9NI a DISCONNECT retry due 20 s after the
+  first was cut off, and two drains ended with no DISCONNECT sent; each time
+  the peer waited out its 240 s watchdog.  BPQ32 keeps the radio until
+  `DISCONNECTED`, now sent when the session has closed, restarts its scan
+  15 s after it, and sends `ABORT` if it has waited 30 s.
 
 When `LISTEN OFF` arrives with no session up while a CALL decoder has locked
 onto a frame it has not decoded yet, Mercury logs it:

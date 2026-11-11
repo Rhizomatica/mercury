@@ -1231,8 +1231,8 @@ void test_repeat_disconnect_while_draining_ends_now(void)
     TEST_ASSERT_EQUAL_UINT64(first_req, sess.disc_req_ms);
 }
 
-/* A CONNECT while a DISCONNECT is held to drain ends the drain: the host was
- * already told DISCONNECTED, so for it the old session is over.  The call
+/* A CONNECT while a DISCONNECT is held to drain ends the drain: a host that
+ * redials has hung up on the old session.  The call
  * stays queued and is placed once the teardown completes. */
 void test_redial_while_draining_ends_the_drain(void)
 {
@@ -1586,6 +1586,35 @@ void test_rx_disconnect_with_backlog_ends_at_once(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
     TEST_ASSERT_EQUAL_INT(ARQ_TD_REPLYING, sess.teardown);
     TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+}
+
+/* The host hears one DISCONNECTED per session.  arq.c answers a host
+ * DISCONNECT or ABORT at once only when the FSM owes none: a session ended on
+ * the peer's DISCONNECT is no longer active, but its notice still waits for
+ * our reply to go out, so it is owed until then (#493). */
+void test_notice_owed_until_the_reply_is_out(void)
+{
+    TEST_ASSERT_FALSE_MESSAGE(arq_fsm_notice_owed(&sess), "no session, yet a notice owed");
+    goto_connected();
+    TEST_ASSERT_TRUE(arq_fsm_notice_owed(&sess));
+    RESET_FAKE(fake_notify_disconnected);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE_MESSAGE(arq_fsm_notice_owed(&sess),
+        "ended on the peer's DISCONNECT: the notice is still to come");
+
+    ev = make_event(ARQ_EV_TIMER_ACK);                 /* the reply keys */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE(arq_fsm_notice_owed(&sess));
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_disconnected_fake.call_count);
+
+    ev = make_event(ARQ_EV_TX_COMPLETE);               /* ...and is out */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+    TEST_ASSERT_FALSE_MESSAGE(arq_fsm_notice_owed(&sess), "the notice went, yet still owed");
 }
 
 
@@ -2243,6 +2272,7 @@ int main(void)
     RUN_TEST(test_disconnect_keyed_deferral_is_bounded);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
     RUN_TEST(test_rx_disconnect_with_backlog_ends_at_once);
+    RUN_TEST(test_notice_owed_until_the_reply_is_out);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     /* Timeout tests */
     RUN_TEST(test_call_timeout);

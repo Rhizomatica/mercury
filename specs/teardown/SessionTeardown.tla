@@ -10,8 +10,8 @@
 (*   its last word not yet confirmed, M holds the DISCONNECT while its    *)
 (*   drain delivers it (ARQ_TD_DRAINING; how, specs/carousel DirDone),   *)
 (*   up to a deadline or the peer's silence.  The host, told DISCONNECTED *)
-(*   already, may ask again meanwhile -- a second DISCONNECT, or a CONNECT *)
-(*   -- and either ends the drain at once, dropping what it holds.        *)
+(*   only when the session ends, may still ask again meanwhile -- a second *)
+(*   DISCONNECT, or a CONNECT -- and either ends the drain at once.       *)
 (*   Once S has said M_END, M remembers it; if S then falls silent as    *)
 (*   long as S's own drain would last, M ends with one DISCONNECT.       *)
 (*   S, the callee, keys nothing of its own: its DISCONNECT goes in its   *)
@@ -68,6 +68,20 @@
 (*              a redial while M drains).                                 *)
 (*   Released -- once the host has asked again, M no longer holds its    *)
 (*              DISCONNECT (N3JXB, 1.9.22, 2026-11-04).                   *)
+(*   ToldOnce -- each end's host hears DISCONNECTED at most once per      *)
+(*              session (#493; ABORT's answer and the end's, VE4KLM 5 Nov). *)
+(*   ToldAtEnd -- ...and only once that end has left the session, never   *)
+(*              while its drain or DISCONNECT exchange goes on -- except   *)
+(*              after an ABORT, which is answered at once.                 *)
+(*                                                                         *)
+(* The host's notice (arq.c): a host DISCONNECT is answered at once only  *)
+(* when the FSM owes no notice (arq_fsm_notice_owed: no session, and no   *)
+(* reply to the peer's DISCONNECT still to go); otherwise the FSM's end   *)
+(* says it.  ABORT is answered at once, and its session's end then says   *)
+(* nothing (g_host_told).  A host DISCONNECT answered at once is still    *)
+(* queued for the FSM, and a CALL may come first: the notice is the       *)
+(* no-session one (before PENDING), and the session that CALL opens ends  *)
+(* on that DISCONNECT with its own.                                       *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -79,8 +93,11 @@ CONSTANTS NS,      \* sessions the caller may place
           FOREIGN, \* another station's DISCONNECT may be heard
           FPAT,    \* ...or another station's pattern
           FEND,    \* ...or another station's M_END
-          ABORT,   \* the host may send ABORT (#514: MAbort, SAbort)
+          ABORT,   \* the hosts may send ABORT (#514: MAbort, SAbort), answered
+                   \*   with DISCONNECTED at once (#493)
           CALLS,   \* the callsigns the caller may call with (MYCALL per application)
+          HOST,    \* what else the hosts may do: a subset of {"race"} (a host
+                   \*   DISCONNECT answered at once, then a CALL first)
           Mutant   \* "none", or one rule broken:
                    \*   "crossedsilent": ending, the peer's DISCONNECT before mine
                    \*                    went out ends me without a reply
@@ -111,6 +128,14 @@ CONSTANTS NS,      \* sessions the caller may place
                    \*                    it, the old session keying on
                    \*   "endsilence":    M ends on silence without having heard
                    \*                    an M_END (MEndSilent unguarded)
+                   \*   "toldearly":     M's host is told when it hangs up, the
+                   \*                    session still up (1.9.22, before #493)
+                   \*   "aborttwice":    the end of an ABORTed session tells the
+                   \*                    host again (1.9.22, VE4KLM 5 Nov)
+                   \*   "activeonly":    a host DISCONNECT is answered at once
+                   \*                    whenever no session is active, though
+                   \*                    the reply to the peer's DISCONNECT and
+                   \*                    its notice are still to go
                    \*   "abortnow":      M's ABORT with its DISCONNECT out ends
                    \*                    it at once, the answer not awaited
                    \*                    (#514 as first written)
@@ -154,11 +179,23 @@ VARIABLES
              \*   hung up
     wordgone, \* ghost: M ended on silence after the M_END with S's last word
              \*   not yet got (lost to the channel, as at the watchdog)
+    told,    \* [E -> [1..NS -> 0..2]]: DISCONNECTED notices e's host has had
+             \*   for each session (2 stands for "more than 1"); one with no
+             \*   session up is no session's, and not counted
+    htold,   \* [E -> 0..NS]: the session whose notice e's host had at its
+             \*   ABORT (arq.c g_host_told); 0 none
+    hq,      \* [E -> BOOLEAN]: e's host DISCONNECT, answered at once, still
+             \*   queued for the FSM
+    raced,   \* ghost: such a DISCONNECT found its end in a session
     sab      \* S's host sent ABORT: its one DISCONNECT ends it once out
              \*   (abort_teardown, tx_retries_left = 0 on the callee)
 
-vars == <<st, gen, sid, sent, tries, slot, q, placed, mcall, scall, how, dropped, wish, unasked, word, lostword, mw,
-         mdrain, asked, forced, mend, cut, wordgone, sab>>
+\* The air side's variables; the actions on them (Air) leave the host's
+\* notice to FSMNotice, and their fairness is stated over these.
+avars == <<st, gen, sid, sent, tries, slot, q, placed, mcall, scall, how, dropped, wish, unasked, word, lostword, mw,
+          mdrain, asked, forced, mend, cut, wordgone, sab>>
+HostVars == <<htold, hq, raced>>
+vars == <<avars, told, HostVars>>
 
 Frame(k, s, g) == [k |-> k, sid |-> s, g |-> g, c |-> mcall]
 \* The reply to a DISCONNECT is an ACK pattern (send_disconnect_reply): no
@@ -178,6 +215,8 @@ Init == /\ st = [e \in E |-> "idle"] /\ gen = [e \in E |-> 0] /\ sid = [e \in E 
         /\ wish = 0 /\ unasked = FALSE /\ word = "none" /\ lostword = FALSE /\ mw = "none"
         /\ mdrain = FALSE /\ asked = FALSE /\ forced = FALSE
         /\ mend = FALSE /\ cut = FALSE /\ wordgone = FALSE /\ sab = FALSE
+        /\ told = [e \in E |-> [g \in 1 .. NS |-> 0]] /\ htold = [e \in E |-> 0]
+        /\ hq = [e \in E |-> FALSE] /\ raced = FALSE
 
 \* Something more will come to e from its peer, or is already on its way:
 \* a peer in the same session talks while connected (M polls at least every
@@ -216,8 +255,8 @@ MAppDisc == /\ st["M"] = "conn" /\ ~mdrain /\ mw \notin {"owed", "acked"}
             /\ tries' = R
             /\ UNCHANGED <<gen, sid, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw, mdrain, asked, forced, mend, cut, wordgone, sab>>
 \* ...with its last word not yet confirmed: the DISCONNECT is held while the
-\* drain delivers it (fsm_connected_carousel, ARQ_TD_DRAINING).  The host has
-\* been told DISCONNECTED already (arq.c, the VARA convention).
+\* drain delivers it (fsm_connected_carousel, ARQ_TD_DRAINING).  The host
+\* hears DISCONNECTED when the session ends, as VARA's (arq.c).
 MHold == /\ st["M"] = "conn" /\ ~mdrain /\ mw \in {"owed", "acked"}
          /\ mdrain' = TRUE
          /\ UNCHANGED <<st, gen, sid, sent, tries, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw, asked, forced, mend, cut, wordgone, sab>>
@@ -233,7 +272,8 @@ MDrainEnd == /\ st["M"] = "conn" /\ mdrain /\ TimerOK("M")
              /\ st' = [st EXCEPT !["M"] = "ending"] /\ sent' = [sent EXCEPT !["M"] = FALSE]
              /\ tries' = R /\ mdrain' = FALSE
              /\ UNCHANGED <<gen, sid, slot, q, placed, how, mcall, scall, dropped, wish, unasked, word, lostword, mw, asked, forced, mend, cut, wordgone, sab>>
-\* The host, told DISCONNECTED, asks again while the drain holds: a second
+\* The host asks again while the drain holds (it need not wait for
+\* DISCONNECTED, and before 2026-11-07 it had it already): a second
 \* DISCONNECT, or a CONNECT (the redial, placed once M is idle: Call).  Each
 \* ends the drain at once and drops what it has not delivered, as ABORT
 \* does.  Before (N3JXB, 1.9.22, 2026-11-04) a second DISCONNECT re-armed the
@@ -320,7 +360,8 @@ SSlotDisc == /\ st["S"] = "ending" /\ slot
 \* in its next slot only, and S ends once it is out; one already out ends S
 \* now.  The wait for the slot is capped (30 s): SGiveUp, a timer, as before.
 \* Mutant "abortsilent": S ends at once, its DISCONNECT never keyed.
-SAbort == /\ ABORT /\ st["S"] \in {"conn", "ending"} /\ ~sab
+\* The host's side (DISCONNECTED at once) is SAbort, below.
+SAbortAir ==
           /\ IF Mutant = "abortsilent" \/ (st["S"] = "ending" /\ sent["S"])
              THEN st' = [st EXCEPT !["S"] = "idle"] /\ End("S", "abort") /\ UNCHANGED <<sent, sab>>
              ELSE /\ sab' = TRUE
@@ -334,18 +375,21 @@ SAbort == /\ ABORT /\ st["S"] \in {"conn", "ending"} /\ ~sab
 \* (tries = 0, then MGiveUp after one retry interval, or the answer), also
 \* with one already out: ending at once, an immediate redial's CALL meets
 \* S still replying (Mut_abortnow).  From CONNECTED it drops what is
-\* undelivered.
-MAbort == /\ ABORT /\ st["M"] \in {"conn", "ending"}
+\* undelivered.  Replying to S's DISCONNECT, it keys that reply as before.
+\* The host's side is MAbort, below.
+MAbortAir ==
           /\ CASE st["M"] = "conn" ->
                     /\ st' = [st EXCEPT !["M"] = "ending"] /\ sent' = [sent EXCEPT !["M"] = FALSE]
                     /\ tries' = 0 /\ mdrain' = FALSE /\ forced' = TRUE /\ UNCHANGED how
-                [] sent["M"] /\ Mutant = "abortnow" ->
+                [] st["M"] = "ending" /\ sent["M"] /\ Mutant = "abortnow" ->
                     \* #514 as first written: one already out ends M
                     \* now, the answer not awaited
                     /\ st' = [st EXCEPT !["M"] = "idle"] /\ End("M", "abort")
                     /\ UNCHANGED <<sent, tries, mdrain, forced>>
-                [] OTHER ->
+                [] st["M"] = "ending" ->
                     /\ tries' = 0 /\ UNCHANGED <<st, sent, mdrain, forced, how>>
+                [] OTHER ->
+                    /\ UNCHANGED <<st, sent, tries, mdrain, forced, how>>
           /\ UNCHANGED <<gen, sid, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw, asked, mend, cut, wordgone, sab>>
 SGiveUp == /\ st["S"] = "ending" /\ TimerOK("S")
            /\ st' = [st EXCEPT !["S"] = "idle"] /\ End("S", "timeout")
@@ -462,19 +506,78 @@ Foreign(e) == /\ \/ FOREIGN /\ \E s \in SIDS : Send(e, Frame("disc", s, 0))
 Done == placed = NS /\ \A e \in E : st[e] = "idle" /\ q[e] = <<>>
         /\ UNCHANGED vars
 
-Next == \/ Done \/ Call \/ CallFails \/ Poll \/ MAppDisc \/ MDisc \/ MRetry \/ MGiveUp
-        \/ MHold \/ MDrained \/ MDrainEnd \/ MAgain \/ MRedial \/ MEndSilent
-        \/ MAbort \/ SAbort
-        \/ MWord \/ SAppDisc \/ SWish \/ SDeliver \/ SAck \/ SEndPoll \/ SDrained \/ SSlotDisc \/ SGiveUp
-        \/ \E e \in E : Lost(e) \/ Reply(e) \/ SkipReply(e) \/ Receive(e) \/ Lose(e) \/ Foreign(e)
+\* ---- the host's notice ----
+Bump(f, g) == [f EXCEPT ![g] = IF @ < 2 THEN @ + 1 ELSE 2]
+InSession(e) == st[e] \in {"calling", "conn", "ending", "reply"}
+\* The FSM's end of e's session says DISCONNECTED (notify_session_ended):
+\* it leaves for idle -- after its reply, if it owed one -- or takes a new
+\* session's CALL mid-teardown.  Not for an ABORTed session (g_host_told, htold).
+\* Not modelled: a CONNECT queued behind the teardown, whose end says
+\* nothing (call_queued); telling more here only makes ToldOnce harder.
+Ends(e) == InSession(e) /\ (st'[e] = "idle" \/ (st'[e] = "conn" /\ gen'[e] # gen[e]))
+FSMNotice == told' = [e \in E |->
+                IF Ends(e) /\ ~(htold[e] = gen[e] /\ Mutant # "aborttwice")
+                THEN Bump(told[e], gen[e]) ELSE told[e]]
+\* The FSM owes the host a notice (arq_fsm_notice_owed): in a session, or
+\* ended on the peer's DISCONNECT with the reply still to go.
+Owed(e) == IF Mutant = "activeonly" THEN st[e] \in {"calling", "conn", "ending"}
+           ELSE InSession(e)
+\* e's host hangs up with no notice owed: DISCONNECTED at once, the
+\* DISCONNECT still queued for the FSM.  Idle, that notice is no session's.
+\* In "reply" (the "activeonly" mutant) it is the ended session's.  M's
+\* only matters there: idle, its queued DISCONNECT precedes any CALL.
+HostDisc(e) == /\ "race" \in HOST /\ ~Owed(e) /\ ~hq[e] /\ (e = "S" \/ st[e] = "reply")
+               /\ hq' = [hq EXCEPT ![e] = TRUE]
+               /\ told' = IF st[e] = "reply" THEN [told EXCEPT ![e] = Bump(@, gen[e])] ELSE told
+               /\ UNCHANGED <<st, gen, sid, sent, tries, slot, q, placed, mcall, scall, how, dropped, wish, unasked,
+                              word, lostword, mw, mdrain, asked, forced, mend, cut, wordgone, sab, htold, raced>>
+\* The FSM takes it.  S, in the session a CALL opened meanwhile (the race):
+\* its application has hung up (SAppDisc, or SWish owing the ack).  Anywhere
+\* else it ends nothing (M places no call before it: one queue, in order).
+HostDiscTaken(e) ==
+    /\ hq[e] /\ hq' = [hq EXCEPT ![e] = FALSE]
+    /\ IF e = "S" /\ st["S"] = "conn" /\ wish = 0
+       THEN /\ raced' = TRUE
+            /\ IF mw # "owed"
+               THEN st' = [st EXCEPT !["S"] = "ending"] /\ sent' = [sent EXCEPT !["S"] = FALSE] /\ UNCHANGED <<wish, word>>
+               ELSE wish' = gen["S"] /\ word' = "none" /\ UNCHANGED <<st, sent>>
+       ELSE UNCHANGED <<raced, st, sent, wish, word>>
+    /\ UNCHANGED <<gen, sid, tries, slot, q, placed, mcall, scall, how, dropped, unasked, lostword, mw, mdrain,
+                   asked, forced, mend, cut, wordgone, sab, told, htold>>
+\* e's host ABORTs (with a notice owed): DISCONNECTED at once, the session's
+\* only one -- its end then says nothing more (g_host_told).  One ABORT per
+\* session: the host is done with it.
+Told(e) == /\ htold' = [htold EXCEPT ![e] = gen[e]]
+           /\ told' = [told EXCEPT ![e] = Bump(@, gen[e])]
+           /\ UNCHANGED <<hq, raced>>
+MAbort == /\ ABORT /\ st["M"] \in {"conn", "ending", "reply"} /\ htold["M"] # gen["M"]
+          /\ MAbortAir /\ Told("M")
+SAbort == /\ ABORT /\ st["S"] \in {"conn", "ending"} /\ ~sab /\ htold["S"] # gen["S"]
+          /\ SAbortAir /\ Told("S")
+\* The old rule: M's host is told when it hangs up, its session still up.
+MEarly == /\ Mutant = "toldearly" /\ st["M"] = "conn" /\ told["M"][gen["M"]] = 0
+          /\ told' = [told EXCEPT !["M"] = Bump(@, gen["M"])]
+          /\ UNCHANGED <<avars, htold, hq, raced>>
+
+Air == \/ CallFails \/ Poll \/ MAppDisc \/ MDisc \/ MRetry \/ MGiveUp
+       \/ MHold \/ MDrained \/ MDrainEnd \/ MAgain \/ MRedial \/ MEndSilent
+       \/ MWord \/ SAppDisc \/ SWish \/ SDeliver \/ SAck \/ SEndPoll \/ SDrained \/ SSlotDisc \/ SGiveUp
+       \/ \E e \in E : Lost(e) \/ Reply(e) \/ SkipReply(e) \/ Receive(e) \/ Lose(e) \/ Foreign(e)
+
+Next == \/ Done
+        \/ Air /\ FSMNotice /\ UNCHANGED HostVars
+        \/ Call /\ ~hq["M"] /\ UNCHANGED <<told, HostVars>>
+        \/ MAbort \/ SAbort \/ MEarly
+        \/ \E e \in E : HostDisc(e) \/ HostDiscTaken(e)
 
 \* Progress is fair; the application, the channel's losses and other
 \* stations are not.
-Fair == /\ WF_vars(MDisc) /\ WF_vars(MRetry) /\ WF_vars(MGiveUp) /\ WF_vars(CallFails)
-        /\ WF_vars(MDrained) /\ WF_vars(MDrainEnd)
-        /\ WF_vars(SSlotDisc) /\ WF_vars(SGiveUp) /\ WF_vars(Poll)
-        /\ WF_vars(SEndPoll) /\ WF_vars(SDrained) /\ WF_vars(SDeliver) /\ WF_vars(SAck)
-        /\ \A e \in E : WF_vars(Reply(e)) /\ WF_vars(Receive(e)) /\ WF_vars(Lost(e))
+Fair == /\ WF_avars(MDisc) /\ WF_avars(MRetry) /\ WF_avars(MGiveUp) /\ WF_avars(CallFails)
+        /\ WF_avars(MDrained) /\ WF_avars(MDrainEnd)
+        /\ WF_avars(SSlotDisc) /\ WF_avars(SGiveUp) /\ WF_avars(Poll)
+        /\ WF_avars(SEndPoll) /\ WF_avars(SDrained) /\ WF_avars(SDeliver) /\ WF_avars(SAck)
+        /\ \A e \in E : WF_avars(Reply(e)) /\ WF_avars(Receive(e)) /\ WF_avars(Lost(e))
+        /\ \A e \in E : WF_vars(HostDiscTaken(e))
 Spec == Init /\ [][Next]_vars /\ Fair
 
 \* ---- properties ----
@@ -483,6 +586,8 @@ TypeOK == /\ st \in [E -> {"idle", "calling", "conn", "ending", "reply"}]
           /\ mw \in {"none", "owed", "acked", "conf"}
           /\ mdrain \in BOOLEAN /\ asked \in BOOLEAN /\ forced \in BOOLEAN
           /\ mend \in BOOLEAN /\ cut \in BOOLEAN /\ wordgone \in BOOLEAN /\ sab \in BOOLEAN
+          /\ told \in [E -> [1 .. NS -> 0 .. 2]] /\ htold \in [E -> 0 .. NS]
+          /\ hq \in [E -> BOOLEAN] /\ raced \in BOOLEAN
 NoKill == \A h \in how : h.why # "killed"
 \* No end leaves on the answer to an earlier session's DISCONNECT, nor on
 \* another station's pattern.
@@ -505,6 +610,16 @@ Clean == ~LOSS => \A h \in how : h.why \in {"peer", "recall", "abort"}
 Confirmed == ~LOSS /\ ~forced => ~(st["M"] \in {"idle", "reply"} /\ mw \in {"owed", "acked"})
 \* Once the host has asked again, M holds its DISCONNECT no longer.
 Released == ~(st["M"] = "conn" /\ mdrain /\ asked)
+\* One DISCONNECTED per session for each host.  The no-session notice (a
+\* host DISCONNECT with nothing owed) is no session's: in the race it comes
+\* before the PENDING of the session the CALL opens, which then ends with
+\* its own.
+ToldOnce == \A e \in E, g \in 1 .. NS : told[e][g] <= 1
+\* ...and only once e has left that session (an ABORTed one excepted).
+ToldAtEnd == \A e \in E : gen[e] # 0 /\ told[e][gen[e]] > 0 =>
+                 ~InSession(e) \/ htold[e] = gen[e]
+\* A witness, expected to fail (Race.cfg): the race is reached.
+NoRace == ~raced
 In(e, g) == gen[e] = g /\ st[e] \in {"calling", "conn", "ending", "reply"}
 Mutual == \A g \in 1 .. NS :
             (\E h \in how : h.g = g /\ h.why # "nocall") ~> ~(\E e \in E : In(e, g))
