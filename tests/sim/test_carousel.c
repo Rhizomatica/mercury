@@ -485,6 +485,37 @@ static void test_carousel_ctl_snr_offset_moves_only_the_control_reading(void)
     TEST_ASSERT_GREATER_THAN_INT_MESSAGE(0, off.data_frames, what);
 }
 
+/* Below the control mode's cliff the knob takes the frames out, not just the
+ * reading: at cliff:0 with the control mode reading -10 dB it sits below its
+ * -7 dB cliff, the polls mostly stop coming, and the session falls to the
+ * MFSK floor -- the control-deaf regime (#501's other half).  The same
+ * channel at offset 0 rides DATAC3. */
+static void test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor(void)
+{
+    car_sim_result_t plain, off;
+    char what[128];
+
+    carousel_sim_run(1, "cliff:0", false, LIMIT_MS, &plain);
+    setenv("CAR_CTL_SNR_OFFSET", "-10", 1);
+    carousel_sim_run(1, "cliff:0", false, LIMIT_MS, &off);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+
+    TEST_ASSERT_TRUE_MESSAGE(plain.intact, "offset 0 baseline");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, plain.done_ms, "offset 0 baseline");
+    snprintf(what, sizeof(what), "control reads %.1f dB, data %.1f dB, done in %llu ms against %llu ms",
+             off.ctl_snr_db, off.data_snr_db,
+             (unsigned long long)off.done_ms, (unsigned long long)plain.done_ms);
+    TEST_ASSERT_TRUE_MESSAGE(off.intact, what);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, off.done_ms, what);
+    /* The frames that do come through read ten dB low; the data frames read
+     * as the channel reads them. */
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)(plain.ctl_snr_db - 10.0), (float)off.ctl_snr_db, what);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)plain.data_snr_db, (float)off.data_snr_db, what);
+    /* ...and the ones below the cliff do not come: the session is on the
+     * floor. */
+    TEST_ASSERT_GREATER_THAN_MESSAGE(plain.done_ms * 3, off.done_ms, what);
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -665,6 +696,7 @@ int main(void)
     RUN_TEST(test_carousel_m_scores_a_short_round_as_sent);
     RUN_TEST(test_carousel_round_with_its_poll_scored_as_declared);
     RUN_TEST(test_carousel_ctl_snr_offset_moves_only_the_control_reading);
+    RUN_TEST(test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }

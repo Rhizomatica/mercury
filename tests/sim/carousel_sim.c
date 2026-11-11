@@ -165,32 +165,25 @@ static bool asym;                                      /* an asym:A:B channel */
 static double snr_dir[2];                              /* its SNR, by sender */
 /* Never exactly 0.0: car_on_frame takes that for "no estimate", which a
  * decoded frame always has -- at 0 dB (cliff:0, fade:0) the sim ran with no
- * SNR at all. */
+ * SNR at all.  The control mode's offset is the channel's: this asks the
+ * channel what such a frame reads. */
 static double frame_snr(const station_t *rx, uint64_t f_start, int mode)
 {
-    /* Under fading, what the modem reports for this frame: on air the
-     * estimate swings with the fade, and everything that reads it -- the
-     * start rung, the control-deaf switch -- sees that. */
-    double snr = sim_channel_frame_snr(ch, f_start, rx->id ^ 1, mode);
-    if (isnan(snr)) snr = asym ? snr_dir[rx->id ^ 1] : snr_now;
+    double snr = sim_channel_mode_snr_db(ch, f_start, rx->id ^ 1, mode,
+                                         asym ? snr_dir[rx->id ^ 1] : snr_now);
     return snr == 0.0 ? 0.001 : snr;
 }
 /* CAR_SNR_OFFSET=<dB>: every estimate reads that much off, as a receiver
  * whose estimate reads low (on air estacao2 read 5-7 dB on every mode where
- * DATAC17, rated 7 dB, delivered all its frames). */
+ * DATAC17, rated 7 dB, delivered all its frames).  The control mode's offset
+ * (CAR_CTL_SNR_OFFSET) is the channel's, applied where the channel judges and
+ * reports its frames. */
 static double snr_offset;
-/* The control frames' estimate, and the data frames'.  The control mode reads
- * low on its own (CAR_CTL_SNR_OFFSET, the channel's ctl_snr_offset): on MPD
- * the control frames under-read the SNR against the data modes by ~10 dB
- * (#501), and the smoothed estimate -- and with it the rung the ladder
- * picks -- follows them down.  The frames are still decoded and delivered:
- * this is the estimate, not the channel. */
 static double snr_bias(int mode)
 {
     double b = snr_offset;
     if (snr_biased && (mode == FREEDV_MODE_DATAC15 || mode == FREEDV_MODE_DATAC4 || mode == ARQ_CONTROL_MODE))
         b -= 3.5;
-    if (mode == ARQ_CONTROL_MODE) b += sim_channel_ctl_snr_offset(ch);
     return b;
 }
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */

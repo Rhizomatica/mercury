@@ -164,6 +164,29 @@ double sim_channel_ctl_snr_offset(const sim_channel_t *ch)
     return ch ? ch->ctl_snr_offset : 0.0;
 }
 
+/* The control mode's offset (0 for every other mode).  Applied where the
+ * channel judges a frame's SNR, not where the caller stamps it: a reading
+ * that low decides too, so the frames stop decoding once the mode is below
+ * its cliff -- the same narrowband deficit that reads low takes the mode
+ * out (#501). */
+static double ctl_off(const sim_channel_t *ch, int freedv_mode)
+{
+    return freedv_mode == ARQ_CONTROL_MODE ? ch->ctl_snr_offset : 0.0;
+}
+
+static double ctl_adj(const sim_channel_t *ch, int freedv_mode, double db)
+{
+    return db + ctl_off(ch, freedv_mode);
+}
+
+double sim_channel_mode_snr_db(const sim_channel_t *ch, uint64_t t0_ms, int dir,
+                               int freedv_mode, double fallback_db)
+{
+    if (!ch) return fallback_db;
+    if (ch->fading) return sim_channel_frame_snr(ch, t0_ms, dir, freedv_mode);
+    return ctl_adj(ch, freedv_mode, fallback_db);
+}
+
 /* |h(t)|^2 for one direction, mean 1. */
 static double fade_power(const sim_channel_t *ch, int dir, double t_s)
 {
@@ -182,14 +205,14 @@ static double fade_power(const sim_channel_t *ch, int dir, double t_s)
  * scales with the mode's operating point (its cliff), as in EESM: a fixed
  * small beta would reduce every fast mode to its worst instant. */
 static double frame_snr_db(const sim_channel_t *ch, int dir, uint64_t t0_ms,
-                           uint32_t air_ms, double cliff_db)
+                           uint32_t air_ms, double cliff_db, double snr_off_db)
 {
     double beta = pow(10.0, cliff_db / 10.0);
     if (beta < 0.5) beta = 0.5;
     double acc = 0;
     for (int i = 0; i < 8; i++) {
         double t = (t0_ms + (air_ms * (i + 0.5)) / 8.0) / 1000.0;
-        double snr = pow(10.0, ch->fade_mean_db / 10.0) * fade_power(ch, dir & 1, t);
+        double snr = pow(10.0, (ch->fade_mean_db + snr_off_db) / 10.0) * fade_power(ch, dir & 1, t);
         acc += exp(-snr / beta);
     }
     double eff = -beta * log(acc / 8.0);
@@ -208,7 +231,7 @@ double sim_channel_frame_snr(const sim_channel_t *ch, uint64_t t0_ms, int dir, i
     double acc = 0;
     for (int i = 0; i < 8; i++) {
         double t = (t0_ms + (air_ms * (i + 0.5)) / 8.0) / 1000.0;
-        acc += pow(10.0, ch->fade_mean_db / 10.0) * fade_power(ch, dir & 1, t);
+        acc += pow(10.0, (ch->fade_mean_db + ctl_off(ch, freedv_mode)) / 10.0) * fade_power(ch, dir & 1, t);
     }
     acc /= 8.0;
     return acc > 1e-9 ? 10.0 * log10(acc) : -90.0;
@@ -243,7 +266,8 @@ bool sim_channel_syncable(const sim_channel_t *ch, uint64_t now_ms,
 {
     double cliff = mode_cliff_db(freedv_mode);
     if (ch->fading)
-        return frame_snr_db(ch, dir, now_ms, sim_channel_airtime_ms(freedv_mode, 0), cliff) >= cliff;
+        return frame_snr_db(ch, dir, now_ms, sim_channel_airtime_ms(freedv_mode, 0),
+                            cliff, ctl_off(ch, freedv_mode)) >= cliff;
     if (ch->mode_per_count > 0) {
         for (int i = 0; i < ch->mode_per_count; i++)
             if (ch->mode_per[i].freedv_mode == freedv_mode)
@@ -251,7 +275,8 @@ bool sim_channel_syncable(const sim_channel_t *ch, uint64_t now_ms,
         return !below_return(ch, dir, freedv_mode);
     }
     if (ch->cliff_enabled)
-        return (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) >= cliff;
+        return ctl_adj(ch, freedv_mode,
+                       ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) >= cliff;
     return true;
 }
 
@@ -261,13 +286,14 @@ double sim_channel_frame_per(const sim_channel_t *ch, uint64_t now_ms, int dir, 
     if (ch->fading) {
         uint32_t air = sim_channel_airtime_ms(freedv_mode, 0);
         double cliff = mode_cliff_db(freedv_mode);
-        if (frame_snr_db(ch, dir, now_ms, air, cliff) < cliff) per = SIM_CLIFF_PER;
+        if (frame_snr_db(ch, dir, now_ms, air, cliff, ctl_off(ch, freedv_mode)) < cliff) per = SIM_CLIFF_PER;
     } else if (ch->mode_per_count > 0) {
         for (int i = 0; i < ch->mode_per_count; i++)
             if (ch->mode_per[i].freedv_mode == freedv_mode) { per = ch->mode_per[i].per; break; }
         if (below_return(ch, dir, freedv_mode)) per = SIM_CLIFF_PER;
     } else if (ch->cliff_enabled &&
-               (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode)) {
+               ctl_adj(ch, freedv_mode,
+                       ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode)) {
         per = SIM_CLIFF_PER;
     }
     return per;
@@ -282,7 +308,7 @@ bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
     {
         uint32_t air = sim_channel_airtime_ms(freedv_mode, frame_size);
         double cliff = mode_cliff_db(freedv_mode);
-        if (frame_snr_db(ch, dir, now_ms, air, cliff) < cliff)
+        if (frame_snr_db(ch, dir, now_ms, air, cliff, ctl_off(ch, freedv_mode)) < cliff)
             per = SIM_CLIFF_PER;
     }
     else if (ch->mode_per_count > 0)
@@ -297,7 +323,8 @@ bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
             per = SIM_CLIFF_PER;
     }
     else if (ch->cliff_enabled &&
-             (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode))
+             ctl_adj(ch, freedv_mode,
+                     ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode))
         per = SIM_CLIFF_PER;
     bool erased = sim_channel_next_rand(ch) < per;
     uint32_t air = sim_channel_airtime_ms(freedv_mode, frame_size);

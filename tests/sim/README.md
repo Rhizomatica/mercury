@@ -144,38 +144,50 @@ from its peer for that long.  Two benches measure it; neither is run by
 
 ## The control mode's SNR (`CAR_CTL_SNR_OFFSET`)
 
-`CAR_CTL_SNR_OFFSET=<dB>` offsets the **control frames'** SNR estimate, and
-only theirs: the frames the carousel sends as polls, handovers and status
-(the control mode is `ARQ_CONTROL_MODE` = `FREEDV_MODE_DATAC16`, the only
-mode with the 14-byte control payload, so the sim tells them apart by mode).
-The default is 0, which is the channel as it reads.
+`CAR_CTL_SNR_OFFSET=<dB>` lowers the **control mode's** SNR on the simulated
+channel, and only its: the frames the carousel sends as polls, handovers and
+status (the control mode is `ARQ_CONTROL_MODE` = `FREEDV_MODE_DATAC16`, the
+only mode with the 14-byte control payload, so the channel tells them apart
+by mode).  The default is 0, which is the channel as it reads.
 
-It is the **estimate**, not the channel: the control frames are still decoded
-and delivered, as they are on air when they read low.  What changes is what
-the receiver makes of them -- the smoothed estimate
-(`snr_ema = 0.7·ema + 0.3·reading`, and the two-reading snap at
-`SNR_GATE_DB`), the rung the ladder picks, and the control-mode deafness
-test.  The connect hint is a control-mode reading too -- on the air it is the
-SNR field of the peer's ACCEPT, a DATAC16 frame -- so the session starts below
-where the data modes would put it and has to climb.  That is the mechanism
-behind #501: on MPD the control frames under-read the SNR against the data
-modes by ~10 dB, and the smoothed estimate follows them down, so a session
-that should climb to DATAC17/QAM16C2 stays where it is.
+The offset is the channel's, applied wherever the channel judges or reports a
+frame's SNR -- the reading a modem would give, the cliff test that decides
+the decode, the connect hint.  So it does two things at once, and they are
+the same thing: where the control mode still clears its cliff (−7 dB in the
+sim), the frames are decoded and delivered but **read low**, and everything
+that reads them -- the smoothed estimate (`snr_ema = 0.7·ema + 0.3·reading`
+with the two-reading snap at `SNR_GATE_DB`), the rung the ladder picks, the
+control-mode deafness test -- follows them down; where the offset takes the
+mode **below its cliff**, the frames stop decoding, like any mode below its
+cliff, and the session falls to the floor.  That is one physical fact -- on
+MPD the narrowband control frame sits in a notch the wide data modes average
+across, reading ~10 dB below the wide modes at 25-35 dB, 1-4 dB below DATAC3,
+and about 3-4 dB at +5 dB (#501) -- and the knob says it once.
+
+**Which offset.** The gap is not one number, and it grows with SNR: ~10 dB
+against the wide modes at 25-35 dB, where DATAC16 tops out near 2-3 dB while
+they keep climbing; 1-4 dB against DATAC3 all along; about 3-4 dB at MPD's
++5 dB.  So about -10 stands for the high-SNR reading drag, and about -3 to -4
+for a link like MPD near +5 dB.  The -10 floor run below is the control-deaf
+regime -- the offset takes the mode under its cliff -- not what MPD does at
++3 dB.
 
 ```
 $ CAR_CTL_SNR_OFFSET=-8 SIM_STATS=1 ./carousel_bench 4 fade:3:0.5
-  mode 10:    3 frames    0 ok     14 s air      (DATAC1)
-  mode 12:  102 frames   70 ok    390 s air      (DATAC3)
-  mode 18:   25 frames   24 ok    145 s air      (DATAC4)
-  mode 23:   19 frames   18 ok     71 s air      (DATAC16, the control mode)
-seed=4 chan=fade:3:0.5 oneway a2b=8192 b2a=0 integrity=OK done_ms=782321
-readings: ctl=-5.5 dB (18 frames) data=3.3 dB (96 frames)
+  mode 10:    1 frames    0 ok      5 s air      (DATAC1)
+  mode 12:  103 frames   72 ok    393 s air      (DATAC3)
+  mode 23:   25 frames   15 ok     94 s air      (DATAC16, the control mode)
+seed=4 chan=fade:3:0.5 oneway a2b=8192 b2a=0 integrity=OK done_ms=756121
+readings: ctl=-4.8 dB (15 frames) data=3.3 dB (77 frames)
 ```
 
 The same seed without the knob rides DATAC3 the whole way (115 frames, 439 s
-of air) and finishes in 575.6 s: with the control frames reading 8 dB low the
-ladder drops to DATAC4 and the session takes 36 % longer.  That is the
-symptom #501 is about, reproduced on demand.
+of air) and finishes in 575.6 s.  With the control mode 8 dB low the ladder
+drops to DATAC3-only and -- on a fading channel, where the dips take the
+control frames below the cliff -- 10 of the 25 control frames sent stop
+decoding; the session takes 31 % longer.  That is the symptom #501 is about,
+reproduced on demand: reading low where the mode survives, failing where it
+does not.
 
 **The reproduction Pedro's fix test needs** (control frames read low, the
 session must still climb to DATAC17/QAM16C2) is message traffic on a clean
@@ -207,32 +219,59 @@ DATAC15, DATAC4 and DATAC16); the two add up.
 | channel | offset 0 | offset -6 | offset -8 | offset -10 | data reading |
 |---|---|---|---|---|---|
 | `awgn:0.02` | 53.2 s | 86.8 s | 70.8 s | 70.8 s | 12.0 dB |
-| `cliff:8` | 76.1 s | 102.6 s | 98.2 s | 115.4 s | 8.0 dB |
+| `cliff:8` | 76.1 s | 102.6 s | 99.8 s | 115.4 s | 8.0 dB |
 | `cliff:3` | 368.0 s | 399.8 s | 412.8 s | 412.8 s | 3.0 dB |
-| `fade:8:0.5` | 242.4 s | 286.8 s | 293.4 s | 246.4 s | 8.2 dB |
-| `fade:3:0.5` | 569.0 s | 599.4 s | 647.4 s | 726.2 s | 3.4 dB |
-| `nvis` | 1473.7 s | 1639.1 s | 1551.3 s | 1811.3 s | 10.0 dB |
+| `fade:8:0.5` | 242.4 s | 286.8 s | 290.3 s | 287.0 s | 8.1 dB |
+| `fade:3:0.5` | 569.0 s | 691.5 s | 942.7 s | 1775.1 s | 3.3 dB |
+| `nvis` | 1473.7 s | 1639.1 s | 1551.3 s | 1947.5 s | 10.0 dB |
 
-(The control readings move by exactly the offset: 12.0 -> 6.0 -> 4.0 -> 2.0 dB
-on `awgn:0.02`, and likewise on the rest.)
+(The control readings move by exactly the offset wherever the mode still
+decodes; on the fading channels the dips take the mode below its cliff and
+the delivered control frames' mean sits higher than the offset -- fewer
+frames, the failed ones counted in the mode's SIM_STATS row instead.)
+
+(The response is not monotonic: on `awgn:0.02`, -6 at 86.8 s is slower than
+-8 at 70.8 s.  At -6 the gap sits just under the two-reading snap --
+`SNR_GATE_DB` -- so the smoothed estimate stays between the control and the
+data readings and QAM16C2 stays gated; at -8 the snap takes the estimate
+back up to the data readings and the ladder reaches it.  The drag is worst
+when the gap is just under the snap margin, not when it is largest, so an
+A/B for #501's fix should sweep about -4 to -10, not take the single -10.)
 
 Nothing was corrupted in any of the runs, and the offset 0 runs are the runs
-without the knob, down to the frame count.  The cost is in the ladder: with
-the connect hint reading low too, the session starts low and pays for the
-climb -- up to 63 % on `awgn:0.02`, 52 % on `cliff:8`, 28 % on `fade:3:0.5`,
-23 % on nvis.  (The offsets are not monotone in time: which rung the ladder
-settles on depends on where the biased readings land relative to the rung
-gates, so -6 can cost more than -10.  The readings themselves are exact.)
+without the knob, down to the frame count.  Where the mode stays above its
+cliff the cost is the ladder's; where the fading takes it below (`fade:3:0.5`
+at -8 and -10, whose mean sits on the cliff) the polls start failing too, and
+the cost compounds: 65 % at -8, 3.1x at -10.
 
-Two limits: on the floor the control frames ride the floor mode (MFSK), so
-the knob does not apply there; and the knob moves the estimate only, so it
-cannot reproduce a control mode that *fails* to decode -- that is the
-channel's model, not the estimate's.
+**Below the cliff: the floor.** On `cliff:0` with the control mode at -10 dB
+-- ten below its cliff -- the polls mostly stop coming (27 keyed, 3 through)
+and the session falls to the MFSK floor and crawls: 2395 s against 358 s at
+offset 0, intact.  That is the control-deaf regime of #501 and #510, from the
+same knob:
 
-`test_carousel_ctl_snr_offset_moves_only_the_control_reading` is the test:
-the offset moves the control frames' reading and leaves the data frames'
-alone, the session still completes and delivers intact, and an offset of 0 is
-the run without the knob.
+```
+$ CAR_LIMIT_S=7200 CAR_CTL_SNR_OFFSET=-10 ./carousel_bench 1 cliff:0
+seed=1 chan=cliff:0 oneway a2b=8192 b2a=0 integrity=OK done_ms=2395091
+readings: ctl=-10.0 dB (3 frames) data=0.0 dB (128 frames)
+```
+
+Three limits: on the floor the control frames ride the floor mode (MFSK), so
+the knob does not apply there; the decode failure is tied to the SNR -- it
+happens when the offset takes the mode below its cliff, and not otherwise;
+and the sim never runs the connect exchange, so a session whose control mode
+is below its cliff (`cliff:0` at -10) still starts as if CALL and ACCEPT had
+got through on DATAC16 -- only the connect hint reads low, by the offset.
+A control mode that fails *without* its SNR being low (interference, a notch
+the reading does not see) is a different model; that is the second knob in
+the alternative proposal on #501.
+
+`test_carousel_ctl_snr_offset_moves_only_the_control_reading` and
+`test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor` are the
+tests: the offset moves the control frames' reading and leaves the data
+frames' alone while the session still completes (above the cliff), and takes
+the session to the floor (below it); an offset of 0 is the run without the
+knob.
 
 ## The fade-cliff regression
 
