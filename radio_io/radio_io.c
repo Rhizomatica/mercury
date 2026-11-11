@@ -103,6 +103,19 @@ void radio_io_set_usb_fd(const char *device, int fd)
 #ifdef HAVE_HAMLIB
 static RIG *g_radio = NULL;
 
+/* Hamlib's error text can end in a line break (on Windows, the system's
+ * "Access denied\r\n"), which split our log line in two.  Copy it without
+ * the trailing whitespace. */
+static const char *rig_err_text(const char *text, char *buf, size_t len)
+{
+    snprintf(buf, len, "%s", text ? text : "");
+    size_t n = strlen(buf);
+    while (n > 0 && (buf[n - 1] == '\r' || buf[n - 1] == '\n' ||
+                     buf[n - 1] == ' ' || buf[n - 1] == '\t'))
+        buf[--n] = '\0';
+    return buf;
+}
+
 static radio_port_kind_t radio_io_port_kind(rig_model_t model)
 {
     switch ((rig_port_t)rig_get_caps_int(model, RIG_CAPS_PORT_TYPE))
@@ -292,8 +305,10 @@ static int hamlib_open(const ptt_config_t *config)
      * low.  Before holding them low, such ports opened fine: give it back. */
     if (ret != RIG_OK && defaulted)
     {
+        char err[256];
         HLOGW(RADIO_LOG_TAG, "rig_open failed (%s) holding RTS/DTR low; "
-              "retrying with the lines as the port leaves them", rigerror2(ret));
+              "retrying with the lines as the port leaves them",
+              rig_err_text(rigerror2(ret), err, sizeof err));
         if (defaulted & 1)
             rig_set_conf(g_radio, rig_token_lookup(g_radio, "rts_state"), "Unset");
         if (defaulted & 2)
@@ -303,9 +318,10 @@ static int hamlib_open(const ptt_config_t *config)
     }
     if (ret != RIG_OK)
     {
+        char err[256];
         HLOGE(RADIO_LOG_TAG, "rig_open(%s) failed: %s (%d)",
               config->device[0] ? config->device : "default",
-              rigerror2(ret), ret);
+              rig_err_text(rigerror2(ret), err, sizeof err), ret);
         const char *advice = radio_port_advice(
             radio_port_check(radio_io_port_kind(config->hamlib_model),
                              config->device));
@@ -349,8 +365,10 @@ static int hamlib_set(bool on)
                           on ? RIG_PTT_ON : RIG_PTT_OFF);
     if (ret != RIG_OK)
     {
+        char err[512];
         HLOGW(RADIO_LOG_TAG, "PTT %s failed (Hamlib model %d): %s",
-              on ? "ON" : "OFF", g_config.hamlib_model, rigerror(ret));
+              on ? "ON" : "OFF", g_config.hamlib_model,
+              rig_err_text(rigerror(ret), err, sizeof err));
         return -1;
     }
     HLOGD(RADIO_LOG_TAG, "PTT %s via Hamlib (model %d)",
@@ -819,8 +837,10 @@ bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz,
         }
         else if (ret != RIG_OK)
         {
+            char err[512];
             HLOGD(RADIO_LOG_TAG, "Frequency read failed (model %d): %s",
-                  g_config.hamlib_model, rigerror(ret));
+                  g_config.hamlib_model,
+                  rig_err_text(rigerror(ret), err, sizeof err));
         }
     }
 #else

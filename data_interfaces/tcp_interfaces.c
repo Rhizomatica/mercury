@@ -1188,7 +1188,10 @@ void *arq_reactor_thread(void *port)
                 }
                 else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
                 {
-                    HLOGW("tcp-data", "Data recv returned %zd (err=%d), closing", n, sock_errno());
+                    if (n == 0)
+                        HLOGI("tcp-data", "Data client closed the connection");
+                    else
+                        HLOGW("tcp-data", "Data recv returned %zd (err=%d), closing", n, sock_errno());
                     close_data_client(&data_client);
                 }
             }
@@ -1211,7 +1214,10 @@ void *arq_reactor_thread(void *port)
                 }
                 else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
                 {
-                    HLOGW("tcp-ctl", "Control recv returned %zd (err=%d), closing", n, sock_errno());
+                    if (n == 0)
+                        HLOGI("tcp-ctl", "Control client closed the connection");
+                    else
+                        HLOGW("tcp-ctl", "Control recv returned %zd (err=%d), closing", n, sock_errno());
                     close_ctl_client(&ctl_client, &data_client, true);
                 }
             }
