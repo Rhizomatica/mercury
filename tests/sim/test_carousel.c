@@ -302,6 +302,34 @@ static void test_carousel_dark_rounds_drop_the_rung(void)
     unsetenv("CAR_SCRIPT");
 }
 
+/* Floor polls B never heard leave nothing for A to wait out: B continues in
+ * a poll's later slots only after a round of its own in its first, and
+ * nothing was on the air there.  Held for them, A kept its next poll off the
+ * air 14 s after each pair of unheard polls (on air, NW8L-KA8RYU, MPD -5 dB:
+ * 97 s, and vARIM gave up on the /OK 25 s before it came).  The frames: A's
+ * message (0), B's poll (1), A's poll (2), B's message, first round (3), A's
+ * poll on DATAC4 (4), B's DATAC4 round (5), then A's floor polls for 2
+ * frames (6, 7, 8), the three lost. */
+static void test_carousel_unheard_polls_free_their_slots(void)
+{
+    static const int lost[] = { 5, 6, 7, 8 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A40,B200+2000", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:-7", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(11, r.frames, "the frame order changed: pick the lost frames again (CAR_TRACE=1)");
+    carousel_sim_force_losses(lost, 4);
+    carousel_sim_run(1, "cliff:-7", false, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT(0, r.kd_overlaps);
+    char what[64];
+    snprintf(what, sizeof(what), "held %llu ms for the slots of unheard polls", (unsigned long long)r.slot_hold_ms);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, (int)r.slot_hold_ms, what);
+}
+
 /* M's own round of one frame, after my "done", lost whole: M asks (REQ)
  * about the one frame it sent.  Scored as the 8 my last poll had asked for,
  * one lost frame took QAM16C2 out at 20 dB (on air at its threshold: NW8L-
@@ -323,6 +351,58 @@ static void test_carousel_req_scores_the_frames_sent(void)
     unsetenv("CAR_SCRIPT");
     TEST_ASSERT_TRUE(r.intact);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.one_frame_kills, "one lost frame took a rung out");
+}
+
+/* My "done" poll asks for nothing; M's next round comes on its own turn, and
+ * is no answer to the poll before it.  With that round's tail lost, it was
+ * scored as the 8 frames that poll asked for, not the 2 it had: 1 of 8, and
+ * DATAC1 read 0.49 delivered instead of 0.83 (#507).  The frames: A's first
+ * round (0), B's poll for 8 (1), A's 5 (2-6), B's "done" (7), A's poll and
+ * B's 59 bytes (8, 9), A's ack (10), A's 1500 bytes in 2 (11, 12). */
+static void test_carousel_done_poll_asks_for_nothing(void)
+{
+    static const int lost[] = { 12 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A6000,B59+500,A1500+3000", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(13, r.frames, "the frame order changed: pick the lost frame again (CAR_TRACE=1)");
+    carousel_sim_force_losses(lost, 1);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "a round scored as more frames than were sent");
+}
+
+/* My poll asked for 8; M had 5 to send.  With the round's last frame lost,
+ * it was scored as the 8 asked: 4 of 8, QAM16C2 read 0.58 delivered instead
+ * of 0.81 (#516).  It is the 5 that fit between my poll and the round's end.
+ * Its first frame lost too, the frames heard say 4 (seen + left): the time
+ * still says 5, so the lost one is scored.  The frames: A's first round (0),
+ * B's poll for 8 (1), A's 5 (2-6). */
+static void test_carousel_short_round_scored_as_sent(void)
+{
+    static const int tail[] = { 6 }, both[] = { 2, 6 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A6000,B59+500,A1500+3000", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(13, r.frames, "the frame order changed: pick the lost frames again (CAR_TRACE=1)");
+    carousel_sim_force_losses(tail, 1);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "the tail lost: scored as more frames than were sent");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "the tail lost: scored as fewer frames than were sent");
+    carousel_sim_force_losses(both, 2);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "head and tail lost: scored as more frames than were sent");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "head and tail lost: scored as fewer frames than were sent");
 }
 
 static void test_carousel_drain_budget_fits_the_floor(void)
@@ -498,7 +578,10 @@ int main(void)
     RUN_TEST(test_carousel_drop_below_control_mode);
     RUN_TEST(test_carousel_no_reprobe_below_gate);
     RUN_TEST(test_carousel_dark_rounds_drop_the_rung);
+    RUN_TEST(test_carousel_unheard_polls_free_their_slots);
     RUN_TEST(test_carousel_req_scores_the_frames_sent);
+    RUN_TEST(test_carousel_done_poll_asks_for_nothing);
+    RUN_TEST(test_carousel_short_round_scored_as_sent);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }

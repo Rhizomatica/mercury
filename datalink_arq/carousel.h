@@ -111,7 +111,9 @@ enum { CAR_PATTERN_ACK = 0, CAR_PATTERN_BREAK = 1 };
 
 enum { CAR_T_M, CAR_T_S, CAR_T_F, CAR_T_W, CAR_NTIMERS };   /* M's next decision or keydown; S's next slot;
                                                     * S's fallback to the floor, and its watch
-                                                    * for the round it asked for (listening only) */
+                                                    * for the round it asked for (listening only);
+                                                    * on M, CAR_T_W watches the air in S's answer
+                                                    * slot (carousel.c, m_watch) */
 
 typedef struct {
     uint8_t  id;
@@ -264,7 +266,7 @@ typedef struct {
     double   loss_est;
     double   polled_loss;        /* the loss my last poll told the sender */
     uint8_t  poll_id;               /* my last poll's keydown id (M), or the one I answer (S) */
-    int      poll_level, poll_n;    /* what I asked the peer for */
+    int      poll_level, poll_n;    /* what I asked the peer for (poll_n < 0: its size, after a poll for nothing) */
     int      round_seen, round_frames;
     int      round_lv;              /* the rung the frames came on */
     bool     rx_tail;               /* ...and its last frame among them */

@@ -290,6 +290,66 @@ void test_accept_fallback_completes_on_first_frame(void)
     TEST_ASSERT_EQUAL_INT(1, fake_notify_connected_fake.call_count);
 }
 
+/* The caller gave up while we were answering it: its host hung up while it
+ * was CALLING, our ACCEPT reached it afterwards, and it answered that stale
+ * ACCEPT with a DISCONNECT.  We release the channel at once, as a host
+ * DISCONNECT would (K7EK, 2026-11-08 10:43: ignored, a scanning host held
+ * 104 s more). */
+void test_accepting_releases_on_the_callers_disconnect(void)
+{
+    enter_accepting();
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = 0x42;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_cancelpending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+}
+
+/* ...but only the caller's DISCONNECT for this call: another session's says
+ * nothing about it. */
+void test_accepting_keeps_answering_past_another_sessions_disconnect(void)
+{
+    enter_accepting();
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = 0x43;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_disconnected_fake.call_count);
+}
+
+/* Back in LISTENING after our ACCEPTs ran out, still keyed to the caller: its
+ * DISCONNECT ends that wait, so the session's seed stops dropping every
+ * other station's frames, and a late frame of it no longer connects. */
+void test_accept_fallback_ends_on_the_callers_disconnect(void)
+{
+    enter_accepting();
+    accept_until_fallback();
+    TEST_ASSERT_TRUE(sess.accept_fallback);
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = 0x43;   /* not this session's: nothing changes */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE(sess.accept_fallback);
+
+    ev.session_id = 0x42;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_FALSE(sess.accept_fallback);
+    TEST_ASSERT_EQUAL(0, sess.crc_seed);
+
+    RESET_FAKE(fake_notify_connected);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id  = 0x42;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_connected_fake.call_count);
+}
+
 /* A session that has ENDED is not resurrected by a late frame from its peer.
  *
  * The session id survives a teardown, and the rejoin used to key on it alone:
@@ -2222,6 +2282,9 @@ int main(void)
     RUN_TEST(test_call_max_s_leaves_default_retries_alone);
     RUN_TEST(test_accepting_gives_up_after_budget);
     RUN_TEST(test_accept_fallback_completes_on_first_frame);
+    RUN_TEST(test_accepting_releases_on_the_callers_disconnect);
+    RUN_TEST(test_accepting_keeps_answering_past_another_sessions_disconnect);
+    RUN_TEST(test_accept_fallback_ends_on_the_callers_disconnect);
     RUN_TEST(test_ended_session_is_not_resurrected_by_a_late_frame);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
     RUN_TEST(test_accepting_repeat_call_sends_pending_again);

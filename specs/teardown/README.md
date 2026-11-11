@@ -154,15 +154,15 @@ again during the drain (`HostAgain`), told or not.
 The notice is modelled (#493 review): `told` counts the DISCONNECTED each
 end's host has had per session, and `FSMNotice` adds one when an end leaves
 its session (idle, after its reply if it owed one, or taking a new CALL
-mid-teardown: `notify_session_ended`).  The constant `HOST` says what else
-the hosts may do:
+mid-teardown: `notify_session_ended`).  What else the hosts may do:
 
-- `"abort"`: the caller's host ABORTs (`MAbort`).  It is answered at once
-  and the session's end then says nothing more (`htold`, arq.c
-  `g_host_told`).  Before, the end said it again: on air, VE4KLM and K7EK,
-  5 Nov, 1.9.22, a JNOS ABORT was answered, and a second DISCONNECTED came
-  58 s later, after the unanswered DISCONNECT frames.
-- `"race"`: a host DISCONNECT with no notice owed is answered at once and
+- ABORT (`ABORT = TRUE`, below): either host's ABORT (`MAbort`, `SAbort`)
+  is answered at once and the session's end then says nothing more
+  (`htold`, the session told at its ABORT; arq.c `g_host_told`).  Before,
+  the end said it again: on air, VE4KLM and K7EK, 5 Nov, 1.9.22, a JNOS
+  ABORT was answered, and a second DISCONNECTED came 58 s later, after
+  the unanswered DISCONNECT frames.
+- `"race"` in the constant `HOST`: a host DISCONNECT with no notice owed is answered at once and
   still queued for the FSM (`HostDisc`, `hq`), and a CALL may be taken
   before the FSM has it (`HostDiscTaken`, the ghost `raced`).  That notice
   comes before the PENDING of the session the CALL opens, so it is no
@@ -188,10 +188,35 @@ the caller hears), `MEndSilent` (a timer), the ghosts `cut` and `wordgone`,
 and property `NoCut`.  `Mut_endsilence.cfg` ends on silence without an
 M_END.
 
+ABORT (2026-11-11, #514, `ABORT`): VARA's "disconnect the link
+immediately".  The peer is still told (#218), but once.  On air (N3JXB ->
+KG9NI-1, 1.9.23) an ABORT 80 s into the peer's silence went through all
+three DISCONNECTs, 53 s, with the operator's next CONNECT queued behind
+them; one during a teardown already running did nothing at all.  Now the
+caller sends one DISCONNECT, no retries, and ends at its answer or when
+the retry interval is over; with its DISCONNECT already out it sends no
+more and waits out the interval running.  The callee's DISCONNECT goes in
+its next slot only, and the callee ends once it is out (or at once, if it
+was out already); it waits for that slot 30 s at most.  In the model, with
+`ABORT = TRUE`: `MAbort`, `SAbort`, and `sab` (S's host sent ABORT:
+`tx_retries_left` at 0 on the callee).  An end that ends on its own ABORT
+is clean (`Clean` takes `"abort"`); its peer must still be told.  A
+callee's ABORT drops the ack it owes the caller (`car_owes_ack`), as ABORT
+says, so `SAbort` sets `forced`.  With `ABORT = FALSE` the behaviour is
+exactly the model's before.
+
+As first written, a caller whose DISCONNECT was out ended at once on the
+ABORT.  The model has it as `Mut_abortnow.cfg`: the caller calls again, and
+its CALL reaches the callee while that one still owes its reply
+(`fsm_disconnected` takes no CALL), so the call fails on a lossless
+channel.  In the sim the CALL also keyed over the reply: both keyed for
+640 ms, and connected after 24.0 s against 13.8 s.
+
 Results:
 
 - `SessionTeardown.cfg`: the code's rules, lossless, 2 sessions, 2 caller
-  callsigns.  No error, 56 041 distinct states (41 421 before the
+  callsigns, with the host's race.  No error, 178 290 distinct states
+  (56 041 before the host's notice, 41 421 before the
   silence after an M_END, 21 317 before the caller's drain, 10 645 before the callee's owed ack, 4 957 before the
   last word, 2 069 before M_END).
 - `SessionTeardown_lossy.cfg`: the same with any frame lost.  No error,
@@ -199,6 +224,18 @@ Results:
   599 881 before the caller's drain, 264 149
   before the owed ack, 124 141 before the last word, 52 041 before M_END).  `Clean` does not apply
   here.
+- `SessionTeardown_abort.cfg`: the code's rules with the host's ABORT,
+  lossless, with the host's race and its notice.  No error, 1 865 558
+  distinct states (259 749 before the host's notice).
+- `SessionTeardown_abort_lossy.cfg`: the same with any frame lost.  Not
+  exhausted: no error through 36.7 M distinct states at depth 48
+  (7 workers, 1 h 50 min), with 1.3 M still queued when the run was stopped.
+- `Mut_abortnow.cfg`: lossless, the caller's ABORT with its DISCONNECT out
+  ends it at once.  It violates `Clean`: its next CALL is dropped by a
+  callee still replying.
+- `Mut_abortsilent.cfg`: lossless, the callee's ABORT ends it without
+  keying its DISCONNECT.  It violates `Clean`: the caller is left to its
+  watchdog (#218).
 - `Mut_ignorepattern.cfg`: the end waiting for the answer to its
   DISCONNECT does not take the pattern.  It violates `Clean`: it retries
   and times out.

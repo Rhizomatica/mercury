@@ -262,11 +262,20 @@ ABORT\r
 `DISCONNECT` first delivers what is still queued: unsent bytes, and the
 pieces the peer has not yet confirmed.  `ABORT` does not wait.  It discards
 the unsent TX data, the unconfirmed pieces and received data not yet read,
-then sends the
-DISCONNECT frames straight away (after any frame already on the air), so
-the peer is told rather than left to time out.  `DISCONNECTED\r` is sent
-on the control port at once, and it is the session's only one: the end of
-the teardown that follows sends no second `DISCONNECTED\r`.
+then sends one DISCONNECT frame straight away (after any frame already on
+the air, and clear of the peer's reply window), so the peer is told rather
+than left to time out.  It is not retried: the caller is free once the
+peer answers or one retry interval passes, and the callee once its
+DISCONNECT has gone in its next slot (30 s at most waiting for one).
+`DISCONNECTED\r` is sent on the control port at once, and it is the
+session's only one: the end of the teardown that follows sends no second
+`DISCONNECTED\r`.
+
+An `ABORT` during a teardown already under way (after a `DISCONNECT`) cuts
+it short the same way: no more retries.  With its DISCONNECT already out,
+the caller is free when the retry interval running ends (or the peer
+answers), and the callee at once.  Its `DISCONNECTED\r` too comes at once
+and is the session's only one.
 
 ---
 
@@ -647,7 +656,10 @@ transmitting so VARA clients can treat CQ send as an in-progress operation.
 ### CANCELPENDING
 
 Sent when a previously pending incoming connect request does not complete and
-Mercury returns to the idle/listening state.
+Mercury returns to the idle/listening state: its `ACCEPT`s ran out, the host
+sent `DISCONNECT` or `LISTEN OFF`, or the caller sent a `DISCONNECT` for that
+call (it gave up calling before our `ACCEPT` reached it).  A scanning host
+then resumes its scan at once rather than holding the channel.
 
 Mercury also sends `CANCELPENDING\r` when an outgoing `CQFRAME` transmission
 finishes, which matches the lifecycle expected by VARA clients such as varim.

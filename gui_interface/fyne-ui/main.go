@@ -1873,6 +1873,9 @@ func main() {
 		}
 	}()
 
+	// Sailfish OS's keyboard for text fields (osk_hybris.go; a no-op elsewhere).
+	startOnScreenKeyboard(myApp, appendLog)
+
 	myWindow.ShowAndRun()
 
 	// ShowAndRun returns once the window has closed. Teardown now runs off the
