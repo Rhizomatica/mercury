@@ -1795,6 +1795,15 @@ void *recv_thread(void *client_socket_ptr)
                 hermes_usleep(20000);
                 continue;
             }
+            /* The server thread shuts the socket down when the client has
+             * gone, to wake this recv(); Windows then answers WSAESHUTDOWN
+             * where Linux returns 0.  That is the client leaving, not an
+             * error (N3JXB, closing VARA Terminal: "err=10058"). */
+            if (err == SOCK_ESHUTDOWN)
+            {
+                HLOGI("tcp-bcast", "Client disconnected.");
+                break;
+            }
             HLOGW("tcp-bcast", "Error receiving TCP data (err=%d)", err);
             break;
         }

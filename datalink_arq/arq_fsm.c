@@ -888,9 +888,18 @@ static bool car_fail_closed(arq_session_t *sess, uint64_t now)
 #define ARQ_CAR_END_WAIT_MS 180000
 static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
 {
-    HLOGI(LOG_COMP, "Teardown starts (%s), %llu ms after the host's DISCONNECT",
-          car_is_master(sess->car) ? "caller" : "callee",
-          (unsigned long long)(sess->disc_req_ms ? now - sess->disc_req_ms : 0));
+    /* disc_req_ms is 0 when the host has not hung up: the peer's
+     * application did, a drain gave up, the link failed.  The line then
+     * claimed "0 ms after the host's DISCONNECT" for a DISCONNECT that came
+     * later or never (N3JXB -> VE4KLM, 2026-11-10 18:23:51: the host's came
+     * 30 s later, during the teardown). */
+    if (sess->disc_req_ms)
+        HLOGI(LOG_COMP, "Teardown starts (%s), %llu ms after the host's DISCONNECT",
+              car_is_master(sess->car) ? "caller" : "callee",
+              (unsigned long long)(now - sess->disc_req_ms));
+    else
+        HLOGI(LOG_COMP, "Teardown starts (%s)",
+              car_is_master(sess->car) ? "caller" : "callee");
     sess->teardown_deadline_ms = 0;
     bool quiet = car_peer_quiet(sess, now);
     sess->tx_retries_left = quiet ? 0 : ARQ_DISCONNECT_RETRY_SLOTS;
