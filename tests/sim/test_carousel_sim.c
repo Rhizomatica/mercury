@@ -586,8 +586,9 @@ void test_car_abort_quiet_peer_one_disconnect(void)
 }
 
 /* ABORT during a DISCONNECT already retrying, as BPQ32 sends it 30 s after
- * its DISCONNECT and Pat after 60 s: our DISCONNECT is out, so the session
- * ends at once.  It carried on with every retry. */
+ * its DISCONNECT and Pat after 60 s: our DISCONNECT is out, so it is not
+ * sent again, and the session ends with the retry interval running.  It
+ * carried on with every retry. */
 void test_car_abort_during_teardown_ends_it(void)
 {
     sim_t *s = idle_session(9, 10.0);
@@ -610,7 +611,7 @@ void test_car_abort_during_teardown_ends_it(void)
     char msg[96];
     snprintf(msg, sizeof msg, "%d more DISCONNECTs, free after %llu ms", n, (unsigned long long)t);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, n, msg);
-    TEST_ASSERT_TRUE_MESSAGE(t <= 1000, msg);
+    TEST_ASSERT_TRUE_MESSAGE(t <= 10000, msg);
     sim_destroy(s);
 }
 
@@ -657,6 +658,42 @@ void test_car_callee_abort_one_disconnect(void)
     sim_run_until_idle(s, 60000);
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_DISCONNECTING, state(sim_a(s)));
+    sim_destroy(s);
+}
+
+/* ABORT just after the caller's DISCONNECT is out, on a good link, and a
+ * CONNECT to the same peer at once: the caller waits out the retry interval
+ * running, so its CALL comes after the peer's reply.  Ending at once, the
+ * CALL keyed over that reply (both keyed 640 ms) to a peer still replying,
+ * which takes no CALL: connected after 24.0 s, against 13.8 s. */
+void test_car_abort_then_redial_keeps_clear_of_the_reply(void)
+{
+    sim_t *s = idle_session(9, 10.0);
+    sim_run_until_idle(s, 20000);
+    arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+    sim_inject(s, sim_a(s), &disc);
+    const arq_session_t *sa = sim_endpoint_session(sim_a(s));
+    for (int i = 0; i < 1200 && !(sa->conn_state == ARQ_CONN_DISCONNECTING &&
+                                  sa->teardown == ARQ_TD_SENT && !sa->tx_active); i++)
+        sim_run_until_idle(s, 10);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, state(sim_a(s)));
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_SENT, sa->teardown);
+    arq_event_t ab = { .id = ARQ_EV_APP_DISCONNECT, .abort = true };
+    sim_inject(s, sim_a(s), &ab);
+    arq_event_t conn = { .id = ARQ_EV_APP_CONNECT };
+    snprintf(conn.remote_call, CALLSIGN_MAX_SIZE, "%s", "B0BBB");
+    sim_inject(s, sim_a(s), &conn);
+    int both = 0;
+    uint64_t t;
+    for (t = 0; t < 120000 && !(state(sim_a(s)) == ARQ_CONN_CONNECTED &&
+                                 state(sim_b(s)) == ARQ_CONN_CONNECTED); t += 10) {
+        sim_run_until_idle(s, 10);
+        if (sim_keyed(s, sim_a(s)) && sim_keyed(s, sim_b(s))) both++;
+    }
+    char msg[96];
+    snprintf(msg, sizeof msg, "connected after %llu ms, both keyed %d ms", (unsigned long long)t, both * 10);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, both, msg);
+    TEST_ASSERT_TRUE_MESSAGE(t <= 20000, msg);
     sim_destroy(s);
 }
 
@@ -889,6 +926,7 @@ int main(void)
     RUN_TEST(test_car_abort_skips_the_drain);
     RUN_TEST(test_car_abort_quiet_peer_one_disconnect);
     RUN_TEST(test_car_abort_during_teardown_ends_it);
+    RUN_TEST(test_car_abort_then_redial_keeps_clear_of_the_reply);
     RUN_TEST(test_car_callee_abort_caps_the_slot_wait);
     RUN_TEST(test_car_callee_abort_one_disconnect);
     RUN_TEST(test_car_reply_during_final_poll);

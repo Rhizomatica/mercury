@@ -914,10 +914,15 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
  *
  * The caller: its DISCONNECT goes once, clear of the peer's slots as ever,
  * and the session ends when its answer comes or one retry interval passes.
- * One already out and off the air has told the peer: the session ends now.
+ * With one already out it is the same: no more retries, and the interval
+ * running is waited out.  Ending at once there, a redial keyed its CALL
+ * over the peer's reply, to a peer still replying that takes no CALL (sim:
+ * both keyed 640 ms, connected after 24.0 s against 13.8 s; specs/teardown,
+ * Mut_abortnow).
  * The callee: its DISCONNECT goes in its next slot only, not again in the
  * slots after, and that slot is waited for ARQ_CAR_ABORT_WAIT_MS at most,
- * not the 180 s of ARQ_CAR_END_WAIT_MS.  tx_retries_left at 0 marks it:
+ * not the 180 s of ARQ_CAR_END_WAIT_MS.  One already out and off the air
+ * has told the caller: the session ends now.  tx_retries_left at 0 marks it:
  * the callee's DISCONNECT is not retried on the FSM's timers, and its 0
  * otherwise means a quiet caller, which ends the session at once
  * (car_begin_disconnect).  True when the session has ended here. */
@@ -927,7 +932,7 @@ static bool abort_teardown(arq_session_t *sess, uint64_t now)
     if (sess->conn_state != ARQ_CONN_DISCONNECTING)
         return false;
     sess->tx_retries_left = 0;
-    if (sess->teardown == ARQ_TD_SENT && !sess->tx_active)
+    if (callee_ending(sess) && sess->teardown == ARQ_TD_SENT && !sess->tx_active)
     {
         HLOGI(LOG_COMP, "ABORT: our DISCONNECT is out -- ending now, the peer's answer not awaited");
         notify_session_ended(sess);
@@ -943,7 +948,8 @@ static bool abort_teardown(arq_session_t *sess, uint64_t now)
               (unsigned long long)((sess->teardown_deadline_ms - now + 999) / 1000));
     }
     else
-        HLOGI(LOG_COMP, "ABORT: one DISCONNECT, no retries");
+        HLOGI(LOG_COMP, sess->teardown == ARQ_TD_SENT ? "ABORT: our DISCONNECT is out -- no more retries"
+                                                      : "ABORT: one DISCONNECT, no retries");
     return false;
 }
 

@@ -258,8 +258,9 @@ DISCONNECT has gone in its next slot (30 s at most waiting for one).
 `DISCONNECTED\r` is sent on the control port at once, as for `DISCONNECT`.
 
 An `ABORT` during a teardown already under way (after a `DISCONNECT`) cuts
-it short the same way: no more retries, and if our DISCONNECT has already
-gone out the session ends at once.
+it short the same way: no more retries.  With its DISCONNECT already out,
+the caller is free when the retry interval running ends (or the peer
+answers), and the callee at once.
 
 ---
 
