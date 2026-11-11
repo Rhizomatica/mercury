@@ -135,6 +135,7 @@ int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now)
 static void car_stop(arq_session_t *sess);
 static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev);
 static void car_begin_disconnect(arq_session_t *sess, uint64_t now);
+static bool abort_teardown(arq_session_t *sess, uint64_t now);
 
 /* The station enters a connection state, at teardown step td (ARQ_TD_NONE
  * but for a reply owed to the peer's DISCONNECT): no step outlives its
@@ -901,6 +902,57 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
     sess_enter(sess, ARQ_CONN_DISCONNECTING, sess->teardown_deadline_ms, ARQ_EV_TIMER_CAROUSEL);
 }
 
+/* ABORT: VARA's "disconnect the link immediately".  The peer is still told
+ * (#218), but once: one DISCONNECT, no retries, and nothing waited for past
+ * it.  Going through the retries kept the rig keying for a peer that had
+ * gone quiet (on air, N3JXB -> KG9NI-1, 1.9.23: ABORT 80 s into the
+ * silence, under ARQ_CAR_PEER_QUIET_MS, so three DISCONNECTs over 53 s; the
+ * CONNECT to K7EK typed meanwhile waited 34 s of them).  An ABORT during a
+ * teardown already running did nothing at all, and hosts send exactly that
+ * when the DISCONNECTED is slow to come: BPQ32 30 s after its DISCONNECT,
+ * Pat 60 s.
+ *
+ * The caller: its DISCONNECT goes once, clear of the peer's slots as ever,
+ * and the session ends when its answer comes or one retry interval passes.
+ * With one already out it is the same: no more retries, and the interval
+ * running is waited out.  Ending at once there, a redial keyed its CALL
+ * over the peer's reply, to a peer still replying that takes no CALL (sim:
+ * both keyed 640 ms, connected after 24.0 s against 13.8 s; specs/teardown,
+ * Mut_abortnow).
+ * The callee: its DISCONNECT goes in its next slot only, not again in the
+ * slots after, and that slot is waited for ARQ_CAR_ABORT_WAIT_MS at most,
+ * not the 180 s of ARQ_CAR_END_WAIT_MS.  One already out and off the air
+ * has told the caller: the session ends now.  tx_retries_left at 0 marks it:
+ * the callee's DISCONNECT is not retried on the FSM's timers, and its 0
+ * otherwise means a quiet caller, which ends the session at once
+ * (car_begin_disconnect).  True when the session has ended here. */
+#define ARQ_CAR_ABORT_WAIT_MS 30000
+static bool abort_teardown(arq_session_t *sess, uint64_t now)
+{
+    if (sess->conn_state != ARQ_CONN_DISCONNECTING)
+        return false;
+    sess->tx_retries_left = 0;
+    if (callee_ending(sess) && sess->teardown == ARQ_TD_SENT && !sess->tx_active)
+    {
+        HLOGI(LOG_COMP, "ABORT: our DISCONNECT is out -- ending now, the peer's answer not awaited");
+        notify_session_ended(sess);
+        if (g_timing) arq_timing_record_disconnect(g_timing, "abort");
+        enter_idle_after_call(sess);
+        return true;
+    }
+    if (callee_ending(sess))
+    {
+        if (sess->teardown_deadline_ms > now + ARQ_CAR_ABORT_WAIT_MS)
+            sess->teardown_deadline_ms = now + ARQ_CAR_ABORT_WAIT_MS;
+        HLOGI(LOG_COMP, "ABORT: one DISCONNECT, in my next slot (waiting %llu s at most)",
+              (unsigned long long)((sess->teardown_deadline_ms - now + 999) / 1000));
+    }
+    else
+        HLOGI(LOG_COMP, sess->teardown == ARQ_TD_SENT ? "ABORT: our DISCONNECT is out -- no more retries"
+                                                      : "ABORT: one DISCONNECT, no retries");
+    return false;
+}
+
 /* The caller's DISCONNECT: when it would run into a slot of the callee's,
  * later.  True when it waits. */
 static bool car_disconnect_must_wait(arq_session_t *sess, const arq_event_t *ev, uint64_t now)
@@ -1579,6 +1631,15 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                                                                               : CAR_PATTERN_ACK);
             return;
         case ARQ_EV_TX_COMPLETE:
+            /* ABORT's one DISCONNECT is off the air (abort_teardown). */
+            if (sess->teardown == ARQ_TD_SENT && sess->tx_retries_left == 0)
+            {
+                HLOGI(LOG_COMP, "Disconnect finalized (ABORT: my one DISCONNECT is out)");
+                notify_session_ended(sess);
+                if (g_timing) arq_timing_record_disconnect(g_timing, "abort");
+                enter_idle_after_call(sess);
+                return;
+            }
             car_on_tx_done(sess->car, now);
             return;
         case ARQ_EV_TIMER_CAROUSEL:
@@ -1627,13 +1688,16 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_APP_DISCONNECT:
-        /* The host changed its mind about a deferred call: drop it.  The
-         * teardown already in progress carries on regardless. */
+        /* The host changed its mind about a deferred call: drop it.  A
+         * DISCONNECT lets the teardown in progress carry on; an ABORT cuts
+         * it short (abort_teardown). */
         if (call_queued(sess))
         {
             HLOGI(LOG_COMP, "Deferred CONNECT to %s cancelled", sess->pending_connect_call);
             sess->pending_connect_call[0] = '\0';
         }
+        if (ev->abort && abort_teardown(sess, now))
+            return;
         break;
 
     case ARQ_EV_APP_STOP_LISTEN:
@@ -1849,6 +1913,8 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         if (!ev->abort && !repeat)
             HLOGI(LOG_COMP, "DISCONNECT: nothing left to deliver, ending now");
         car_begin_disconnect(sess, now);
+        if (ev->abort)
+            abort_teardown(sess, now);
         return true;
     }
     case ARQ_EV_RX_ACCEPT:
