@@ -40,7 +40,8 @@ typedef struct {
     int      one_frame_kills;     /* rounds of one frame, none of it heard, that left their
                                      rung out of the running (#502) */
     int      over_scored;         /* rounds, their tail unheard, scored as more frames than the
-                                     peer's keydown carried (#507) */
+                                     peer's keydown carried (#507, #516) */
+    int      under_scored;        /* ...as fewer: frames lost, scored as never sent */
     int      kd_unexplained;      /* ... over a keydown of the peer that could be sensed */
     const char *failed;           /* a station failed the session (car_failed), or NULL */
     uint64_t air_ms[2];           /* each station on the air */
