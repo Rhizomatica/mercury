@@ -210,6 +210,10 @@ static int tnc_queue_line(const char *line)
 
 static int tnc_queue_line_critical(const char *line)
 {
+    /* At shutdown the queue is closed on purpose, and the host has been told
+     * what it needs (tell_host_before_closing): not an error. */
+    if (mercury_stop && !atomic_load_explicit(&tnc_txq_open, memory_order_acquire))
+        return -1;
     for (int i = 0; i < TNC_CRITICAL_RETRIES; i++)
     {
         if (tnc_queue_line(line) == 0)
@@ -1023,6 +1027,24 @@ static void drain_tnc_queue_to_ctl(void)
     }
 }
 
+/* Shutting down: send what is still queued while the host is connected, and
+ * if we are keyed, PTT OFF.  The TX loop stops on the same mercury_stop and
+ * unkeys only after this thread has closed the socket, so its own PTT OFF
+ * never reached the host.  A host that keys the radio from PTT ON / PTT OFF
+ * (BPQ32 with Mercury's PTT method "none") was left believing we were still
+ * transmitting (K7EK, 2026-11-10 18:46:41Z, shutdown 18 s into a 26 s
+ * keydown).  tcp_send_some, not tcp_write: the latter gives up once
+ * mercury_stop is set. */
+static void tell_host_before_closing(void)
+{
+    drain_tnc_queue_to_ctl();
+    if (arq_get_trx() != TX)
+        return;
+    static const uint8_t off[] = "PTT OFF\r";
+    if (tcp_send_some(CTL_TCP_PORT, off, sizeof off - 1) == (ssize_t)(sizeof off - 1))
+        HLOGI("tcp-ctl", "Shutting down while keyed: PTT OFF sent to the host");
+}
+
 static void dispose_tnc_tx_queue(void)
 {
     atomic_store_explicit(&tnc_txq_open, false, memory_order_release);
@@ -1280,9 +1302,9 @@ void *arq_reactor_thread(void *port)
         }
     }
 
+    tell_host_before_closing();
     close_ctl_client(&ctl_client, &data_client, true);
     close_data_client(&data_client);
-    drain_tnc_queue_to_ctl();
     if (ctl_listener >= 0)
         SOCK_CLOSE(ctl_listener);
     if (data_listener >= 0)
