@@ -2020,6 +2020,7 @@ void *radio_capture_thread(void *device_ptr)
     const uint64_t CAP_POLL_MS  = 5;
     uint64_t cap_last_data_ms   = audioio_monotonic_ms();
     uint32_t diag_reopens       = 0;
+    bool     cap_reopened       = false;   /* no samples yet since the last reopen */
 
     /* Reached only after the device, rate and format checks above: the capture
      * path is fully validated and about to stream. */
@@ -2094,11 +2095,20 @@ void *radio_capture_thread(void *device_ptr)
                 }
                 if (rat_down) resamp_rat_reset(rat_down); else resamp_down_reset(&down_rs);
                 cap_last_data_ms = audioio_monotonic_ms();
+                cap_reopened = true;
             }
             ffthread_sleep(CAP_POLL_MS);
             continue;
         }
 
+        /* A reopen that opens fine says nothing; whether the device came
+         * back shows only here (K7EK, 2026-11-10: 86 reopens, each opening,
+         * and then nothing to tell if audio ever returned). */
+        if (cap_reopened)
+        {
+            HLOGI("audio-cap", "capture delivering again after reopen #%u", diag_reopens);
+            cap_reopened = false;
+        }
         cap_last_data_ms = audioio_monotonic_ms();
         diag_read_calls++;
         diag_last_read_bytes = r;
