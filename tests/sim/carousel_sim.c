@@ -745,6 +745,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         /* What each end hears, and what its peer hears of it. */
         double hears = asym ? snr_dir[i ^ 1] : snr_db, heard = asym ? snr_dir[i] : snr_db;
         hears += snr_offset; heard += snr_offset;   /* the connect estimate reads off too */
+        /* ...and the connect hint is a control-mode reading too: on the air it
+         * is the SNR field of the peer's ACCEPT, a DATAC16 frame, so with
+         * CAR_CTL_SNR_OFFSET it reads low by the same bias and the session
+         * starts below where the data modes would put it (#501: the slow
+         * climb at session start on MPD). */
+        hears += ctl_snr_offset; heard += ctl_snr_offset;
         if (getenv("CAR_NOHINT")) hears = heard = -99.0;
         /* CAR_MFSK_TX=A, B or AB: that station transmits only MFSK, and both
          * ends know it from the connect (arq_fsm.c); a, b: its peer does not */
