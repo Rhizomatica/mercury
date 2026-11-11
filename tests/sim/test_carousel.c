@@ -405,6 +405,46 @@ static void test_carousel_short_round_scored_as_sent(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "head and tail lost: scored as fewer frames than were sent");
 }
 
+/* M's side of #516: A polled B for 8; B had 2 to send, and the second was
+ * lost.  M kept no time to bound the round with, and scored it 1 of 8
+ * (QAM16C2 read 0.31 delivered); S's answer slot opens no sooner
+ * than mslot_lo, so 2 fit, and it is 1 of 2 (0.69).  The frames: A's 30
+ * bytes (0), B's ack (1), A's ack-only poll (2), B's first round (3), A's
+ * poll for 8 (4), B's 2 (5, 6). */
+static void test_carousel_m_scores_a_short_round_as_sent(void)
+{
+    static const int lost[] = { 6 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A30,B3000+500", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(7, r.frames, "the frame order changed: pick the lost frame again (CAR_TRACE=1)");
+    carousel_sim_force_losses(lost, 1);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "scored as more frames than were sent");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "scored as fewer frames than were sent");
+}
+
+/* A round M carried with its poll (ANC_BOTH) is the size the poll said: B
+ * asked for 5, A's keydown carried its poll and 2 frames, the second lost.
+ * Scored as the 5 asked (1 of 5) before; 1 of 2 now.  On fade:16:2, seed
+ * 21, at 102.8 s: if this run no longer has the case, pick another seed
+ * (CAR_TRACE=1, "as its poll said"). */
+static void test_carousel_round_with_its_poll_scored_as_declared(void)
+{
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A4096,B59+500,A4096+500,B59+500", 1);
+    carousel_sim_run(21, "fade:16:2", false, LIMIT_MS, &r);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "scored as more frames than were sent");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "scored as fewer frames than were sent");
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -582,6 +622,8 @@ int main(void)
     RUN_TEST(test_carousel_req_scores_the_frames_sent);
     RUN_TEST(test_carousel_done_poll_asks_for_nothing);
     RUN_TEST(test_carousel_short_round_scored_as_sent);
+    RUN_TEST(test_carousel_m_scores_a_short_round_as_sent);
+    RUN_TEST(test_carousel_round_with_its_poll_scored_as_declared);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }

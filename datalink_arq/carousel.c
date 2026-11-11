@@ -2088,6 +2088,23 @@ static int s_round_fit(const car_t *c, int lv)
     return (int)((c->anc.eh - TAIL_MS - c->s_tx_end + gap + per / 2) / per);
 }
 
+/* M: the same bound on S's round, which answers my last poll: S's response
+ * slot opens no sooner than mslot_lo (S anchors on the poll's end as it
+ * decoded it, never sooner), and I score the round once it has ended
+ * (m_decide_recv, from CAR_T_M at its end).  0: not known. */
+static int m_round_fit(const car_t *c, int lv, uint64_t now)
+{
+    if (!c->master) return 0;
+    const car_mlog_t *l = NULL;
+    for (int j = 0; j < c->nmlog; j++)
+        if (!c->mlog[j].pat && c->mlog[j].mk == c->poll_id && (!l || c->mlog[j].e > l->e)) l = &c->mlog[j];
+    if (!l) return 0;
+    uint64_t lo = mslot_lo(c, l, 0);
+    if (now <= lo + TAIL_MS) return 0;
+    uint64_t gap = burst_gap_ms(c, lv), per = level_air(c, lv) + gap;
+    return (int)((now - TAIL_MS - lo + gap + per / 2) / per);
+}
+
 /* A round's size is what its frames say -- but only its last frame says it
  * all: with the tail lost, seen + left counted the lost frames as never sent,
  * and a NVIS round of 7 that brought 3 read as "3 of 3, whole" (sim, nvis
@@ -2096,22 +2113,37 @@ static int s_round_fit(const car_t *c, int lv)
  * a "done" poll, poll_n is negative (asked_n) -- and no more than fits in
  * its time (s_round_fit): a sender with less than I asked for sends a
  * shorter round, and with its last frame lost, a round of 3 asked as 6 was
- * scored 1 of 6, the frames never sent as lost (#516). */
-static int rx_round_size(const car_t *c, int lv)
+ * scored 1 of 6, the frames never sent as lost (#516).  M bounds S's round
+ * the same way (m_round_fit), and a round M carried with its poll is the
+ * size the poll said (rx_round_declared). */
+/* A round M carried with its poll (ANC_BOTH): the poll said its size
+ * (h_n, kept in round_frames: s_on_data), and M knows what it sent. */
+static bool rx_round_declared(const car_t *c)
+{
+    return !c->master && c->anc.on && c->anc.kind == ANC_BOTH;
+}
+
+static int round_fit(const car_t *c, uint64_t now)
+{
+    int lv = c->round_lv;
+    return c->master ? m_round_fit(c, lv, now) : s_round_fit(c, lv);
+}
+
+static int rx_round_size(const car_t *c, uint64_t now)
 {
     int frames = c->round_frames > 0 ? c->round_frames : 1;
-    if (c->rx_tail || c->poll_n <= frames) return frames;
-    int fit = s_round_fit(c, lv);
+    if (c->rx_tail || c->poll_n <= frames || rx_round_declared(c)) return frames;
+    int fit = round_fit(c, now);
     if (!fit || fit >= c->poll_n) return c->poll_n;
     return fit > frames ? fit : frames;
 }
 
 static void rx_measure(car_t *c, int lv, uint64_t now)
 {
-    int frames = rx_round_size(c, lv);
+    int frames = rx_round_size(c, now);
     if (!c->rx_tail && c->poll_n > (c->round_frames > 0 ? c->round_frames : 1))
         car_trace(c, "rx: the round's tail unheard -- scored as %d frames (asked %d%s)", frames, c->poll_n,
-                  s_round_fit(c, lv) ? "" : ", fit unknown");
+                  rx_round_declared(c) ? ", as its poll said" : round_fit(c, now) ? "" : ", fit unknown");
     rx_score(c, lv, frames, now);
 }
 
@@ -2191,7 +2223,7 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
      * that it lost no more than my last poll told the sender, which credits
      * the round with that loss -- so a worse round is polled.  Not to a
      * sender whose window is full (only a poll retires its blocks). */
-    int frames = rx_round_size(c, c->round_lv);
+    int frames = rx_round_size(c, now);
     double loss = 1.0 - (double)c->round_seen / frames;
     /* ...a round that came on the rung I asked for: a sender that missed my
      * poll keeps on where it was, and a pattern to that kept it there (sim,
@@ -2930,7 +2962,11 @@ static void s_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
     s_heard_m(c, now);
     bool both = c->anc.on && c->anc.kind == ANC_BOTH && c->anc.mk == m->poll_id;
     if (both) {
+        /* ...the size its poll said (h_n) stays: seen + left misses the
+         * frames lost before the last one heard, and the poll's is exact */
+        int declared = c->round_frames;
         rx_frame(c, m, lv, true);
+        if (declared > c->round_frames) c->round_frames = declared;
         c->s_prev_lv = lv;
         return;
     }
