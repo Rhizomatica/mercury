@@ -396,6 +396,7 @@ jobs:
             libhidapi-dev \
             libgl1-mesa-dev \
             libegl1-mesa-dev \
+            libgles-dev \
             xorg-dev \
             libwayland-dev \
             libxkbcommon-dev
@@ -418,6 +419,11 @@ jobs:
           [ -f mercury-ui ] || { echo "::error::no mercury-ui binary produced"; exit 1; }
           file mercury-ui
           echo "OK: native Fyne UI build"
+
+      # osk_hybris.go and tls_hybris.go build only with Sailfish OS's tags
+      # (sailfish/build-mercury-ui.sh), which no other job passes.
+      - name: Vet the Sailfish OS variant (hybris tags)
+        run: cd gui_interface/fyne-ui && go vet -tags mercury_embedded,wayland,gles2,egl,hybris .
 
   build-fyne-ui-linux-arm64:
     name: Build Fyne UI (Linux arm64, Debian 13)

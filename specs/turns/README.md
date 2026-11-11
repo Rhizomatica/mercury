@@ -84,6 +84,35 @@ behaviour is exactly the base model's.
   what bounds it (0 on the bench), and listen-before-talk catches what it
   can.
 
+## Unanswered polls free their slots (`MWatch`, #510)
+
+With `CLOSE = TRUE`, M also watches the response slot of each keydown that
+has continuation slots (`m_watch` in `datalink_arq/carousel.c`).  If the slot
+is over and no carrier of S's was sensed since it opened, S sent no round in
+it, so it cannot continue: S keys a continuation only after a round of its
+own on that anchor (`s_slot`: `sent_round`).  M then takes every slot of
+that keydown as over.  On air, two floor polls S never heard held M's next
+one off the air for 97 s (NW8L-KA8RYU, IONOS MPD at -5 dB).
+
+`MWatch` needs `CLOSE`.  Without it, S continues without a round in the
+response slot, and `CarouselTurns.cfg` with the rule added gives a
+`NoOverlap` counterexample at once.
+
+- `CarouselTurns_watch.cfg`: the slot-closing rules with `MWatch`, at
+  `H = 16` (the full `H = 24` does not exhaust, as for
+  `CarouselTurns_close.cfg`).  No error, 2.15 M distinct states (4 min,
+  4 workers).
+- `Mut_csmiss.cfg`: M's carrier sense misses S's round in the response
+  slot.  Violates `NoOverlap`: M frees the slots, then keys over S's
+  continuation.  This is the residual risk, next to `FalsePattern`'s.  With
+  the busy detector off, carrier sense is a decoder in sync, so a round M
+  cannot sync on (a deep fade) is not sensed.  The watch samples carrier
+  sense once a second from the slot's opening, and a floor round is far
+  longer than that and holds sync for its airtime, so a round M can decode
+  is seen.  Listen-before-talk then saves a missed one only if M senses the
+  continuation before it keys.  In the sim, with `CAR_CS_DECODABLE=1`
+  (carrier sense only on decodable frames), the benches had no collisions.
+
 Not modelled: the wait in `s_slot` for an application answer.  S's start
 may move by up to `min(d/2, APP_GRACE_MS)` past the opening of its slot.
 With a decode `d` late, that start can fall up to

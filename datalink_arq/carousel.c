@@ -1800,6 +1800,45 @@ static void m_close_spent(car_t *c, uint64_t te, int mk)
     c->mlog[hj].done = 0xFF;
 }
 
+/* A poll S never answered: nothing of S's on the air in its first slot.  S
+ * keys a continuation slot only after a round of its own on the same anchor
+ * (s_slot: anc.sent_round), so a first slot it stayed silent in leaves the
+ * rest unused.  Held open, two floor polls S did not hear kept my next one
+ * off the air 97 s (on air, NW8L-KA8RYU, MPD -5 dB: the FPUT's /OK came 25 s
+ * after vARIM stopped waiting for it).  Carrier sense is a decoder in sync,
+ * held for a caught frame's airtime (arq_fsm.c), so I sample it every
+ * WATCH_MS through the slot; any sign keeps the slots.  Polls only: their
+ * continuations are at the floor, which the poll bound my payload decoder
+ * to, where S's round comes.  A pattern's answer may come on a rung I am not
+ * listening on.  The watch is CAR_T_W, which only S uses otherwise. */
+#define WATCH_MS 1000
+static void m_watch(car_t *c, uint64_t now)
+{
+    if (!c->master) return;
+    /* Sample first: the fire at a slot's end decides on last_carrier_ms, and
+     * a carrier still on the air then must keep the slots. */
+    (void)peer_keyed(c, now);                    /* sets last_carrier_ms */
+    uint64_t next = 0;
+    bool freed = false;
+    for (int j = 0; j < c->nmlog; j++) {
+        car_mlog_t *l = &c->mlog[j];
+        if (!l->k || l->pat || (l->done & 1u)) continue;
+        uint64_t lo = mslot_lo(c, l, 0), hi = mslot_hi(c, l, 0);
+        if (now < hi) {
+            uint64_t t = now < lo ? lo : now + WATCH_MS;
+            if (t > hi) t = hi;
+            if (!next || t < next) next = t;
+        } else if (c->last_carrier_ms < lo) {
+            car_trace(c, "rx: nothing on the air in the peer's answer slot -- its %d continuation slots are free", l->k);
+            l->done = 0xFF;
+            freed = true;
+        }
+    }
+    if (next) arm(c, CAR_T_W, next);
+    /* A keydown held for those slots goes now, if nothing else holds it. */
+    if (freed && c->m_state == MS_PLAN && !c->tx_busy) arm(c, CAR_T_M, now);
+}
+
 /* ---- keydowns, either end ---- */
 /* The size of my last poll that asked for frames.  A "done" poll (n = 0)
  * keeps it, negative: the peer may still send a round on its own turn after
@@ -3252,6 +3291,7 @@ void car_on_tx_done(car_t *c, uint64_t now)
     c->m_state = MS_WAIT;
     /* Decide when S's response slot is over, or once its answer is heard. */
     arm(c, CAR_T_M, mslot_hi(c, &c->mlog[c->nmlog - 1], 0) + TURN_G_MS);
+    m_watch(c, now);                         /* ...and the air in it, for its continuations */
 }
 
 /* A pattern carries no id and a detector can false-alarm, so one is taken
@@ -3344,6 +3384,7 @@ void car_on_time(car_t *c, uint64_t now)
         c->deadline[due] = 0;
         if (due == CAR_T_M) m_timer(c, now);
         else if (due == CAR_T_S) s_slot(c, now);
+        else if (due == CAR_T_W && c->master) m_watch(c, now);
         else if (due == CAR_T_W) {
             /* Not off the floor once the silence fallback is due: M's control
              * comes there after its own silence (SILENT_MS), and going back to

@@ -309,6 +309,7 @@ static int recv_fallbacks;
 static int app_wait_says;              /* "tx: my application's data waits for" lines */
 static int gated_probes;
 static int dark_polls;
+static uint64_t slot_hold_ms;            /* the longest "held N ms, clear of the peer's slots" */
 static int one_frame_kills;
 static int over_scored;
 static int under_scored;
@@ -371,6 +372,11 @@ static void io_trace(void *ctx, const char *line)
         s->dark_run = s->poll_at && s->heard_at < s->poll_at ? s->dark_run + 1 : 1;
         s->poll_at = now_ms;
         if (s->dark_run > dark_polls) dark_polls = s->dark_run;
+    }
+    static const char held[] = "tx: held ";
+    if (!strncmp(line, held, sizeof held - 1) && strstr(line, "clear of the peer's slots")) {
+        uint64_t ms = strtoull(line + sizeof held - 1, NULL, 10);
+        if (ms > slot_hold_ms) slot_hold_ms = ms;
     }
     static const char said[] = "tx: my application's data waits for ";
     if (!strncmp(line, said, sizeof said - 1)) app_wait_says++;
@@ -682,6 +688,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     app_wait_says = 0;
     gated_probes = 0;
     dark_polls = 0;
+    slot_hold_ms = 0;
     one_frame_kills = 0;
     over_scored = 0;
     under_scored = 0;
@@ -841,6 +848,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->app_wait_says = app_wait_says;
     res->gated_probes = gated_probes;
     res->dark_polls = dark_polls;
+    res->slot_hold_ms = slot_hold_ms;
     res->one_frame_kills = one_frame_kills;
     res->over_scored = over_scored;
     res->under_scored = under_scored;

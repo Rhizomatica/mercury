@@ -35,6 +35,8 @@ typedef struct {
                                      out) whose SNR gate the smoothed SNR is below */
     int      dark_polls;          /* the most polls above the floor in a row, by one station,
                                      with nothing of the peer heard between them */
+    uint64_t slot_hold_ms;        /* the longest wait of a planned keydown of M's to be clear of
+                                     the peer's slots ("tx: held ... clear of the peer's slots") */
     int      one_frame_kills;     /* rounds of one frame, none of it heard, that left their
                                      rung out of the running (#502) */
     int      over_scored;         /* rounds, their tail unheard, scored as more frames than the

@@ -35,6 +35,10 @@
 (*     answer to its latest keydown, closing slot 0 and older keydowns --  *)
 (*     only off the air, and only in time: no sooner than Tg + PMIN after *)
 (*     that keydown, no later than DP past its response slot.             *)
+(*   - M watches the response slot of a keydown with continuation slots *)
+(*     (m_watch): when it is over with no carrier of S's since it opened, *)
+(*     S sent no round in it, so it will not continue: all its slots are  *)
+(*     over.  Carrier sense is ideal unless Mutant = "csmiss".            *)
 (* With DISC, M also keys the FSM's DISCONNECT, which S answers TgD after *)
 (* it decodes it (one slot), and logs it (car_log_ctl).  With FALSEPAT,   *)
 (* M's pattern detector may false-alarm.  With ONE, an M keydown may be a *)
@@ -69,6 +73,8 @@ CONSTANTS Tg,    \* turnaround: S's slot opens this long after the end it anchor
                  \*   "anytime":   M takes a pattern whenever it hears one
                  \*   "closenewer": M closes newer keydowns' slots too, not only older
                  \*   "nologdisc": M does not log its DISCONNECT
+                 \*   "csmiss":    M's carrier sense misses a keydown of S's
+                 \*                (m_watch frees slots S continues in)
                  \*   with ONE:
                  \*   "onecont":  S continues after a one-frame poll (M keeps
                  \*               no continuation slots for it)
@@ -161,6 +167,18 @@ MStop ==
     /\ mDone' = {d \in mDone : \E k \in mLog' : k.e = d.e}
     /\ inflight' = inflight \cup {[e |-> t, r |-> mR, dc |-> mDc, one |-> mOne]}
     /\ UNCHANGED <<t, mEnd, mR, mDc, mOne, sOn, sEnd, sSlot, sKind, anchor, pPend>>
+
+\* #510 (m_watch): a keydown with continuation slots whose response slot is
+\* over with no carrier of S's since it opened: all its slots are over.
+\* Carrier sense is ideal unless Mutant = "csmiss" (a keydown of S's unsensed).
+\* Only with CLOSE: without it S continues without a round of its own in the
+\* response slot (Kinds), and the rule does not hold.
+MWatch(k) ==
+    /\ CLOSE /\ k \in mLog /\ Kof(k) > 0 /\ t >= SHi(k, 0)
+    /\ \E i \in 0 .. Kof(k) : [e |-> k.e, i |-> i] \notin mDone
+    /\ (~sOn /\ sEnd < SLo(k, 0)) \/ Mutant = "csmiss"
+    /\ mDone' = mDone \cup AllOf(k.e)
+    /\ UNCHANGED <<t, mOn, mEnd, mR, mDc, mOne, mLog, inflight, sOn, sEnd, sSlot, sKind, anchor, pPend>>
 
 \* ---- S ----
 \* Decoding an M keydown, no later than D after it ended (a frame decoded later
@@ -269,6 +287,7 @@ Next ==
     \/ \E r \in RL \cup {SetMax(RL) + 1}, kind \in {"round", "status", "pattern"} : SStart(r, kind)
     \/ SBlind \/ SReuse
     \/ PatHear \/ PatMiss \/ PatFalse
+    \/ \E k \in mLog : MWatch(k)
     \/ \E k \in inflight : SDecode(k) \/ SLose(k)
 
 Spec == Init /\ [][Next]_vars
