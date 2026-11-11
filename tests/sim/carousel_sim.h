@@ -51,6 +51,11 @@ typedef struct {
                                      watchdog counts (240 s ends a session) */
     int      msgs;                /* a traffic script's messages (0: a transfer) */
     uint64_t msg_delay_ms[CAR_SIM_MSGS];   /* ...each from written to delivered (UINT64_MAX: never) */
+    /* What the delivered frames' estimates read: the control frames' and the
+     * data frames'.  CAR_CTL_SNR_OFFSET moves the first without the second
+     * (#501); NAN when no frame of that kind was delivered. */
+    double   ctl_snr_db, data_snr_db;
+    int      ctl_frames, data_frames;
 } car_sim_result_t;
 
 /* Exploration: from the next run on, no random loss -- the frames (and

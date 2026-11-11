@@ -142,6 +142,73 @@ from its peer for that long.  Two benches measure it; neither is run by
 `test_car_idle_lossy_link_stays_connected` and
 `test_carousel_idle_keeps_hearing_the_peer` are the tests for the same thing.
 
+## The control mode's SNR (`CAR_CTL_SNR_OFFSET`)
+
+`CAR_CTL_SNR_OFFSET=<dB>` offsets the **control frames'** SNR estimate, and
+only theirs: the frames the carousel sends as polls, handovers and status
+(the control mode is `ARQ_CONTROL_MODE` = `FREEDV_MODE_DATAC16`, the only
+mode with the 14-byte control payload, so the sim tells them apart by mode).
+The default is 0, which is the channel as it reads.
+
+It is the **estimate**, not the channel: the control frames are still decoded
+and delivered, as they are on air when they read low.  What changes is what
+the receiver makes of them -- the smoothed estimate
+(`snr_ema = 0.7·ema + 0.3·reading`, and the two-reading snap at
+`SNR_GATE_DB`), the rung the ladder picks, and the control-mode deafness
+test.  That is the mechanism behind #501: on MPD the control frames under-read
+the SNR against the data modes by ~10 dB, and the smoothed estimate follows
+them down, so a session that should climb to DATAC17/QAM16C2 stays where it
+is.
+
+```
+$ CAR_CTL_SNR_OFFSET=-8 SIM_STATS=1 ./carousel_bench 4 fade:3:0.5
+  mode 10:    3 frames    0 ok     14 s air      (DATAC1)
+  mode 12:   87 frames   57 ok    332 s air      (DATAC3)
+  mode 18:   38 frames   36 ok    220 s air      (DATAC4)
+  mode 23:   23 frames   23 ok     86 s air      (DATAC16, the control mode)
+seed=4 chan=fade:3:0.5 oneway a2b=8192 b2a=0 integrity=OK done_ms=804901
+readings: ctl=-5.3 dB (23 frames) data=3.0 dB (93 frames)
+```
+
+The same seed without the knob rides DATAC3 the whole way (115 frames, 439 s
+of air) and finishes in 575.6 s: with the control frames reading 8 dB low the
+ladder drops to DATAC4 and the session takes 40 % longer.  That is the
+symptom #501 is about, reproduced on demand.
+
+The `readings:` line is in `carousel_bench`'s output: the mean SNR the control
+frames' estimates read and the mean the data frames' read, with their frame
+counts.  `CAR_SNR_BIAS` is separate and older (the bench-measured -3.5 dB for
+DATAC15, DATAC4 and DATAC16); the two add up.
+
+**A/B, one-way 8 KB, 10 seeds** (`CAR_LIMIT_S=3600 ./carousel_bench <seed>
+<channel>`), mean time to complete, every run finished:
+
+| channel | offset 0 | offset -8 | control reading | data reading |
+|---|---|---|---|---|
+| `awgn:0.02` | 53.2 s | 55.4 s | 12.0 -> 4.0 dB | 12.0 dB |
+| `cliff:8` | 76.1 s | 76.1 s | 8.0 -> 0.0 dB | 8.0 dB |
+| `cliff:3` | 368.0 s | 367.7 s | 3.0 -> -5.0 dB | 3.0 dB |
+| `fade:8:0.5` | 242.4 s | 249.9 s | 7.6 -> -0.3 dB | 8.2 dB |
+| `fade:3:0.5` | 569.0 s | 630.5 s | 2.6 -> -5.5 dB | 3.4 dB |
+| `nvis` | 1473.7 s | 1488.8 s | 10.0 -> 2.0 dB | 10.0 dB |
+
+Nothing was corrupted in any of the runs, and the offset 0 runs are the runs
+without the knob, down to the frame count.  The cost is in the ladder: where
+the estimate decides the rung, the session takes longer -- 11 % on
+`fade:3:0.5` on the mean, 40 % on the seed above.  The control plane is a
+small share of an 8 KB transfer, so the mean understates what the same bias
+does to a session that polls more.
+
+Two limits: on the floor the control frames ride the floor mode (MFSK), so
+the knob does not apply there; and the knob moves the estimate only, so it
+cannot reproduce a control mode that *fails* to decode -- that is the
+channel's model, not the estimate's.
+
+`test_carousel_ctl_snr_offset_moves_only_the_control_reading` is the test:
+the offset moves the control frames' reading and leaves the data frames'
+alone, the session still completes and delivers intact, and an offset of 0 is
+the run without the knob.
+
 ## The fade-cliff regression
 
 `test_sim_fade_cliff_completes` connects on a good band, then drops the
