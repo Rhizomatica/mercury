@@ -51,6 +51,10 @@ typedef struct {
      * (#501); NAN when no frame of that kind was delivered. */
     double   ctl_snr_db, data_snr_db;
     int      ctl_frames, data_frames;
+    /* ...and how many of each kind were keyed, whether they came or not:
+     * with CAR_CTL_FRAME_LOSS the gap between keyed and delivered is the
+     * knob's. */
+    int      ctl_keyed, data_keyed;
 } car_sim_result_t;
 
 /* Exploration: from the next run on, no random loss -- the frames (and

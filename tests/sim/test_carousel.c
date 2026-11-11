@@ -30,6 +30,7 @@ void tearDown(void)
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
     unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
     unsetenv("CAR_CTL_SNR_OFFSET");
+    unsetenv("CAR_CTL_FRAME_LOSS");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -365,6 +366,44 @@ static void test_carousel_ctl_snr_offset_moves_only_the_control_reading(void)
     TEST_ASSERT_GREATER_THAN_INT_MESSAGE(0, off.data_frames, what);
 }
 
+/* CAR_CTL_FRAME_LOSS: control frames erased at that rate on top of the
+ * channel's own, whatever their SNR -- the control mode failing to decode
+ * for a reason the reading does not see (#501).  The frames that do get
+ * through read as the channel reads them: the receiver cannot tell this loss
+ * from the channel's own, which is the point.  0 is the run without it.
+ * Message traffic, so there are enough control frames to see the rate. */
+static void test_car_ctl_frame_loss_drops_control_frames(void)
+{
+    static const char *SCRIPT = "A2500+1000,B300+2000,A2000+4000,B300+6000,"
+                                "A2000+8000,B300+10000,A1000+12000,B300+14000";
+    car_sim_result_t plain, lossy;
+    char what[160];
+
+    setenv("CAR_SCRIPT", SCRIPT, 1);
+    carousel_sim_run(1, "cliff:10", false, LIMIT_MS, &plain);
+    setenv("CAR_CTL_FRAME_LOSS", "0.8", 1);
+    carousel_sim_run(1, "cliff:10", false, LIMIT_MS, &lossy);
+    unsetenv("CAR_CTL_FRAME_LOSS");
+    unsetenv("CAR_SCRIPT");
+
+    TEST_ASSERT_TRUE_MESSAGE(plain.intact, "no-loss baseline");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, plain.done_ms, "no-loss baseline");
+    TEST_ASSERT_TRUE_MESSAGE(plain.ctl_keyed >= 8, "too few control frames to see the rate");
+    snprintf(what, sizeof(what), "loss 0.8: %d of %d control keyings delivered (plain %d/%d); done %llu ms against %llu",
+             lossy.ctl_frames, lossy.ctl_keyed, plain.ctl_frames, plain.ctl_keyed,
+             (unsigned long long)lossy.done_ms, (unsigned long long)plain.done_ms);
+    /* Four fifths of the control keyings stop coming, on a channel where
+     * they all came before -- the sender re-keys them, so the loss shows in
+     * the gap between keyed and delivered, and in the time ... */
+    TEST_ASSERT_TRUE_MESSAGE(lossy.ctl_frames < lossy.ctl_keyed / 2, what);
+    TEST_ASSERT_TRUE_MESSAGE(lossy.done_ms > plain.done_ms * 2, what);
+    TEST_ASSERT_TRUE_MESSAGE(lossy.intact, what);
+    /* ... and what control frames do come through read exactly what they
+     * read: the loss is not the estimate's to say. */
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)plain.ctl_snr_db, (float)lossy.ctl_snr_db, what);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)plain.data_snr_db, (float)lossy.data_snr_db, what);
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -540,6 +579,7 @@ int main(void)
     RUN_TEST(test_carousel_dark_rounds_drop_the_rung);
     RUN_TEST(test_carousel_req_scores_the_frames_sent);
     RUN_TEST(test_carousel_ctl_snr_offset_moves_only_the_control_reading);
+    RUN_TEST(test_car_ctl_frame_loss_drops_control_frames);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }

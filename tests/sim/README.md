@@ -234,6 +234,44 @@ the offset moves the control frames' reading and leaves the data frames'
 alone, the session still completes and delivers intact, and an offset of 0 is
 the run without the knob.
 
+## The control mode failing to decode (`CAR_CTL_FRAME_LOSS`)
+
+`CAR_CTL_FRAME_LOSS=<0..1>` erases the **control frames** at that rate, on
+top of whatever the channel already does to them, independent of their SNR:
+`per = 1 − (1 − per) · loss`, drawn against the same random number as the
+channel's own erasure, so the two fail independently and offset 0 is the run
+without the knob.  This is the control mode failing to decode for a reason
+the reading does not see -- interference, a notch, a capture -- where
+`CAR_CTL_SNR_OFFSET` has nothing to say, because that knob is the SNR being
+low.  The estimate is untouched: what control frames do get through read
+exactly what the channel gives them, so the receiver cannot tell this loss
+from the channel's own.  The carousel re-keys its polls, so the loss shows in
+the gap between frames keyed and frames delivered, and in the time.
+
+```
+$ CAR_CTL_FRAME_LOSS=0.9 CAR_SCRIPT="$SC" ./carousel_bench 1 cliff:16
+seed=1 chan=cliff:16 oneway a2b=7500 b2a=1200 integrity=OK done_ms=3475011
+readings: ctl=16.0 dB (9 frames) data=16.0 dB (74 frames)
+msgs=8 delivered=8 delay_mean=427.3 delay_p90=827.1 delay_max=827.1
+```
+
+(The script is the eight-message one from the `CAR_CTL_SNR_OFFSET` section.)
+At loss 0 the same run is 197.0 s with 20 control frames delivered and a
+17.5 s mean message delay; at 0.5 it is 318.9 s; at 0.9 it is 3475 s with
+message delays of 427 s mean and 827 s at the 90th percentile, on a channel
+whose readings never moved off 16.0 dB.
+
+`test_car_ctl_frame_loss_drops_control_frames` is the test: at loss 0.8 on
+message traffic, most control keyings stop coming and the run takes more than
+twice as long, while the frames that do come through read what they read.
+
+The two knobs answer different questions and stack: `CAR_CTL_SNR_OFFSET` says
+the control mode's SNR is low (and everything that follows -- the ladder, the
+deafness test, the start rung); `CAR_CTL_FRAME_LOSS` says the control mode
+fails at this rate for reasons the SNR does not capture.  On #501's MPD
+captures the first is the phenomenon (the frames decode but read ~10 dB
+low); the second is there for the failure modes those captures do not show.
+
 ## The fade-cliff regression
 
 `test_sim_fade_cliff_completes` connects on a good band, then drops the

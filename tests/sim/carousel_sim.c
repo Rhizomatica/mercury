@@ -200,6 +200,8 @@ static double step_back = NAN;                         /* stepa: the way back, t
  * data frames', so a run can say how far apart the two read (#501's knob). */
 static double ctl_snr_sum, data_snr_sum;
 static int ctl_snr_n, data_snr_n;
+/* ...and how many of each kind were keyed, delivered or not. */
+static int ctl_keyed_n, data_keyed_n;
 static void note_snr(int mode, double snr)
 {
     if (mode == ARQ_CONTROL_MODE) { ctl_snr_sum += snr; ctl_snr_n++; }
@@ -282,6 +284,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
         }
         if (i) t += fr[i].gap_ms;
         if (!mercury_mode_is_mfsk(fr[i].mode)) non_mfsk[s->id]++;
+        if (fr[i].mode == ARQ_CONTROL_MODE) ctl_keyed_n++; else data_keyed_n++;
         uint64_t air = sim_channel_airtime_ms(fr[i].mode, 0), d;
         if (trace) {
             static const char *K[] = { "poll", "handover", "status", "?" };
@@ -686,6 +689,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     /* CAR_CTL_SNR_OFFSET=<dB>: the control frames' estimate reads that much
      * off, and only theirs (#501).  0: as the channel reads. */
     double ctl_snr_offset = getenv("CAR_CTL_SNR_OFFSET") ? atof(getenv("CAR_CTL_SNR_OFFSET")) : 0.0;
+    /* CAR_CTL_FRAME_LOSS=<0..1>: control frames erased at that rate on top of
+     * the channel's own, whatever their SNR -- the control mode failing to
+     * decode for a reason the reading does not see (#501).  0: none. */
+    double ctl_frame_loss = getenv("CAR_CTL_FRAME_LOSS") ? atof(getenv("CAR_CTL_FRAME_LOSS")) : 0.0;
     nev = 0;
     collisions = 0;
     recv_fallbacks = 0;
@@ -702,11 +709,13 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     kd_unexplained = 0;
     ctl_snr_sum = data_snr_sum = 0.0;
     ctl_snr_n = data_snr_n = 0;
+    ctl_keyed_n = data_keyed_n = 0;
     memset(S, 0, sizeof(S));
 
     double snr_db = 12.0;                  /* what the sim stamps on frames */
     ch = carousel_sim_channel(seed, chan, &snr_db);
     sim_channel_set_ctl_snr_offset(ch, ctl_snr_offset);
+    sim_channel_set_ctl_frame_loss(ch, ctl_frame_loss);
     snr_now = snr_db;
     if (getenv("CAR_NOHINT")) snr_db = -99.0;
 
@@ -873,6 +882,8 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->data_snr_db = data_snr_n ? data_snr_sum / data_snr_n : NAN;
     res->ctl_frames  = ctl_snr_n;
     res->data_frames = data_snr_n;
+    res->ctl_keyed   = ctl_keyed_n;
+    res->data_keyed  = data_keyed_n;
     /* No timer either side, and nobody on the air: a station keyed when the
      * run ends arms its timers only as the keydown ends (a 27 s BW500 floor
      * frame often straddles the limit). */

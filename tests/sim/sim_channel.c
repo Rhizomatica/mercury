@@ -29,6 +29,7 @@ struct sim_channel {
     double   fade_mean_db, fade_doppler_hz;
     double   fade_w[2][FADE_OSC], fade_ph[2][FADE_OSC][2];  /* per direction */
     double   ctl_snr_offset;  /* the control mode's SNR reads this much off */
+    double   ctl_frame_loss;  /* control frames erased at this rate on top */
     uint32_t stat_sent[SIM_STAT_MODES], stat_ok[SIM_STAT_MODES];
     uint64_t stat_air_ms[SIM_STAT_MODES];
 };
@@ -164,6 +165,24 @@ double sim_channel_ctl_snr_offset(const sim_channel_t *ch)
     return ch ? ch->ctl_snr_offset : 0.0;
 }
 
+/* The control mode's frames are lost at this rate on top of the channel's
+ * own: the two fail independently (see sim_channel.h). */
+void sim_channel_set_ctl_frame_loss(sim_channel_t *ch, double per)
+{
+    if (ch) ch->ctl_frame_loss = per;
+}
+
+double sim_channel_ctl_frame_loss(const sim_channel_t *ch)
+{
+    return ch ? ch->ctl_frame_loss : 0.0;
+}
+
+static double ctl_loss_per(const sim_channel_t *ch, double per, int freedv_mode)
+{
+    if (freedv_mode != ARQ_CONTROL_MODE || ch->ctl_frame_loss <= 0.0) return per;
+    return per + (1.0 - per) * ch->ctl_frame_loss;   /* 1 - (1-per)(1-loss) */
+}
+
 /* |h(t)|^2 for one direction, mean 1. */
 static double fade_power(const sim_channel_t *ch, int dir, double t_s)
 {
@@ -270,7 +289,7 @@ double sim_channel_frame_per(const sim_channel_t *ch, uint64_t now_ms, int dir, 
                (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode)) {
         per = SIM_CLIFF_PER;
     }
-    return per;
+    return ctl_loss_per(ch, per, freedv_mode);
 }
 
 bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
@@ -299,7 +318,7 @@ bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
     else if (ch->cliff_enabled &&
              (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode))
         per = SIM_CLIFF_PER;
-    bool erased = sim_channel_next_rand(ch) < per;
+    bool erased = sim_channel_next_rand(ch) < ctl_loss_per(ch, per, freedv_mode);
     uint32_t air = sim_channel_airtime_ms(freedv_mode, frame_size);
     if (freedv_mode >= 0 && freedv_mode < SIM_STAT_MODES) {
         ch->stat_sent[freedv_mode]++;

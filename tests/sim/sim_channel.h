@@ -59,6 +59,16 @@ void           sim_channel_set_fading(sim_channel_t *ch, double mean_snr_db, dou
 void           sim_channel_set_ctl_snr_offset(sim_channel_t *ch, double db);
 double         sim_channel_ctl_snr_offset(const sim_channel_t *ch);
 
+/* Control frames erased with this probability, on top of whatever the
+ * channel already does (CAR_CTL_FRAME_LOSS): the control mode failing to
+ * decode, independent of its SNR -- interference or a notch the reading
+ * does not see.  The estimate is untouched: the frames that do get through
+ * read as the channel reads them, so the receiver cannot tell the loss from
+ * the channel's own.  0 (the default): nothing lost beyond the channel's
+ * own. */
+void           sim_channel_set_ctl_frame_loss(sim_channel_t *ch, double per);
+double         sim_channel_ctl_frame_loss(const sim_channel_t *ch);
+
 uint32_t       sim_channel_airtime_ms(int freedv_mode, size_t frame_size);
 bool           sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                                      int dir, int freedv_mode, size_t frame_size,
