@@ -39,6 +39,8 @@ typedef struct {
                                      the peer's slots ("tx: held ... clear of the peer's slots") */
     int      one_frame_kills;     /* rounds of one frame, none of it heard, that left their
                                      rung out of the running (#502) */
+    int      over_scored;         /* rounds, their tail unheard, scored as more frames than the
+                                     peer's keydown carried (#507) */
     int      kd_unexplained;      /* ... over a keydown of the peer that could be sensed */
     const char *failed;           /* a station failed the session (car_failed), or NULL */
     uint64_t air_ms[2];           /* each station on the air */

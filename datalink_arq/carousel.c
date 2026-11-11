@@ -1840,6 +1840,14 @@ static void m_watch(car_t *c, uint64_t now)
 }
 
 /* ---- keydowns, either end ---- */
+/* The size of my last poll that asked for frames.  A "done" poll (n = 0)
+ * keeps it, negative: the peer may still send a round on its own turn after
+ * it, and that round is no answer to the old size: with its tail lost it was
+ * scored as that many frames, most of them never sent (#507, as #502 on the
+ * REQ path).  rx_measure and rx_next read poll_n as it is, so a negative one
+ * never raises a round; everything else takes the size. */
+static int asked_n(const car_t *c) { return c->poll_n < 0 ? -c->poll_n : c->poll_n; }
+
 /* A poll: what I still need of the peer's blocks, and its next round --
  * with my own round after it, in the same keydown, when with_round and I have
  * one: both directions in one exchange (the poll names the round's rung and
@@ -1873,6 +1881,7 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
          * was lost, naming nothing, left M on a rung I had left
          * (specs/rungs/RungAgreement.tla, Agree) */
         m.level = c->rx_level;
+    if (!n && c->poll_n > 0) c->poll_n = -c->poll_n;   /* asked for nothing (asked_n) */
     c->name_lv = 0;
     c->round_seen = 0; c->round_frames = n; c->status_seen = false;
     c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
@@ -1923,6 +1932,8 @@ static void send_pattern(car_t *c, int kind)
     c->seq_at_ask = c->deliver_seq;
     if (c->poll_level == 0)
         c->poll_n = keydown_cap(c, 0);     /* what a sender streaming the floor sends */
+    else
+        c->poll_n = asked_n(c);            /* the same again: it asks for frames */
     c->round_seen = 0; c->round_frames = c->poll_n; c->status_seen = false;
     c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
     c->tx_busy = true;
@@ -2069,11 +2080,15 @@ static void rx_score(car_t *c, int lv, int frames, uint64_t now)
  * all: with the tail lost, seen + left counted the lost frames as never sent,
  * and a NVIS round of 7 that brought 3 read as "3 of 3, whole" (sim, nvis
  * seed 3: a "same again" pattern, and the loss unscored).  Without the tail,
- * the round is taken to be what I asked for. */
+ * the round is taken to be what I asked for -- if I asked for frames: after
+ * a "done" poll, poll_n is negative (asked_n). */
 static void rx_measure(car_t *c, int lv, uint64_t now)
 {
     int frames = c->round_frames > 0 ? c->round_frames : 1;
-    if (!c->rx_tail && c->poll_n > frames) frames = c->poll_n;
+    if (!c->rx_tail && c->poll_n > frames) {
+        car_trace(c, "rx: the round's tail unheard -- scored as the %d frames I asked for", c->poll_n);
+        frames = c->poll_n;
+    }
     rx_score(c, lv, frames, now);
 }
 
@@ -2161,7 +2176,7 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
      * step:-12:10 seed 27: DATAC3 asked, floor rounds answered by patterns
      * "for DATAC3" at +10 dB). */
     if (c->io.pattern && lv > 0 && lv == c->poll_level && c->rx_level == c->poll_level &&
-        n == c->poll_n && !c->status_seen &&
+        n == asked_n(c) && !c->status_seen &&
         c->round_seen > 0 && loss <= c->polled_loss + 0.05 &&
         c->floor_patterns < FLOOR_POLL_EVERY && !window_full) {
         bool whole = c->round_seen >= c->round_frames && c->rx_tail;
@@ -2281,7 +2296,7 @@ static void m_key_plan(car_t *c)
          * pattern carries no control-deaf bit: S's status may be either mode. */
         uint32_t cm = s_ctl_ms(c), r = r_cap_ms(c);
         bool known = c->round_seen > 0, floor = c->poll_level == 0 && c->io.pattern;
-        if (known) r = floor ? r_floor_ms(c) : s_round_ms(c, c->poll_level, c->poll_n);
+        if (known) r = floor ? r_floor_ms(c) : s_round_ms(c, c->poll_level, asked_n(c));
         int k = c->io.pattern && (!known || floor) ? K_FLOOR : 0;
         m_note(c, kind, r > cm ? r : cm, D_PAT_MS, k, r_floor_ms(c));
         send_pattern(c, kind == KD_PATTERN_BREAK ? CAR_PATTERN_BREAK : CAR_PATTERN_ACK);
@@ -2578,7 +2593,7 @@ static void m_decide_recv(car_t *c, uint64_t now)
         c->rung[c->poll_level].sent >= 2.0 && level_delivery(c, c->poll_level) >= 0.5) {
         c->silent_polls |= SILENT_ASKED;
         car_trace(c, "rx round lv=%d unheard: asking again", c->poll_level);
-        m_plan(c, KD_POLL, c->poll_level, c->poll_n);
+        m_plan(c, KD_POLL, c->poll_level, asked_n(c));
         return;
     }
     c->silent_polls &= ~SILENT_ASKED;
@@ -2624,7 +2639,7 @@ static void m_decide_recv(car_t *c, uint64_t now)
     /* With data of my own, the answer carries my round: a poll, then it (a
      * pattern carries nothing; it becomes the same poll). */
     if (has_data(c) && kind != KD_DONE && both_ok(c, kind == KD_POLL ? lv : c->poll_level)) {
-        if (kind != KD_POLL) { lv = c->poll_level; n = c->poll_n; }
+        if (kind != KD_POLL) { lv = c->poll_level; n = asked_n(c); }
         kind = KD_BOTH;
     }
     m_plan(c, kind, lv, n);
@@ -2828,7 +2843,7 @@ static void s_answer_both(car_t *c, uint64_t now)
     int lv = 0, n = 0;
     int kind = rx_next(c, now, &lv, &n);
     if (kind == KD_DONE) { lv = 0; n = 0; c->name_lv = s_idle_rung(c, now); }
-    else if (kind != KD_POLL) { lv = c->poll_level; n = c->poll_n; }   /* a pattern carries no round */
+    else if (kind != KD_POLL) { lv = c->poll_level; n = asked_n(c); }   /* a pattern carries no round */
     if (n && c->ctl_deaf && c->io.pattern) lv = 0;
     c->s_asked_new = n && c->s_prev_lv >= 0 && lv != c->s_prev_lv;
     c->tx_slot = 0; c->tx_pat_anchor = false;
@@ -3246,7 +3261,7 @@ void car_on_tx_done(car_t *c, uint64_t now)
         if (c->s_asked_new) {
             c->s_asked_new = false;
             uint64_t round_end = now + D_OFDM_MS + TURN_G_MS + LEAD_MAX_MS +
-                                 round_air(c, c->poll_level, c->poll_n) + TAIL_MS + d_of_mode(lmode(c, c->poll_level));
+                                 round_air(c, c->poll_level, asked_n(c)) + TAIL_MS + d_of_mode(lmode(c, c->poll_level));
             arm(c, CAR_T_W, round_end);
         }
         return;
@@ -3360,7 +3375,7 @@ void car_on_time(car_t *c, uint64_t now)
                           (int)((now - c->heard_ms) / 1000));
             } else if (c->rx_level == c->poll_level && c->s_prev_lv >= 0 && c->poll_level != c->s_prev_lv) {
                 car_trace(c, "rx: no round on lv=%d -- back to lv=%d", c->poll_level, c->s_prev_lv);
-                c->round_seen = 0; c->round_frames = c->poll_n;
+                c->round_seen = 0; c->round_frames = asked_n(c);
                 rx_measure(c, c->poll_level, now);
                 bind_rx(c, c->s_prev_lv);
             }

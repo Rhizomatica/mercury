@@ -266,7 +266,7 @@ typedef struct {
     double   loss_est;
     double   polled_loss;        /* the loss my last poll told the sender */
     uint8_t  poll_id;               /* my last poll's keydown id (M), or the one I answer (S) */
-    int      poll_level, poll_n;    /* what I asked the peer for */
+    int      poll_level, poll_n;    /* what I asked the peer for (poll_n < 0: its size, after a poll for nothing) */
     int      round_seen, round_frames;
     int      round_lv;              /* the rung the frames came on */
     bool     rx_tail;               /* ...and its last frame among them */
