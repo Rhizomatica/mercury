@@ -49,6 +49,16 @@ void           sim_channel_set_mode_per(sim_channel_t *ch,
  * SNR against the mode cliffs.  Overrides the other models. */
 void           sim_channel_set_fading(sim_channel_t *ch, double mean_snr_db, double doppler_hz);
 
+/* The control mode's SNR reads this much off (dB): the control frames
+ * under-read the SNR against the data modes -- on MPD by ~10 dB (#501), the
+ * narrowband control frame sitting in a notch the wide data modes average
+ * across.  The estimate only: the frames are still decoded and delivered, as
+ * they are on air when they read low; what changes is what the receiver makes
+ * of them (the smoothed estimate, the rung the ladder picks, the control-mode
+ * deafness test).  0 (the default): the channel reads as it does. */
+void           sim_channel_set_ctl_snr_offset(sim_channel_t *ch, double db);
+double         sim_channel_ctl_snr_offset(const sim_channel_t *ch);
+
 uint32_t       sim_channel_airtime_ms(int freedv_mode, size_t frame_size);
 bool           sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                                      int dir, int freedv_mode, size_t frame_size,

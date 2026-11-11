@@ -179,13 +179,32 @@ static double frame_snr(const station_t *rx, uint64_t f_start, int mode)
  * whose estimate reads low (on air estacao2 read 5-7 dB on every mode where
  * DATAC17, rated 7 dB, delivered all its frames). */
 static double snr_offset;
+/* The control frames' estimate, and the data frames'.  The control mode reads
+ * low on its own (CAR_CTL_SNR_OFFSET, the channel's ctl_snr_offset): on MPD
+ * the control frames under-read the SNR against the data modes by ~10 dB
+ * (#501), and the smoothed estimate -- and with it the rung the ladder
+ * picks -- follows them down.  The frames are still decoded and delivered:
+ * this is the estimate, not the channel. */
 static double snr_bias(int mode)
 {
-    if (!snr_biased) return snr_offset;
-    return snr_offset + (mode == FREEDV_MODE_DATAC15 || mode == FREEDV_MODE_DATAC4 || mode == ARQ_CONTROL_MODE ? -3.5 : 0.0);
+    double b = snr_offset;
+    if (snr_biased && (mode == FREEDV_MODE_DATAC15 || mode == FREEDV_MODE_DATAC4 || mode == ARQ_CONTROL_MODE))
+        b -= 3.5;
+    if (mode == ARQ_CONTROL_MODE) b += sim_channel_ctl_snr_offset(ch);
+    return b;
 }
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
 static double step_back = NAN;                         /* stepa: the way back, this much better */
+
+/* What the delivered frames' estimates read: the control frames' and the
+ * data frames', so a run can say how far apart the two read (#501's knob). */
+static double ctl_snr_sum, data_snr_sum;
+static int ctl_snr_n, data_snr_n;
+static void note_snr(int mode, double snr)
+{
+    if (mode == ARQ_CONTROL_MODE) { ctl_snr_sum += snr; ctl_snr_n++; }
+    else                          { data_snr_sum += snr; data_snr_n++; }
+}
 
 /* The detector reports a pattern this long after it ends (0.23-0.24 s on air,
  * Pi 4); a poll, by contrast, is decoded as it ends. */
@@ -664,6 +683,9 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
     snr_biased = getenv("CAR_SNR_BIAS") != NULL;
     snr_offset = getenv("CAR_SNR_OFFSET") ? atof(getenv("CAR_SNR_OFFSET")) : 0.0;
+    /* CAR_CTL_SNR_OFFSET=<dB>: the control frames' estimate reads that much
+     * off, and only theirs (#501).  0: as the channel reads. */
+    double ctl_snr_offset = getenv("CAR_CTL_SNR_OFFSET") ? atof(getenv("CAR_CTL_SNR_OFFSET")) : 0.0;
     nev = 0;
     collisions = 0;
     recv_fallbacks = 0;
@@ -678,10 +700,13 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     keydown_no = 0;
     kd_overlaps = 0;
     kd_unexplained = 0;
+    ctl_snr_sum = data_snr_sum = 0.0;
+    ctl_snr_n = data_snr_n = 0;
     memset(S, 0, sizeof(S));
 
     double snr_db = 12.0;                  /* what the sim stamps on frames */
     ch = carousel_sim_channel(seed, chan, &snr_db);
+    sim_channel_set_ctl_snr_offset(ch, ctl_snr_offset);
     snr_now = snr_db;
     if (getenv("CAR_NOHINT")) snr_db = -99.0;
 
@@ -782,10 +807,14 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                 }
             } else if (e.mode == ARQ_CONTROL_MODE) {
                 heard(s);
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)), 0);
+                float snr = (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode));
+                note_snr(e.mode, snr);
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, snr, 0);
             } else if (e.mode == s->rx_mode && (!cs_decodable || s->bound_at <= e.f_start)) {
                 heard(s);
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)), 0);
+                float snr = (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode));
+                note_snr(e.mode, snr);
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, snr, 0);
             }
             free(e.bytes);
         }
@@ -832,6 +861,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;
     res->overruns = car_overruns(&S[0].car) + car_overruns(&S[1].car) + slot_breaches;
+    /* What the delivered frames' estimates read, each way round: the control
+     * frames' and the data frames' (CAR_CTL_SNR_OFFSET). */
+    res->ctl_snr_db  = ctl_snr_n  ? ctl_snr_sum  / ctl_snr_n  : NAN;
+    res->data_snr_db = data_snr_n ? data_snr_sum / data_snr_n : NAN;
+    res->ctl_frames  = ctl_snr_n;
+    res->data_frames = data_snr_n;
     /* No timer either side, and nobody on the air: a station keyed when the
      * run ends arms its timers only as the keydown ends (a 27 s BW500 floor
      * frame often straddles the limit). */

@@ -29,6 +29,7 @@ void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
     unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
+    unsetenv("CAR_CTL_SNR_OFFSET");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -325,6 +326,45 @@ static void test_carousel_req_scores_the_frames_sent(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.one_frame_kills, "one lost frame took a rung out");
 }
 
+/* CAR_CTL_SNR_OFFSET: the control frames' estimate reads that much off, and
+ * only theirs (#501).  The frames are still decoded and delivered -- the knob
+ * is the estimate, not the channel -- so the session still completes, and the
+ * data frames' readings do not move.  The default (0) is the channel as it
+ * reads: the same run, down to the frame count. */
+static void test_carousel_ctl_snr_offset_moves_only_the_control_reading(void)
+{
+    car_sim_result_t plain, zero, off;
+    char what[96];
+
+    carousel_sim_run(3, "cliff:10", false, LIMIT_MS, &plain);
+    setenv("CAR_CTL_SNR_OFFSET", "0", 1);
+    carousel_sim_run(3, "cliff:10", false, LIMIT_MS, &zero);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+    snprintf(what, sizeof(what), "the offset 0 run differs from the plain one (seed 3 cliff:10)");
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(plain.done_ms, zero.done_ms, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.frames, zero.frames, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.keydowns, zero.keydowns, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.ctl_frames, zero.ctl_frames, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.data_frames, zero.data_frames, what);
+
+    setenv("CAR_CTL_SNR_OFFSET", "-10", 1);
+    carousel_sim_run(3, "cliff:10", false, LIMIT_MS, &off);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+
+    /* The control frames read ten dB lower than they did ... */
+    snprintf(what, sizeof(what), "the control frames read %.2f dB, the data frames %.2f dB",
+             off.ctl_snr_db, off.data_snr_db);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)(plain.ctl_snr_db - 10.0), (float)off.ctl_snr_db, what);
+    /* ... and the data frames read what they read. */
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)plain.data_snr_db, (float)off.data_snr_db, what);
+    /* The frames are still decoded: the session completes, and what arrives is
+     * what was sent. */
+    TEST_ASSERT_TRUE_MESSAGE(off.intact, what);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, off.done_ms, what);
+    TEST_ASSERT_GREATER_THAN_INT_MESSAGE(0, off.ctl_frames, what);
+    TEST_ASSERT_GREATER_THAN_INT_MESSAGE(0, off.data_frames, what);
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -499,6 +539,7 @@ int main(void)
     RUN_TEST(test_carousel_no_reprobe_below_gate);
     RUN_TEST(test_carousel_dark_rounds_drop_the_rung);
     RUN_TEST(test_carousel_req_scores_the_frames_sent);
+    RUN_TEST(test_carousel_ctl_snr_offset_moves_only_the_control_reading);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }

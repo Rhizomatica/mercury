@@ -28,6 +28,7 @@ struct sim_channel {
     bool     fading;          /* time-varying SNR (see sim_channel_set_fading) */
     double   fade_mean_db, fade_doppler_hz;
     double   fade_w[2][FADE_OSC], fade_ph[2][FADE_OSC][2];  /* per direction */
+    double   ctl_snr_offset;  /* the control mode's SNR reads this much off */
     uint32_t stat_sent[SIM_STAT_MODES], stat_ok[SIM_STAT_MODES];
     uint64_t stat_air_ms[SIM_STAT_MODES];
 };
@@ -150,6 +151,17 @@ void sim_channel_set_fading(sim_channel_t *ch, double mean_snr_db, double dopple
             ch->fade_ph[d][k][0] = 2.0 * M_PI * next_rand(ch);
             ch->fade_ph[d][k][1] = 2.0 * M_PI * next_rand(ch);
         }
+}
+
+/* The control mode's SNR reads this much off (see sim_channel.h). */
+void sim_channel_set_ctl_snr_offset(sim_channel_t *ch, double db)
+{
+    if (ch) ch->ctl_snr_offset = db;
+}
+
+double sim_channel_ctl_snr_offset(const sim_channel_t *ch)
+{
+    return ch ? ch->ctl_snr_offset : 0.0;
 }
 
 /* |h(t)|^2 for one direction, mean 1. */
