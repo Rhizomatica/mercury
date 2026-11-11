@@ -58,6 +58,9 @@ func startOnScreenKeyboard(app fyne.App, logf func(string)) {
 }
 
 // watch follows the focus: the text field focused in any of the app's windows.
+// Polled: Fyne has no public focus hook for its desktop driver (the canvas's
+// OnFocus is internal, for its mobile driver), and a look at a few windows'
+// focus four times a second is nothing beside the modem's decoding.
 func (k *onScreenKeyboard) watch() {
 	for range time.Tick(250 * time.Millisecond) {
 		var field fyne.Focusable
@@ -118,13 +121,15 @@ func (k *onScreenKeyboard) follow(field fyne.Focusable) {
 // call sends one method call to maliit-server, connecting first if need be.
 // The message has no destination: godbus's Object.Call always sets one, and
 // on a peer-to-peer connection an empty destination makes the server drop it.
+// The server answers every call (as with upstream's own client, nothing waits
+// for it), and an error answer goes to the log: a keyboard that does not come
+// up then says why.
 func (k *onScreenKeyboard) call(member string, args ...interface{}) bool {
 	if k.conn == nil && !k.connect() {
 		return false
 	}
 	msg := &dbus.Message{
-		Type:  dbus.TypeMethodCall,
-		Flags: dbus.FlagNoReplyExpected,
+		Type: dbus.TypeMethodCall,
 		Headers: map[dbus.HeaderField]dbus.Variant{
 			dbus.FieldPath:      dbus.MakeVariant(dbus.ObjectPath(maliitServerPath)),
 			dbus.FieldInterface: dbus.MakeVariant(maliitServerIface),
@@ -135,12 +140,18 @@ func (k *onScreenKeyboard) call(member string, args ...interface{}) bool {
 	if len(args) > 0 {
 		msg.Headers[dbus.FieldSignature] = dbus.MakeVariant(dbus.SignatureOf(args...))
 	}
-	if c := k.conn.Send(msg, nil); c.Err != nil {
+	c := k.conn.Send(msg, make(chan *dbus.Call, 1))
+	if c.Err != nil {
 		k.logf("On-screen keyboard: " + member + ": " + c.Err.Error() + "\n")
 		k.conn.Close()
 		k.conn, k.shown = nil, false
 		return false
 	}
+	go func() {
+		if r := <-c.Done; r.Err != nil {
+			k.logf("On-screen keyboard: maliit-server answered " + member + ": " + r.Err.Error() + "\n")
+		}
+	}()
 	return true
 }
 
@@ -172,6 +183,8 @@ func (k *onScreenKeyboard) connect() bool {
 			"SetDetectableRepeat":   "setDetectableAutoRepeat",
 			"SetSelection":          "setSelection",
 			"SetLanguage":           "setLanguage",
+			"PreeditRectangle":      "preeditRectangle",
+			"Selection":             "selection",
 		}, maliitContextPath, maliitContextIface)
 	}
 	if err != nil {
@@ -254,3 +267,9 @@ func (m *maliitContext) SetRedirectKeys(enabled bool) *dbus.Error               
 func (m *maliitContext) SetDetectableRepeat(enabled bool) *dbus.Error                { return nil }
 func (m *maliitContext) SetSelection(start, length int32) *dbus.Error                { return nil }
 func (m *maliitContext) SetLanguage(language string) *dbus.Error                     { return nil }
+
+// No preedit is shown and no selection is offered: both answer "none".
+func (m *maliitContext) PreeditRectangle() (bool, int32, int32, int32, int32, *dbus.Error) {
+	return false, 0, 0, 0, 0, nil
+}
+func (m *maliitContext) Selection() (bool, string, *dbus.Error) { return false, "", nil }
