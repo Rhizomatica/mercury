@@ -2110,7 +2110,8 @@ static void rx_measure(car_t *c, int lv, uint64_t now)
 {
     int frames = rx_round_size(c, lv);
     if (!c->rx_tail && c->poll_n > (c->round_frames > 0 ? c->round_frames : 1))
-        car_trace(c, "rx: the round's tail unheard -- scored as %d frames (asked %d)", frames, c->poll_n);
+        car_trace(c, "rx: the round's tail unheard -- scored as %d frames (asked %d%s)", frames, c->poll_n,
+                  s_round_fit(c, lv) ? "" : ", fit unknown");
     rx_score(c, lv, frames, now);
 }
 
