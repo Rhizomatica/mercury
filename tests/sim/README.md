@@ -155,25 +155,46 @@ and delivered, as they are on air when they read low.  What changes is what
 the receiver makes of them -- the smoothed estimate
 (`snr_ema = 0.7·ema + 0.3·reading`, and the two-reading snap at
 `SNR_GATE_DB`), the rung the ladder picks, and the control-mode deafness
-test.  That is the mechanism behind #501: on MPD the control frames under-read
-the SNR against the data modes by ~10 dB, and the smoothed estimate follows
-them down, so a session that should climb to DATAC17/QAM16C2 stays where it
-is.
+test.  The connect hint is a control-mode reading too -- on the air it is the
+SNR field of the peer's ACCEPT, a DATAC16 frame -- so the session starts below
+where the data modes would put it and has to climb.  That is the mechanism
+behind #501: on MPD the control frames under-read the SNR against the data
+modes by ~10 dB, and the smoothed estimate follows them down, so a session
+that should climb to DATAC17/QAM16C2 stays where it is.
 
 ```
 $ CAR_CTL_SNR_OFFSET=-8 SIM_STATS=1 ./carousel_bench 4 fade:3:0.5
   mode 10:    3 frames    0 ok     14 s air      (DATAC1)
-  mode 12:   87 frames   57 ok    332 s air      (DATAC3)
-  mode 18:   38 frames   36 ok    220 s air      (DATAC4)
-  mode 23:   23 frames   23 ok     86 s air      (DATAC16, the control mode)
-seed=4 chan=fade:3:0.5 oneway a2b=8192 b2a=0 integrity=OK done_ms=804901
-readings: ctl=-5.3 dB (23 frames) data=3.0 dB (93 frames)
+  mode 12:  102 frames   70 ok    390 s air      (DATAC3)
+  mode 18:   25 frames   24 ok    145 s air      (DATAC4)
+  mode 23:   19 frames   18 ok     71 s air      (DATAC16, the control mode)
+seed=4 chan=fade:3:0.5 oneway a2b=8192 b2a=0 integrity=OK done_ms=782321
+readings: ctl=-5.5 dB (18 frames) data=3.3 dB (96 frames)
 ```
 
 The same seed without the knob rides DATAC3 the whole way (115 frames, 439 s
 of air) and finishes in 575.6 s: with the control frames reading 8 dB low the
-ladder drops to DATAC4 and the session takes 40 % longer.  That is the
+ladder drops to DATAC4 and the session takes 36 % longer.  That is the
 symptom #501 is about, reproduced on demand.
+
+**The reproduction Pedro's fix test needs** (control frames read low, the
+session must still climb to DATAC17/QAM16C2) is message traffic on a clean
+high-SNR channel -- bulk traffic has too few control frames for the drag to
+bite:
+
+```
+$ SC='A2500+1000,B300+2000,A2000+4000,B300+6000,A2000+8000,B300+10000,A1000+12000,B300+14000'
+$ CAR_LIMIT_S=3600 CAR_CTL_SNR_OFFSET=-10 SIM_STATS=1 CAR_SCRIPT="$SC" ./carousel_bench 1 cliff:16
+  mode 10:    5 frames    5 ok     24 s air      (DATAC1)
+  mode 12:    2 frames    2 ok      8 s air      (DATAC3)
+  mode 24:    7 frames    7 ok     52 s air      (DATAC17)
+seed=1 chan=cliff:16 oneway a2b=7500 b2a=1200 integrity=OK done_ms=229751
+readings: ctl=6.0 dB (21 frames) data=16.0 dB (14 frames)
+```
+
+QAM16C2 never comes: at offset 0 the same script rides it (7 frames) and
+finishes in 197.0 s, at -10 it is 229.8 s with message delays +23 % (mean)
+and +49 % (p90), and the QAM16C2 rung is absent on every seed tried (1-3).
 
 The `readings:` line is in `carousel_bench`'s output: the mean SNR the control
 frames' estimates read and the mean the data frames' read, with their frame
@@ -183,21 +204,25 @@ DATAC15, DATAC4 and DATAC16); the two add up.
 **A/B, one-way 8 KB, 10 seeds** (`CAR_LIMIT_S=3600 ./carousel_bench <seed>
 <channel>`), mean time to complete, every run finished:
 
-| channel | offset 0 | offset -8 | control reading | data reading |
-|---|---|---|---|---|
-| `awgn:0.02` | 53.2 s | 55.4 s | 12.0 -> 4.0 dB | 12.0 dB |
-| `cliff:8` | 76.1 s | 76.1 s | 8.0 -> 0.0 dB | 8.0 dB |
-| `cliff:3` | 368.0 s | 367.7 s | 3.0 -> -5.0 dB | 3.0 dB |
-| `fade:8:0.5` | 242.4 s | 249.9 s | 7.6 -> -0.3 dB | 8.2 dB |
-| `fade:3:0.5` | 569.0 s | 630.5 s | 2.6 -> -5.5 dB | 3.4 dB |
-| `nvis` | 1473.7 s | 1488.8 s | 10.0 -> 2.0 dB | 10.0 dB |
+| channel | offset 0 | offset -6 | offset -8 | offset -10 | data reading |
+|---|---|---|---|---|---|
+| `awgn:0.02` | 53.2 s | 86.8 s | 70.8 s | 70.8 s | 12.0 dB |
+| `cliff:8` | 76.1 s | 102.6 s | 98.2 s | 115.4 s | 8.0 dB |
+| `cliff:3` | 368.0 s | 399.8 s | 412.8 s | 412.8 s | 3.0 dB |
+| `fade:8:0.5` | 242.4 s | 286.8 s | 293.4 s | 246.4 s | 8.2 dB |
+| `fade:3:0.5` | 569.0 s | 599.4 s | 647.4 s | 726.2 s | 3.4 dB |
+| `nvis` | 1473.7 s | 1639.1 s | 1551.3 s | 1811.3 s | 10.0 dB |
+
+(The control readings move by exactly the offset: 12.0 -> 6.0 -> 4.0 -> 2.0 dB
+on `awgn:0.02`, and likewise on the rest.)
 
 Nothing was corrupted in any of the runs, and the offset 0 runs are the runs
-without the knob, down to the frame count.  The cost is in the ladder: where
-the estimate decides the rung, the session takes longer -- 11 % on
-`fade:3:0.5` on the mean, 40 % on the seed above.  The control plane is a
-small share of an 8 KB transfer, so the mean understates what the same bias
-does to a session that polls more.
+without the knob, down to the frame count.  The cost is in the ladder: with
+the connect hint reading low too, the session starts low and pays for the
+climb -- up to 63 % on `awgn:0.02`, 52 % on `cliff:8`, 28 % on `fade:3:0.5`,
+23 % on nvis.  (The offsets are not monotone in time: which rung the ladder
+settles on depends on where the biased readings land relative to the rung
+gates, so -6 can cost more than -10.  The readings themselves are exact.)
 
 Two limits: on the floor the control frames ride the floor mode (MFSK), so
 the knob does not apply there; and the knob moves the estimate only, so it
