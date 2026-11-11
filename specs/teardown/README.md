@@ -197,13 +197,26 @@ caller sends one DISCONNECT, no retries, and ends at its answer or when
 the retry interval is over; with its DISCONNECT already out it sends no
 more and waits out the interval running.  The callee's DISCONNECT goes in
 its next slot only, and the callee ends once it is out (or at once, if it
-was out already); it waits for that slot 30 s at most.  In the model, with
+was out already).  In the model, with
 `ABORT = TRUE`: `MAbort`, `SAbort`, and `sab` (S's host sent ABORT:
 `tx_retries_left` at 0 on the callee).  An end that ends on its own ABORT
 is clean (`Clean` takes `"abort"`); its peer must still be told.  A
 callee's ABORT drops the ack it owes the caller (`car_owes_ack`), as ABORT
 says, so `SAbort` sets `forced`.  With `ABORT = FALSE` the behaviour is
 exactly the model's before.
+
+The ABORT's DISCONNECT is on the air and done within 15 s of it, slot or
+not (abort_key_by): BPQ32 takes the radio back as it sends ABORT, and its
+scan hops 15 s later (`CheckForDetach`: `ForcedClose`, then `CloseComplete`
+and `SCANSTART 15`), whatever DISCONNECTED says.  Waiting for the peer's
+slots, the caller's DISCONNECT was still 16.1 s from keying at that hop on
+the bench (two sBitx), and the callee's waited up to 30 s for its slot.  In
+the model the caller's wait for slots is abstract already (`MDisc`); the
+callee's DISCONNECT out of turn is `SAbortKey`, which may come before any
+slot or after.  It breaks no property.  The 15 s bound itself is timing,
+which the model does not have: the sim tests
+`test_car_abort_disconnect_before_the_hop` and
+`test_car_callee_abort_disconnect_before_the_hop` check it.
 
 As first written, a caller whose DISCONNECT was out ended at once on the
 ABORT.  The model has it as `Mut_abortnow.cfg`: the caller calls again, and
@@ -225,11 +238,13 @@ Results:
   before the owed ack, 124 141 before the last word, 52 041 before M_END).  `Clean` does not apply
   here.
 - `SessionTeardown_abort.cfg`: the code's rules with the host's ABORT,
-  lossless, with the host's race and its notice.  No error, 1 865 558
-  distinct states (259 749 before the host's notice).
+  lossless, with the host's race and its notice.  No error, 1 967 830
+  distinct states (1 865 558 before `SAbortKey`, 259 749 before the host's
+  notice).
 - `SessionTeardown_abort_lossy.cfg`: the same with any frame lost.  Not
   exhausted: no error through 36.7 M distinct states at depth 48
-  (7 workers, 1 h 50 min), with 1.3 M still queued when the run was stopped.
+  (7 workers, 1 h 50 min), with 1.3 M still queued when the run was stopped.  With `SAbortKey`: no error through 9.45 M distinct states at depth 30
+  (6 workers, 25 min), 1.1 M still queued.
 - `Mut_abortnow.cfg`: lossless, the caller's ABORT with its DISCONNECT out
   ends it at once.  It violates `Clean`: its next CALL is dropped by a
   callee still replying.

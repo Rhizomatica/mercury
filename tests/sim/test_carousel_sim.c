@@ -617,8 +617,9 @@ void test_car_abort_during_teardown_ends_it(void)
 
 /* The callee hangs up, its DISCONNECT waiting for a slot of the caller's
  * that never comes (the caller hears nothing more), and then ABORTs, as a
- * BBS's BPQ32 does 30 s on: free within ARQ_CAR_ABORT_WAIT_MS, not at the
- * end of the callee's 180 s end wait. */
+ * BBS's BPQ32 does 30 s on: its DISCONNECT keys without the slot and it is
+ * free within the 15 s before BPQ32's scan hops (abort_key_by), not at the
+ * end of the callee's 180 s end wait, nor of the 30 s slot wait #514 had. */
 void test_car_callee_abort_caps_the_slot_wait(void)
 {
     sim_t *s = idle_session(9, 10.0);
@@ -634,10 +635,12 @@ void test_car_callee_abort_caps_the_slot_wait(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, state(sim_b(s)));
     arq_event_t ab = { .id = ARQ_EV_APP_DISCONNECT, .abort = true };
     sim_inject(s, sim_b(s), &ab);
-    uint64_t t = ms_to_leave(s, sim_b(s), 240000, NULL);
+    int n;
+    uint64_t t = ms_to_leave(s, sim_b(s), 240000, &n);
     char msg[64];
-    snprintf(msg, sizeof msg, "free after %llu ms", (unsigned long long)t);
-    TEST_ASSERT_TRUE_MESSAGE(t <= 31000, msg);
+    snprintf(msg, sizeof msg, "%d keydowns, free after %llu ms", n, (unsigned long long)t);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, n, msg);
+    TEST_ASSERT_TRUE_MESSAGE(t <= 15000, msg);
     sim_destroy(s);
 }
 
@@ -696,6 +699,82 @@ void test_car_abort_then_redial_keeps_clear_of_the_reply(void)
     TEST_ASSERT_TRUE_MESSAGE(t <= 20000, msg);
     sim_destroy(s);
 }
+
+/* From an ABORT until ep's one DISCONNECT is off the air (or ep has left the
+ * session), at most ms.  Counted from the end of a keydown of ep's already
+ * on the air at the ABORT: a keydown goes to the modem whole, and nothing
+ * cuts it short (*own: how long it ran on).  *keyed: whether that
+ * DISCONNECT went out. */
+static uint64_t ms_to_abort_disconnect(sim_t *s, sim_endpoint_t *ep, uint64_t ms, bool *keyed,
+                                       uint64_t *own)
+{
+    const arq_session_t *ss = sim_endpoint_session(ep);
+    *own = 0;
+    while (ss->tx_active && ss->teardown != ARQ_TD_SENT && *own < ms) {
+        sim_run_until_idle(s, 50);
+        *own += 50;
+    }
+    uint64_t t = 0;
+    *keyed = false;
+    for (; t < ms; t += 50) {
+        if (ss->conn_state == ARQ_CONN_DISCONNECTING && ss->teardown == ARQ_TD_SENT)
+            *keyed = true;
+        if (ss->conn_state != ARQ_CONN_CONNECTED && ss->conn_state != ARQ_CONN_DISCONNECTING) break;
+        if (*keyed && !ss->tx_active) break;
+        sim_run_until_idle(s, 50);
+    }
+    return t;
+}
+
+/* BPQ32 takes the radio as it sends ABORT, and its scan's first hop comes
+ * 15 s later (abort_key_by): the one DISCONNECT must be on the air and done
+ * by then, wherever in the peer's slots the ABORT falls.  Both directions
+ * busy, BPQ32's timing: DISCONNECT, then ABORT 30 s on with the drain still
+ * running.  On mercuryv2 the caller's DISCONNECT waited for the peer's slots
+ * (16.1 s on the bench, two sBitx), and the callee's for its next slot, up
+ * to 30 s.  Swept over the moment of the hang-up, as the slots move.  A
+ * keydown of our own on the air at the ABORT is not counted (see
+ * ms_to_abort_disconnect). */
+static void abort_disconnect_before_the_hop(bool callee)
+{
+    static uint8_t blob[6000];
+    fill(blob, sizeof(blob), 5);
+    uint64_t worst = 0;
+    char msg[128] = "";
+    for (int k = 0; k < 12; k++) {
+        sim_t *s = idle_session(31 + k, 6.0);
+        sim_endpoint_t *me = callee ? sim_b(s) : sim_a(s);
+        sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+        sim_endpoint_queue_tx(sim_b(s), blob, sizeof(blob));
+        sim_run_until_idle(s, 8000 + 1700 * k);
+        if (state(me) != ARQ_CONN_CONNECTED) { sim_destroy(s); continue; }
+        arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+        sim_inject(s, me, &disc);
+        sim_run_until_idle(s, 30000);        /* BPQ32: 30 s with no DISCONNECTED */
+        if (state(me) != ARQ_CONN_CONNECTED && state(me) != ARQ_CONN_DISCONNECTING) {
+            sim_destroy(s);                  /* drained and done within the 30 s */
+            continue;
+        }
+        if (sim_endpoint_session(me)->teardown == ARQ_TD_SENT) { sim_destroy(s); continue; }
+        arq_event_t ab = { .id = ARQ_EV_APP_DISCONNECT, .abort = true };
+        sim_inject(s, me, &ab);
+        bool keyed;
+        uint64_t own;
+        uint64_t t = ms_to_abort_disconnect(s, me, 120000, &keyed, &own);
+        if (!keyed || t > worst) {
+            snprintf(msg, sizeof msg, "case %d: DISCONNECT %s, %llu ms after the ABORT (+%llu ms of our keydown)",
+                     k, keyed ? "off the air" : "never keyed", (unsigned long long)t, (unsigned long long)own);
+            if (!keyed) { sim_destroy(s); TEST_FAIL_MESSAGE(msg); }
+            worst = t;
+        }
+        sim_destroy(s);
+    }
+    TEST_ASSERT_TRUE_MESSAGE(worst > 0, "no case reached the ABORT with the DISCONNECT still held");
+    TEST_ASSERT_TRUE_MESSAGE(worst <= 15000, msg);
+}
+
+void test_car_abort_disconnect_before_the_hop(void)        { abort_disconnect_before_the_hop(false); }
+void test_car_callee_abort_disconnect_before_the_hop(void) { abort_disconnect_before_the_hop(true); }
 
 /* Request and reply, as UUCP talks: A's request arrives, B's application
  * answers while B's last poll (nothing left either way) is on the air.  The
@@ -929,6 +1008,8 @@ int main(void)
     RUN_TEST(test_car_abort_then_redial_keeps_clear_of_the_reply);
     RUN_TEST(test_car_callee_abort_caps_the_slot_wait);
     RUN_TEST(test_car_callee_abort_one_disconnect);
+    RUN_TEST(test_car_abort_disconnect_before_the_hop);
+    RUN_TEST(test_car_callee_abort_disconnect_before_the_hop);
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
     RUN_TEST(test_car_bandwidth_caps_the_rungs);

@@ -785,6 +785,9 @@ static void car_set_seed(arq_session_t *sess, uint16_t seed)
 static void car_io_end(void *ctx)
 {
     arq_session_t *sess = ctx;
+    /* ABORT's one DISCONNECT, keyed outside the slots, is out already. */
+    if (sess->tx_retries_left == 0 && sess->teardown == ARQ_TD_SENT)
+        return;
     HLOGI(LOG_COMP, "carousel: DISCONNECT in my slot");
     send_disconnect_frame(sess);
     sess->teardown = ARQ_TD_SENT;
@@ -936,13 +939,46 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
  * both keyed 640 ms, connected after 24.0 s against 13.8 s; specs/teardown,
  * Mut_abortnow).
  * The callee: its DISCONNECT goes in its next slot only, not again in the
- * slots after, and that slot is waited for ARQ_CAR_ABORT_WAIT_MS at most,
- * not the 180 s of ARQ_CAR_END_WAIT_MS.  One already out and off the air
- * has told the caller: the session ends now.  tx_retries_left at 0 marks it:
- * the callee's DISCONNECT is not retried on the FSM's timers, and its 0
- * otherwise means a quiet caller, which ends the session at once
- * (car_begin_disconnect).  True when the session has ended here. */
-#define ARQ_CAR_ABORT_WAIT_MS 30000
+ * slots after.  One already out and off the air has told the caller: the
+ * session ends now.  tx_retries_left at 0 marks it: the callee's DISCONNECT
+ * is not retried on the FSM's timers, and its 0 otherwise means a quiet
+ * caller, which ends the session at once (car_begin_disconnect).
+ *
+ * Either way the one DISCONNECT not yet out keys by abort_key_by(), slot or
+ * no slot: the host takes the radio soon after its ABORT.  BPQ32 does so as
+ * it sends it: CheckForDetach (linbpq CommonCode.c) sends the ABORT through
+ * ForcedClose and goes straight on to CloseComplete, whose VARAReleaseTNC
+ * sends LISTEN ON and SCANSTART 15, whatever our DISCONNECTED says.  On air
+ * (K7EK, 2026-11-10) LISTEN ON came in the ABORT's millisecond and the first
+ * hop's LISTEN OFF 16.6 s later.  Waiting for the peer's slots, the caller's
+ * DISCONNECT was still 16.1 s from keying at that hop (bench, two sBitx), and
+ * the callee's slot wait ran to 30 s: the peer was never told, and sat out
+ * its 240 s watchdog.  teardown_deadline_ms holds the key-by time, for both
+ * ends (the caller's is 0 otherwise in DISCONNECTING: car_begin_disconnect).
+ * True when the session has ended here. */
+#define ARQ_CAR_ABORT_WAIT_MS 30000   /* the callee's DISCONNECT on the air at the ABORT: its end at most */
+#define ARQ_ABORT_RELEASE_MS  15000   /* BPQ32: the scan's first hop after an ABORT (SCANSTART 15) */
+#define ARQ_ABORT_MARGIN_MS    1000
+
+/* When ABORT's DISCONNECT keys at the latest: off the air a margin before
+ * the host's scan takes the radio.  A frame too long for that (the MFSK
+ * floor at 500 Hz: 26 s) keys at once. */
+static uint64_t abort_key_by(const arq_session_t *sess, uint64_t now)
+{
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(session_ctl_mode(sess));
+    uint64_t air = tm ? (uint64_t)(tm->frame_duration_s * 1000.0f) : 4400;
+    return air + ARQ_ABORT_MARGIN_MS < ARQ_ABORT_RELEASE_MS
+         ? now + ARQ_ABORT_RELEASE_MS - air - ARQ_ABORT_MARGIN_MS : now;
+}
+
+/* ABORT's DISCONNECT, not yet out, has reached its key-by time. */
+static bool abort_must_key(const arq_session_t *sess, uint64_t now)
+{
+    return sess->conn_state == ARQ_CONN_DISCONNECTING && sess->tx_retries_left == 0 &&
+           sess->teardown != ARQ_TD_SENT && sess->teardown_deadline_ms != 0 &&
+           now >= sess->teardown_deadline_ms;
+}
+
 static bool abort_teardown(arq_session_t *sess, uint64_t now)
 {
     if (sess->conn_state != ARQ_CONN_DISCONNECTING)
@@ -956,16 +992,21 @@ static bool abort_teardown(arq_session_t *sess, uint64_t now)
         enter_idle_after_call(sess);
         return true;
     }
-    if (callee_ending(sess))
+    if (sess->teardown == ARQ_TD_SENT)
     {
-        if (sess->teardown_deadline_ms > now + ARQ_CAR_ABORT_WAIT_MS)
+        /* On the air now (the callee), or waiting out its answer (the
+         * caller): nothing more to key. */
+        if (callee_ending(sess) && sess->teardown_deadline_ms > now + ARQ_CAR_ABORT_WAIT_MS)
             sess->teardown_deadline_ms = now + ARQ_CAR_ABORT_WAIT_MS;
-        HLOGI(LOG_COMP, "ABORT: one DISCONNECT, in my next slot (waiting %llu s at most)",
-              (unsigned long long)((sess->teardown_deadline_ms - now + 999) / 1000));
+        HLOGI(LOG_COMP, "ABORT: our DISCONNECT is out -- no more retries");
+        return false;
     }
-    else
-        HLOGI(LOG_COMP, sess->teardown == ARQ_TD_SENT ? "ABORT: our DISCONNECT is out -- no more retries"
-                                                      : "ABORT: one DISCONNECT, no retries");
+    sess->teardown_deadline_ms = abort_key_by(sess, now);
+    if (!callee_ending(sess) && sess->deadline_ms > sess->teardown_deadline_ms)
+        sess->deadline_ms = sess->teardown_deadline_ms;   /* a wait for the peer's slots, cut short */
+    HLOGI(LOG_COMP, "ABORT: one DISCONNECT, no retries, on the air within %llu ms%s",
+          (unsigned long long)(sess->teardown_deadline_ms - now),
+          callee_ending(sess) ? " (in my next slot if one comes first)" : "");
     return false;
 }
 
@@ -984,6 +1025,17 @@ static bool car_disconnect_must_wait(arq_session_t *sess, const arq_event_t *ev,
     const arq_mode_timing_t *tm = arq_protocol_mode_timing(session_ctl_mode(sess));
     uint64_t len = 110 + (tm ? (uint64_t)(tm->frame_duration_s * 1000.0f) : 4400) + 200;
     uint64_t at = car_free_at(sess->car, now, len);
+    /* ABORT's DISCONNECT goes by its key-by time, slots or not (abort_key_by). */
+    if (sess->tx_retries_left == 0 && sess->teardown_deadline_ms != 0 && at > sess->teardown_deadline_ms)
+    {
+        if (now >= sess->teardown_deadline_ms)
+        {
+            HLOGI(LOG_COMP, "ABORT: DISCONNECT keyed %llu ms before the peer's slots are free",
+                  (unsigned long long)(at - now));
+            return false;
+        }
+        at = sess->teardown_deadline_ms;
+    }
     if (at <= now)
         return false;
     HLOGD(LOG_COMP, "DISCONNECT waits %llu ms for the peer's slots", (unsigned long long)(at - now));
@@ -1580,6 +1632,11 @@ static void fire_deferred_connect(arq_session_t *sess)
 static bool disconnect_must_wait(arq_session_t *sess)
 {
     uint64_t now = time_now_ms();
+    if (!sess->tx_active && abort_must_key(sess, now))
+    {
+        sess->defer_count = 0;      /* the host takes the radio soon (abort_key_by) */
+        return false;
+    }
     if (sess->defer_count >= (sess->tx_active ? ARQ_CHANNEL_DEFER_KEYED_MAX : ARQ_CHANNEL_DEFER_MAX))
     {
         HLOGW(LOG_COMP, "DISCONNECT deferral cap reached (%u) - keying anyway",
@@ -1659,6 +1716,24 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
             car_on_tx_done(sess->car, now);
             return;
         case ARQ_EV_TIMER_CAROUSEL:
+            /* ABORT's DISCONNECT, no slot of the caller's in time: it goes
+             * now, before the host's scan takes the radio (abort_key_by). */
+            if (abort_must_key(sess, now))
+            {
+                if (sess->tx_active)
+                {
+                    sess->teardown_deadline_ms = now + ARQ_CHANNEL_DEFER_MS;   /* after our keydown */
+                    return;
+                }
+                tm = arq_protocol_mode_timing(session_ctl_mode(sess));
+                HLOGI(LOG_COMP, "ABORT: DISCONNECT keyed outside my slots, the host's scan due");
+                send_disconnect_frame(sess);
+                sess->teardown = ARQ_TD_SENT;
+                /* It ends at its TX_COMPLETE; this is the fallback. */
+                sess->teardown_deadline_ms = now + (tm ? (uint64_t)(tm->frame_duration_s * 1000.0f) : 4400) +
+                                             ARQ_CAR_ABORT_WAIT_MS;
+                return;
+            }
             if (now >= sess->teardown_deadline_ms)
             {
                 HLOGI(LOG_COMP, "Disconnect finalized (timeout: the caller never answered)");
