@@ -697,6 +697,58 @@ void test_car_abort_then_redial_keeps_clear_of_the_reply(void)
     sim_destroy(s);
 }
 
+/* The callee's ABORT on a link whose control mode reaches the caller only
+ * part of the time, though its MFSK does (on air, KG9NI calling K7EK,
+ * 2026-11-11, 16:15: KG9NI heard K7EK at -6 to -7 dB; K7EK's acknowledgement
+ * of the B2 "FQ" and both its DISCONNECTs were lost, and KG9NI sat out its
+ * 240 s watchdog).  B's host ABORTs 30 s after B has the last of A's data, as
+ * K7EK's did 37 s after the FQ.  Returns how many of n callers were told
+ * (left CONNECTED within 60 s of the ABORT). */
+static int ctl_loss_abort_told(int n, uint64_t seed0)
+{
+    static uint8_t blob[3000];
+    fill(blob, sizeof(blob), 7);
+    int told = 0;
+    for (int k = 0; k < n; k++) {
+        sim_t *s = make_sim(seed0 + (uint64_t)k, 0.0);
+        sim_set_snr_asym(s, 5.0, -6.5);
+        sim_set_return_mode_per(s, FREEDV_MODE_DATAC16, 0.4);
+        connect_ab(s);
+        for (int i = 0; i < 1200 && !(state(sim_a(s)) == ARQ_CONN_CONNECTED &&
+                                      state(sim_b(s)) == ARQ_CONN_CONNECTED); i++)
+            sim_run_until_idle(s, 100);
+        if (state(sim_a(s)) != ARQ_CONN_CONNECTED || state(sim_b(s)) != ARQ_CONN_CONNECTED) {
+            sim_destroy(s);
+            continue;
+        }
+        sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+        static uint8_t rx[4096];
+        for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)) < sizeof(blob); i++)
+            sim_run_until_idle(s, 100);
+        sim_run_until_idle(s, 30000);
+        arq_event_t ab = { .id = ARQ_EV_APP_DISCONNECT, .abort = true };
+        sim_inject(s, sim_b(s), &ab);
+        for (int i = 0; i < 600 && state(sim_a(s)) == ARQ_CONN_CONNECTED; i++)
+            sim_run_until_idle(s, 100);
+        if (state(sim_a(s)) != ARQ_CONN_CONNECTED) told++;
+        sim_destroy(s);
+    }
+    return told;
+}
+
+/* mercuryv2: 17 of 30.  A caller that misses two answers in a row while it
+ * still hears the callee takes itself deaf to the control mode
+ * (carousel.c, ctl_deaf_on_asks), and the callee's DISCONNECT goes on MFSK:
+ * 27.  The 3 left lost single answers, never two in a row, and then the one
+ * DISCONNECT on DATAC16. */
+void test_car_ctl_loss_callee_abort_tells_the_caller(void)
+{
+    int told = ctl_loss_abort_told(30, 300);
+    char msg[64];
+    snprintf(msg, sizeof msg, "%d of 30 callers told", told);
+    TEST_ASSERT_TRUE_MESSAGE(told >= 25, msg);
+}
+
 /* Request and reply, as UUCP talks: A's request arrives, B's application
  * answers while B's last poll (nothing left either way) is on the air.  The
  * reply came too late for that poll and B was not idle yet, so it waited for
@@ -929,6 +981,7 @@ int main(void)
     RUN_TEST(test_car_abort_then_redial_keeps_clear_of_the_reply);
     RUN_TEST(test_car_callee_abort_caps_the_slot_wait);
     RUN_TEST(test_car_callee_abort_one_disconnect);
+    RUN_TEST(test_car_ctl_loss_callee_abort_tells_the_caller);
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
     RUN_TEST(test_car_bandwidth_caps_the_rungs);

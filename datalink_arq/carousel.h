@@ -317,7 +317,11 @@ void car_set_floor_mode(car_t *c, int mode);
  * for good: the station transmits only MFSK (arq:mfsk_tx_only, an FSK-only
  * radio; the connect's TX-MFSK-only bit).  Its peer holds it in ctl_deaf,
  * the station itself in peer_ctl_deaf; nothing the session hears clears it. */
-enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2, CAR_DEAF_MFSK_TX = 3 };
+/* LOSS is deaf by the peer's control going missing while the peer is heard:
+ * asks unanswered (ctl_deaf_on_asks in carousel.c), where the reading sits
+ * in the band DATAC16 decodes only part of.  It clears on a reading well
+ * above that band, not on the band's own edge. */
+enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2, CAR_DEAF_MFSK_TX = 3, CAR_DEAF_LOSS = 4 };
 /* Seed, from the connect exchange, whether each end hears the other below the
  * control mode (CAR_DEAF_*; see ctl_on_floor in carousel.c).  Frames keep
  * both current, all but MFSK_TX. */
