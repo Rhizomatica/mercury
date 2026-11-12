@@ -83,6 +83,16 @@ int  audioio_restart(const char *capture_dev, const char *playback_dev,
 int  audioio_wait_healthy(int timeout_ms) { (void)timeout_ms; return 0; }
 void audioio_hl2_set(const audioio_hl2_settings *s) { (void)s; }
 void audioio_hl2_get(audioio_hl2_settings *s) { memset(s, 0, sizeof(*s)); }
+/* Two enumerated devices, as Windows names a radio's USB codec. */
+int  audioio_device_name(int audio_subsys, int mode, const char *id, char *name, size_t len)
+{
+    (void)audio_subsys;
+    const char *n = NULL;
+    if (mode == 1 && strcmp(id, "{0.0.1.00000000}.{cap-1}") == 0)  n = "Microphone (3- USB Audio CODEC )";
+    if (mode == 0 && strcmp(id, "{0.0.0.00000000}.{play-1}") == 0) n = "Speakers (3- USB Audio CODEC )";
+    snprintf(name, len, "%s", n ? n : "");
+    return n ? 0 : -1;
+}
 int  get_soundcard_list(int audio_system, int mode,
                         char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX], int max_count)
 { (void)audio_system; (void)mode; (void)ids; (void)dev_names; (void)max_count; return 0; }
@@ -279,6 +289,34 @@ void test_set_callsign_clear_is_saved(void)
     TEST_ASSERT_EQUAL_STRING("", r.callsign);
 }
 
+/* A chosen sound card is saved with its name, which finds it again when
+ * Windows gives it a new id (N3JXB 2026-11-11, K7EK 2026-11-10). */
+void test_set_audio_config_saves_the_device_names(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, send_cmd("set_audio_config", "{0.0.1.00000000}.{cap-1}",
+                                      "{0.0.0.00000000}.{play-1}", "left", "", "", "", ""));
+
+    mercury_config r = reload();
+    TEST_ASSERT_EQUAL_STRING("{0.0.1.00000000}.{cap-1}", r.input_device);
+    TEST_ASSERT_EQUAL_STRING("Microphone (3- USB Audio CODEC )", r.input_device_name);
+    TEST_ASSERT_EQUAL_STRING("{0.0.0.00000000}.{play-1}", r.output_device);
+    TEST_ASSERT_EQUAL_STRING("Speakers (3- USB Audio CODEC )", r.output_device_name);
+}
+
+/* A device not in the list has no name to save: none, not a stale one. */
+void test_set_audio_config_unknown_device_saves_no_name(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, send_cmd("set_audio_config", "{0.0.1.00000000}.{cap-1}",
+                                      "{0.0.0.00000000}.{play-1}", "left", "", "", "", ""));
+    TEST_ASSERT_EQUAL_INT(0, send_cmd("set_audio_config", "hw:9,0", "hw:9,0",
+                                      "left", "", "", "", ""));
+
+    mercury_config r = reload();
+    TEST_ASSERT_EQUAL_STRING("hw:9,0", r.input_device);
+    TEST_ASSERT_EQUAL_STRING("", r.input_device_name);
+    TEST_ASSERT_EQUAL_STRING("", r.output_device_name);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -289,5 +327,7 @@ int main(void)
     RUN_TEST(test_legacy_set_radio_config_is_refused);
     RUN_TEST(test_set_callsign_is_saved);
     RUN_TEST(test_set_callsign_clear_is_saved);
+    RUN_TEST(test_set_audio_config_saves_the_device_names);
+    RUN_TEST(test_set_audio_config_unknown_device_saves_no_name);
     return UNITY_END();
 }

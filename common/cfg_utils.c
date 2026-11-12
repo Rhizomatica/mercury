@@ -52,6 +52,8 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->ptt.hamlib_conf[0] = '\0';
     cfg->input_device[0]    = '\0';
     cfg->output_device[0]   = '\0';
+    cfg->input_device_name[0]  = '\0';
+    cfg->output_device_name[0] = '\0';
     cfg->capture_channel    = LEFT;
     cfg->sound_system       = -1;  /* auto: resolved by audioio_pick_default_subsystem() */
     cfg->arq_tcp_base_port  = DEFAULT_ARQ_PORT;       /* 8300   */
@@ -370,6 +372,14 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
         cfg->output_device[sizeof(cfg->output_device) - 1] = '\0';
     }
 
+    s = iniparser_getstring(ini, CFG_KEY_INPUT_DEVICE_NAME, NULL);
+    if (s)
+        snprintf(cfg->input_device_name, sizeof(cfg->input_device_name), "%s", s);
+
+    s = iniparser_getstring(ini, CFG_KEY_OUTPUT_DEVICE_NAME, NULL);
+    if (s)
+        snprintf(cfg->output_device_name, sizeof(cfg->output_device_name), "%s", s);
+
     s = iniparser_getstring(ini, CFG_KEY_CAPTURE_CHANNEL, NULL);
     if (s)
         cfg->capture_channel = parse_capture_channel(s);
@@ -559,6 +569,16 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
 
     cfg_escape_str(escaped, sizeof(escaped), cfg->output_device);
     fprintf(f, "output_device = \"%s\"\n", escaped);
+
+    /* Written only when known: a config without them reads as before. */
+    if (cfg->input_device_name[0]) {
+        cfg_escape_str(escaped, sizeof(escaped), cfg->input_device_name);
+        fprintf(f, "input_device_name = \"%s\"\n", escaped);
+    }
+    if (cfg->output_device_name[0]) {
+        cfg_escape_str(escaped, sizeof(escaped), cfg->output_device_name);
+        fprintf(f, "output_device_name = \"%s\"\n", escaped);
+    }
 
     fprintf(f, "capture_channel = %s\n",  capture_channel_name(cfg->capture_channel));
     fprintf(f, "sound_system = %s\n",     cfg_sound_system_name(cfg->sound_system));
