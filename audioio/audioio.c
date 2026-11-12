@@ -200,6 +200,11 @@ static const char *audio_rate_mismatch_hint(void)
     }
 }
 
+/* From datalink_arq/arq.c (arq.h: not included, see the sock transport
+ * below): 0 = RX, 1 = TX.  The capture thread reads it on every platform
+ * (cap_recover_on_stall). */
+extern int  arq_get_trx(void);
+
 /* Devices an enumeration looks at, at most. */
 #define DEVICE_RESOLVE_MAX 64
 
@@ -660,9 +665,9 @@ static void fifo_ignore_sigpipe(void)
 
 /* From datalink_arq/arq.c.  Declared here instead of including arq.h so the
  * audioio library keeps its narrow include surface (see audioio/Makefile).
- * arq_get_trx() returns 0 = RX, 1 = TX (arq.h). */
+ * arq_get_trx() is declared with the forward declarations above, outside
+ * any platform block: the capture thread uses it on every platform. */
 extern void arq_notify_virtual_time(void);
-extern int  arq_get_trx(void);
 
 static int sock_connect_retry(const char *path)
 {
