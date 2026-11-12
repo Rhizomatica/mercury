@@ -30,5 +30,18 @@
     <!-- rigctld/flrig over the network. -->
     <key>com.apple.security.network.client</key>
     <true/>
+
+    <!-- Files: the file to broadcast and the folder for received files are
+         picked in the system's open panel (picker_macos.m), the folder is
+         kept across restarts by its bookmark, and received files go to
+         Downloads until the operator picks a folder.  Without these the
+         sandbox leaves the app only its container, which the user cannot
+         see (App Review, guideline 2.4.5(i)). -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    <key>com.apple.security.files.bookmarks.app-scope</key>
+    <true/>
+    <key>com.apple.security.files.downloads.read-write</key>
+    <true/>
 </dict>
 </plist>

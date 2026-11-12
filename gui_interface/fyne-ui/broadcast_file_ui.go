@@ -9,6 +9,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -105,6 +106,13 @@ func newBroadcastFilePanel(win fyne.Window, prefs fyne.Preferences,
 	p.rxDir = defaultBroadcastRxDir()
 	if prefs != nil {
 		p.rxDir = prefs.StringWithFallback(broadcastRxDirPrefKey, p.rxDir)
+		// macOS, sandboxed: a folder chosen before is reached again only
+		// through its bookmark (picker_macos.go).
+		if bm, err := base64.StdEncoding.DecodeString(prefs.String(broadcastRxBookmarkPrefKey)); err == nil {
+			if dir := nativeOpenBookmark(bm); dir != "" {
+				p.rxDir = dir
+			}
+		}
 	}
 	p.rxDirLbl = widget.NewLabel(p.rxDir)
 	p.rxDirLbl.Wrapping = fyne.TextTruncate
@@ -129,6 +137,11 @@ func defaultBroadcastRxDir() string {
 	if home, err := os.UserHomeDir(); err == nil {
 		dl := filepath.Join(home, "Downloads")
 		if st, err := os.Stat(dl); err == nil && st.IsDir() {
+			// A sandboxed Mac app's home is its container, whose Downloads
+			// is a link to the user's: show the folder the user knows.
+			if real, err := filepath.EvalSymlinks(dl); err == nil {
+				return real
+			}
 			return dl
 		}
 		return home
@@ -185,6 +198,13 @@ func (p *broadcastFilePanel) setConnected(on bool) {
 }
 
 func (p *broadcastFilePanel) onChooseRxDir() {
+	if nativePick(true, func(dir string, bookmark []byte) {
+		if dir != "" {
+			fyne.Do(func() { p.setRxDir(dir, bookmark) })
+		}
+	}) {
+		return
+	}
 	dialog.ShowFolderOpen(func(u fyne.ListableURI, err error) {
 		if err != nil || u == nil {
 			return
@@ -194,17 +214,24 @@ func (p *broadcastFilePanel) onChooseRxDir() {
 			dialog.ShowError(fmt.Errorf("that folder is not on the local filesystem"), p.win)
 			return
 		}
-		p.rxDir = dir
-		p.rxDirLbl.SetText(dir)
-		if p.prefs != nil {
-			p.prefs.SetString(broadcastRxDirPrefKey, dir)
-		}
-		// A running receiver holds the old directory; restart it on the new one.
-		if p.rxEnabled.Checked {
-			p.stopReceiving()
-			p.startReceiving()
-		}
+		p.setRxDir(dir, nil)
 	}, p.win)
+}
+
+// setRxDir takes the folder the operator chose for received files, with its
+// bookmark where the system gave one (picker_macos.go).
+func (p *broadcastFilePanel) setRxDir(dir string, bookmark []byte) {
+	p.rxDir = dir
+	p.rxDirLbl.SetText(dir)
+	if p.prefs != nil {
+		p.prefs.SetString(broadcastRxDirPrefKey, dir)
+		p.prefs.SetString(broadcastRxBookmarkPrefKey, base64.StdEncoding.EncodeToString(bookmark))
+	}
+	// A running receiver holds the old directory; restart it on the new one.
+	if p.rxEnabled.Checked {
+		p.stopReceiving()
+		p.startReceiving()
+	}
 }
 
 func (p *broadcastFilePanel) onToggleReceive(on bool) {
@@ -301,6 +328,13 @@ func (p *broadcastFilePanel) onBroadcastFrame(frame []byte) bool {
 }
 
 func (p *broadcastFilePanel) onChoose() {
+	if nativePick(false, func(path string, _ []byte) {
+		if path != "" {
+			fyne.Do(func() { p.setPath(path) })
+		}
+	}) {
+		return
+	}
 	dialog.ShowFileOpen(func(rc fyne.URIReadCloser, err error) {
 		if err != nil || rc == nil {
 			return
@@ -311,27 +345,32 @@ func (p *broadcastFilePanel) onChoose() {
 			dialog.ShowError(fmt.Errorf("that file is not on the local filesystem"), p.win)
 			return
 		}
-		// Refuse an oversized file HERE rather than after the operator has
-		// started a transmission: the cap is on the bundle, which is the file
-		// plus its name, so check the way the encoder will.
-		if st, serr := os.Stat(path); serr == nil {
-			limit := broadcastFileMaxBytes()
-			bundle := st.Size() + int64(len(filepath.Base(path))) + 5
-			if bundle > limit {
-				dialog.ShowError(fmt.Errorf(
-					"%s is %d bytes; with its name that is %d, over the %d byte limit",
-					filepath.Base(path), st.Size(), bundle, limit), p.win)
-				return
-			}
-			if st.Size() == 0 {
-				dialog.ShowError(fmt.Errorf("%s is empty", filepath.Base(path)), p.win)
-				return
-			}
-		}
-		p.path = path
-		p.pathLbl.SetText(filepath.Base(path))
-		p.sendBtn.Enable()
+		p.setPath(path)
 	}, p.win)
+}
+
+// setPath takes the file the operator chose to broadcast.
+func (p *broadcastFilePanel) setPath(path string) {
+	// Refuse an oversized file HERE rather than after the operator has
+	// started a transmission: the cap is on the bundle, which is the file
+	// plus its name, so check the way the encoder will.
+	if st, serr := os.Stat(path); serr == nil {
+		limit := broadcastFileMaxBytes()
+		bundle := st.Size() + int64(len(filepath.Base(path))) + 5
+		if bundle > limit {
+			dialog.ShowError(fmt.Errorf(
+				"%s is %d bytes; with its name that is %d, over the %d byte limit",
+				filepath.Base(path), st.Size(), bundle, limit), p.win)
+			return
+		}
+		if st.Size() == 0 {
+			dialog.ShowError(fmt.Errorf("%s is empty", filepath.Base(path)), p.win)
+			return
+		}
+	}
+	p.path = path
+	p.pathLbl.SetText(filepath.Base(path))
+	p.sendBtn.Enable()
 }
 
 func (p *broadcastFilePanel) onSend() {
