@@ -2021,6 +2021,16 @@ void *radio_capture_thread(void *device_ptr)
     uint64_t cap_last_data_ms   = audioio_monotonic_ms();
     uint32_t diag_reopens       = 0;
     bool     cap_reopened       = false;   /* no samples yet since the last reopen */
+    /* A device that reopens fine and still delivers nothing was reopened
+     * every 2 s with a warning each time, and nothing else said so: K7EK,
+     * 2026-11-10 20:22-21:09Z, 1384 reopens in 47 minutes while BPQ32 kept
+     * scanning a station that heard nothing.  So the warning thins out (the
+     * first three, then one a minute), and past CAP_DEAF_MS the capture
+     * health goes FAILED, which the UI shows, until samples come back. */
+    const uint64_t CAP_DEAF_MS  = 30000;
+    uint64_t cap_heard_ms       = cap_last_data_ms;   /* last samples, not reset by a reopen */
+    uint32_t stall_reopens      = 0;                  /* reopens since then */
+    bool     cap_deaf           = false;
 
     /* Reached only after the device, rate and format checks above: the capture
      * path is fully validated and about to stream. */
@@ -2047,9 +2057,22 @@ void *radio_capture_thread(void *device_ptr)
             uint64_t now = audioio_monotonic_ms();
             if (now - cap_last_data_ms >= CAP_STALL_MS)
             {
-                HLOGW("audio-cap",
-                      "capture stalled %llu ms, reopening device (reopen #%u)",
-                      (unsigned long long)(now - cap_last_data_ms), ++diag_reopens);
+                ++diag_reopens;
+                ++stall_reopens;
+                if (stall_reopens <= 3 || stall_reopens % 30 == 0)
+                    HLOGW("audio-cap",
+                          "capture stalled %llu ms, reopening device (reopen #%u)%s",
+                          (unsigned long long)(now - cap_last_data_ms), diag_reopens,
+                          stall_reopens == 3 ? " -- from here, one line a minute" : "");
+                if (!cap_deaf && now - cap_heard_ms >= CAP_DEAF_MS)
+                {
+                    char why[128];
+                    snprintf(why, sizeof why, "no audio from the device for %llu s (reopened %u times)",
+                             (unsigned long long)((now - cap_heard_ms) / 1000), stall_reopens);
+                    HLOGE("audio-cap", "%s: the station hears nothing", why);
+                    audio_health_set(true, AUDIO_HEALTH_FAILED, why);
+                    cap_deaf = true;
+                }
                 audio->free(b);
                 b = NULL;
                 /* Keep trying -- a USB radio interface can come back -- but
@@ -2106,9 +2129,17 @@ void *radio_capture_thread(void *device_ptr)
          * and then nothing to tell if audio ever returned). */
         if (cap_reopened)
         {
-            HLOGI("audio-cap", "capture delivering again after reopen #%u", diag_reopens);
+            HLOGI("audio-cap", "capture delivering again after reopen #%u (%llu s without audio)",
+                  diag_reopens, (unsigned long long)((audioio_monotonic_ms() - cap_heard_ms) / 1000));
             cap_reopened = false;
+            stall_reopens = 0;
+            if (cap_deaf)
+            {
+                audio_health_set(true, AUDIO_HEALTH_RUNNING, NULL);
+                cap_deaf = false;
+            }
         }
+        cap_heard_ms = audioio_monotonic_ms();
         cap_last_data_ms = audioio_monotonic_ms();
         diag_read_calls++;
         diag_last_read_bytes = r;
