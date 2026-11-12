@@ -201,12 +201,18 @@ frame on MFSK.
   differ.  Both ends then cut the same pieces (spec R25).
 - It answers on the CALL's carrier, except a repeat on the control mode:
   that one says the caller heard none of its ACCEPTs there, and gets its
-  ACCEPT on the floor -- unless the last one went there already, so that a
-  floor ACCEPT the caller keyed over costs one round, not the connect.  The
-  caller listens on the floor from its first repeat on.  Its next CALL waits
-  while one of its decoders is on a frame arriving (not the energy busy
-  detector), and after such a wait until `ARQ_CALL_DECODE_WAIT_MS` (5 s) past
-  the frame's end, so an ACCEPT decodes before a CALL goes out.  An ACCEPT
+  ACCEPT on the floor -- unless the last one went there already, so that the
+  control mode gets a second chance.  The caller listens on the floor from
+  its first repeat on, and its next CALL is due one call interval of the
+  carrier the ACCEPT may come on (`call_interval_s`): after a repeat on the
+  control mode, the floor's 24 s, not the control mode's 8 s, which keyed it
+  over a 13.5 s floor ACCEPT no decoder had caught (on air, KG9NI calling
+  K7EK, 2026-11-10: 5 of 6, 3.7-4.9 s of each; sim, half duplex, no carrier
+  sense, asym:-4:-9, 20 seeds: connect 89.9 -> 28.9 s, 38 collisions -> 0;
+  with both fast paths dead, cliff:-9, 51.5 -> 67.5 s).  Its next CALL also
+  waits while one of its decoders is on a frame arriving (not the energy
+  busy detector), and after such a wait until `ARQ_CALL_DECODE_WAIT_MS` (5 s)
+  past the frame's end, so an ACCEPT decodes before a CALL goes out.  An ACCEPT
   on the floor to a control-mode CALL does not make the caller control-deaf:
   the SNR decides.  On air (2026-10-21) an sBitx's DATAC16 CALLs reached an
   IC-7100, none of its DATAC16 ACCEPTs came back, and the MFSK CALL that

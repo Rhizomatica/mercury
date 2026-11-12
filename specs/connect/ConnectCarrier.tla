@@ -7,7 +7,9 @@
 (*                                                                         *)
 (*   C, the caller, keys CALL i on the control mode ("fast", DATAC16) for  *)
 (*   i <= F, then on the floor (MFSK) and fast in turn, each the call      *)
-(*   interval of its carrier after the last one ended (IvFast, IvFloor).   *)
+(*   interval of the carrier its ACCEPT may come on after the last one     *)
+(*   ended (call_interval_s: IvFloor after a floor CALL or a repeat, which *)
+(*   E may answer on the floor; IvFast after the first CALL).              *)
 (*   F is ARQ_CALL_FAST_SLOTS: 2 by default, min(max(2, RETRIES/2), 4)     *)
 (*   after a host's RETRIES (#442); the floor listening below keeps i >= 2.*)
 (*   From a repeat (i >= 2) on, or a floor CALL, it also listens on the    *)
@@ -42,7 +44,8 @@
 (* The hold's cap (a floor frame and DW) is not modelled: an ACCEPT ends.  *)
 (*                                                                         *)
 (* Properties:                                                            *)
-(*   NoOverlap  (Sense "always") C and E are never on the air at once;    *)
+(*   NoOverlap  C and E are never on the air at once (with Sense "any"    *)
+(*              too, since call_interval_s: ConnectCarrier_sense.cfg);    *)
 (*   Early      (the fast forward path and the floor both ways delivering, *)
 (*              the fast return dead, as on air 2026-10-21; Sense          *)
 (*              "always") C connects on the answer to its second CALL: it  *)
@@ -83,6 +86,9 @@ CONSTANTS LF, LM, TG, DF, DM, DW, SA, IvFast, IvFloor, R, H,
                   \*   "firstiv":   an MFSK-only C's next CALL is due before its
                   \*                first ends (the first deadline set from the
                   \*                fast interval, as #424 as opened did)
+                  \*   "fastiv":    a repeat on fast waits IvFast, though E may
+                  \*                answer it on the floor (the code before
+                  \*                call_interval_s)
 
 VARIABLES t,
           cSt,      \* "calling", "connected", "gaveup"
@@ -110,11 +116,14 @@ Dec(car) == IF car = "fast" THEN DF ELSE DM
 \* arq_call_carrier: CALLs 1 .. F fast, then the floor and fast in turn.
 CallCar(i) == IF CM THEN "floor"
               ELSE IF i <= F THEN "fast" ELSE IF (i - F - 1) % 2 = 0 THEN "floor" ELSE "fast"
-Wait(i)    == IF i = 1 /\ CM /\ Mutant = "firstiv" THEN 0
-              ELSE IF CallCar(i) = "floor" THEN IvFloor ELSE IvFast
 \* call_answer_carrier, as send_call_accept binds the payload decoder to it.
 Listen(i)  == CallCar(i) = "floor" \/ (i >= 2 /\ Mutant \notin {"old", "nolisten"})
               \/ Mutant = "listenall"
+\* call_interval_s: the interval of the carrier the ACCEPT may come on.
+Wait(i)    == IF i = 1 /\ CM /\ Mutant = "firstiv" THEN 0
+              ELSE IF CallCar(i) = "floor" THEN IvFloor
+              ELSE IF i >= 2 /\ Mutant \notin {"old", "nolisten", "fastiv"} THEN IvFloor
+              ELSE IvFast
 
 \* accept_carrier: E's carrier for an ACCEPT to a CALL on car.
 AcceptCar(car) == IF car = "floor" THEN "floor"

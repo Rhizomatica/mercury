@@ -289,14 +289,26 @@ int arq_call_carrier(const arq_session_t *sess)
 
 /* The carrier an ACCEPT to my last CALL may come back on: the CALL's own, or
  * my floor for a repeat on the control mode, which the callee may answer there
- * (accept_carrier).  The first CALL is no repeat.  An ACCEPT on the floor
- * outlasts the control mode's call interval: the next CALL waits for it while
- * it is arriving (call_must_wait). */
+ * (accept_carrier).  The first CALL is no repeat. */
 static int call_answer_carrier(const arq_session_t *sess)
 {
     if (mercury_mode_is_mfsk(sess->call_carrier) || sess->call_sends_done < 2)
         return sess->call_carrier;
     return arq_floor_mode(arq_get_bw());
+}
+
+/* How long after my last CALL ends the next one is due: the call interval of
+ * the carrier its ACCEPT may come back on (call_answer_carrier), not of the
+ * CALL's own.  An ACCEPT on the floor to a repeat on the control mode is a
+ * 13.5 s frame (26 s at 500 Hz): the control mode's 8 s interval keyed the
+ * next CALL over it, held back only while a decoder of ours was on it
+ * (call_must_wait), and at the SNR that wants the floor one seldom is.  On
+ * air (KG9NI calling K7EK, 1.9.23, 2026-11-10) 5 of K7EK's 6 floor ACCEPTs
+ * were keyed over, 3.7-4.9 s of each; no ACCEPT on the control mode got
+ * through, so the floor's was the one that could have. */
+static float call_interval_s(const arq_session_t *sess)
+{
+    return arq_protocol_call_interval_for_mode_s(call_answer_carrier(sess));
 }
 
 /* The callee's carrier for an ACCEPT to this CALL, of a session it has
@@ -309,10 +321,11 @@ static int call_answer_carrier(const arq_session_t *sess)
 static int accept_carrier(const arq_session_t *sess, const arq_event_t *ev)
 {
     int floor = arq_floor_mode(ev->bw_hz);
-    /* Not twice running: the caller holds its next CALL for our ACCEPT only
-     * while one of its decoders is on it, and keys over one they missed.  On
-     * the control mode then, and its floor CALL after gets ours on the floor
-     * (specs/connect/ConnectCarrier.tla, Connects with Sense "any"). */
+    /* Not twice running: the caller's floor CALL after this one gets ours
+     * on the floor anyway, and the control mode between is the fast path's
+     * second chance.  (It was also there because the caller keyed over a
+     * floor ACCEPT its decoders missed; it now waits one out,
+     * call_interval_s, and specs/connect's Mut_noalt connects too.) */
     if (mercury_mode_is_mfsk(ev->mode) || floor != sess->floor_mode || sess->call_rx_mode == floor)
         return ev->mode;
     return floor;
@@ -1053,7 +1066,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         /* the first CALL's interval: the floor's from a station that
          * transmits only MFSK, or its next CALL keys behind this one */
         sess_enter(sess, ARQ_CONN_CALLING,
-                   deadline_from_s(arq_protocol_call_interval_for_mode_s(sess->call_carrier)),
+                   deadline_from_s(call_interval_s(sess)),
                    ARQ_EV_TIMER_RETRY);
         break;
 
@@ -1192,10 +1205,10 @@ static bool call_over_time(const arq_session_t *sess)
 }
 
 /* A CALL waits while a frame we caught is arriving (decoder_hears_frame; not
- * the energy busy detector, off by default and not to hold CALLs): the
- * ACCEPT to a repeat, on the floor, outlasts the control mode's call interval
- * (accept_carrier), and another station's frame is no place for a CALL
- * either.  Once held, also until that frame could have decoded: a CALL keyed
+ * the energy busy detector, off by default and not to hold CALLs): an ACCEPT
+ * that came late, or another station's frame, is no place for a CALL.  (The
+ * ACCEPT to a repeat, on the floor, no longer outlasts the interval:
+ * call_interval_s.)  Once held, also until that frame could have decoded: a CALL keyed
  * as the ACCEPT ended went out from a caller connected a moment later, and the
  * callee answered it over the caller's first round (sim, asym:-4:-9).  At most
  * one floor frame's airtime and its decode, then we key regardless. */
@@ -1272,7 +1285,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
          * moment the ACCEPT is arriving -- so the retry keys the transmitter on
          * top of the reply it was waiting for, on essentially every connect.
          * Measuring the interval from here gives the peer a full turnaround. */
-        sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_for_mode_s(sess->call_carrier));
+        sess->deadline_ms = retry_deadline_from_s(sess, call_interval_s(sess));
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1294,7 +1307,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             send_call_accept(sess, false);
             /* Deadline is re-anchored on TX_COMPLETE above; this is the
              * fallback if that event is ever missed. */
-            sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_for_mode_s(sess->call_carrier));
+            sess->deadline_ms = retry_deadline_from_s(sess, call_interval_s(sess));
         }
         else
         {

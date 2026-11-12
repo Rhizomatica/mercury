@@ -2042,6 +2042,47 @@ void test_call_retry_deadline_anchored_to_ptt_off(void)
 }
 
 
+/* The next CALL is due one call interval of the carrier the ACCEPT may come
+ * back on: after a repeat on the control mode that is the floor, whose ACCEPT
+ * (13.5 s) outlasts the control mode's 8 s.  At 8 s the CALL keyed over it
+ * whenever no decoder of ours had caught it (on air, KG9NI calling K7EK,
+ * 2026-11-10: 5 of 6 floor ACCEPTs, 3.7-4.9 s of each). */
+void test_call_after_a_repeat_waits_out_a_floor_accept(void)
+{
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "AAA");   /* we rank first: no stagger */
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "TEST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);                         /* CALL 1, control mode */
+    mock_set_uptime_ms(time_now_ms() + 3700);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    /* The first CALL's ACCEPT comes on its own carrier: the control mode's interval. */
+    TEST_ASSERT_EQUAL_UINT64(time_now_ms() + (uint64_t)(arq_protocol_call_interval_s() * 1000.0f),
+                             sess.deadline_ms);
+
+    mock_set_uptime_ms(sess.deadline_ms);
+    RESET_FAKE(fake_send_tx_frame);
+    ev = make_event(ARQ_EV_TIMER_RETRY);                  /* CALL 2: a repeat */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, fake_send_tx_frame_fake.arg1_val);
+    mock_set_uptime_ms(time_now_ms() + 3700);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Its ACCEPT may come on the floor: guard, 13.5 s on the air, decode. */
+    int floor = arq_floor_mode(arq_get_bw());
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(floor);
+    uint64_t accept_end = time_now_ms() + ARQ_CHANNEL_GUARD_MS + (uint64_t)(tm->frame_duration_s * 1000.0f);
+    TEST_ASSERT_EQUAL_UINT64(time_now_ms() + (uint64_t)(arq_protocol_call_interval_for_mode_s(floor) * 1000.0f),
+                             sess.deadline_ms);
+    TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms >= accept_end + ARQ_CALL_DECODE_WAIT_MS,
+                             "the next CALL would key over the floor ACCEPT or before it decodes");
+}
+
 /* An ACCEPT is only correct one channel guard after a CALL we actually heard:
  * that is the only moment we know the caller has dropped PTT and is listening.
  *
@@ -2220,6 +2261,7 @@ int main(void)
     RUN_TEST(test_listen_transitions_to_listening);
     RUN_TEST(test_connect_transitions_to_calling);
     RUN_TEST(test_call_retry_deadline_anchored_to_ptt_off);
+    RUN_TEST(test_call_after_a_repeat_waits_out_a_floor_accept);
     RUN_TEST(test_incoming_call_transitions_to_accepting);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
