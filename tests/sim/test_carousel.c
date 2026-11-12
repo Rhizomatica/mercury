@@ -28,7 +28,7 @@ void setUp(void) {}
 void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
-    unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
+    unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD"); unsetenv("CAR_EARLY");
     unsetenv("CAR_CTL_SNR_OFFSET"); unsetenv("CAR_NOISE");
 }
 
@@ -903,6 +903,70 @@ static void test_carousel_noise_does_not_hold_the_caller(void)
     unsetenv("CAR_NOISE");
 }
 
+/* #495 prototype (CAR_EARLY=1): the caller takes an empty response slot as
+ * over once the answer it expects -- one that opens with a control frame --
+ * would have been sensed, instead of waiting out the whole ~7 s.  Sparse
+ * writes into a quiet session are delivered sooner, nothing is keyed over,
+ * and knob off (or 0) is the run without it, down to the millisecond. */
+static void test_carousel_early_slot_release_ends_the_empty_wait(void)
+{
+    static const char sc[] = "A30+0,B30+9000,A30+18000,B30+27000,A30+36000";
+    car_sim_result_t off, zero, on;
+    char what[128];
+    uint64_t off_max = 0, on_max = 0;
+
+    setenv("CAR_SCRIPT", sc, 1);
+    carousel_sim_run(1, "awgn:0.02", false, LIMIT_MS, &off);
+    setenv("CAR_EARLY", "0", 1);
+    carousel_sim_run(1, "awgn:0.02", false, LIMIT_MS, &zero);
+    unsetenv("CAR_EARLY");
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(off.done_ms, zero.done_ms, "CAR_EARLY=0 differs from the run without it");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(off.early_closes, zero.early_closes, "CAR_EARLY=0 differs from the run without it");
+
+    setenv("CAR_EARLY", "1", 1);
+    carousel_sim_run(1, "awgn:0.02", false, LIMIT_MS, &on);
+    unsetenv("CAR_EARLY");
+    unsetenv("CAR_SCRIPT");
+
+    for (int m = 0; m < off.msgs; m++) {
+        if (off.msg_delay_ms[m] != UINT64_MAX && off.msg_delay_ms[m] > off_max) off_max = off.msg_delay_ms[m];
+        if (on.msg_delay_ms[m] != UINT64_MAX && on.msg_delay_ms[m] > on_max) on_max = on.msg_delay_ms[m];
+    }
+    snprintf(what, sizeof(what), "closes %d, done %llu against %llu ms, slowest write %llu against %llu ms",
+             on.early_closes, (unsigned long long)on.done_ms, (unsigned long long)off.done_ms,
+             (unsigned long long)on_max, (unsigned long long)off_max);
+    TEST_ASSERT_TRUE_MESSAGE(off.intact && on.intact, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, on.kd_overlaps, what);
+    TEST_ASSERT_GREATER_THAN_INT_MESSAGE(off.early_closes, on.early_closes, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, on.early_closes, "the empty slots changed: re-pin (CAR_TRACE=1)");
+    TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(off.done_ms, on.done_ms, what);
+    TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(off_max, on_max, what);
+}
+
+/* ...and where the guards say no, the knob says nothing: below the control
+ * mode with the asks unanswered (step:5:-14, the sixth ask over S's poll),
+ * the run is the run without it and no slot closes -- carrier sense itself
+ * is imperfect here (CAR_CS_DECODABLE). */
+static void test_carousel_early_slot_release_stays_gated_below_the_control_mode(void)
+{
+    car_sim_result_t off, on;
+    char what[96];
+
+    setenv("CAR_CS_DECODABLE", "1", 1);
+    carousel_sim_run(1, "step:5:-14", false, LIMIT_MS, &off);
+    setenv("CAR_EARLY", "1", 1);
+    carousel_sim_run(1, "step:5:-14", false, LIMIT_MS, &on);
+    unsetenv("CAR_EARLY");
+    unsetenv("CAR_CS_DECODABLE");
+
+    snprintf(what, sizeof(what), "done %llu against %llu ms, closes %d",
+             (unsigned long long)on.done_ms, (unsigned long long)off.done_ms, on.early_closes);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, on.early_closes, what);
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(off.done_ms, on.done_ms, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(off.frames, on.frames, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(off.keydowns, on.keydowns, what);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -940,5 +1004,7 @@ int main(void)
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     RUN_TEST(test_carousel_bw500_control_loss_does_not_stall);
     RUN_TEST(test_carousel_noise_does_not_hold_the_caller);
+    RUN_TEST(test_carousel_early_slot_release_ends_the_empty_wait);
+    RUN_TEST(test_carousel_early_slot_release_stays_gated_below_the_control_mode);
     return UNITY_END();
 }

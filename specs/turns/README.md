@@ -113,6 +113,39 @@ response slot, and `CarouselTurns.cfg` with the rule added gives a
   continuation before it keys.  In the sim, with `CAR_CS_DECODABLE=1`
   (carrier sense only on decodable frames), the benches had no collisions.
 
+## Empty response slots end early (`EarlySlot`, #495 prototype)
+
+M's keydowns whose answer would open with a control frame -- an ack or a
+REQ, or a round where S has a poll to answer with -- take S's response slot
+as over once S's keydown, had it come, would have been sensed: `d +
+LEAD_MAX_MS + EARLY_SENSE_MS` after the slot opens (`m_early_ms` /
+`m_early_close` in `datalink_arq/carousel.c`), against the full `hi +
+TURN_G_MS` otherwise.  On air this is the 6.5-10.8 s a host write waits
+when it arrives just after M's ack (#495, N3JXB-K7EK: `since_tx_end` 6.95 s
+on every such turn).  **Off by default** (`car_set_early_slot`); nothing in
+the daemon turns it on.  Unlike `MWatch` this is not in the model -- it is
+the prototype's own trade, pending the decision on #495.
+
+What keeps it safe is what it waits for: S's answer in these cases opens
+with a DATAC16 control frame, and the control decoder always runs, so the
+sensing `EarlySlot` relies on is the one decoder that cannot miss it -- not
+the payload-decoder-in-sync of `Mut_csmiss`.  Not released: after a poll
+(S answers with its round alone, on a rung M's payload decoder may not be
+on), both ways (S's poll may ride inline in a data frame), at the floor or
+below the control mode (`ctl_deaf`), and while M's asks go unanswered
+(`reqs > 0`: step:5:-14, the sixth ask over S's poll).  What is left is the
+keydown M sensed nothing of because it was not there, or came late: it
+costs one keydown and one ask, and only on links where frames are already
+being lost.
+
+In the sim (`CAR_EARLY=1`): sparse host writes complete 7-12 % sooner
+(mean delay -17 to -23 %, p90 -18 to -31 % over ten seeds on awgn:0.02,
+cliff:8, cliff:3, fade:8:0.5, fade:3:0.5 and nvis), bulk on clean channels
+is byte-identical -- no slot is empty, so nothing closes -- and with
+`CAR_CS_DECODABLE=1` on cliff:3, fade:8:0.5, fade:3:0.5 and nvis, message
+and bulk, 80 runs with up to 164 closes per config: no collisions, nothing
+corrupt.
+
 Not modelled: the wait in `s_slot` for an application answer.  S's start
 may move by up to `min(d/2, APP_GRACE_MS)` past the opening of its slot.
 With a decode `d` late, that start can fall up to
