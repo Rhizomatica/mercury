@@ -1064,6 +1064,28 @@ static float level_min_db(int lv)
  * the application heard nothing.  The SNR only ever excludes: on NVIS it
  * reads 10 dB where fast rungs fail anyway, and measurement handles that. */
 #define SNR_GATE_DB 3.0f
+/* How long a data frame's reading keeps control-mode readings out of the rung
+ * estimate (car_on_frame, #501). */
+#define CTL_READING_DATA_MS 120000
+/* A frame of the peer's data heard (M's m_on_data, S's s_on_data).  The
+ * first one after none for CTL_READING_DATA_MS -- the session's first, or the
+ * first after an idle stretch -- takes the estimate to its own reading when
+ * that is well above it: until then the estimate was the control mode's (the
+ * connect hint is a DATAC16 reading too), and the control mode reads low
+ * where the two differ, never high.  Smoothed from it, a data reading 6 dB
+ * above took three more frames to come up -- the snap missing by 0.06 dB --
+ * and QAM16C2 stayed gated (sim, awgn:0.02 with the control mode 6 dB low:
+ * 86.8 s against 53.2; 63.9 s with this).  Not for a reading below, nor just
+ * above: one data frame on a fading channel is one sample of the fade, and
+ * taken either way it cost 1-2 % where the two modes read alike (fade:10:2,
+ * fade:5:1, 80 seeds). */
+static void peer_data_heard(car_t *c, uint64_t now)
+{
+    if ((!c->peer_data_ms || now - c->peer_data_ms >= CTL_READING_DATA_MS) && c->snr_valid &&
+        c->snr_ms == now && c->snr_last > c->snr_ema + SNR_GATE_DB / 2)
+        c->snr_ema = c->snr_last;
+    c->peer_data_ms = now;
+}
 static bool level_marginal(const car_t *c, int lv)
 {
     return c->snr_valid && c->snr_ema < level_min_db(lv) + SNR_GATE_DB;
@@ -2749,7 +2771,7 @@ static void m_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 {
     if (lv != c->rx_level) return;           /* the payload decoder is on another mode */
     c->traffic = true;
-    c->peer_data_ms = now;
+    peer_data_heard(c, now);
     rx_frame(c, m, lv, m->poll_id == c->poll_id);
     m_heard_end(c, now + (uint64_t)m->left * (level_air(c, lv) + burst_gap_ms(c, lv)) + TAIL_MS,
                 (int)m->poll_id, m->pat_anchor, m->slot);
@@ -2960,6 +2982,7 @@ static void s_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 {
     if (lv != c->rx_level) return;           /* the payload decoder is on another mode */
     s_heard_m(c, now);
+    peer_data_heard(c, now);
     bool both = c->anc.on && c->anc.kind == ANC_BOTH && c->anc.mk == m->poll_id;
     if (both) {
         /* ...the size its poll said (h_n) stays: seen + left misses the
@@ -3221,25 +3244,42 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     if (c->rx_late) car_trace(c, "rx frame decoded %u ms late: data only", age_ms);
     now = when;
     if (snr_db != 0.0f) {
-        c->snr_ema = c->snr_valid ? 0.7f * c->snr_ema + 0.3f * snr_db : snr_db;
-        /* Two readings in a row more than SNR_GATE_DB to one side of the
-         * smoothed one move it to the nearer of them: smoothing is for a
-         * noisy estimate, not for a channel that has moved.  In the sim,
-         * step:-12:10, two MFSK frames at +10 dB read -0.8 smoothed, and the
-         * session climbed DATAC3, DATAC1, DATAC17 one exchange each.  One
-         * reading alone does not move it: a lucky frame does not open the
-         * ladder.  The margin keeps fading out of it: with none, fade:5 8 KB
-         * took 2.8 % longer; with 2 dB 0.2 %; with 3-8 dB the same as
-         * without the rule, and the steps gained as much (120 seeds). */
-        if (c->snr_valid) {
-            float lo = c->snr_last < snr_db ? c->snr_last : snr_db;
-            float hi = c->snr_last < snr_db ? snr_db : c->snr_last;
-            if (lo > c->snr_ema + SNR_GATE_DB) c->snr_ema = lo;
-            else if (hi < c->snr_ema - SNR_GATE_DB) c->snr_ema = hi;
+        float ema = c->snr_valid ? 0.7f * c->snr_ema + 0.3f * snr_db : snr_db;
+        /* A control-mode frame's reading, with a data frame of the peer's
+         * heard within CTL_READING_DATA_MS, does not move the rung estimate:
+         * the data frames' readings are what the rungs carry.  The narrow
+         * control frame reads low on a selective channel -- on MPD (NW8L's
+         * IONOS) ~10 dB under the wide modes at 25-35 dB -- and two such
+         * readings snapped the estimate to 2-3 dB, gating DATAC17 and
+         * QAM16C2 while QAM16C2 delivered 90 % (#501).  It still counts for
+         * the deafness test below, as it would have moved the estimate: that
+         * asks whether the control mode gets through, and its own reading
+         * says so.  With no data frame lately -- at connect, between
+         * transfers -- the control frames are all there is, as before. */
+        bool ctl_only = control && c->snr_valid && c->peer_data_ms &&
+                        now - c->peer_data_ms < CTL_READING_DATA_MS;
+        if (!ctl_only) {
+            c->snr_ema = ema;
+            /* Two readings in a row more than SNR_GATE_DB to one side of the
+             * smoothed one move it to the nearer of them: smoothing is for a
+             * noisy estimate, not for a channel that has moved.  In the sim,
+             * step:-12:10, two MFSK frames at +10 dB read -0.8 smoothed, and the
+             * session climbed DATAC3, DATAC1, DATAC17 one exchange each.  One
+             * reading alone does not move it: a lucky frame does not open the
+             * ladder.  The margin keeps fading out of it: with none, fade:5 8 KB
+             * took 2.8 % longer; with 2 dB 0.2 %; with 3-8 dB the same as
+             * without the rule, and the steps gained as much (120 seeds). */
+            if (c->snr_valid) {
+                float lo = c->snr_last < snr_db ? c->snr_last : snr_db;
+                float hi = c->snr_last < snr_db ? snr_db : c->snr_last;
+                if (lo > c->snr_ema + SNR_GATE_DB) c->snr_ema = lo;
+                else if (hi < c->snr_ema - SNR_GATE_DB) c->snr_ema = hi;
+            }
+            c->snr_last = snr_db;
+            c->snr_ms = now;
+            c->snr_valid = true;
+            ema = c->snr_ema;
         }
-        c->snr_last = snr_db;
-        c->snr_ms = now;
-        c->snr_valid = true;
         if (c->ctl_deaf != CAR_DEAF_MFSK_TX && !(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
             bool was = c->ctl_deaf != 0;
             /* An MFSK frame's reading alone says I went deaf: 13.8 s of
@@ -3249,7 +3289,7 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
              * it put its control back on the control mode for another 90 s
              * of silence (sim, stepa:0:-9:20:12, the Winlink exchange of
              * #431: the client's 74 bytes took 311 s). */
-            float db = !was && mercury_mode_is_mfsk(mode) && snr_db < c->snr_ema ? snr_db : c->snr_ema;
+            float db = !was && mercury_mode_is_mfsk(mode) && snr_db < ema ? snr_db : ema;
             bool deaf = was ? db < CTL_DEAF_OFF_DB : db < CTL_DEAF_ON_DB;
             c->ctl_deaf = deaf ? CAR_DEAF_SNR : 0;
             if (deaf != was)

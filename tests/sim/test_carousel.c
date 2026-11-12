@@ -516,6 +516,47 @@ static void test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor(void
     TEST_ASSERT_GREATER_THAN_MESSAGE(plain.done_ms * 3, off.done_ms, what);
 }
 
+/* Control frames reading low, the data frames reading true: the session
+ * still climbs, its rungs chosen by the data frames' readings (#501).  The
+ * offset's runs within a margin of the offset 0 run: the start rung still
+ * follows the connect hint, a control-mode reading, so one more step of the
+ * climb is left to pay.  Before the fix, the low readings held the estimate
+ * under the top rungs' gates: awgn:0.02 took 84.8 s at -6 and 68.7 s at -10
+ * against 52.1 s, and the messages on cliff:16 never went on QAM16C2. */
+static void test_carousel_low_control_readings_do_not_hold_the_ladder(void)
+{
+    car_sim_result_t zero, off;
+    char what[128];
+    static const char *const offs[] = { "-6", "-10" };
+
+    carousel_sim_run(1, "awgn:0.02", false, LIMIT_MS, &zero);
+    TEST_ASSERT_TRUE_MESSAGE(zero.intact && zero.done_ms, "offset 0 baseline (awgn:0.02)");
+    for (size_t i = 0; i < sizeof offs / sizeof *offs; i++) {
+        setenv("CAR_CTL_SNR_OFFSET", offs[i], 1);
+        carousel_sim_run(1, "awgn:0.02", false, LIMIT_MS, &off);
+        unsetenv("CAR_CTL_SNR_OFFSET");
+        snprintf(what, sizeof(what), "awgn:0.02 at %s dB: done in %llu ms against %llu ms", offs[i],
+                 (unsigned long long)off.done_ms, (unsigned long long)zero.done_ms);
+        TEST_ASSERT_TRUE_MESSAGE(off.intact && off.done_ms, what);
+        TEST_ASSERT_TRUE_MESSAGE(off.done_ms * 4 <= zero.done_ms * 5, what);   /* within 25 % */
+    }
+
+    /* Message traffic on a clean high-SNR channel, the shape of NW8L's MPD
+     * runs: few data frames between many control frames. */
+    setenv("CAR_SCRIPT", "A2500+1000,B300+2000,A2000+4000,B300+6000,"
+                         "A2000+8000,B300+10000,A1000+12000,B300+14000", 1);
+    carousel_sim_run(1, "cliff:16", false, LIMIT_MS, &zero);
+    setenv("CAR_CTL_SNR_OFFSET", "-10", 1);
+    carousel_sim_run(1, "cliff:16", false, LIMIT_MS, &off);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+    unsetenv("CAR_SCRIPT");
+    snprintf(what, sizeof(what), "cliff:16 messages at -10 dB: done in %llu ms against %llu ms",
+             (unsigned long long)off.done_ms, (unsigned long long)zero.done_ms);
+    TEST_ASSERT_TRUE_MESSAGE(zero.intact && zero.done_ms, what);
+    TEST_ASSERT_TRUE_MESSAGE(off.intact && off.done_ms, what);
+    TEST_ASSERT_TRUE_MESSAGE(off.done_ms * 10 <= zero.done_ms * 11, what);   /* within 10 % */
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -697,6 +738,7 @@ int main(void)
     RUN_TEST(test_carousel_round_with_its_poll_scored_as_declared);
     RUN_TEST(test_carousel_ctl_snr_offset_moves_only_the_control_reading);
     RUN_TEST(test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor);
+    RUN_TEST(test_carousel_low_control_readings_do_not_hold_the_ladder);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }
