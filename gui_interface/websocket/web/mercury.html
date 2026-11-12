@@ -219,6 +219,7 @@ input[type="range"] {
             <option value="serial">Serial (RTS/DTR)</option>
             <option value="cm108">CM108 GPIO</option>
             <option value="hermes_shm">HERMES SHM</option>
+            <option value="gpio">GPIO (Raspberry Pi / libgpiod)</option>
           </select>
           <div class="ptt-row" id="pttRowDevice">
             <label for="devicePathInput">Device Path</label>
@@ -263,6 +264,22 @@ input[type="range"] {
               <option value="2">GPIO 2</option>
               <option value="3" selected>GPIO 3</option>
               <option value="4">GPIO 4</option>
+            </select>
+          </div>
+          <div class="ptt-row" id="pttRowGPIOChip">
+            <label for="gpioChipInput">GPIO Chip</label>
+            <input type="text" id="gpioChipInput" value="/dev/gpiochip0"
+                   placeholder="/dev/gpiochip0" />
+          </div>
+          <div class="ptt-row" id="pttRowGPIOLine">
+            <label for="gpioLineInput">GPIO Line (BCM)</label>
+            <input type="number" id="gpioLineInput" value="17" min="0" max="4294967295" />
+          </div>
+          <div class="ptt-row" id="pttRowGPIOInvert">
+            <label for="gpioInvertSelect">GPIO Invert</label>
+            <select id="gpioInvertSelect">
+              <option value="false" selected>Normal</option>
+              <option value="true">Active Low</option>
             </select>
           </div>
           <button class="apply-btn" id="radioApplyBtn">Apply</button>
@@ -349,6 +366,9 @@ let appliedBaudRate = "";
 let appliedPTTLine = "";
 let appliedPTTInvert = "";
 let appliedCM108GPIO = "";
+let appliedGPIOChip = "";
+let appliedGPIOLine = "";
+let appliedGPIOInvert = "";
 let previousPTTMethod = "none";
 
 /* ===========================================================================
@@ -831,6 +851,11 @@ function restoreRadioSelection() {
   setSelectValue(document.getElementById("pttLineSelect"), appliedPTTLine || "rts");
   setSelectValue(document.getElementById("pttInvertSelect"), appliedPTTInvert || "none");
   setSelectValue(document.getElementById("cm108GPIOSelect"), appliedCM108GPIO || "3");
+  if (appliedGPIOChip)
+    document.getElementById("gpioChipInput").value = appliedGPIOChip;
+  if (appliedGPIOLine !== "")
+    document.getElementById("gpioLineInput").value = appliedGPIOLine;
+  setSelectValue(document.getElementById("gpioInvertSelect"), appliedGPIOInvert || "false");
   previousPTTMethod = getSelectValue(document.getElementById("pttMethodSelect")) || "none";
   updatePTTFieldState();
 }
@@ -845,10 +870,12 @@ function updatePTTFieldState() {
     /* CM108 auto-detects the HID node; the device path stays available as an
      * explicit override, so it is shown but never required. */
     cm108:  ["pttRowDevice", "pttRowGPIO"],
+    gpio:   ["pttRowGPIOChip", "pttRowGPIOLine", "pttRowGPIOInvert"],
   };
   const shown = rows[method] || [];
   ["pttRowDevice", "pttRowModel", "pttRowBaud",
-   "pttRowLine", "pttRowInvert", "pttRowGPIO"].forEach(function(id) {
+   "pttRowLine", "pttRowInvert", "pttRowGPIO",
+   "pttRowGPIOChip", "pttRowGPIOLine", "pttRowGPIOInvert"].forEach(function(id) {
     const row = document.getElementById(id);
     const visible = shown.indexOf(id) !== -1;
     row.hidden = !visible;
@@ -864,6 +891,7 @@ function clearAppliedState() {
   appliedCapture = ""; appliedPlayback = ""; appliedChannel = "";
   appliedPTTMethod = ""; appliedRadioModel = ""; appliedDevicePath = ""; appliedBaudRate = "";
   appliedPTTLine = ""; appliedPTTInvert = ""; appliedCM108GPIO = "";
+  appliedGPIOChip = ""; appliedGPIOLine = ""; appliedGPIOInvert = "";
 }
 
 function resetControls() {
@@ -877,6 +905,9 @@ function resetControls() {
   document.getElementById("pttLineSelect").value = "rts";
   document.getElementById("pttInvertSelect").value = "none";
   document.getElementById("cm108GPIOSelect").value = "3";
+  document.getElementById("gpioChipInput").value = "/dev/gpiochip0";
+  document.getElementById("gpioLineInput").value = "17";
+  document.getElementById("gpioInvertSelect").value = "false";
   updatePTTFieldState();
 }
 
@@ -915,6 +946,14 @@ function handleRadioList(msg) {
   if (!appliedPTTLine) appliedPTTLine = msg.ptt_line || "rts";
   if (!appliedPTTInvert) appliedPTTInvert = msg.ptt_invert || "none";
   if (!appliedCM108GPIO) appliedCM108GPIO = String(msg.cm108_gpio || 3);
+
+  if (!appliedGPIOChip && msg.gpio_chip)
+    appliedGPIOChip = msg.gpio_chip;
+  if (appliedGPIOLine === "" && msg.gpio_line != null)
+    appliedGPIOLine = String(msg.gpio_line);
+  if (appliedGPIOInvert === "" && msg.gpio_invert != null)
+    appliedGPIOInvert = String(msg.gpio_invert);
+
   restoreRadioSelection();
   updatePTTFieldState();
 }
@@ -1174,8 +1213,12 @@ document.getElementById("radioApplyBtn").addEventListener("click", function() {
   const pttLine = document.getElementById("pttLineSelect").value;
   const pttInvert = document.getElementById("pttInvertSelect").value;
   const cm108GPIO = document.getElementById("cm108GPIOSelect").value;
+  const gpioChip = document.getElementById("gpioChipInput").value.trim();
+  const gpioLine = document.getElementById("gpioLineInput").value.trim();
+  const gpioInvert = document.getElementById("gpioInvertSelect").value;
   if (method === "hamlib" && (!modelId || modelId === "-1")) return;
   if (method === "serial" && !devPath) return;
+  if (method === "gpio" && (!gpioChip || !gpioLine)) return;
   appliedPTTMethod = method;
   appliedRadioModel = modelId;
   appliedDevicePath = devPath;
@@ -1183,9 +1226,18 @@ document.getElementById("radioApplyBtn").addEventListener("click", function() {
   appliedPTTLine = pttLine;
   appliedPTTInvert = pttInvert;
   appliedCM108GPIO = cm108GPIO;
-  sendJson({ command: "set_ptt_config", value: method, value2: devPath,
-             value3: modelId, value4: baudRate, value5: pttLine,
-             value6: pttInvert, value7: cm108GPIO });
+  appliedGPIOChip = gpioChip;
+  appliedGPIOLine = gpioLine;
+  appliedGPIOInvert = gpioInvert;
+
+  if (method === "gpio") {
+    sendJson({ command: "set_ptt_config", value: method, value2: gpioChip,
+               value6: gpioInvert, value7: gpioLine });
+  } else {
+    sendJson({ command: "set_ptt_config", value: method, value2: devPath,
+               value3: modelId, value4: baudRate, value5: pttLine,
+               value6: pttInvert, value7: cm108GPIO });
+  }
 });
 
 document.getElementById("pttMethodSelect").addEventListener("change", function() {

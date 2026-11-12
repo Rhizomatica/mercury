@@ -88,7 +88,7 @@ Options:
  -d                         Trace mode. Logs the raw bytes of every decoded connect frame (implies -v).
  -L <path>                  Write log to file (TIMING level and above). Windows default: logs\mercury_engine.log beside mercury.exe.
  -J                         Use JSONL format for log file (requires -L).
- -P [ptt_method]            PTT method: none, hamlib, serial, cm108, or hermes_shm.
+ -P [ptt_method]            PTT method: none, hamlib, serial, cm108, hermes_shm, or gpio.
  -R [radio_model]           Sets HAMLIB radio model and selects Hamlib PTT.
  -A [ptt_device]            PTT serial device or HAMLIB device/ip:port endpoint.
  -S                         Select HERMES shared-memory PTT (Linux shorthand for -P hermes_shm).

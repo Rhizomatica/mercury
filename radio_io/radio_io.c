@@ -34,6 +34,7 @@
 #include "radio_port.h"
 #include "serial_ptt.h"
 #include "cm108_ptt.h"
+#include "gpio_ptt.h"
 #include "../common/hermes_log.h"
 
 #define RADIO_LOG_TAG "radio-io"
@@ -79,6 +80,7 @@ static const char *ptt_method_name(ptt_method_t method)
     case PTT_METHOD_HAMLIB:      return "hamlib";
     case PTT_METHOD_SERIAL:      return "serial";
     case PTT_METHOD_CM108:       return "cm108";
+    case PTT_METHOD_GPIO:        return "gpio";
     case PTT_METHOD_HERMES_SHM:  return "hermes_shm";
     default:                     return "unknown";
     }
@@ -514,6 +516,32 @@ static const ptt_backend_t SERIAL_BACKEND = {
 static const ptt_backend_t CM108_BACKEND = {
     cm108_backend_open, cm108_backend_set, cm108_backend_close
 };
+static int gpio_backend_open(const ptt_config_t *config)
+{
+    if (gpio_ptt_open(config) != 0)
+        return -1;
+
+    HLOGI(RADIO_LOG_TAG, "PTT method: GPIO %s line %u%s",
+          config->gpio_chip[0] ? config->gpio_chip : PTT_GPIO_CHIP_DEFAULT,
+          config->gpio_line,
+          config->gpio_invert ? " (active-low)" : "");
+    return 0;
+}
+
+static int gpio_backend_set(bool on)
+{
+    return gpio_ptt_set(on);
+}
+
+static void gpio_backend_close(void)
+{
+    gpio_ptt_close();
+}
+
+static const ptt_backend_t GPIO_BACKEND = {
+    gpio_backend_open, gpio_backend_set, gpio_backend_close
+};
+
 static const ptt_backend_t HERMES_SHM_BACKEND = {
     shm_ptt_open, shm_ptt_set, shm_ptt_close
 };
@@ -525,6 +553,7 @@ static const ptt_backend_t *backend_for_method(ptt_method_t method)
     case PTT_METHOD_HAMLIB:     return &HAMLIB_BACKEND;
     case PTT_METHOD_SERIAL:     return &SERIAL_BACKEND;
     case PTT_METHOD_CM108:      return &CM108_BACKEND;
+    case PTT_METHOD_GPIO:       return &GPIO_BACKEND;
     case PTT_METHOD_HERMES_SHM: return &HERMES_SHM_BACKEND;
     case PTT_METHOD_NONE:       return NULL;
     default:                    return NULL;

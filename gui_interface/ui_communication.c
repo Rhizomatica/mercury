@@ -24,6 +24,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 #include <stdarg.h>
 #include <time.h>
@@ -279,27 +280,65 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         if (config.hamlib_serial_speed < 0)
             config.hamlib_serial_speed = 0;
 
-        /* Older clients omit the advanced fields; retain their current
-         * values in that case so applying an unrelated PTT change is safe. */
-        if (cmd->value5[0] &&
-            !cfg_ptt_line_parse(cmd->value5, &config.serial_line)) {
-            HLOGE(UI_LOG_TAG, "Invalid serial PTT line from UI: %s", cmd->value5);
-            return -1;
-        }
-        if (cmd->value6[0] &&
-            !cfg_ptt_invert_parse(cmd->value6, &config.serial_invert_rts,
-                                  &config.serial_invert_dtr)) {
-            HLOGE(UI_LOG_TAG, "Invalid serial PTT inversion from UI: %s", cmd->value6);
-            return -1;
-        }
-        if (cmd->value7[0]) {
-            char *end = NULL;
-            long gpio = strtol(cmd->value7, &end, 10);
-            if (!end || *end != '\0' || gpio < 1 || gpio > 4) {
-                HLOGE(UI_LOG_TAG, "Invalid CM108 GPIO from UI: %s", cmd->value7);
+        /* GPIO PTT reuses the existing WS command fields:
+         *   value2 = gpio chip
+         *   value6 = invert (true/false)
+         *   value7 = BCM GPIO line
+         *
+         * Do not run the serial/CM108 parsers for GPIO: their value7
+         * range is deliberately limited to CM108 GPIO 1..4. */
+        if (config.method == PTT_METHOD_GPIO) {
+            if (cmd->value2[0])
+                snprintf(config.gpio_chip, sizeof(config.gpio_chip), "%s",
+                         cmd->value2);
+
+            if (cmd->value6[0]) {
+                if (strcmp(cmd->value6, "true") == 0 ||
+                    strcmp(cmd->value6, "1") == 0) {
+                    config.gpio_invert = true;
+                } else if (strcmp(cmd->value6, "false") == 0 ||
+                           strcmp(cmd->value6, "0") == 0) {
+                    config.gpio_invert = false;
+                } else {
+                    HLOGE(UI_LOG_TAG, "Invalid GPIO inversion from UI: %s",
+                          cmd->value6);
+                    return -1;
+                }
+            }
+
+            if (cmd->value7[0]) {
+                char *end = NULL;
+                unsigned long gpio = strtoul(cmd->value7, &end, 10);
+                if (!end || *end != '\0' || gpio > UINT_MAX) {
+                    HLOGE(UI_LOG_TAG, "Invalid GPIO line from UI: %s",
+                          cmd->value7);
+                    return -1;
+                }
+                config.gpio_line = (unsigned int)gpio;
+            }
+        } else {
+            /* Older clients omit the advanced fields; retain their current
+             * values in that case so applying an unrelated PTT change is safe. */
+            if (cmd->value5[0] &&
+                !cfg_ptt_line_parse(cmd->value5, &config.serial_line)) {
+                HLOGE(UI_LOG_TAG, "Invalid serial PTT line from UI: %s", cmd->value5);
                 return -1;
             }
-            config.cm108_gpio = (int)gpio;
+            if (cmd->value6[0] &&
+                !cfg_ptt_invert_parse(cmd->value6, &config.serial_invert_rts,
+                                      &config.serial_invert_dtr)) {
+                HLOGE(UI_LOG_TAG, "Invalid serial PTT inversion from UI: %s", cmd->value6);
+                return -1;
+            }
+            if (cmd->value7[0]) {
+                char *end = NULL;
+                long gpio = strtol(cmd->value7, &end, 10);
+                if (!end || *end != '\0' || gpio < 1 || gpio > 4) {
+                    HLOGE(UI_LOG_TAG, "Invalid CM108 GPIO from UI: %s", cmd->value7);
+                    return -1;
+                }
+                config.cm108_gpio = (int)gpio;
+            }
         }
 
         if (config.method == PTT_METHOD_HAMLIB && config.hamlib_model <= 0) {
@@ -893,6 +932,10 @@ void *ui_publisher_thread(void *arg)
                 char sel[16] = "", dev_path[512] = "", ptt_method[32] = "none";
                 char ptt_line[16] = "rts", ptt_invert[16] = "none";
                 int  serial_speed = 0, cm108_gpio = PTT_CM108_GPIO_DEFAULT;
+                ptt_config_t current_ptt;
+                memset(&current_ptt, 0, sizeof(current_ptt));
+                radio_io_get_config(&current_ptt);
+
                 int  count = ui_comm_get_radio_list(radios, max_radios, sel, sizeof(sel),
                                                     dev_path, sizeof(dev_path), &serial_speed,
                                                     ptt_method, sizeof(ptt_method),
@@ -907,9 +950,13 @@ void *ui_publisher_thread(void *arg)
                         "{\"type\":\"radio_list\",\"selected\":\"%s\",\"device_path\":\"%s\","
                         "\"serial_speed\":%d,\"ptt_method\":\"%s\","
                         "\"ptt_line\":\"%s\",\"ptt_invert\":\"%s\","
-                        "\"cm108_gpio\":%d,\"list\":[",
+                        "\"cm108_gpio\":%d,"
+                        "\"gpio_chip\":\"%s\",\"gpio_line\":%u,\"gpio_invert\":%s,"
+                        "\"list\":[",
                         sel, dev_path, serial_speed, ptt_method, ptt_line,
-                        ptt_invert, cm108_gpio);
+                        ptt_invert, cm108_gpio,
+                        current_ptt.gpio_chip, current_ptt.gpio_line,
+                        current_ptt.gpio_invert ? "true" : "false");
                     for (int i2 = 0; i2 < count && pos < 65536 - 160; i2++)
                         pos += snprintf(buf + pos, 65536 - pos, "%s{\"name\":\"%s\",\"id\":\"%s\"}",
                                         i2 ? "," : "", radios[i2].name, radios[i2].id);
