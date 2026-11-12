@@ -266,13 +266,15 @@ then sends one DISCONNECT frame straight away (after any frame already on
 the air, and clear of the peer's reply window), so the peer is told rather
 than left to time out.  It is not retried: the caller is free once the
 peer answers or one retry interval passes, and the callee once its
-DISCONNECT is out.  The DISCONNECT waits for the peer's slots (the caller)
-or its own next slot (the callee) only so long: it is on the air and done
-within 15 s of the `ABORT`, slot or not, because a scanning BPQ32 takes
-the radio back as it sends `ABORT` (see
-[Scanning hosts](#scanning-hosts-bpq32)).  A keydown of Mercury's already
-on the air at the `ABORT` still runs to its end first, and a DISCONNECT on
-a mode too slow to fit (the MFSK floor at 500 Hz, about 26 s) keys at once.
+DISCONNECT is out.  The callee's waits for its own next slot only so
+long: if none comes in time to be on the air and done within 15 s of the
+`ABORT`, it keys out of turn, because a scanning BPQ32 takes the radio back
+as it sends `ABORT` (see [Scanning hosts](#scanning-hosts-bpq32)).  The one
+DISCONNECT is never keyed over a station Mercury hears on the air, as it is
+not retried and the peer could not hear it: the caller's keeps to the
+callee's slots, and the callee's out-of-turn one waits for a clear channel
+(the slot after the caller's keydown carries it).  A keydown of Mercury's
+already on the air at the `ABORT` still runs to its end first.
 `DISCONNECTED\r` is sent on the control port at once, and it is the
 session's only one: the end of the teardown that follows sends no second
 `DISCONNECTED\r`.
@@ -844,8 +846,8 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   `LISTEN ON` and `SCANSTART 15`), so its first hop comes 15 s after the
   `ABORT` whatever Mercury answers.  On air (K7EK, 2026-11-10) `LISTEN ON`
   came in the `ABORT`'s millisecond and the hop's `LISTEN OFF` 16.6 s later.
-  So the `ABORT`'s one DISCONNECT keys within that time, slot or not
-  ([ABORT](#abort)).
+  So a callee's `ABORT`ed DISCONNECT keys out of turn, on a clear channel,
+  if no slot comes in that time ([ABORT](#abort)).
 
 When `LISTEN OFF` arrives with no session up while a CALL decoder has locked
 onto a frame it has not decoded yet, Mercury logs it:

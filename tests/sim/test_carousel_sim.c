@@ -700,50 +700,59 @@ void test_car_abort_then_redial_keeps_clear_of_the_reply(void)
     sim_destroy(s);
 }
 
-/* From an ABORT until ep's one DISCONNECT is off the air (or ep has left the
- * session), at most ms.  Counted from the end of a keydown of ep's already
- * on the air at the ABORT: a keydown goes to the modem whole, and nothing
- * cuts it short (*own: how long it ran on).  *keyed: whether that
- * DISCONNECT went out. */
-static uint64_t ms_to_abort_disconnect(sim_t *s, sim_endpoint_t *ep, uint64_t ms, bool *keyed,
-                                       uint64_t *own)
+/* What became of an ABORT's one DISCONNECT, from the ABORT on. */
+typedef struct {
+    uint64_t own;       /* a keydown of ep's on the air at the ABORT ran on this long */
+    bool     keyed;     /* the DISCONNECT went out */
+    uint64_t off;       /* ...and was off the air this long after the ABORT */
+    uint64_t both;      /* ms it was on the air with the peer keyed too */
+    uint64_t told;      /* the peer left CONNECTED this long after the ABORT; 0: not within ms */
+    bool     cut;       /* ep left the session with its DISCONNECT still on the air */
+} abort_fate_t;
+
+static abort_fate_t abort_fate(sim_t *s, sim_endpoint_t *ep, sim_endpoint_t *peer, uint64_t ms)
 {
     const arq_session_t *ss = sim_endpoint_session(ep);
-    *own = 0;
-    while (ss->tx_active && ss->teardown != ARQ_TD_SENT && *own < ms) {
+    abort_fate_t f = { 0 };
+    bool own = ss->tx_active && ss->teardown != ARQ_TD_SENT;
+    for (uint64_t t = 0; t < ms; t += 50) {
+        bool sent = ss->teardown == ARQ_TD_SENT &&
+                    (ss->conn_state == ARQ_CONN_DISCONNECTING || f.keyed);
+        if (own && !ss->tx_active) { own = false; f.own = t; }
+        if (sent && !f.keyed) f.keyed = true;
+        bool on = f.keyed && !f.off && sim_keyed(s, ep);
+        if (f.keyed && !f.off && !on && !own) f.off = t;
+        if (on && sim_keyed(s, peer)) f.both += 50;
+        if (on && ss->conn_state != ARQ_CONN_DISCONNECTING) f.cut = true;
+        if (!f.told && state(peer) != ARQ_CONN_CONNECTED) f.told = t ? t : 1;
+        if (f.told && (f.off || !f.keyed) && state(ep) != ARQ_CONN_DISCONNECTING) break;
         sim_run_until_idle(s, 50);
-        *own += 50;
     }
-    uint64_t t = 0;
-    *keyed = false;
-    for (; t < ms; t += 50) {
-        if (ss->conn_state == ARQ_CONN_DISCONNECTING && ss->teardown == ARQ_TD_SENT)
-            *keyed = true;
-        if (ss->conn_state != ARQ_CONN_CONNECTED && ss->conn_state != ARQ_CONN_DISCONNECTING) break;
-        if (*keyed && !ss->tx_active) break;
-        sim_run_until_idle(s, 50);
-    }
-    return t;
+    return f;
 }
 
 /* BPQ32 takes the radio as it sends ABORT, and its scan's first hop comes
- * 15 s later (abort_key_by): the one DISCONNECT must be on the air and done
- * by then, wherever in the peer's slots the ABORT falls.  Both directions
- * busy, BPQ32's timing: DISCONNECT, then ABORT 30 s on with the drain still
- * running.  On mercuryv2 the caller's DISCONNECT waited for the peer's slots
- * (16.1 s on the bench, two sBitx), and the callee's for its next slot, up
- * to 30 s.  Swept over the moment of the hang-up, as the slots move.  A
- * keydown of our own on the air at the ABORT is not counted (see
- * ms_to_abort_disconnect). */
-static void abort_disconnect_before_the_hop(bool callee)
+ * 15 s later (abort_key_by).  Both directions busy, BPQ32's timing:
+ * DISCONNECT, then ABORT 30 s on with the drain still running, swept over
+ * the moment of the hang-up as the slots move.  Whoever ABORTs, its one
+ * DISCONNECT is never keyed over the peer (a half-duplex peer can't hear it,
+ * and it is not retried), and a callee's that no slot carried in time goes
+ * out of turn on a clear channel.  Asserted as the peer sees it: told, its
+ * session left, and ours not left before the DISCONNECT is off the air.
+ * Returns the worst time the peer was told in, from the ABORT, where no
+ * keydown of ours was on the air at it (a keydown goes to the modem whole,
+ * and the peer answers it before anything else can go); *untold counts the
+ * peers never told within 60 s. */
+static uint64_t abort_sweep(bool callee, int *untold, int *cases)
 {
     static uint8_t blob[6000];
     fill(blob, sizeof(blob), 5);
     uint64_t worst = 0;
-    char msg[128] = "";
+    *untold = *cases = 0;
     for (int k = 0; k < 12; k++) {
         sim_t *s = idle_session(31 + k, 6.0);
         sim_endpoint_t *me = callee ? sim_b(s) : sim_a(s);
+        sim_endpoint_t *peer = callee ? sim_a(s) : sim_b(s);
         sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
         sim_endpoint_queue_tx(sim_b(s), blob, sizeof(blob));
         sim_run_until_idle(s, 8000 + 1700 * k);
@@ -751,30 +760,56 @@ static void abort_disconnect_before_the_hop(bool callee)
         arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
         sim_inject(s, me, &disc);
         sim_run_until_idle(s, 30000);        /* BPQ32: 30 s with no DISCONNECTED */
-        if (state(me) != ARQ_CONN_CONNECTED && state(me) != ARQ_CONN_DISCONNECTING) {
-            sim_destroy(s);                  /* drained and done within the 30 s */
+        if ((state(me) != ARQ_CONN_CONNECTED && state(me) != ARQ_CONN_DISCONNECTING) ||
+            sim_endpoint_session(me)->teardown == ARQ_TD_SENT) {
+            sim_destroy(s);                  /* done, or its DISCONNECT already out */
             continue;
         }
-        if (sim_endpoint_session(me)->teardown == ARQ_TD_SENT) { sim_destroy(s); continue; }
         arq_event_t ab = { .id = ARQ_EV_APP_DISCONNECT, .abort = true };
         sim_inject(s, me, &ab);
-        bool keyed;
-        uint64_t own;
-        uint64_t t = ms_to_abort_disconnect(s, me, 120000, &keyed, &own);
-        if (!keyed || t > worst) {
-            snprintf(msg, sizeof msg, "case %d: DISCONNECT %s, %llu ms after the ABORT (+%llu ms of our keydown)",
-                     k, keyed ? "off the air" : "never keyed", (unsigned long long)t, (unsigned long long)own);
-            if (!keyed) { sim_destroy(s); TEST_FAIL_MESSAGE(msg); }
-            worst = t;
-        }
+        abort_fate_t f = abort_fate(s, me, peer, 60000);
+        (*cases)++;
+        char msg[160];
+        snprintf(msg, sizeof msg, "%s case %d: DISCONNECT %s at %llu ms%s, %llu ms over the peer, "
+                 "peer told at %llu ms (our keydown ran %llu ms on)", callee ? "callee" : "caller", k,
+                 f.keyed ? "off the air" : "never keyed", (unsigned long long)f.off,
+                 f.cut ? " (session left before it)" : "", (unsigned long long)f.both,
+                 (unsigned long long)f.told, (unsigned long long)f.own);
         sim_destroy(s);
+        TEST_ASSERT_EQUAL_UINT64_MESSAGE(0, f.both, msg);
+        TEST_ASSERT_FALSE_MESSAGE(f.cut, msg);
+        if (!f.told) { (*untold)++; printf("  %s\n", msg); continue; }
+        if (!f.own && f.told > worst) worst = f.told;
     }
-    TEST_ASSERT_TRUE_MESSAGE(worst > 0, "no case reached the ABORT with the DISCONNECT still held");
-    TEST_ASSERT_TRUE_MESSAGE(worst <= 15000, msg);
+    return worst;
 }
 
-void test_car_abort_disconnect_before_the_hop(void)        { abort_disconnect_before_the_hop(false); }
-void test_car_callee_abort_disconnect_before_the_hop(void) { abort_disconnect_before_the_hop(true); }
+/* The caller's DISCONNECT keeps clear of the callee's slots, ABORT or not:
+ * keyed before them, it landed on the callee's keydown and told nobody (#531
+ * review: 7 of 12 never told, 6 of them told at 21-28 s on mercuryv2).  Nor
+ * does the channel deferral's cap key it over a keydown we hear: on
+ * mercuryv2 it did, 10 s into a 19.5 s round (case 11), and that peer was
+ * never told.  Every peer is told, none of it over the peer. */
+void test_car_abort_disconnect_before_the_hop(void)
+{
+    int untold, cases;
+    abort_sweep(false, &untold, &cases);
+    TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
+    TEST_ASSERT_EQUAL_INT(0, untold);
+}
+
+/* The callee: its DISCONNECT goes in its next slot, or out of turn on a
+ * clear channel by the key-by time, so the caller is told before the hop.
+ * On mercuryv2 two callees (cases 8, 9) never keyed it, their slot wait over
+ * first, and case 1 was told at 15.3 s. */
+void test_car_callee_abort_disconnect_before_the_hop(void)
+{
+    int untold, cases;
+    uint64_t worst = abort_sweep(true, &untold, &cases);
+    TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
+    TEST_ASSERT_EQUAL_INT(0, untold);
+    TEST_ASSERT_TRUE(worst <= 15000);
+}
 
 /* Request and reply, as UUCP talks: A's request arrives, B's application
  * answers while B's last poll (nothing left either way) is on the air.  The

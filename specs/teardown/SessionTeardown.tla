@@ -359,9 +359,10 @@ SSlotDisc == /\ st["S"] = "ending" /\ slot
              /\ UNCHANGED <<gen, sid, tries, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw, mdrain, asked, forced, mend, cut, wordgone, sab>>
 \* ABORT's DISCONNECT with no slot of M's in time (abort_key_by): the host
 \* takes the radio 15 s after its ABORT (BPQ32's SCANSTART 15), so S keys it
-\* anyway and ends once it is out.  Time is abstract: it may come before any
-\* slot or after, and keying out of turn must break nothing.
-SAbortKey == /\ st["S"] = "ending" /\ sab /\ ~sent["S"]
+\* out of turn and ends once it is out -- on a clear channel only, never over
+\* a frame of M's it hears (q["S"] empty), which it would be lost on.  Time
+\* is abstract: it may come before any slot or after.
+SAbortKey == /\ st["S"] = "ending" /\ sab /\ ~sent["S"] /\ q["S"] = <<>>
              /\ sent' = [sent EXCEPT !["S"] = TRUE]
              /\ Send("M", Frame("disc", sid["S"], gen["S"]))
              /\ st' = [st EXCEPT !["S"] = "idle"] /\ End("S", "abort")

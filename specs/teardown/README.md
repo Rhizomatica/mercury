@@ -205,18 +205,27 @@ callee's ABORT drops the ack it owes the caller (`car_owes_ack`), as ABORT
 says, so `SAbort` sets `forced`.  With `ABORT = FALSE` the behaviour is
 exactly the model's before.
 
-The ABORT's DISCONNECT is on the air and done within 15 s of it, slot or
-not (abort_key_by): BPQ32 takes the radio back as it sends ABORT, and its
-scan hops 15 s later (`CheckForDetach`: `ForcedClose`, then `CloseComplete`
-and `SCANSTART 15`), whatever DISCONNECTED says.  Waiting for the peer's
-slots, the caller's DISCONNECT was still 16.1 s from keying at that hop on
-the bench (two sBitx), and the callee's waited up to 30 s for its slot.  In
-the model the caller's wait for slots is abstract already (`MDisc`); the
-callee's DISCONNECT out of turn is `SAbortKey`, which may come before any
-slot or after.  It breaks no property.  The 15 s bound itself is timing,
-which the model does not have: the sim tests
+BPQ32 takes the radio back as it sends ABORT, and its scan hops 15 s later
+(`CheckForDetach`: `ForcedClose`, then `CloseComplete` and `SCANSTART 15`),
+whatever DISCONNECTED says.  The callee's slot wait ran up to 30 s, so if
+no slot comes in time its DISCONNECT keys out of turn (abort_key_by): that
+is `SAbortKey`, which may come before any slot or after, and only with
+nothing of M's on its way (`q["S"]` empty): the code keys it on a clear
+channel only, never over a keydown it hears, as a DISCONNECT keyed over the
+peer is lost and this one is not retried.  The caller's keeps to the
+callee's slots as ever (`MDisc`).
+
+`SAbortKey` breaks no property, but that says little about collisions: a
+DISCONNECT keyed over the peer is a lost frame, which the lossless config
+can't lose and the lossy one doesn't exhaust.  Nor is out-of-turn keying
+inside what `specs/turns` allows: its no-overlap result assumes the callee
+keys only in its slots.  Listening first keeps the ABORT's one frame off a
+caller it can hear; against one it can't (a hidden station, or one keying
+the same instant) it gives no-overlap up for that frame.  The 15 s bound
+and the no-overlap are timing, which the model does not have: the sim tests
 `test_car_abort_disconnect_before_the_hop` and
-`test_car_callee_abort_disconnect_before_the_hop` check it.
+`test_car_callee_abort_disconnect_before_the_hop` check both, as the peer
+sees it (told, and no time with both keyed).
 
 As first written, a caller whose DISCONNECT was out ended at once on the
 ABORT.  The model has it as `Mut_abortnow.cfg`: the caller calls again, and
@@ -238,13 +247,14 @@ Results:
   before the owed ack, 124 141 before the last word, 52 041 before M_END).  `Clean` does not apply
   here.
 - `SessionTeardown_abort.cfg`: the code's rules with the host's ABORT,
-  lossless, with the host's race and its notice.  No error, 1 967 830
+  lossless, with the host's race and its notice.  No error, 1 966 726
   distinct states (1 865 558 before `SAbortKey`, 259 749 before the host's
   notice).
 - `SessionTeardown_abort_lossy.cfg`: the same with any frame lost.  Not
   exhausted: no error through 36.7 M distinct states at depth 48
-  (7 workers, 1 h 50 min), with 1.3 M still queued when the run was stopped.  With `SAbortKey`: no error through 9.45 M distinct states at depth 30
-  (6 workers, 25 min), 1.1 M still queued.
+  (7 workers, 1 h 50 min), with 1.3 M still queued when the run was stopped.
+  With `SAbortKey` on a clear channel: no error through 7.21 M distinct
+  states at depth 28 (4 workers, 25 min), 1.0 M still queued.
 - `Mut_abortnow.cfg`: lossless, the caller's ABORT with its DISCONNECT out
   ends it at once.  It violates `Clean`: its next CALL is dropped by a
   callee still replying.
