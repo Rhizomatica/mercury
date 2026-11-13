@@ -44,6 +44,13 @@ input_device =
 ; Run mercury -z to list available devices, and store the id it prints.
 output_device =
 
+; The two devices' names, written by the GUI with the ids above.  On Windows
+; (wasapi, dsound), when a saved id is no longer present -- Windows gives a USB
+; sound card a new id when it is re-plugged -- the device with this exact name
+; is used instead, if exactly one has it.  Leave empty to turn that off.
+;input_device_name =
+;output_device_name =
+
 ; Capture input channel: left, right, or stereo (default: left)
 capture_channel = left
 

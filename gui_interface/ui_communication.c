@@ -277,6 +277,12 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
             strncpy(ctx->cfg.output_device, ctx->selected_playback_dev,
                     sizeof(ctx->cfg.output_device) - 1);
             ctx->cfg.output_device[sizeof(ctx->cfg.output_device) - 1] = '\0';
+            /* With their names, which find them if Windows gives them new
+             * ids (audioio_set_saved_device_names). */
+            audioio_device_name(active_system, 1 /* capture */, ctx->cfg.input_device,
+                                ctx->cfg.input_device_name, sizeof(ctx->cfg.input_device_name));
+            audioio_device_name(active_system, 0 /* playback */, ctx->cfg.output_device,
+                                ctx->cfg.output_device_name, sizeof(ctx->cfg.output_device_name));
             ctx->cfg.capture_channel = ctx->rx_input_channel;
             ctx->cfg.sound_system = active_system;
             if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))

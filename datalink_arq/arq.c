@@ -15,6 +15,7 @@
 #include "arq_modem.h"
 #include "arq_channels.h"
 #include "carousel.h"
+#include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK, _N32 */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -102,6 +103,16 @@ static pthread_mutex_t g_conn_lock = PTHREAD_MUTEX_INITIALIZER;
  * arq_conn.src_addr, which an incoming CALL resets (cb_notify_pending), so the
  * session that CONNECT places still reports the host's source. */
 static char g_connect_src[CALLSIGN_MAX_SIZE];
+
+/* The host already has its DISCONNECTED for the session now ending: ABORT
+ * answers at once, then the FSM still runs the teardown, and its end must not
+ * say it again (the line carries no session id, so a host that has moved on
+ * reads a late one as "my current session closed").  Under g_conn_lock; set
+ * by ABORT with a session up, consumed by cb_notify_disconnected, cleared
+ * when a new session starts (CONNECT, an incoming CALL). */
+static bool g_host_told;
+
+static bool notice_owed(void);
 
 /* Internal event queue */
 #define ARQ_EV_QUEUE_CAP 64
@@ -299,6 +310,11 @@ static void cb_notify_connected(const char *remote_call, const char *local_call,
     HLOGI(LOG_COMP, "Connected to %s", remote_call);
 }
 
+/* When PENDING last went to the host for the call we are answering; 0: none.
+ * Written by the FSM's callbacks and by pending_hold, all on the event loop
+ * under g_sess_lock. */
+static uint64_t g_pending_ms;
+
 static void cb_notify_pending(const char *remote_call, const char *local_call)
 {
     /* An incoming call makes us the callee, whatever an earlier session left
@@ -316,8 +332,10 @@ static void cb_notify_pending(const char *remote_call, const char *local_call)
     pthread_mutex_lock(&g_conn_lock);
     memset(arq_conn.src_addr, 0, sizeof(arq_conn.src_addr));
     memset(arq_conn.dst_addr, 0, sizeof(arq_conn.dst_addr));
+    g_host_told = false;   /* a new session: its end is owed a notice */
     pthread_mutex_unlock(&g_conn_lock);
     arq_tnc_send_pending();
+    g_pending_ms = time_now_ms();
     HLOGI(LOG_COMP, "Incoming connection from %s on %s (pending)",
           remote_call, (local_call && local_call[0]) ? local_call : "(primary)");
 }
@@ -331,6 +349,7 @@ static void cb_notify_pending_again(const char *remote_call)
 {
     (void)remote_call;   /* the FSM logs the repeat with the callsign */
     arq_tnc_send_pending();
+    g_pending_ms = time_now_ms();
 }
 
 static void cb_notify_cancelpending(void)
@@ -352,6 +371,8 @@ static void cb_notify_disconnected(bool to_no_client)
     arq_conn.session_bw = 0;
     arq_conn.TRX = RX;
     bool relisten = (arq_conn.listen && arq_conn.my_call_sign[0] != '\0');
+    bool told = g_host_told;
+    g_host_told = false;
     pthread_mutex_unlock(&g_conn_lock);   /* release BEFORE g_app_tx_mtx: leaf discipline */
     /* Flush stale TX bytes from the previous session.  RX bytes are flushed
      * at connection start (cb_notify_connected) instead of here, so that the
@@ -364,8 +385,13 @@ static void cb_notify_disconnected(bool to_no_client)
      * glued onto trailing bytes from this one. */
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
-    arq_tnc_send_disconnected();
-    HLOGI(LOG_COMP, "Disconnected");
+    if (told)
+        HLOGI(LOG_COMP, "Disconnected (the host was told at its ABORT)");
+    else
+    {
+        arq_tnc_send_disconnected();
+        HLOGI(LOG_COMP, "Disconnected");
+    }
     ARQ_TRACE_DUMP("disconnected");
     /* Return to LISTENING after any disconnection (failed call, cancelled call,
      * or ended session) as long as listen mode is active.  The was_connected
@@ -603,6 +629,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
         snprintf(g_connect_src, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
+        g_host_told = false;   /* a new session: its end is owed a notice */
         arq_conn.session_bw = 0;
         pthread_mutex_unlock(&g_conn_lock);
         /* The FSM defers a CONNECT that arrives while the previous session is
@@ -666,14 +693,29 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
     }
 
     case ARQ_CMD_DISCONNECT:
-        /* VARA TNC spec: send DISCONNECTED to host immediately on receiving
-         * DISCONNECT command, before the over-the-air exchange completes.
-         * This lets the host close the socket cleanly while the FSM handles
-         * the air-side teardown.  We deliberately do NOT clear g_app_tx_buf
-         * here: the FSM drains any bytes still queued, then completes a clean
-         * air-side DISCONNECT handshake.  The retry-exhaustion path bounds the
-         * drain so a dead channel still tears down quickly (see arq_fsm.c). */
-        arq_tnc_send_disconnected();
+        /* DISCONNECTED is the host's "the session is closed", sent when it
+         * is: VARA's command reference has DISCONNECT end the link "once the
+         * TX buffer is empty" and DISCONNECTED mean "Session closed by either
+         * end".  The FSM ends the session -- the drain, then the DISCONNECT
+         * exchange -- and its end says DISCONNECTED (cb_notify_disconnected).
+         * We deliberately do NOT clear g_app_tx_buf here: the FSM drains any
+         * bytes still queued first.  ABORT stays immediate.
+         *
+         * Saying it at once let a scanning host move the radio mid-teardown:
+         * BPQ32 restarts its scan 15 s after DISCONNECTED (SCANSTART 15), and
+         * its LISTEN OFF ended the session before the peer had our DISCONNECT
+         * (on air, K7EK and KG9NI, 1.9.22: a retry due 20 s after the first
+         * cut off, and drains cut with no DISCONNECT sent at all; the peer
+         * timed out after 240 s).  BPQ32 keeps the radio while it waits for
+         * DISCONNECTED, and ABORTs after 30 s.
+         *
+         * With no session up there is nothing to end and no later notice to
+         * wait for: answer at once.  Not arq_session_active(): a session that
+         * ended on the peer's DISCONNECT is no longer active, but its notice
+         * waits for our reply to go out, and answering here too said it
+         * twice. */
+        if (!notice_owed())
+            arq_tnc_send_disconnected();
         wait_payload_written();
         ev.id = ARQ_EV_APP_DISCONNECT;
         break;
@@ -682,10 +724,24 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         /* Dirty disconnect: drop everything still held -- the host's unsent
          * bytes here, the frames awaiting an ACK and the re-staged ones in the
          * FSM (ev.abort) -- and go at once, without the drain DISCONNECT waits
-         * for.  The peer is still told: the FSM sends its DISCONNECT frames,
-         * after any frame on the air ends, so it need not time out (#218: the
-         * comment and docs/TNC.md said no frame went out; one always did). */
+         * for.  The peer is still told: the FSM sends one DISCONNECT, never
+         * over a frame on the air, and the callee's out of turn if no slot
+         * comes before a scanning host takes the radio (abort_teardown), so
+         * the peer need not time out (#218: the comment and docs/TNC.md said
+         * no frame went out; one always did).
+         *
+         * DISCONNECTED goes at once: a host that ABORTs is done waiting
+         * (BPQ32 releases the radio on it).  That is this session's notice,
+         * so its end in the FSM doesn't send another (g_host_told): on air,
+         * VE4KLM 5 Nov, a second one came 58 s later, after the unanswered
+         * DISCONNECT frames, when JNOS had already moved on. */
         clear_connection_data();
+        if (notice_owed())
+        {
+            pthread_mutex_lock(&g_conn_lock);
+            g_host_told = true;
+            pthread_mutex_unlock(&g_conn_lock);
+        }
         arq_tnc_send_disconnected();
         ev.id = ARQ_EV_APP_DISCONNECT;
         ev.abort = true;
@@ -772,6 +828,77 @@ static void count_listen_end(arq_listen_end_t end)
         g_listen_releases++;
 }
 
+/* While calling, the host hears a line at least every ARQ_CALL_PROGRESS_MS.
+ *
+ * BPQ32 closes a session idle for its IDLETIME, and a forwarding connect
+ * script may set that as low as it likes ("IDLETIME 60": BBSUtilities.c
+ * passes it to ChangeSessionIdletime with no floor, and the BBS does not log
+ * the line).  While its port is attached and not connected, BPQ32's VARA
+ * driver passes the TNC lines it does not know to the session as data
+ * ("VARA} ..."), and that resets the idle timer; PTT, SN, BUSY and BUFFER it
+ * takes itself (VARA.c).  Mercury's BITRATE went out only for frames on a
+ * payload mode (modem.c, publish_link_bitrate), so during the fast CALLs
+ * the host heard nothing: on air (KG9NI, linbpq 6.0.25.41, 2026-11-10/11) 8
+ * calls were dropped 61-62 s after the last line BPQ32 had, the first MFSK
+ * CALL's BITRATE 55 s in or later.  At BW500 even the floor CALLs leave 64.5
+ * s between keydowns (a 27 s frame and its 37.5 s interval), and a CALL held
+ * for a frame arriving (call_must_wait) adds up to 32.5 s.
+ *
+ * So a BITRATE line on entering CALLING and every ARQ_CALL_PROGRESS_MS after,
+ * for the carrier of the CALL out last: the modem's rate for it, where it
+ * has reported one (tnc_send_bitrate_progress), else the mode's net rate,
+ * its payload over its airtime -- the modem never reports the control mode.
+ * Once connected, BITRATE is the modem's alone again. */
+#define ARQ_CALL_PROGRESS_MS 20000
+static uint64_t g_call_progress_ms;   /* the last line's time; 0: none (g_sess_lock) */
+
+static void call_progress(uint64_t now)
+{
+    if (g_sess.conn_state != ARQ_CONN_CALLING)
+    {
+        g_call_progress_ms = 0;
+        return;
+    }
+    if (g_call_progress_ms && now - g_call_progress_ms < ARQ_CALL_PROGRESS_MS)
+        return;
+    g_call_progress_ms = now;
+    int mode = g_sess.call_carrier > 0 ? g_sess.call_carrier : ARQ_CONTROL_MODE;
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(mode);
+    uint32_t bps = tm && tm->frame_duration_s > 0.0f
+                 ? (uint32_t)(tm->payload_bytes * 8 / tm->frame_duration_s + 0.5f) : 0;
+    /* The modem's speed levels (modem.c, bitrate_level_from_payload_mode),
+     * and 16 for the control mode, which it never reports. */
+    uint32_t level = mode == MERCURY_MODE_MFSK ? 100 : mode == MERCURY_MODE_MFSK_N32 ? 103 : 16;
+    arq_tnc_send_bitrate(level, bps);
+}
+
+/* While we answer a call, PENDING again every ARQ_PENDING_HOLD_MS.
+ *
+ * A scanning host holds its channel for a fixed time per PENDING: BPQ32 six
+ * scan intervals (VARA.c, "Time out after 6 Scanintervals"), about 60-85 s
+ * on air.  We answer for as long as our ACCEPT retries last, the host's
+ * RETRIES slots from the last CALL heard (RETRIES 20: 20 retry intervals,
+ * about 160 s), and only a repeat of the CALL that we decode sent PENDING
+ * again (#477).  On a weak path that is not enough: on air (K7EK <- KG9NI-7,
+ * 30 m, 2026-11-12 20:49) K7EK decoded 2 of the caller's 13 CALLs, answered
+ * the second, and BPQ32 hopped 66 s later while the caller called on for
+ * another 2 minutes; also 06:23 (63 s).  Held this way, the host keeps the
+ * channel exactly as long as we answer: when the ACCEPT retries run out, or
+ * the caller's DISCONNECT ends it, the FSM's CANCELPENDING releases it.
+ * Not after a LISTEN OFF we are deferring (ARQ_TD_LISTEN_OFF): the host has
+ * asked for the radio back. */
+#define ARQ_PENDING_HOLD_MS 20000
+
+static void pending_hold(uint64_t now)
+{
+    if (g_sess.conn_state != ARQ_CONN_ACCEPTING || g_sess.teardown == ARQ_TD_LISTEN_OFF)
+        return;
+    if (g_pending_ms && now - g_pending_ms < ARQ_PENDING_HOLD_MS)
+        return;
+    arq_tnc_send_pending();
+    g_pending_ms = now;
+}
+
 static void *arq_event_loop_worker(void *arg)
 {
     (void)arg;
@@ -818,6 +945,8 @@ static void *arq_event_loop_worker(void *arg)
             arq_event_t tev = { .id = g_sess.deadline_event };
             count_listen_end(arq_fsm_dispatch_ends_listening(&g_sess, &tev));
         }
+        call_progress(now);
+        pending_hold(now);
         pthread_mutex_unlock(&g_sess_lock);
     }
 
@@ -1082,6 +1211,7 @@ int arq_init(size_t frame_size, int mode)
     /* single-threaded: before worker threads start -- no lock needed */
     memset(&arq_conn, 0, sizeof(arq_conn));
     g_connect_src[0] = '\0';
+    g_host_told = false;
     arq_conn.frame_size      = frame_size;
     arq_conn.mode            = mode;
     arq_conn.call_burst_size = 1;
@@ -1205,6 +1335,16 @@ void arq_post_pattern_ack(bool is_break)
     ev.id       = ARQ_EV_RX_PATTERN;
     ev.pattern_break = is_break;
     evq_push(&ev);
+}
+
+/* The FSM will still say DISCONNECTED for the session (arq_fsm_notice_owed):
+ * then a host DISCONNECT waits for it, and ABORT's own answer stands for it. */
+static bool notice_owed(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    bool owed = arq_fsm_notice_owed(&g_sess);
+    pthread_mutex_unlock(&g_sess_lock);
+    return owed;
 }
 
 bool arq_session_active(void)

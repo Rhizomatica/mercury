@@ -385,6 +385,8 @@ const (
 	// present to tick a box.
 	broadcastRxDirPrefKey = "broadcastFile.rxDir"
 	broadcastRxOnPrefKey  = "broadcastFile.receive"
+	// macOS: the security-scoped bookmark of that folder, base64 (picker_macos.go)
+	broadcastRxBookmarkPrefKey = "broadcastFile.rxDirBookmark"
 
 	// defaultWindowWidth/Height match the previous hard-coded launch size and
 	// are used until the operator has resized the window once.
@@ -1872,6 +1874,9 @@ func main() {
 			})
 		}
 	}()
+
+	// Sailfish OS's keyboard for text fields (osk_hybris.go; a no-op elsewhere).
+	startOnScreenKeyboard(myApp, appendLog)
 
 	myWindow.ShowAndRun()
 

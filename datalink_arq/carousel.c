@@ -1064,6 +1064,37 @@ static float level_min_db(int lv)
  * the application heard nothing.  The SNR only ever excludes: on NVIS it
  * reads 10 dB where fast rungs fail anyway, and measurement handles that. */
 #define SNR_GATE_DB 3.0f
+/* How long a data frame's reading keeps control-mode readings out of the rung
+ * estimate (car_on_frame, #501). */
+#define CTL_READING_DATA_MS 120000
+/* A frame of the peer's data heard (M's m_on_data, S's s_on_data).  The
+ * first one after none for CTL_READING_DATA_MS -- the session's first, or the
+ * first after an idle stretch -- takes the estimate to its own reading when
+ * that is well above it: until then the estimate was the control mode's (the
+ * connect hint is a DATAC16 reading too), and the control mode reads low
+ * where the two differ, never high.  Smoothed from it, a data reading 6 dB
+ * above took three more frames to come up -- the snap missing by 0.06 dB --
+ * and QAM16C2 stayed gated (sim, awgn:0.02 with the control mode 6 dB low:
+ * 86.8 s against 53.2; 63.9 s with this).  Not for a reading below, nor just
+ * above: one data frame on a fading channel is one sample of the fade, and
+ * taken either way it cost 1-2 % where the two modes read alike (fade:10:2,
+ * fade:5:1, 80 seeds).  The step corrects the estimate, not the channel:
+ * the reading the peer's last report of me is paired with moves with it, or
+ * peer_hears_me_db takes the step for a channel risen both ways.  It did:
+ * hearing the peer 5.6 dB better than its control frames had read, the
+ * caller judged a callee 9 dB down to hear it above the control mode, and
+ * polled it on a DATAC16 it could not decode for the next 300 s (sim,
+ * stepa:0:-9:20:12 with the control mode 8 dB low: messages unfinished in
+ * 1 h on 4 seeds of 10). */
+static void peer_data_heard(car_t *c, uint64_t now)
+{
+    if ((!c->peer_data_ms || now - c->peer_data_ms >= CTL_READING_DATA_MS) && c->snr_valid &&
+        c->snr_ms == now && c->snr_last > c->snr_ema + SNR_GATE_DB / 2) {
+        c->peer_snr_mine += c->snr_last - c->snr_ema;
+        c->snr_ema = c->snr_last;
+    }
+    c->peer_data_ms = now;
+}
 static bool level_marginal(const car_t *c, int lv)
 {
     return c->snr_valid && c->snr_ema < level_min_db(lv) + SNR_GATE_DB;
@@ -1800,7 +1831,54 @@ static void m_close_spent(car_t *c, uint64_t te, int mk)
     c->mlog[hj].done = 0xFF;
 }
 
+/* A poll S never answered: nothing of S's on the air in its first slot.  S
+ * keys a continuation slot only after a round of its own on the same anchor
+ * (s_slot: anc.sent_round), so a first slot it stayed silent in leaves the
+ * rest unused.  Held open, two floor polls S did not hear kept my next one
+ * off the air 97 s (on air, NW8L-KA8RYU, MPD -5 dB: the FPUT's /OK came 25 s
+ * after vARIM stopped waiting for it).  Carrier sense is a decoder in sync,
+ * held for a caught frame's airtime (arq_fsm.c), so I sample it every
+ * WATCH_MS through the slot; any sign keeps the slots.  Polls only: their
+ * continuations are at the floor, which the poll bound my payload decoder
+ * to, where S's round comes.  A pattern's answer may come on a rung I am not
+ * listening on.  The watch is CAR_T_W, which only S uses otherwise. */
+#define WATCH_MS 1000
+static void m_watch(car_t *c, uint64_t now)
+{
+    if (!c->master) return;
+    /* Sample first: the fire at a slot's end decides on last_carrier_ms, and
+     * a carrier still on the air then must keep the slots. */
+    (void)peer_keyed(c, now);                    /* sets last_carrier_ms */
+    uint64_t next = 0;
+    bool freed = false;
+    for (int j = 0; j < c->nmlog; j++) {
+        car_mlog_t *l = &c->mlog[j];
+        if (!l->k || l->pat || (l->done & 1u)) continue;
+        uint64_t lo = mslot_lo(c, l, 0), hi = mslot_hi(c, l, 0);
+        if (now < hi) {
+            uint64_t t = now < lo ? lo : now + WATCH_MS;
+            if (t > hi) t = hi;
+            if (!next || t < next) next = t;
+        } else if (c->last_carrier_ms < lo) {
+            car_trace(c, "rx: nothing on the air in the peer's answer slot -- its %d continuation slots are free", l->k);
+            l->done = 0xFF;
+            freed = true;
+        }
+    }
+    if (next) arm(c, CAR_T_W, next);
+    /* A keydown held for those slots goes now, if nothing else holds it. */
+    if (freed && c->m_state == MS_PLAN && !c->tx_busy) arm(c, CAR_T_M, now);
+}
+
 /* ---- keydowns, either end ---- */
+/* The size of my last poll that asked for frames.  A "done" poll (n = 0)
+ * keeps it, negative: the peer may still send a round on its own turn after
+ * it, and that round is no answer to the old size: with its tail lost it was
+ * scored as that many frames, most of them never sent (#507, as #502 on the
+ * REQ path).  rx_measure and rx_next read poll_n as it is, so a negative one
+ * never raises a round; everything else takes the size. */
+static int asked_n(const car_t *c) { return c->poll_n < 0 ? -c->poll_n : c->poll_n; }
+
 /* A poll: what I still need of the peer's blocks, and its next round --
  * with my own round after it, in the same keydown, when with_round and I have
  * one: both directions in one exchange (the poll names the round's rung and
@@ -1834,6 +1912,7 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
          * was lost, naming nothing, left M on a rung I had left
          * (specs/rungs/RungAgreement.tla, Agree) */
         m.level = c->rx_level;
+    if (!n && c->poll_n > 0) c->poll_n = -c->poll_n;   /* asked for nothing (asked_n) */
     c->name_lv = 0;
     c->round_seen = 0; c->round_frames = n; c->status_seen = false;
     c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
@@ -1884,6 +1963,8 @@ static void send_pattern(car_t *c, int kind)
     c->seq_at_ask = c->deliver_seq;
     if (c->poll_level == 0)
         c->poll_n = keydown_cap(c, 0);     /* what a sender streaming the floor sends */
+    else
+        c->poll_n = asked_n(c);            /* the same again: it asks for frames */
     c->round_seen = 0; c->round_frames = c->poll_n; c->status_seen = false;
     c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
     c->tx_busy = true;
@@ -2016,19 +2097,85 @@ static void rx_trace(car_t *c)
               c->snr_valid ? "" : "?", gp);
 }
 
-/* A round's size is what its frames say -- but only its last frame says it
- * all: with the tail lost, seen + left counted the lost frames as never sent,
- * and a NVIS round of 7 that brought 3 read as "3 of 3, whole" (sim, nvis
- * seed 3: a "same again" pattern, and the loss unscored).  Without the tail,
- * the round is taken to be what I asked for. */
-static void rx_measure(car_t *c, int lv, uint64_t now)
+/* A round of M's scored as so many frames: rx_measure's count, or the one a
+ * REQ names (s_answer). */
+static void rx_score(car_t *c, int lv, int frames, uint64_t now)
 {
-    int frames = c->round_frames > 0 ? c->round_frames : 1;
-    if (!c->rx_tail && c->poll_n > frames) frames = c->poll_n;
     double loss = 1.0 - (double)c->round_seen / frames;
     if (loss < 0) loss = 0;
     c->loss_est = 0.5 * c->loss_est + 0.5 * loss;
     measure_level(c, lv, frames, loss, now);
+}
+
+/* S: the most frames M's round on lv can have held -- what fits between the
+ * end of my keydown, which M answered, and the round's end as its frames
+ * said (anc.eh), to the nearest frame.  0: not known. */
+static int s_round_fit(const car_t *c, int lv)
+{
+    if (c->master || !c->s_tx_end || !c->anc.on || c->anc.kind != ANC_ROUND ||
+        c->anc.eh <= c->s_tx_end + TAIL_MS)
+        return 0;
+    uint64_t gap = burst_gap_ms(c, lv), per = level_air(c, lv) + gap;
+    return (int)((c->anc.eh - TAIL_MS - c->s_tx_end + gap + per / 2) / per);
+}
+
+/* M: the same bound on S's round, which answers my last poll: S's response
+ * slot opens no sooner than mslot_lo (S anchors on the poll's end as it
+ * decoded it, never sooner), and I score the round once it has ended
+ * (m_decide_recv, from CAR_T_M at its end).  0: not known. */
+static int m_round_fit(const car_t *c, int lv, uint64_t now)
+{
+    if (!c->master) return 0;
+    const car_mlog_t *l = NULL;
+    for (int j = 0; j < c->nmlog; j++)
+        if (!c->mlog[j].pat && c->mlog[j].mk == c->poll_id && (!l || c->mlog[j].e > l->e)) l = &c->mlog[j];
+    if (!l) return 0;
+    uint64_t lo = mslot_lo(c, l, 0);
+    if (now <= lo + TAIL_MS) return 0;
+    uint64_t gap = burst_gap_ms(c, lv), per = level_air(c, lv) + gap;
+    return (int)((now - TAIL_MS - lo + gap + per / 2) / per);
+}
+
+/* A round's size is what its frames say -- but only its last frame says it
+ * all: with the tail lost, seen + left counted the lost frames as never sent,
+ * and a NVIS round of 7 that brought 3 read as "3 of 3, whole" (sim, nvis
+ * seed 3: a "same again" pattern, and the loss unscored).  Without the tail,
+ * the round is taken to be what I asked for -- if I asked for frames: after
+ * a "done" poll, poll_n is negative (asked_n) -- and no more than fits in
+ * its time (s_round_fit): a sender with less than I asked for sends a
+ * shorter round, and with its last frame lost, a round of 3 asked as 6 was
+ * scored 1 of 6, the frames never sent as lost (#516).  M bounds S's round
+ * the same way (m_round_fit), and a round M carried with its poll is the
+ * size the poll said (rx_round_declared). */
+/* A round M carried with its poll (ANC_BOTH): the poll said its size
+ * (h_n, kept in round_frames: s_on_data), and M knows what it sent. */
+static bool rx_round_declared(const car_t *c)
+{
+    return !c->master && c->anc.on && c->anc.kind == ANC_BOTH;
+}
+
+static int round_fit(const car_t *c, uint64_t now)
+{
+    int lv = c->round_lv;
+    return c->master ? m_round_fit(c, lv, now) : s_round_fit(c, lv);
+}
+
+static int rx_round_size(const car_t *c, uint64_t now)
+{
+    int frames = c->round_frames > 0 ? c->round_frames : 1;
+    if (c->rx_tail || c->poll_n <= frames || rx_round_declared(c)) return frames;
+    int fit = round_fit(c, now);
+    if (!fit || fit >= c->poll_n) return c->poll_n;
+    return fit > frames ? fit : frames;
+}
+
+static void rx_measure(car_t *c, int lv, uint64_t now)
+{
+    int frames = rx_round_size(c, now);
+    if (!c->rx_tail && c->poll_n > (c->round_frames > 0 ? c->round_frames : 1))
+        car_trace(c, "rx: the round's tail unheard -- scored as %d frames (asked %d%s)", frames, c->poll_n,
+                  rx_round_declared(c) ? ", as its poll said" : round_fit(c, now) ? "" : ", fit unknown");
+    rx_score(c, lv, frames, now);
 }
 
 /* What to ask the sender next: KD_POLL (lv, n), a pattern, or KD_DONE. */
@@ -2061,7 +2208,8 @@ static size_t s_peer_expect(const car_t *c)
 static int deaf_rung(const car_t *c, int lv)
 {
     if (!c->ctl_deaf || !c->io.pattern) return lv;
-    return c->ctl_deaf == CAR_DEAF_HARD && lv > 0 && level_earned(c, lv) <= 1 ? lv : 0;
+    return (c->ctl_deaf == CAR_DEAF_HARD || c->ctl_deaf == CAR_DEAF_LOSS) && lv > 0 && level_earned(c, lv) <= 1
+         ? lv : 0;
 }
 
 static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
@@ -2107,15 +2255,14 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
      * that it lost no more than my last poll told the sender, which credits
      * the round with that loss -- so a worse round is polled.  Not to a
      * sender whose window is full (only a poll retires its blocks). */
-    int frames = c->round_frames > 0 ? c->round_frames : 1;
-    if (!c->rx_tail && c->poll_n > frames) frames = c->poll_n;
+    int frames = rx_round_size(c, now);
     double loss = 1.0 - (double)c->round_seen / frames;
     /* ...a round that came on the rung I asked for: a sender that missed my
      * poll keeps on where it was, and a pattern to that kept it there (sim,
      * step:-12:10 seed 27: DATAC3 asked, floor rounds answered by patterns
      * "for DATAC3" at +10 dB). */
     if (c->io.pattern && lv > 0 && lv == c->poll_level && c->rx_level == c->poll_level &&
-        n == c->poll_n && !c->status_seen &&
+        n == asked_n(c) && !c->status_seen &&
         c->round_seen > 0 && loss <= c->polled_loss + 0.05 &&
         c->floor_patterns < FLOOR_POLL_EVERY && !window_full) {
         bool whole = c->round_seen >= c->round_frames && c->rx_tail;
@@ -2235,7 +2382,7 @@ static void m_key_plan(car_t *c)
          * pattern carries no control-deaf bit: S's status may be either mode. */
         uint32_t cm = s_ctl_ms(c), r = r_cap_ms(c);
         bool known = c->round_seen > 0, floor = c->poll_level == 0 && c->io.pattern;
-        if (known) r = floor ? r_floor_ms(c) : s_round_ms(c, c->poll_level, c->poll_n);
+        if (known) r = floor ? r_floor_ms(c) : s_round_ms(c, c->poll_level, asked_n(c));
         int k = c->io.pattern && (!known || floor) ? K_FLOOR : 0;
         m_note(c, kind, r > cm ? r : cm, D_PAT_MS, k, r_floor_ms(c));
         send_pattern(c, kind == KD_PATTERN_BREAK ? CAR_PATTERN_BREAK : CAR_PATTERN_ACK);
@@ -2455,6 +2602,75 @@ static bool fall_back_unconfirmed(car_t *c)
     return true;
 }
 
+/* My asks unanswered while the peer is still heard: its control does not
+ * reach me, whatever my reading says.  S answers an ask on the control mode,
+ * and an ask it did not hear it does not answer at all -- but then nothing of
+ * S's comes either, and the silence rule (car_on_tx_done) has it.  With S
+ * heard within SILENT_MS, two asks in a row unanswered say S's answers are
+ * lost on their way to me.  So I take myself deaf to the control mode
+ * (CAR_DEAF_LOSS), say so in the ask I am about to send, and S's control goes
+ * on MFSK.
+ *
+ * Asks only, not an unanswered round (fell_back): S answers a round only if
+ * it heard it, and a round lost on its way to S -- a rung above the channel,
+ * a probe -- says nothing about S's control.  Counted, it set LOSS 13 to 45
+ * times a run on cliff:-5 at BW500 both ways, where DATAC16 decodes every
+ * frame, and 4 of 120 runs did not finish in 2 h (rafael2k's bench on #538;
+ * all 120 finish without it).  The cost: of the callee ABORT test's 30
+ * callers, 25 told instead of 28 (20 with no LOSS at all).
+ *
+ * LOSS lasts LOSS_HOLD_MS, then I go back to what my reading says (CAR_T_F,
+ * which only S used: I am M).  Held to the end of the session, LOSS kept S's
+ * control on a 26 s MFSK frame for hours on a -5 dB link at BW500 (seed 9:
+ * set at 1094 s, A->B 4854 of 8192 bytes at 2 h).  If the answers are still
+ * lost, two more asks set it again.  With asks only and no hold, 2 of 120
+ * such runs still did not finish and one way took 4-5 % longer at BW500;
+ * held 30, 60 or 120 s, all 120 finished within 0.5 % of no LOSS, and the
+ * ABORT test told the same 25.
+ * A reading of CTL_LOSS_OFF_DB or more clears it sooner: the band DATAC16
+ * decodes part of is behind me.  Not HARD, which only a frame of the peer's
+ * on an OFDM mode clears: S sends me none while I only send, and its control
+ * stayed on MFSK to the end of the run after the channel rose to 10 dB (sim,
+ * ctlloss:10:-6.5:0.4:60 seed 3).
+ *
+ * On air (KG9NI calling K7EK, 1.9.23, 2026-11-11, BW500) KG9NI heard K7EK at
+ * -6 to -7 dB, inside the hysteresis band (CTL_DEAF_ON_DB, CTL_DEAF_OFF_DB),
+ * where DATAC16 decodes about two frames in three (docs/MODES.md).  One MFSK
+ * reading of -3.5 dB put the smoothed one above CTL_DEAF_OFF_DB and K7EK's
+ * control back on DATAC16.  From then on KG9NI decoded K7EK's MFSK rounds and
+ * a third of its control: its asks went unanswered four times running, the
+ * acknowledgement of the B2 "FQ" and both of K7EK's DISCONNECTs were lost,
+ * and KG9NI sat out its 240 s watchdog.  The silence rule needs S_FALLBACK_MS
+ * (54 s) since K7EK was last heard, and its last MFSK round had been heard. */
+#define CTL_LOSS_OFF_DB (CTL_DEAF_OFF_DB + SNR_GATE_DB)
+#define LOSS_HOLD_MS    60000
+static void ctl_deaf_on_asks(car_t *c, uint64_t now)
+{
+    if (c->reqs < 2 || c->ctl_deaf || !c->io.pattern || now >= c->heard_ms + SILENT_MS)
+        return;
+    /* Only where my reading could be the cause: at CTL_LOSS_OFF_DB or more
+     * the next reading clears it at once, and the losses are something else
+     * -- multipath, a fade -- which MFSK control only slows (sim, nvis one
+     * way: 1417 -> 1493 s, one more of 10 runs unfinished at 30 min). */
+    if (!c->snr_valid || c->snr_ema >= CTL_LOSS_OFF_DB)
+        return;
+    c->ctl_deaf = CAR_DEAF_LOSS;
+    arm(c, CAR_T_F, now + LOSS_HOLD_MS);
+    car_trace(c, "%d asks unanswered, the peer heard %d s ago: its control does not reach me "
+              "-- control on MFSK for %d s", c->reqs, (int)((now - c->heard_ms) / 1000),
+              LOSS_HOLD_MS / 1000);
+}
+
+/* LOSS_HOLD_MS over: my control back to what my reading says. */
+static void ctl_loss_expired(car_t *c)
+{
+    if (c->ctl_deaf != CAR_DEAF_LOSS) return;
+    c->ctl_deaf = c->snr_valid && c->snr_ema < CTL_DEAF_OFF_DB ? CAR_DEAF_SNR : 0;
+    car_trace(c, "control loss held %d s: %s", LOSS_HOLD_MS / 1000,
+              c->ctl_deaf ? "I hear the peer below the control mode, control stays on MFSK"
+                          : "control on the control mode again");
+}
+
 static void m_decide_send(car_t *c, uint64_t now)
 {
     bool answered = c->s_answered;
@@ -2482,6 +2698,7 @@ static void m_decide_send(car_t *c, uint64_t now)
         }
         c->reqs++;
         car_trace(c, "tx: no answer -- asking (%d)", c->reqs);
+        ctl_deaf_on_asks(c, now);
         m_plan(c, KD_REQ, 0, 0);
         return;
     }
@@ -2532,7 +2749,7 @@ static void m_decide_recv(car_t *c, uint64_t now)
         c->rung[c->poll_level].sent >= 2.0 && level_delivery(c, c->poll_level) >= 0.5) {
         c->silent_polls |= SILENT_ASKED;
         car_trace(c, "rx round lv=%d unheard: asking again", c->poll_level);
-        m_plan(c, KD_POLL, c->poll_level, c->poll_n);
+        m_plan(c, KD_POLL, c->poll_level, asked_n(c));
         return;
     }
     c->silent_polls &= ~SILENT_ASKED;
@@ -2578,7 +2795,7 @@ static void m_decide_recv(car_t *c, uint64_t now)
     /* With data of my own, the answer carries my round: a poll, then it (a
      * pattern carries nothing; it becomes the same poll). */
     if (has_data(c) && kind != KD_DONE && both_ok(c, kind == KD_POLL ? lv : c->poll_level)) {
-        if (kind != KD_POLL) { lv = c->poll_level; n = c->poll_n; }
+        if (kind != KD_POLL) { lv = c->poll_level; n = asked_n(c); }
         kind = KD_BOTH;
     }
     m_plan(c, kind, lv, n);
@@ -2634,7 +2851,7 @@ static void m_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 {
     if (lv != c->rx_level) return;           /* the payload decoder is on another mode */
     c->traffic = true;
-    c->peer_data_ms = now;
+    peer_data_heard(c, now);
     rx_frame(c, m, lv, m->poll_id == c->poll_id);
     m_heard_end(c, now + (uint64_t)m->left * (level_air(c, lv) + burst_gap_ms(c, lv)) + TAIL_MS,
                 (int)m->poll_id, m->pat_anchor, m->slot);
@@ -2740,10 +2957,16 @@ static int s_idle_rung(car_t *c, uint64_t now)
 static void s_answer(car_t *c, uint64_t now, bool req)
 {
     if (req) {
-        /* M's round had no answer from me.  None of it came: score it lost. */
+        /* M's round had no answer from me.  None of it came: score it lost,
+         * as the frames M says it sent.  Taken as my last poll's size (the
+         * tail unheard), one frame M sent on its own turn after my "done"
+         * scored as the 8 that poll had asked for: QAM16C2, delivering 90 %
+         * near its threshold, was dead at once, and the rest of the file went
+         * on DATAC17 at half the goodput (NW8L-KA8RYU, IONOS MPD 35 dB,
+         * 1.9.22: 299 s against 240 s at 25 dB, #502). */
         if (c->req_mk != c->rx_mk && c->req_n > 0) {
             c->round_seen = 0; c->round_frames = c->req_n;
-            rx_measure(c, c->req_lv, now);
+            rx_score(c, c->req_lv, c->req_n, now);
         }
     } else {
         rx_measure(c, c->round_lv, now);
@@ -2776,7 +2999,7 @@ static void s_answer_both(car_t *c, uint64_t now)
     int lv = 0, n = 0;
     int kind = rx_next(c, now, &lv, &n);
     if (kind == KD_DONE) { lv = 0; n = 0; c->name_lv = s_idle_rung(c, now); }
-    else if (kind != KD_POLL) { lv = c->poll_level; n = c->poll_n; }   /* a pattern carries no round */
+    else if (kind != KD_POLL) { lv = c->poll_level; n = asked_n(c); }   /* a pattern carries no round */
     if (n && c->ctl_deaf && c->io.pattern) lv = 0;
     c->s_asked_new = n && c->s_prev_lv >= 0 && lv != c->s_prev_lv;
     c->tx_slot = 0; c->tx_pat_anchor = false;
@@ -2839,9 +3062,14 @@ static void s_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 {
     if (lv != c->rx_level) return;           /* the payload decoder is on another mode */
     s_heard_m(c, now);
+    peer_data_heard(c, now);
     bool both = c->anc.on && c->anc.kind == ANC_BOTH && c->anc.mk == m->poll_id;
     if (both) {
+        /* ...the size its poll said (h_n) stays: seen + left misses the
+         * frames lost before the last one heard, and the poll's is exact */
+        int declared = c->round_frames;
         rx_frame(c, m, lv, true);
+        if (declared > c->round_frames) c->round_frames = declared;
         c->s_prev_lv = lv;
         return;
     }
@@ -3096,26 +3324,68 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     if (c->rx_late) car_trace(c, "rx frame decoded %u ms late: data only", age_ms);
     now = when;
     if (snr_db != 0.0f) {
-        c->snr_ema = c->snr_valid ? 0.7f * c->snr_ema + 0.3f * snr_db : snr_db;
-        /* Two readings in a row more than SNR_GATE_DB to one side of the
-         * smoothed one move it to the nearer of them: smoothing is for a
-         * noisy estimate, not for a channel that has moved.  In the sim,
-         * step:-12:10, two MFSK frames at +10 dB read -0.8 smoothed, and the
-         * session climbed DATAC3, DATAC1, DATAC17 one exchange each.  One
-         * reading alone does not move it: a lucky frame does not open the
-         * ladder.  The margin keeps fading out of it: with none, fade:5 8 KB
-         * took 2.8 % longer; with 2 dB 0.2 %; with 3-8 dB the same as
-         * without the rule, and the steps gained as much (120 seeds). */
-        if (c->snr_valid) {
-            float lo = c->snr_last < snr_db ? c->snr_last : snr_db;
-            float hi = c->snr_last < snr_db ? snr_db : c->snr_last;
-            if (lo > c->snr_ema + SNR_GATE_DB) c->snr_ema = lo;
-            else if (hi < c->snr_ema - SNR_GATE_DB) c->snr_ema = hi;
+        float ema = c->snr_valid ? 0.7f * c->snr_ema + 0.3f * snr_db : snr_db;
+        /* A control-mode frame's reading, with a data frame of the peer's
+         * heard within CTL_READING_DATA_MS, does not move the rung estimate:
+         * the data frames' readings are what the rungs carry.  The narrow
+         * control frame reads low on a selective channel -- on MPD (NW8L's
+         * IONOS) ~10 dB under the wide modes at 25-35 dB -- and two such
+         * readings snapped the estimate to 2-3 dB, gating DATAC17 and
+         * QAM16C2 while QAM16C2 delivered 90 % (#501).  It still counts for
+         * the deafness test below, as it would have moved the estimate: that
+         * asks whether the control mode gets through, and its own reading
+         * says so.  With no data frame lately -- at connect, between
+         * transfers -- the control frames are all there is, as before. */
+        bool ctl_only = control && c->snr_valid && c->peer_data_ms &&
+                        now - c->peer_data_ms < CTL_READING_DATA_MS;
+        /* After S_FALLBACK_MS with nothing of the peer's decoded, the
+         * estimate is from before the silence, and the silence says the
+         * channel fell: the first reading after it counts whatever its mode,
+         * and a lower one is taken as it is.  Smoothed from the estimate of
+         * before, a -6 dB MFSK frame after 3 dB read -2.5, above the control
+         * mode, and the peer's control went back on a DATAC16 that did not
+         * get through, for another 90 s of silence (sim, step:3:-6:60 with
+         * the control mode 4 dB low: message traffic unfinished in 1 h on
+         * 10 seeds of 10).  On NW8L's IONOS MPD at -10 dB the caller, 144 s
+         * without a decode, read -8.1 on DATAC16 and kept -6.8, above the
+         * control mode, while the callee's answers on it went unheard. */
+        if (c->snr_valid && now >= c->heard_ms + S_FALLBACK_MS) {
+            ctl_only = false;
+            if (snr_db < ema) ema = snr_db;
         }
-        c->snr_last = snr_db;
-        c->snr_ms = now;
-        c->snr_valid = true;
-        if (c->ctl_deaf != CAR_DEAF_MFSK_TX && !(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
+        if (!ctl_only) {
+            c->snr_ema = ema;
+            /* Two readings in a row more than SNR_GATE_DB to one side of the
+             * smoothed one move it to the nearer of them: smoothing is for a
+             * noisy estimate, not for a channel that has moved.  In the sim,
+             * step:-12:10, two MFSK frames at +10 dB read -0.8 smoothed, and the
+             * session climbed DATAC3, DATAC1, DATAC17 one exchange each.  One
+             * reading alone does not move it: a lucky frame does not open the
+             * ladder.  The margin keeps fading out of it: with none, fade:5 8 KB
+             * took 2.8 % longer; with 2 dB 0.2 %; with 3-8 dB the same as
+             * without the rule, and the steps gained as much (120 seeds). */
+            if (c->snr_valid) {
+                float lo = c->snr_last < snr_db ? c->snr_last : snr_db;
+                float hi = c->snr_last < snr_db ? snr_db : c->snr_last;
+                if (lo > c->snr_ema + SNR_GATE_DB) c->snr_ema = lo;
+                else if (hi < c->snr_ema - SNR_GATE_DB) c->snr_ema = hi;
+            }
+            c->snr_last = snr_db;
+            c->snr_ms = now;
+            c->snr_valid = true;
+            ema = c->snr_ema;
+        }
+        if (c->ctl_deaf == CAR_DEAF_LOSS) {
+            /* Lost control, not the reading, put me here: only a reading
+             * clear of the band DATAC16 decodes part of takes me out.  The
+             * reading as it would have moved the estimate, control readings
+             * included, as for the test below (#545). */
+            if (ema >= CTL_LOSS_OFF_DB) {
+                c->ctl_deaf = 0;
+                car_trace(c, "I hear the peer well above the control mode (%.1f dB): control on it again",
+                          ema);
+            }
+        } else if (c->ctl_deaf != CAR_DEAF_MFSK_TX && !(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
             bool was = c->ctl_deaf != 0;
             /* An MFSK frame's reading alone says I went deaf: 13.8 s of
              * tones average a fade out, and after the channel fell below
@@ -3124,7 +3394,7 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
              * it put its control back on the control mode for another 90 s
              * of silence (sim, stepa:0:-9:20:12, the Winlink exchange of
              * #431: the client's 74 bytes took 311 s). */
-            float db = !was && mercury_mode_is_mfsk(mode) && snr_db < c->snr_ema ? snr_db : c->snr_ema;
+            float db = !was && mercury_mode_is_mfsk(mode) && snr_db < ema ? snr_db : ema;
             bool deaf = was ? db < CTL_DEAF_OFF_DB : db < CTL_DEAF_ON_DB;
             c->ctl_deaf = deaf ? CAR_DEAF_SNR : 0;
             if (deaf != was)
@@ -3194,7 +3464,7 @@ void car_on_tx_done(car_t *c, uint64_t now)
         if (c->s_asked_new) {
             c->s_asked_new = false;
             uint64_t round_end = now + D_OFDM_MS + TURN_G_MS + LEAD_MAX_MS +
-                                 round_air(c, c->poll_level, c->poll_n) + TAIL_MS + d_of_mode(lmode(c, c->poll_level));
+                                 round_air(c, c->poll_level, asked_n(c)) + TAIL_MS + d_of_mode(lmode(c, c->poll_level));
             arm(c, CAR_T_W, round_end);
         }
         return;
@@ -3203,6 +3473,7 @@ void car_on_tx_done(car_t *c, uint64_t now)
     c->m_state = MS_WAIT;
     /* Decide when S's response slot is over, or once its answer is heard. */
     arm(c, CAR_T_M, mslot_hi(c, &c->mlog[c->nmlog - 1], 0) + TURN_G_MS);
+    m_watch(c, now);                         /* ...and the air in it, for its continuations */
 }
 
 /* A pattern carries no id and a detector can false-alarm, so one is taken
@@ -3295,6 +3566,8 @@ void car_on_time(car_t *c, uint64_t now)
         c->deadline[due] = 0;
         if (due == CAR_T_M) m_timer(c, now);
         else if (due == CAR_T_S) s_slot(c, now);
+        else if (due == CAR_T_W && c->master) m_watch(c, now);
+        else if (due == CAR_T_F && c->master) ctl_loss_expired(c);
         else if (due == CAR_T_W) {
             /* Not off the floor once the silence fallback is due: M's control
              * comes there after its own silence (SILENT_MS), and going back to
@@ -3306,7 +3579,7 @@ void car_on_time(car_t *c, uint64_t now)
                           (int)((now - c->heard_ms) / 1000));
             } else if (c->rx_level == c->poll_level && c->s_prev_lv >= 0 && c->poll_level != c->s_prev_lv) {
                 car_trace(c, "rx: no round on lv=%d -- back to lv=%d", c->poll_level, c->s_prev_lv);
-                c->round_seen = 0; c->round_frames = c->poll_n;
+                c->round_seen = 0; c->round_frames = asked_n(c);
                 rx_measure(c, c->poll_level, now);
                 bind_rx(c, c->s_prev_lv);
             }
@@ -3329,6 +3602,21 @@ uint64_t car_drain_budget_ms(const car_t *c)
     uint64_t exchange = (uint64_t)s_round_ms(c, lv, peer_keydown_cap(c, lv)) + s_ctl_ms(c) + 2 * TG_MS +
                         D_MFSK_MS + 2 * TURN_G_MS;
     return 3 * exchange;
+}
+
+uint64_t car_answer_due_ms(const car_t *c, uint64_t keyed_by)
+{
+    uint64_t due = 0;
+    if (!c || !c->master) return 0;
+    /* Whether I am still waiting or have planned my next keydown, it waits
+     * for these slots too (m_free_from). */
+    for (int j = 0; j < c->nmlog; j++) {
+        const car_mlog_t *l = &c->mlog[j];
+        if (l->e > keyed_by || (l->done & 1u)) continue;
+        uint64_t hi = mslot_hi(c, l, 0) + TURN_G_MS;   /* as car_on_tx_done arms CAR_T_M */
+        if (hi > due) due = hi;
+    }
+    return due;
 }
 
 bool car_is_master(const car_t *c) { return c && c->master; }

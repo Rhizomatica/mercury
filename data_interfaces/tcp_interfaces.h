@@ -96,6 +96,7 @@ void tnc_send_registered(const char *callsign);
 void tnc_send_sn(float snr);
 void tnc_send_busy(bool busy);
 void tnc_send_bitrate(uint32_t speed_level, uint32_t bps);
+void tnc_send_bitrate_progress(uint32_t speed_level, uint32_t bps);
 /* Report a frame decoded by the passive monitor to the host, VARA-monitor
  * style: "MONITOR <mode> <kind> <detail> SNR=<snr>\r".  Lossy (display-only). */
 void tnc_send_monitor(const char *mode_name, const char *kind,

@@ -52,6 +52,15 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 						  pthread_t *radio_playback);
 
 int audioio_init_buffers(void);
+
+/* The configured devices' names, from when they were chosen.  At start, a
+ * device id that is no longer enumerated is looked up by this name (one
+ * exact match only).  Set before audioio_init_internal; "" for none. */
+void audioio_set_saved_device_names(const char *capture_name, const char *playback_name);
+
+/* The enumerated name of device id `id` (mode: 1 capture, 0 playback, as
+ * get_soundcard_list) into name.  0 when found, -1 when not (name is then ""). */
+int audioio_device_name(int audio_subsys, int mode, const char *id, char *name, size_t len);
 void audioio_deinit_buffers(void);
 
 /* --- Audio path health -------------------------------------------------

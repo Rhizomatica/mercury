@@ -396,6 +396,7 @@ jobs:
             libhidapi-dev \
             libgl1-mesa-dev \
             libegl1-mesa-dev \
+            libgles-dev \
             xorg-dev \
             libwayland-dev \
             libxkbcommon-dev
@@ -418,6 +419,11 @@ jobs:
           [ -f mercury-ui ] || { echo "::error::no mercury-ui binary produced"; exit 1; }
           file mercury-ui
           echo "OK: native Fyne UI build"
+
+      # osk_hybris.go and tls_hybris.go build only with Sailfish OS's tags
+      # (sailfish/build-mercury-ui.sh), which no other job passes.
+      - name: Vet the Sailfish OS variant (hybris tags)
+        run: cd gui_interface/fyne-ui && go vet -tags mercury_embedded,wayland,gles2,egl,hybris .
 
   build-fyne-ui-linux-arm64:
     name: Build Fyne UI (Linux arm64, Debian 13)
@@ -554,11 +560,11 @@ jobs:
           go-version: '1.26.9'
           cache-dependency-path: gui_interface/fyne-ui/go.sum
 
-      - name: Install the NDK and the fyne CLI
+      # The Makefile builds fyne's tool itself, at minSdkVersion 26
+      # (FYNE_ANDROID), from fyne.io/tools@$FYNE_CLI_VERSION.
+      - name: Install the NDK
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "platforms;android-34" "build-tools;34.0.0" > /dev/null
-          go install fyne.io/tools/cmd/fyne@$FYNE_CLI_VERSION
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Build the .apk
         run: |
@@ -576,6 +582,7 @@ jobs:
           grep -E "^package:|native-code" badging.txt
           grep -q "native-code: 'arm64-v8a'" badging.txt || { echo "::error::no arm64-v8a library in $APK"; exit 1; }
           grep -q "android.permission.RECORD_AUDIO" badging.txt || { echo "::error::$APK does not ask for RECORD_AUDIO"; exit 1; }
+          grep -q "^sdkVersion:'26'" badging.txt || { echo "::error::$APK does not need Android 8 (minSdkVersion 26)"; exit 1; }
           "$B/apksigner" verify "$APK"
           echo "OK: $APK"
 

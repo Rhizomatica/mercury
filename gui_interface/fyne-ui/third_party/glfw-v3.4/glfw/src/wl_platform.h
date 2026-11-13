@@ -427,6 +427,7 @@ typedef struct _GLFWlibraryWayland
     struct wl_seat*             seat;
     struct wl_pointer*          pointer;
     struct wl_keyboard*         keyboard;
+    struct wl_touch*            touch;
     struct wl_data_device_manager*          dataDeviceManager;
     struct wl_data_device*      dataDevice;
     struct xdg_wm_base*         wmBase;
@@ -509,6 +510,9 @@ typedef struct _GLFWlibraryWayland
 
     _GLFWwindow*                pointerFocus;
     _GLFWwindow*                keyboardFocus;
+    // The window the first touch point went down on, and that point's id
+    _GLFWwindow*                touchFocus;
+    int32_t                     touchId;
 
     struct {
         void*                                       handle;

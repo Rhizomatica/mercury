@@ -163,17 +163,17 @@ Which model covers the other 2.0 changes:
   smoothed SNR move it): it changes only the reading S judges rungs by, so
   `RungAgreement` covers the rung S then names (any rung).  It also moves
   when an end decides it hears its peer below the control mode
-  (`ctl_deaf`).  No model has that decision, before or after this change:
-  the models fix the control frame's mode per configuration
-  (`CarouselTurns.cfg`, `CarouselTurns_mfsk.cfg`);
+  (`ctl_deaf`).  The rung models fix the control frame's mode per
+  configuration (`CarouselTurns.cfg`, `CarouselTurns_mfsk.cfg`); the
+  decision itself, for the caller, is `specs/ctldeaf/CtlDeaf.tla`;
 - no first try of a rung while the SNR is well below its threshold (half the gate)
   (`choose_level`'s one-rung-up probe): it only narrows the rungs S may
   name, which `RungAgreement` leaves free (any rung);
 - control on the control mode once the channel has risen past the peer's
   "deaf" (`ctl_on_floor`, `peer_hears_me_db`): it changes only which mode
   a control frame goes on, and only from the floor to the control mode,
-  which the peer always decodes.  Like the `ctl_deaf` decision above, no
-  model has that choice;
+  which the peer always decodes.  No model has that choice (the `ctl_deaf`
+  decision behind it is `specs/ctldeaf`);
 - a pattern only for the rung asked: the floor's patterns are outside
   `RungAgreement`; the rule only narrows when S answers with one, which
   `FloorSilence` does not depend on;
@@ -199,7 +199,7 @@ Which model covers the other 2.0 changes:
   (`deaf_rung`); a decoded OFDM frame, or the peer's report that it hears
   mine, ends the deafness.  The probe is a sized poll naming a rung, which
   `RungAgreement` allows for any rung, so agreement and delivery hold; the
-  deafness itself is the `ctl_deaf` decision no model has (above).
+  deafness itself is the `ctl_deaf` decision of `specs/ctldeaf`.
 
 ## PollRung
 

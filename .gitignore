@@ -114,7 +114,11 @@ Mercury-*.ipa
 
 # Android build
 gui_interface/fyne-ui/AndroidManifest.xml
+gui_interface/fyne-ui/zz_ndk_link_android.go
 Mercury-*.apk
+Mercury-*.aab
+# fyne's tool at minSdkVersion 26 (Makefile, FYNE_ANDROID)
+.fyne-android/
 
 # sailfish/build-mercury-ui.sh: development links and pkg-config files
 sailfish/.gl/

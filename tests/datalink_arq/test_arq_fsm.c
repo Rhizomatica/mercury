@@ -290,6 +290,66 @@ void test_accept_fallback_completes_on_first_frame(void)
     TEST_ASSERT_EQUAL_INT(1, fake_notify_connected_fake.call_count);
 }
 
+/* The caller gave up while we were answering it: its host hung up while it
+ * was CALLING, our ACCEPT reached it afterwards, and it answered that stale
+ * ACCEPT with a DISCONNECT.  We release the channel at once, as a host
+ * DISCONNECT would (K7EK, 2026-11-08 10:43: ignored, a scanning host held
+ * 104 s more). */
+void test_accepting_releases_on_the_callers_disconnect(void)
+{
+    enter_accepting();
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = 0x42;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_cancelpending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+}
+
+/* ...but only the caller's DISCONNECT for this call: another session's says
+ * nothing about it. */
+void test_accepting_keeps_answering_past_another_sessions_disconnect(void)
+{
+    enter_accepting();
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = 0x43;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_disconnected_fake.call_count);
+}
+
+/* Back in LISTENING after our ACCEPTs ran out, still keyed to the caller: its
+ * DISCONNECT ends that wait, so the session's seed stops dropping every
+ * other station's frames, and a late frame of it no longer connects. */
+void test_accept_fallback_ends_on_the_callers_disconnect(void)
+{
+    enter_accepting();
+    accept_until_fallback();
+    TEST_ASSERT_TRUE(sess.accept_fallback);
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = 0x43;   /* not this session's: nothing changes */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE(sess.accept_fallback);
+
+    ev.session_id = 0x42;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_FALSE(sess.accept_fallback);
+    TEST_ASSERT_EQUAL(0, sess.crc_seed);
+
+    RESET_FAKE(fake_notify_connected);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id  = 0x42;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_connected_fake.call_count);
+}
+
 /* A session that has ENDED is not resurrected by a late frame from its peer.
  *
  * The session id survives a teardown, and the rejoin used to key on it alone:
@@ -1171,8 +1231,8 @@ void test_repeat_disconnect_while_draining_ends_now(void)
     TEST_ASSERT_EQUAL_UINT64(first_req, sess.disc_req_ms);
 }
 
-/* A CONNECT while a DISCONNECT is held to drain ends the drain: the host was
- * already told DISCONNECTED, so for it the old session is over.  The call
+/* A CONNECT while a DISCONNECT is held to drain ends the drain: a host that
+ * redials has hung up on the old session.  The call
  * stays queued and is placed once the teardown completes. */
 void test_redial_while_draining_ends_the_drain(void)
 {
@@ -1337,6 +1397,47 @@ void test_silent_peer_without_hangup_waits_for_the_watchdog(void)
     arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
+/* The lost-peer watchdog waits out the answer to a keydown already on the
+ * air at its 240 s mark: at the floor that answer is a 27 s keydown (NW8L's
+ * IONOS MPD at -10 dB: the session ended 6 s before the callee's floor
+ * answer was through).  A keydown after the mark is not waited for. */
+void test_watchdog_waits_for_an_answer_on_the_air(void)
+{
+    goto_connected();
+    uint64_t mark = sess.car_last_rx_ms + 240000;
+
+    /* My poll ended 2 s before the mark: its answer slot runs past it. */
+    car_log_ctl(sess.car, mark - 2000, ARQ_CHANNEL_GUARD_MS);
+    uint64_t due = car_answer_due_ms(sess.car, mark);
+    TEST_ASSERT_TRUE_MESSAGE(due > mark, "the answer's slot runs past the mark");
+
+    mock_set_uptime_ms(mark);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms > mark && sess.deadline_ms <= due,
+                             "the timer is armed for the end of the slot, not the past mark");
+
+    mock_set_uptime_ms(due);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
+void test_watchdog_does_not_wait_for_a_keydown_after_the_mark(void)
+{
+    goto_connected();
+    uint64_t mark = sess.car_last_rx_ms + 240000;
+
+    car_log_ctl(sess.car, mark + 1000, ARQ_CHANNEL_GUARD_MS);
+    TEST_ASSERT_EQUAL_UINT64(0, car_answer_due_ms(sess.car, mark));
+
+    mock_set_uptime_ms(mark + 1000);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 }
 
 /* A deferred APP_DISCONNECT that never drains must still tear down once the
@@ -1526,6 +1627,35 @@ void test_rx_disconnect_with_backlog_ends_at_once(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
     TEST_ASSERT_EQUAL_INT(ARQ_TD_REPLYING, sess.teardown);
     TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+}
+
+/* The host hears one DISCONNECTED per session.  arq.c answers a host
+ * DISCONNECT or ABORT at once only when the FSM owes none: a session ended on
+ * the peer's DISCONNECT is no longer active, but its notice still waits for
+ * our reply to go out, so it is owed until then (#493). */
+void test_notice_owed_until_the_reply_is_out(void)
+{
+    TEST_ASSERT_FALSE_MESSAGE(arq_fsm_notice_owed(&sess), "no session, yet a notice owed");
+    goto_connected();
+    TEST_ASSERT_TRUE(arq_fsm_notice_owed(&sess));
+    RESET_FAKE(fake_notify_disconnected);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE_MESSAGE(arq_fsm_notice_owed(&sess),
+        "ended on the peer's DISCONNECT: the notice is still to come");
+
+    ev = make_event(ARQ_EV_TIMER_ACK);                 /* the reply keys */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE(arq_fsm_notice_owed(&sess));
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_disconnected_fake.call_count);
+
+    ev = make_event(ARQ_EV_TX_COMPLETE);               /* ...and is out */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+    TEST_ASSERT_FALSE_MESSAGE(arq_fsm_notice_owed(&sess), "the notice went, yet still owed");
 }
 
 
@@ -1953,6 +2083,47 @@ void test_call_retry_deadline_anchored_to_ptt_off(void)
 }
 
 
+/* The next CALL is due one call interval of the carrier the ACCEPT may come
+ * back on: after a repeat on the control mode that is the floor, whose ACCEPT
+ * (13.5 s) outlasts the control mode's 8 s.  At 8 s the CALL keyed over it
+ * whenever no decoder of ours had caught it (on air, KG9NI calling K7EK,
+ * 2026-11-10: 5 of 6 floor ACCEPTs, 3.7-4.9 s of each). */
+void test_call_after_a_repeat_waits_out_a_floor_accept(void)
+{
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "AAA");   /* we rank first: no stagger */
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "TEST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);                         /* CALL 1, control mode */
+    mock_set_uptime_ms(time_now_ms() + 3700);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    /* The first CALL's ACCEPT comes on its own carrier: the control mode's interval. */
+    TEST_ASSERT_EQUAL_UINT64(time_now_ms() + (uint64_t)(arq_protocol_call_interval_s() * 1000.0f),
+                             sess.deadline_ms);
+
+    mock_set_uptime_ms(sess.deadline_ms);
+    RESET_FAKE(fake_send_tx_frame);
+    ev = make_event(ARQ_EV_TIMER_RETRY);                  /* CALL 2: a repeat */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, fake_send_tx_frame_fake.arg1_val);
+    mock_set_uptime_ms(time_now_ms() + 3700);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Its ACCEPT may come on the floor: guard, 13.5 s on the air, decode. */
+    int floor = arq_floor_mode(arq_get_bw());
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(floor);
+    uint64_t accept_end = time_now_ms() + ARQ_CHANNEL_GUARD_MS + (uint64_t)(tm->frame_duration_s * 1000.0f);
+    TEST_ASSERT_EQUAL_UINT64(time_now_ms() + (uint64_t)(arq_protocol_call_interval_for_mode_s(floor) * 1000.0f),
+                             sess.deadline_ms);
+    TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms >= accept_end + ARQ_CALL_DECODE_WAIT_MS,
+                             "the next CALL would key over the floor ACCEPT or before it decodes");
+}
+
 /* An ACCEPT is only correct one channel guard after a CALL we actually heard:
  * that is the only moment we know the caller has dropped PTT and is listening.
  *
@@ -2131,6 +2302,7 @@ int main(void)
     RUN_TEST(test_listen_transitions_to_listening);
     RUN_TEST(test_connect_transitions_to_calling);
     RUN_TEST(test_call_retry_deadline_anchored_to_ptt_off);
+    RUN_TEST(test_call_after_a_repeat_waits_out_a_floor_accept);
     RUN_TEST(test_incoming_call_transitions_to_accepting);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
@@ -2179,10 +2351,13 @@ int main(void)
     RUN_TEST(test_silent_peer_after_hangup_is_ended_early);
     RUN_TEST(test_silent_peer_after_hangup_waits_the_callees_drain);
     RUN_TEST(test_silent_peer_without_hangup_waits_for_the_watchdog);
+    RUN_TEST(test_watchdog_waits_for_an_answer_on_the_air);
+    RUN_TEST(test_watchdog_does_not_wait_for_a_keydown_after_the_mark);
     RUN_TEST(test_disconnect_waits_out_a_long_keydown);
     RUN_TEST(test_disconnect_keyed_deferral_is_bounded);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
     RUN_TEST(test_rx_disconnect_with_backlog_ends_at_once);
+    RUN_TEST(test_notice_owed_until_the_reply_is_out);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
@@ -2192,6 +2367,9 @@ int main(void)
     RUN_TEST(test_call_max_s_leaves_default_retries_alone);
     RUN_TEST(test_accepting_gives_up_after_budget);
     RUN_TEST(test_accept_fallback_completes_on_first_frame);
+    RUN_TEST(test_accepting_releases_on_the_callers_disconnect);
+    RUN_TEST(test_accepting_keeps_answering_past_another_sessions_disconnect);
+    RUN_TEST(test_accept_fallback_ends_on_the_callers_disconnect);
     RUN_TEST(test_ended_session_is_not_resurrected_by_a_late_frame);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
     RUN_TEST(test_accepting_repeat_call_sends_pending_again);

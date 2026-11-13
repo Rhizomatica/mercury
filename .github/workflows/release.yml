@@ -6,7 +6,9 @@
 #   1. Bump version strings + changelog, commit, push
 #   2. Build unsigned Windows zip (debian container, mingw cross-compile)
 #   3. Authenticode-sign the binaries (certum-signer container, jsign + SimplySign)
-#   4. Build the Android .apk, signed with the release key (secrets)
+#   4. Build the Android .apk, signed with the release key (secrets); with
+#      publish_play, also the .aab, signed with the Play upload key, and
+#      release it on a Google Play track
 #   5. Build the iOS sideload .ipa
 #   6. Create GitHub release with signed zip (+ installer, .dmg, .apk, .ipa)
 
@@ -39,6 +41,17 @@ on:
         required: false
         default: true
         type: boolean
+      publish_play:
+        description: 'Build the Android .aab and release it on Google Play (needs build_android)'
+        required: false
+        default: false
+        type: boolean
+      play_track:
+        description: 'Google Play track for publish_play'
+        required: false
+        default: internal
+        type: choice
+        options: [internal, alpha, beta, production]
 
 jobs:
   # ---- Version bump + commit ----
@@ -376,6 +389,8 @@ jobs:
     env:
       NDK_VERSION: 27.3.13750724
       FYNE_CLI_VERSION: v1.7.3
+      BUNDLETOOL_VERSION: 1.18.3
+      BUNDLETOOL_SHA256: a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
     steps:
       - uses: actions/checkout@v4
         with: { ref: mercuryv2, fetch-depth: 1 }
@@ -385,10 +400,24 @@ jobs:
           go-version: '1.26.9'
           cache-dependency-path: gui_interface/fyne-ui/go.sum
 
-      - name: Install the NDK and the fyne CLI
+      # The Makefile builds fyne's tool itself, at minSdkVersion 26
+      # (FYNE_ANDROID), from fyne.io/tools@$FYNE_CLI_VERSION.
+      - name: Install the NDK
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "platforms;android-34" "build-tools;34.0.0" > /dev/null
-          go install fyne.io/tools/cmd/fyne@$FYNE_CLI_VERSION
+
+      - name: Install bundletool
+        if: ${{ inputs.publish_play }}
+        run: |
+          set -eu
+          B="$RUNNER_TEMP/bundletool"
+          mkdir -p "$B"
+          curl -sSfL -o "$B/bundletool.jar" \
+            "https://github.com/google/bundletool/releases/download/$BUNDLETOOL_VERSION/bundletool-all-$BUNDLETOOL_VERSION.jar"
+          echo "$BUNDLETOOL_SHA256  $B/bundletool.jar" | sha256sum -c -
+          printf '#!/bin/sh\nexec java -jar %s/bundletool.jar "$@"\n' "$B" > "$B/bundletool"
+          chmod 755 "$B/bundletool"
+          echo "$B" >> "$GITHUB_PATH"
 
       - name: Build and sign the .apk
         env:
@@ -414,6 +443,70 @@ jobs:
         with:
           name: android-apk
           path: Mercury-${{ inputs.version }}-android-arm64.apk
+
+      # Signed with the Play upload key (ANDROID_UPLOAD_KEYSTORE_B64 and
+      # ANDROID_UPLOAD_KEYSTORE_PASS, alias "upload"); Google signs what it
+      # serves with the release key (Play App Signing).
+      - name: Build and sign the .aab
+        if: ${{ inputs.publish_play }}
+        env:
+          ANDROID_UPLOAD_KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_B64 }}
+          ANDROID_UPLOAD_KEYSTORE_PASS: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASS }}
+        run: |
+          set -eu
+          if [ -z "$ANDROID_UPLOAD_KEYSTORE_B64" ] || [ -z "$ANDROID_UPLOAD_KEYSTORE_PASS" ]; then
+            echo "::error::the ANDROID_UPLOAD_KEYSTORE_B64 / ANDROID_UPLOAD_KEYSTORE_PASS secrets are not set"; exit 1
+          fi
+          KS="$RUNNER_TEMP/upload.jks"
+          echo "$ANDROID_UPLOAD_KEYSTORE_B64" | base64 -d > "$KS"
+          NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
+          T="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          make fyne-ui-android-aab ANDROID_UPLOAD_KEYSTORE="$KS" \
+            ANDROID_AAB=Mercury-${{ inputs.version }}-android-arm64.aab \
+            ANDROID_NDK_HOME="$NDK" ANDROID_HOME="$ANDROID_HOME" \
+            CC="$T/aarch64-linux-android26-clang" AR="$T/llvm-ar"
+          rm -f "$KS"
+
+      - name: Upload the .aab
+        if: ${{ inputs.publish_play }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aab
+          path: Mercury-${{ inputs.version }}-android-arm64.aab
+
+  # ---- Google Play ----
+  # The .aab on the play_track input's track, through the Play Developer API
+  # with the service account in PLAY_SERVICE_ACCOUNT_JSON
+  # (mercury-release@mercury-play.iam.gserviceaccount.com, invited in Play
+  # Console with the release permissions).  Opt-in: publish_play.
+  play:
+    name: Release on Google Play (${{ inputs.play_track }})
+    needs: android
+    if: ${{ inputs.build_android && inputs.publish_play }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: mercuryv2, fetch-depth: 1, sparse-checkout: android }
+
+      - name: Download the .aab
+        uses: actions/download-artifact@v4
+        with: { name: android-aab }
+
+      - name: Upload to Google Play
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -eu
+          [ -n "$PLAY_SERVICE_ACCOUNT_JSON" ] || { echo "::error::the PLAY_SERVICE_ACCOUNT_JSON secret is not set"; exit 1; }
+          umask 077
+          SA="$RUNNER_TEMP/play.json"
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$SA"
+          v=${{ inputs.version }}
+          printf '<en-US>\nMercury %s: https://github.com/Rhizomatica/mercury/releases/tag/v%s\n</en-US>\n' "$v" "$v" > notes.txt
+          sh android/play_upload.sh "$SA" org.rhizomatica.mercury \
+            Mercury-$v-android-arm64.aab ${{ inputs.play_track }} notes.txt
+          rm -f "$SA"
 
   # ---- iOS sideload .ipa ----
   # Signed ad hoc, with no provisioning profile: SideStore and AltStore

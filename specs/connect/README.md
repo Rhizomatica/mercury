@@ -101,57 +101,76 @@ The carriers and timing ConnectHandshake leaves out, in 0.25 s steps
   go on the CALL's carrier.  On air (2026-10-21, an sBitx calling an
   IC-7100) 0 of 3 DATAC16 ACCEPTs arrived and every MFSK one did, and the
   caller's MFSK CALL cost 22 s more.
-- The caller listens on the floor from its first repeat on.  A CALL that
+- The caller listens on the floor from its first repeat on, and waits for
+  an ACCEPT there: the next CALL is due one call interval of the carrier
+  the ACCEPT may come on after the last ended (`call_interval_s`), the
+  floor's (24 s) after a repeat on the control mode, not the control mode's
+  8 s.  On air (KG9NI calling K7EK, 2026-11-10) 5 of K7EK's 6 floor ACCEPTs
+  were keyed over by the next CALL, 3.7-4.9 s of each.  A CALL that
   comes due while one of its decoders is on a frame arriving waits, and
   once it has, until `ARQ_CALL_DECODE_WAIT_MS` past the frame's end (the
   floor's decode allowance and a deferral step).  The energy busy detector
   holds no CALL.
 - Any frame may be lost, and a decoder may miss an ACCEPT arriving (`Sense`).
 
-Properties: `NoOverlap` (decoders always catch an ACCEPT: no two keydowns
-at once); `Early` (the fast forward path and the floor delivering, the fast
+Properties: `NoOverlap` (no two keydowns at once; with decoders always
+catching an ACCEPT, and since `call_interval_s` with `Sense` "any" too); `Early` (the fast forward path and the floor delivering, the fast
 return dead: connected on the second CALL's answer, no third CALL);
 `Connects` (the floor delivering, decoders catching ACCEPTs or not:
 connected by the horizon).
 
 Results:
 
-- `ConnectCarrier.cfg` (every path "any"): no error, 405606 distinct states.
-- `ConnectCarrier_early.cfg`: no error, 23876.
-- `ConnectCarrier_floor.cfg` (`Sense` "any"): no error, 355346.
+- `ConnectCarrier.cfg` (every path "any"): no error, 149404 distinct states
+  (405606 before `call_interval_s`).
+- `ConnectCarrier_sense.cfg` (every path "any", `Sense` "any"): `NoOverlap`
+  holds, 297879: a CALL never keys over an ACCEPT, caught by a decoder or
+  not.
+- `ConnectCarrier_early.cfg`: no error, 23222 (23876).
+- `ConnectCarrier_floor.cfg` (`Sense` "any"): no error, 244623 (355346).
+- `Mut_fastiv.cfg` (`ConnectCarrier_sense.cfg` with a repeat on fast
+  waiting the fast interval, the code before `call_interval_s`): violates
+  `NoOverlap`, the CALL keyed over the floor ACCEPT a decoder missed.
 - `F`, the fast CALLs before the floor (`ARQ_CALL_FAST_SLOTS`): 2 by
   default, `min(max(2, RETRIES/2), 4)` after a host's `RETRIES` (#442),
   so the `F` = 4 configs are the code's highest case.  Every
   config above has `F` = 2 (and the counts are unchanged).  The caller
   still listens on the floor from its second CALL whatever `F` is.
-  - `F` = 4, `R` = 8 (`ConnectCarrier_f4*.cfg`): `NoOverlap` holds, 449131
-    states (every path "any"); `Early`, 23876; MFSK-only callee
-    (`_f4_emfsk`), `NoOverlap` and `FloorOnly`, 430194; MFSK-only caller
-    (`_f4_cmfsk_floor`), `Connects`, 291289 (its CALLs are all on the
-    floor, so `F` does not apply).
+  - `F` = 4, `R` = 8 (`ConnectCarrier_f4*.cfg`): `NoOverlap` holds, 84324
+    states (every path "any"; 449131 before `call_interval_s`); `Early`,
+    23222; MFSK-only callee (`_f4_emfsk`), `NoOverlap` and `FloorOnly`,
+    67577; MFSK-only caller (`_f4_cmfsk_floor`), `Connects`, 291289 (its
+    CALLs are all on the floor, so `F` does not apply).
   - `F` = 10, `R` = 20 (`ConnectCarrier_f10*.cfg`, `RETRIES 20` without
     the cap; kept as the record of why the cap is there):
-    `NoOverlap` holds, 2364589 states; `Early`, 42686; `_f10_emfsk`,
-    2026816.
+    `NoOverlap` holds, 217943 states; `Early`, 42032; `_f10_emfsk`,
+    178655.
   - `Connects` needs a later horizon as `F` grows: with only the floor
     delivering, the first floor CALL comes after `F` fast ones, each 47
-    steps (a CALL and its interval).  The earliest horizon it holds from:
-    `F` = 2, 450 (112 s; `ConnectCarrier_floor.cfg` checks 520); `F` = 4,
-    ~540 (134 s; `_f4_floor` and `_f4_emfsk_floor` check 560: 346036 and
-    301462 states); `F` = 10, 820 (205 s; `_f10_floor` and
-    `_f10_emfsk_floor` check 850: 683736 and 548691).  The same for an
-    MFSK-only callee.  That is the cost of more fast CALLs on a path only
-    the floor carries: ~23 s per two of them.
+    steps (a CALL and its interval), 111 from the first repeat on (its
+    interval is the floor's: `call_interval_s`).  The earliest horizon it
+    holds from: `F` = 2, ~454 (114 s; 450 before `call_interval_s`;
+    `ConnectCarrier_floor.cfg` checks 520); `F` = 4, ~532 (133 s; ~540
+    before; `_f4_floor` and `_f4_emfsk_floor` check 560: 201759 and 160779
+    states); `F` = 10, ~1200 (300 s; 820 before; `_f10_floor` and
+    `_f10_emfsk_floor` now check 1250: 964335 and 773661).  The same for
+    an MFSK-only callee.  That is the cost of more fast CALLs on a path
+    only the floor carries: ~28 s per fast repeat now, so the cap at 4.
 - `Mut_old.cfg`, the code before (no floor answer, no floor listening, no
   hold): violates `Early` (a third CALL, the floor one, 22 s later).
-- `Mut_nohold.cfg`: the CALL goes when due.  Violates `NoOverlap`: it keys
-  over the floor ACCEPT, which outlasts the 8 s call interval.
-- `Mut_nodecwait.cfg`: the hold ends with the frame.  Violates `Early`: the
-  CALL goes out before the ACCEPT decodes (sim, asym:-4:-9: the callee, now
-  connected, took it for a redial).
+- `Mut_nohold.cfg`: the CALL goes when due.  Violated `NoOverlap` before
+  `call_interval_s`: it keyed over the floor ACCEPT, which outlasted the
+  8 s call interval.  Now no error (149404): the interval waits that
+  ACCEPT out.  The hold stays in the code for what the model leaves out:
+  an ACCEPT later than its allowances, and other stations' frames.
+- `Mut_nodecwait.cfg`: the hold ends with the frame.  Violated `Early`
+  before `call_interval_s` (the CALL went out before the ACCEPT decoded;
+  sim, asym:-4:-9: the callee, now connected, took it for a redial).  Now
+  no error (23222), for the same reason.
 - `Mut_noalt.cfg`: every repeat on the control mode answered on the floor.
-  Violates `Connects`: a floor ACCEPT the caller's decoders miss is keyed
-  over every time.
+  Violated `Connects` before `call_interval_s`: a floor ACCEPT the caller's
+  decoders missed was keyed over every time.  Now no error (244623): none
+  is keyed over.  `accept_carrier` still alternates.
 - `Mut_nolisten.cfg`: the caller does not listen on the floor.  Violates
   `Early` (and `NoOverlap`, below).
 - `MfskTx`, an end that transmits only MFSK (`arq:mfsk_tx_only`, #424):

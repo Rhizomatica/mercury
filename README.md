@@ -1,6 +1,6 @@
 # Mercury — HERMES HF Modem
 
-Mercury is part of the [HERMES project](https://www.rhizomatica.org/hermes/)
+Mercury is part of the [HERMES project](https://hermes.radio/)
 (High-Frequency Emergency and Rural Multimedia Exchange System) by
 [Rhizomatica](https://www.rhizomatica.org/), funded by
 [ARDC](https://www.ardc.net/) and others.
@@ -133,6 +133,11 @@ PTT control notes:
 - `-S` is the compatible shorthand for `hermes_shm` and is unavailable on Windows builds.
 - `-Q` opens the configured backend, keys it for one second, releases it, and exits without starting the modem or audio devices. For example: `mercury -C mercury.ini -Q`.
 
+Sound card notes:
+- A capture device that stops delivering audio is reopened every 2 s. After three reopens in a row that bring nothing (about 6 s, not counting the time Mercury is transmitting), Mercury logs `the capture device delivers no audio` once and reports the audio as failed (`audio_ok: false` in the GUI and the WebSocket status) until samples come back. When they do, the log says how long the station was deaf: `capture delivering again after reopen #N (S s without audio)`.
+- When it reports the failure, and on every 5th reopen after that, Mercury also lists the sound cards again and looks for the device by the name it had when capture started. Windows can give a USB codec a new id, under the same name, when it resets or is re-plugged. If exactly one device has that name, Mercury opens it under its new id (`listed under a new id: ... -- opening that`). If two have it (two radios with the same codec), Mercury does not guess, and asks you to select it again. The default device (no `-i`) is left to the sound system.
+- The same at start, on Windows (`wasapi`, `dsound`): when you choose the devices in the GUI, their names are saved next to their ids (`input_device_name`, `output_device_name` in `mercury.ini`). If a saved id is no longer listed when Mercury starts, the device with that exact name is used, if exactly one has it (`device id '...' is gone; found '...' by its saved name`). `-i` and `-o` on the command line drop the saved name. A config without the names works as before.
+
 ## Getting Started with Mercury
 
 ### Compile and Install from Git repository on Linux
@@ -209,16 +214,21 @@ make fyne-ui
 ./mercury-ui
 ```
 
-### Build the Android .apk (technology preview)
+### Build the Android .apk or .aab (technology preview)
 
 ```sh
-# Android NDK r27d, the Android SDK (platform 34, build-tools 34) and the
-# fyne CLI (see "GUI build prerequisites" below)
+# Android NDK r27d, the Android SDK (platform 34, build-tools 34) and Go.
+# The Makefile builds its own copy of the fyne CLI, at Android 8 (API 26)
+# as the minimum (.fyne-android/).
 T=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 make fyne-ui-android ANDROID_NDK_HOME=$ANDROID_NDK_HOME ANDROID_HOME=$ANDROID_HOME \
      CC=$T/aarch64-linux-android26-clang AR=$T/llvm-ar
 # -> Mercury-<version>.apk (arm64, debug-signed; ANDROID_RELEASE=1 with
 #    ANDROID_KEYSTORE signs it with a release key)
+
+# For Google Play: bundletool on PATH, and the Play upload key
+make fyne-ui-android-aab ANDROID_UPLOAD_KEYSTORE=upload.jks ...   # same NDK settings
+# -> Mercury-<version>.aab (target SDK 36), the password in ANDROID_UPLOAD_KEYSTORE_PASS
 ```
 
 The GUI with the modem inside, on AAudio, with a vendored Hamlib
@@ -346,6 +356,13 @@ like any other app.
 You need a 64-bit ARM phone or tablet (almost every Android device since
 2017) with Android 11 or later; it was tested on Android 15.
 
+**From Google Play.**  Install
+[Mercury HF Modem](https://play.google.com/store/apps/details?id=org.rhizomatica.mercury)
+on the phone or tablet.  It is free, and updates arrive through Google Play.
+Then go on from step 3 below.
+
+**From the releases page.**
+
 1. On the phone, open the
    [releases page](https://github.com/Rhizomatica/mercury/releases/latest) and
    download `Mercury-<version>-android-arm64.apk`.
@@ -410,9 +427,8 @@ has been used with a radio there yet (see below):
   with the modem built in: it does not need the `mercury` package.  It is in
   the app list as **Mercury**.
 
-The repository carries a snapshot of the development branch, not a release
-(versions such as `1.9.22+git20261108.1432.57fb7a15`: the last release, the
-date and the commit).
+The repository carries the releases, from 1.9.23 (`pkcon refresh && pkcon
+update` moves an install of the earlier `1.9.22+git…` snapshot to it).
 
 1. Turn on **Developer mode** (Settings → Developer tools), open
    **Terminal**, and become root with `devel-su`.

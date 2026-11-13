@@ -268,7 +268,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: ios-app fyne-ui-ios fyne-ui-ios-ipa fyne-ui-android
+.PHONY: ios-app fyne-ui-ios fyne-ui-ios-ipa fyne-ui-android fyne-ui-android-aab android-prep
 .PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-macos-appstore-pkg sign-macos-bin macos-notarize-dmg fyne-ui-windows windows-installer test integration-test integration-test-random FORCE
 
 prefix ?= /usr
@@ -716,46 +716,76 @@ endif
 	@echo "  -> $(IOS_UI_APP)  ($(IOS_PLATFORM), $(TARGET_GOARCH))"
 
 # Mercury for Android with its GUI: the Fyne UI with the engine embedded, as
-# an .apk to sideload (Sailfish OS runs it too, through Android App Support).
-# CC is the NDK's clang for the target ABI and API level 26 (AAudio):
+# an .apk to sideload (Sailfish OS runs it too, through Android App Support),
+# or as an .aab for Google Play.  CC is the NDK's clang for the target ABI and
+# API level 26 (AAudio):
 #   NDK=~/Android/android-ndk-r27d
 #   make fyne-ui-android ANDROID_NDK_HOME=$NDK ANDROID_HOME=~/Android/sdk \
 #        CC=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang \
 #        AR=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
 # fyne links the Go side at API 21, where there is no libaaudio, so the link
-# is pointed at the API 26 stubs; the app needs Android 8 or newer.  The
-# versionCode is MAJOR*10000 + MINOR*100 + PATCH (1.9.20 -> 10920).  Without
-# ANDROID_RELEASE=1 the .apk is debuggable and signed with fyne's debug key,
-# which is public.  A release is signed again (v1-v3) with our own key:
+# is pointed at the API 26 stubs, through a generated Go file: fyne's release
+# build (the .aab) replaces CGO_LDFLAGS with its own.  The app needs Android 8
+# or newer, and Play offers it to every phone its minSdkVersion admits, so it
+# is built with fyne's tool at minSdkVersion 26 (FYNE_ANDROID, below).  The
+# versionCode is 10 * (MAJOR*10000 + MINOR*100 + PATCH) (1.9.24 -> 109240): the
+# last digit is for a rebuild of the same version, as Play needs a new
+# versionCode for every upload (1.9.20 to 1.9.23 had MAJOR*10000 + MINOR*100 +
+# PATCH, and Play has 10924).  Without ANDROID_RELEASE=1 the .apk is
+# debuggable and signed with fyne's debug key, which is public.  A release is
+# signed again (v1-v3) with our own key:
 #   ANDROID_KEYSTORE=release.jks [ANDROID_KEY_ALIAS=mercury], and the
 #   keystore password in the environment variable ANDROID_KEYSTORE_PASS.
 # Every update must carry the same key, or Android refuses to install it.
 ANDROID_APK ?= Mercury-$(MERCURY_VERSION).apk
 ANDROID_API = 26
-ANDROID_BUILD ?= $(shell echo $(MERCURY_VERSION) | awk -F. '{ print $$1 * 10000 + $$2 * 100 + $$3 }')
+ANDROID_BUILD ?= $(shell echo $(MERCURY_VERSION) | awk -F. '{ print 10 * ($$1 * 10000 + $$2 * 100 + $$3) }')
 ANDROID_TRIPLE = $(if $(filter amd64,$(TARGET_GOARCH)),x86_64,aarch64)-linux-android
 ANDROID_KEY_ALIAS ?= mercury
 ANDROID_BUILD_TOOLS ?= $(lastword $(sort $(wildcard $(ANDROID_HOME)/build-tools/*)))
 ANDROID_SYSROOT_LIB = $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$(ANDROID_TRIPLE)/$(ANDROID_API)
+ANDROID_LINK_GO = $(FYNE_UI_DIR)/zz_ndk_link_android.go
 
-fyne-ui-android:
+# fyne's own tool (fyne.io/tools) with its minSdkVersion (binres.MinSDK, 21)
+# at ANDROID_API: it is the only value it writes there, and a manifest that
+# declares uses-sdk itself is refused.  Built once into .fyne-android/.
+FYNE_CLI_VERSION ?= v1.7.3
+FYNE_ANDROID = .fyne-android/fyne-$(FYNE_CLI_VERSION)-api$(ANDROID_API)
+$(FYNE_ANDROID):
+	rm -rf .fyne-android/src && mkdir -p .fyne-android
+	cd .fyne-android && src=$$(GOFLAGS= go mod download -json fyne.io/tools@$(FYNE_CLI_VERSION) | \
+		sed -n 's/^[[:space:]]*"Dir": "\(.*\)",$$/\1/p') && cp -R "$$src" src && chmod -R u+w src
+	sed -e 's/^const MinSDK = 21$$/const MinSDK = $(ANDROID_API)/' \
+		.fyne-android/src/cmd/fyne/internal/mobile/binres/sdk.go > .fyne-android/sdk.go
+	grep -q '^const MinSDK = $(ANDROID_API)$$' .fyne-android/sdk.go
+	mv .fyne-android/sdk.go .fyne-android/src/cmd/fyne/internal/mobile/binres/sdk.go
+	# A host tool: none of the target's CC, GOOS or cgo flags.
+	cd .fyne-android/src && env -u CC -u CXX -u AR -u GOOS -u GOARCH -u CGO_CFLAGS -u CGO_LDFLAGS \
+		CGO_ENABLED=0 go build -o ../$(notdir $@) ./cmd/fyne
+
+# Both Android builds: the engine for the target, the manifest, and the link
+# to the API 26 libraries.
+android-prep: $(FYNE_ANDROID)
 ifneq ($(TARGET_ANDROID),1)
-	$(error fyne-ui-android needs the NDK's compiler: CC=.../aarch64-linux-android26-clang)
+	$(error the Android builds need the NDK's compiler: CC=.../aarch64-linux-android26-clang)
 endif
 ifeq ($(ANDROID_NDK_HOME),)
-	$(error fyne-ui-android needs ANDROID_NDK_HOME (and ANDROID_HOME, the SDK))
+	$(error the Android builds need ANDROID_NDK_HOME (and ANDROID_HOME, the SDK))
 endif
 	$(MAKE) internal_deps
 	$(MAKE) libmercury_core.a
 	sed -e 's/@VERSION@/$(MERCURY_VERSION)/' -e 's/@BUILD@/$(ANDROID_BUILD)/' \
 		-e 's/@DEBUG@/$(if $(filter 1,$(ANDROID_RELEASE)),false,true)/' \
 		android/AndroidManifest.xml.in > $(FYNE_UI_DIR)/AndroidManifest.xml
-	cd $(FYNE_UI_DIR) && CGO_LDFLAGS="-L$(ANDROID_SYSROOT_LIB)" \
-		fyne package -os android/$(TARGET_GOARCH) -tags mercury_embedded \
+	printf '//go:build android\n\npackage main\n\n// #cgo LDFLAGS: -L%s\nimport "C"\n' \
+		"$(ANDROID_SYSROOT_LIB)" > $(ANDROID_LINK_GO)
+
+fyne-ui-android: android-prep
+	cd $(FYNE_UI_DIR) && $(CURDIR)/$(FYNE_ANDROID) package -os android/$(TARGET_GOARCH) -tags mercury_embedded \
 		--app-id org.rhizomatica.mercury --name Mercury --icon mercury-ui.png \
 		--app-version $(MERCURY_VERSION) --app-build $(ANDROID_BUILD) \
 		$(if $(filter 1,$(ANDROID_RELEASE)),--release)
-	rm -f $(FYNE_UI_DIR)/AndroidManifest.xml
+	rm -f $(FYNE_UI_DIR)/AndroidManifest.xml $(ANDROID_LINK_GO)
 	# Aligned, or Android cannot map the dex from the .apk and unpacks it at
 	# every start ("please zipalign to 4 bytes").  apksigner signs after the
 	# alignment; the debug .apk keeps fyne's signature, which zipalign leaves
@@ -768,6 +798,28 @@ ifneq ($(ANDROID_KEYSTORE),)
 	$(ANDROID_BUILD_TOOLS)/apksigner verify $(ANDROID_APK)
 endif
 	@echo "  -> $(ANDROID_APK)  (android/$(TARGET_GOARCH), versionCode $(ANDROID_BUILD))"
+
+# The .aab for Google Play: fyne's release build (target SDK 36, 16 KB pages),
+# signed with the Play upload key; Google signs what it serves with the
+# release key (Play App Signing).  Needs bundletool on PATH, the upload key in
+# ANDROID_UPLOAD_KEYSTORE [ANDROID_UPLOAD_KEY_ALIAS=upload], and its password
+# in the environment variable ANDROID_UPLOAD_KEYSTORE_PASS.
+ANDROID_AAB ?= Mercury-$(MERCURY_VERSION).aab
+ANDROID_UPLOAD_KEY_ALIAS ?= upload
+fyne-ui-android-aab: ANDROID_RELEASE = 1
+fyne-ui-android-aab: android-prep
+ifeq ($(ANDROID_UPLOAD_KEYSTORE),)
+	$(error fyne-ui-android-aab needs ANDROID_UPLOAD_KEYSTORE (and ANDROID_UPLOAD_KEYSTORE_PASS))
+endif
+	# jarsigner takes the password as an argument: fyne passes no other way.
+	cd $(FYNE_UI_DIR) && $(CURDIR)/$(FYNE_ANDROID) release -os android/$(TARGET_GOARCH) --tags mercury_embedded \
+		--app-id org.rhizomatica.mercury --name Mercury --icon mercury-ui.png \
+		--app-version $(MERCURY_VERSION) --app-build $(ANDROID_BUILD) \
+		--keystore $(abspath $(ANDROID_UPLOAD_KEYSTORE)) --key-name $(ANDROID_UPLOAD_KEY_ALIAS) \
+		--keystore-pass "$$ANDROID_UPLOAD_KEYSTORE_PASS"
+	rm -f $(FYNE_UI_DIR)/AndroidManifest.xml $(ANDROID_LINK_GO)
+	mv $(FYNE_UI_DIR)/Mercury.aab $(ANDROID_AAB)
+	@echo "  -> $(ANDROID_AAB)  (android/$(TARGET_GOARCH), versionCode $(ANDROID_BUILD))"
 
 # The device build as an .ipa for App Store Connect (and from there Apple's
 # notarization for alternative distribution, e.g. AltStore PAL): fyne-ui-ios
@@ -1272,7 +1324,7 @@ windows-installer: windows fyne-ui-windows windows-installer-stage
 clean:
 	rm -f mercury mercury.exe *.o *.d .git_hash_stamp .mercury_host mercury-*.zip libmercury_core.a libmercury_core_w64.a libmercury_host.a
 	rm -f host/*.o host/*.d
-	rm -rf ios/*.o ios/*.d ios/Mercury.app ios/MercuryUI.app ios/build-assets Mercury-*.ipa Mercury-*.apk
+	rm -rf ios/*.o ios/*.d ios/Mercury.app ios/MercuryUI.app ios/build-assets Mercury-*.ipa Mercury-*.apk Mercury-*.aab
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
