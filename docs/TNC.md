@@ -340,7 +340,18 @@ BITRATE\r
 
 **Response:** `BITRATE (<code>) <bps> BPS\r` on the control port.  `<code>`
 names the mode on the air: 1 DATAC1, 3 DATAC3, 4 DATAC4, 15 DATAC15,
-17 DATAC17, 25 QAM16C2, 100 MFSK.
+16 DATAC16 (the control mode, while calling only), 17 DATAC17, 25 QAM16C2,
+100 MFSK, 103 MFSK at 500 Hz.
+
+Mercury also sends the line unprompted: in a session, for each frame on a
+payload mode keyed or decoded; and while a `CONNECT` is calling, on the
+first CALL and at least every 20 s until the call connects or ends, for the
+carrier of the CALL out last.  The second keeps a host's idle timer from
+running out while the CALLs go unanswered.  BPQ32 passes TNC lines it does
+not handle itself to the session (`VARA} BITRATE ...`), and a forwarding
+connect script may set the session's IDLETIME as low as 60 s: on air
+(KG9NI, November 2026) calls were dropped 61-62 s after the last line,
+before the first MFSK CALL had gone out.
 
 ---
 
@@ -643,7 +654,7 @@ These are sent on the **control port** without a preceding command.
 | `SN <value>\r`                              | SNR update                                   |
 | `BUSY ON\r`                                 | Channel became occupied (busy detector)      |
 | `BUSY OFF\r`                                | Channel became clear (busy detector)         |
-| `BITRATE (<level>) <bps> BPS\r`            | Throughput update                            |
+| `BITRATE (<level>) <bps> BPS\r`            | Throughput update; while calling, every 20 s |
 | `IAMALIVE\r`                                | Heartbeat (sent periodically while idle)     |
 | `REGISTERED <callsign>\r`                  | Callsign registration confirmed (after MYCALL) |
 
