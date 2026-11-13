@@ -489,7 +489,8 @@ libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS) $(MODEM_TOP_O
 
 # The daemon build: everything but the host-replaceable modules, plus host/,
 # for a program that links Mercury in (hermes-radio-daemon).  Link it with
-# modem/freedv/libfreedvdata.a and -liniparser; the host also provides the
+# modem/freedv/libfreedvdata.a, -liniparser and, where this build found
+# libsodium (config.mk, ARQ_CRYPTO), -lsodium; the host also provides the
 # hermes_shm rings (ring_buffer_posix, shm_posix).  It runs the engine through
 # the bridge's mercury_init/mercury_shutdown and host/mercury_host.h.
 HOST_CFLAGS = $(CFLAGS) -Ihost $(INIPARSER_CFLAGS)
@@ -516,7 +517,7 @@ check-host-link: libmercury_host.a
 	echo 'int main(void) { return 0; }' > .check_host_link.c
 	$(CC) -o .check_host_link .check_host_link.c -Wl,--whole-archive libmercury_host.a -Wl,--no-whole-archive \
 		modem/freedv/libfreedvdata.a common/iniparser/iniparser.o common/iniparser/dictionary.o \
-		common/ring_buffer_posix.o common/shm_posix.o -lm -lpthread $(ATOMIC_LDFLAGS)
+		common/ring_buffer_posix.o common/shm_posix.o -lm -lpthread $(ATOMIC_LDFLAGS) $(CRYPTO_LDFLAGS)
 	rm -f .check_host_link .check_host_link.c
 
 # The OS=Windows_NT internal_deps sub-make compiles cm108_ptt.o with
