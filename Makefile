@@ -245,7 +245,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: ios-app fyne-ui-ios fyne-ui-ios-ipa fyne-ui-android fyne-ui-android-aab android-prep
+.PHONY: check-host-link ios-app fyne-ui-ios fyne-ui-ios-ipa fyne-ui-android fyne-ui-android-aab android-prep
 .PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-macos-appstore-pkg sign-macos-bin macos-notarize-dmg fyne-ui-windows windows-installer test integration-test integration-test-random FORCE
 
 prefix ?= /usr
@@ -502,6 +502,17 @@ endif
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	rm -f $@
 	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(HOST_AUDIO_OBJS) $(HOST_API_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
+
+# Links every object of libmercury_host.a into a program, with what a host
+# supplies (iniparser, the hermes_shm rings) taken from our own copies: a
+# function the core calls that host/ doesn't define fails here, not in the
+# host's build (1.9.24: #534's two audioio calls).
+check-host-link: libmercury_host.a
+	echo 'int main(void) { return 0; }' > .check_host_link.c
+	$(CC) -o .check_host_link .check_host_link.c -Wl,--whole-archive libmercury_host.a -Wl,--no-whole-archive \
+		modem/freedv/libfreedvdata.a common/iniparser/iniparser.o common/iniparser/dictionary.o \
+		common/ring_buffer_posix.o common/shm_posix.o -lm -lpthread $(ATOMIC_LDFLAGS)
+	rm -f .check_host_link .check_host_link.c
 
 # The OS=Windows_NT internal_deps sub-make compiles cm108_ptt.o with
 # -DHAVE_HIDAPI, so the archive must carry the matching vendored hidapi object.
