@@ -93,6 +93,8 @@ int mercury_ui_get_radio_list(ui_device_t *out, int max,
                               char *ptt_line, int line_len,
                               char *ptt_invert, int invert_len,
                               int *cm108_gpio);
+/* GPIO PTT: chip path, BCM line, active-low. */
+void mercury_ui_get_gpio_ptt(char *chip, int chip_len, int *line, int *invert);
 int mercury_ui_get_input_channel(void);
 
 /* Android: the usbfs descriptor the app opened (UsbManager) for the radio's

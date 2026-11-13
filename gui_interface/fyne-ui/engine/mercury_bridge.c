@@ -206,6 +206,18 @@ int mercury_ui_get_radio_list(ui_device_t *out, int max,
                                   ptt_invert, (size_t)invert_len, cm108_gpio);
 }
 
+void mercury_ui_get_gpio_ptt(char *chip, int chip_len, int *line, int *invert)
+{
+    ptt_config_t config;
+    radio_io_get_config(&config);
+    if (chip && chip_len > 0)
+        snprintf(chip, (size_t)chip_len, "%s", config.gpio_chip);
+    if (line)
+        *line = (int)config.gpio_line;
+    if (invert)
+        *invert = config.gpio_invert;
+}
+
 int mercury_ui_get_input_channel(void)
 {
     return ui_comm_get_input_channel();

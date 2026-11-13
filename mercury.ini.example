@@ -102,7 +102,7 @@ freedv_verbosity = 0
 
 [ptt]
 
-; PTT backend: none, hamlib, serial, cm108, or hermes_shm (default: none).
+; PTT backend: none, hamlib, serial, cm108, hermes_shm, or gpio (default: none).
 ; "serial" keys a modem-control line on a serial port -- DigiRig, the
 ; All-In-One Cable (AIOC) and most home-brew interfaces.  "cm108" keys a GPIO
 ; pin on a CM108/CM119-class USB sound chip; the AIOC does this
@@ -128,6 +128,14 @@ device =
 
 ; CM108 GPIO pin, 1..4.  GPIO3 is the de-facto standard.
 ;cm108_gpio = 3
+
+; Raspberry Pi GPIO via libgpiod 2.x (Linux only).
+; BCM GPIO offset, not physical header pin. BCM GPIO17 is physical pin 11.
+; Raspberry Pi 5 on a kernel older than 6.6.45: the header is /dev/gpiochip4.
+; The user running Mercury needs access to the chip (the "gpio" group).
+;gpio_chip = /dev/gpiochip0
+;gpio_line = 17
+;gpio_invert = false
 
 ; The settings below are used only by method=hamlib.
 ; Run mercury -K to list supported model IDs.

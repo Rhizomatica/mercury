@@ -24,6 +24,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 #include <stdarg.h>
 #include <time.h>
@@ -71,6 +72,43 @@ _Static_assert(AUDIO_DEV_STR_MAX >= UI_DEV_ID_MAX,
 extern _Atomic bool mercury_stop;
 
 #define UI_LOG_TAG "ui-comm"
+
+/* Escape strings inserted into JSON values. */
+static bool ui_json_escape_string(const char *src, char *dst, size_t cap)
+{
+    static const char hex[] = "0123456789abcdef";
+    size_t out = 0;
+
+    if (!src || !dst || cap == 0) return false;
+
+    for (const unsigned char *p = (const unsigned char *)src; *p; ++p) {
+        unsigned char c = *p;
+        char e[6];
+        size_t n = 1;
+
+        switch (c) {
+        case '"':  e[0] = '\\'; e[1] = '"';  n = 2; break;
+        case '\\': e[0] = '\\'; e[1] = '\\'; n = 2; break;
+        case '\b': e[0] = '\\'; e[1] = 'b'; n = 2; break;
+        case '\f': e[0] = '\\'; e[1] = 'f'; n = 2; break;
+        case '\n': e[0] = '\\'; e[1] = 'n'; n = 2; break;
+        case '\r': e[0] = '\\'; e[1] = 'r'; n = 2; break;
+        case '\t': e[0] = '\\'; e[1] = 't'; n = 2; break;
+        default:
+            if (c < 0x20) {
+                e[0] = '\\'; e[1] = 'u'; e[2] = '0'; e[3] = '0';
+                e[4] = hex[c >> 4]; e[5] = hex[c & 15]; n = 6;
+            } else e[0] = (char)c;
+        }
+
+        if (out + n >= cap) { dst[0] = '\0'; return false; }
+        memcpy(dst + out, e, n);
+        out += n;
+    }
+
+    dst[out] = '\0';
+    return true;
+}
 
 static const char *ui_arq_mode_name(int mode)
 {
@@ -277,7 +315,9 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
             return -1;
         }
 
-        snprintf(config.device, sizeof(config.device), "%s", cmd->value2);
+        /* GPIO carries its chip in value2; the serial/Hamlib device stays. */
+        if (config.method != PTT_METHOD_GPIO)
+            snprintf(config.device, sizeof(config.device), "%s", cmd->value2);
         if (cmd->value3[0])
             config.hamlib_model = atoi(cmd->value3);
         if (cmd->value4[0])
@@ -285,27 +325,68 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         if (config.hamlib_serial_speed < 0)
             config.hamlib_serial_speed = 0;
 
-        /* Older clients omit the advanced fields; retain their current
-         * values in that case so applying an unrelated PTT change is safe. */
-        if (cmd->value5[0] &&
-            !cfg_ptt_line_parse(cmd->value5, &config.serial_line)) {
-            HLOGE(UI_LOG_TAG, "Invalid serial PTT line from UI: %s", cmd->value5);
-            return -1;
-        }
-        if (cmd->value6[0] &&
-            !cfg_ptt_invert_parse(cmd->value6, &config.serial_invert_rts,
-                                  &config.serial_invert_dtr)) {
-            HLOGE(UI_LOG_TAG, "Invalid serial PTT inversion from UI: %s", cmd->value6);
-            return -1;
-        }
-        if (cmd->value7[0]) {
-            char *end = NULL;
-            long gpio = strtol(cmd->value7, &end, 10);
-            if (!end || *end != '\0' || gpio < 1 || gpio > 4) {
-                HLOGE(UI_LOG_TAG, "Invalid CM108 GPIO from UI: %s", cmd->value7);
+        /* GPIO PTT reuses the existing WS command fields:
+         *   value2 = gpio chip
+         *   value6 = invert (true/false)
+         *   value7 = BCM GPIO line
+         *
+         * Do not run the serial/CM108 parsers for GPIO: their value7
+         * range is deliberately limited to CM108 GPIO 1..4. */
+        if (config.method == PTT_METHOD_GPIO) {
+            if (cmd->value2[0])
+                snprintf(config.gpio_chip, sizeof(config.gpio_chip), "%s",
+                         cmd->value2);
+
+            if (cmd->value6[0]) {
+                if (strcmp(cmd->value6, "true") == 0 ||
+                    strcmp(cmd->value6, "1") == 0) {
+                    config.gpio_invert = true;
+                } else if (strcmp(cmd->value6, "false") == 0 ||
+                           strcmp(cmd->value6, "0") == 0) {
+                    config.gpio_invert = false;
+                } else {
+                    HLOGE(UI_LOG_TAG, "Invalid GPIO inversion from UI: %s",
+                          cmd->value6);
+                    return -1;
+                }
+            }
+
+            if (cmd->value7[0]) {
+                char *end = NULL;
+                errno = 0;
+                unsigned long gpio = strtoul(cmd->value7, &end, 10);
+                if (cmd->value7[0] == '-' || errno == ERANGE ||
+                    !end || end == cmd->value7 || *end != '\0' ||
+                    gpio > INT_MAX) {
+                    HLOGE(UI_LOG_TAG, "Invalid GPIO line from UI: %s",
+                          cmd->value7);
+                    return -1;
+                }
+                config.gpio_line = (unsigned int)gpio;
+            }
+        } else {
+            /* Older clients omit the advanced fields; retain their current
+             * values in that case so applying an unrelated PTT change is safe. */
+            if (cmd->value5[0] &&
+                !cfg_ptt_line_parse(cmd->value5, &config.serial_line)) {
+                HLOGE(UI_LOG_TAG, "Invalid serial PTT line from UI: %s", cmd->value5);
                 return -1;
             }
-            config.cm108_gpio = (int)gpio;
+            if (cmd->value6[0] &&
+                !cfg_ptt_invert_parse(cmd->value6, &config.serial_invert_rts,
+                                      &config.serial_invert_dtr)) {
+                HLOGE(UI_LOG_TAG, "Invalid serial PTT inversion from UI: %s", cmd->value6);
+                return -1;
+            }
+            if (cmd->value7[0]) {
+                char *end = NULL;
+                long gpio = strtol(cmd->value7, &end, 10);
+                if (!end || *end != '\0' || gpio < 1 || gpio > 4) {
+                    HLOGE(UI_LOG_TAG, "Invalid CM108 GPIO from UI: %s", cmd->value7);
+                    return -1;
+                }
+                config.cm108_gpio = (int)gpio;
+            }
         }
 
         if (config.method == PTT_METHOD_HAMLIB && config.hamlib_model <= 0) {
@@ -899,6 +980,18 @@ void *ui_publisher_thread(void *arg)
                 char sel[16] = "", dev_path[512] = "", ptt_method[32] = "none";
                 char ptt_line[16] = "rts", ptt_invert[16] = "none";
                 int  serial_speed = 0, cm108_gpio = PTT_CM108_GPIO_DEFAULT;
+                ptt_config_t current_ptt;
+                char gpio_chip_json[PTT_DEVICE_PATH_MAX * 6 + 1];
+                memset(&current_ptt, 0, sizeof(current_ptt));
+                radio_io_get_config(&current_ptt);
+
+                if (!ui_json_escape_string(current_ptt.gpio_chip,
+                                           gpio_chip_json,
+                                           sizeof(gpio_chip_json))) {
+                    HLOGE(UI_LOG_TAG, "Failed to escape GPIO chip path for JSON");
+                    gpio_chip_json[0] = '\0';
+                }
+
                 int  count = ui_comm_get_radio_list(radios, max_radios, sel, sizeof(sel),
                                                     dev_path, sizeof(dev_path), &serial_speed,
                                                     ptt_method, sizeof(ptt_method),
@@ -913,9 +1006,13 @@ void *ui_publisher_thread(void *arg)
                         "{\"type\":\"radio_list\",\"selected\":\"%s\",\"device_path\":\"%s\","
                         "\"serial_speed\":%d,\"ptt_method\":\"%s\","
                         "\"ptt_line\":\"%s\",\"ptt_invert\":\"%s\","
-                        "\"cm108_gpio\":%d,\"list\":[",
+                        "\"cm108_gpio\":%d,"
+                        "\"gpio_chip\":\"%s\",\"gpio_line\":%u,\"gpio_invert\":%s,"
+                        "\"list\":[",
                         sel, dev_path, serial_speed, ptt_method, ptt_line,
-                        ptt_invert, cm108_gpio);
+                        ptt_invert, cm108_gpio,
+                        gpio_chip_json, current_ptt.gpio_line,
+                        current_ptt.gpio_invert ? "true" : "false");
                     for (int i2 = 0; i2 < count && pos < 65536 - 160; i2++)
                         pos += snprintf(buf + pos, 65536 - pos, "%s{\"name\":\"%s\",\"id\":\"%s\"}",
                                         i2 ? "," : "", radios[i2].name, radios[i2].id);

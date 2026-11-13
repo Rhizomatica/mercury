@@ -238,6 +238,29 @@ HIDAPI_LDFLAGS :=
 HIDAPI_OBJS :=
 endif
 
+# GPIO PTT via libgpiod (Linux standalone only).
+HAVE_LIBGPIOD :=
+LIBGPIOD_CFLAGS :=
+LIBGPIOD_LDFLAGS :=
+
+ifeq ($(MERCURY_HOST),standalone)
+ifeq ($(UNAME_S),Linux)
+ifneq ($(TARGET_ANDROID),1)
+ifneq ($(TARGET_IOS),1)
+ifneq ($(OS),Windows_NT)
+ifneq ($(shell pkg-config --atleast-version=2.0 libgpiod 2>/dev/null && echo yes),)
+HAVE_LIBGPIOD := 1
+LIBGPIOD_CFLAGS := $(shell pkg-config --cflags libgpiod) -DHAVE_LIBGPIOD
+LIBGPIOD_LDFLAGS := $(shell pkg-config --libs libgpiod)
+endif
+endif
+endif
+endif
+endif
+endif
+
+export HAVE_LIBGPIOD LIBGPIOD_CFLAGS LIBGPIOD_LDFLAGS
+
 MINGW_CC  = x86_64-w64-mingw32-gcc
 MINGW_AR  = x86_64-w64-mingw32-ar
 
@@ -267,7 +290,7 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS) $(WS_TLS_LDFLAGS)
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS) $(WS_TLS_LDFLAGS) $(LIBGPIOD_LDFLAGS)
 
 # The modules a host program can replace, one implementation per build
 # (MERCURY_HOST, config.mk).  Each has one interface: audioio/audioio.h,
@@ -276,7 +299,7 @@ LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LD
 # carries an identical copy of.
 ifeq ($(MERCURY_HOST),standalone)
 HOST_AUDIO_OBJS = audioio/audioio.a
-HOST_RADIO_OBJS = radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
+HOST_RADIO_OBJS = radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o radio_io/gpio_ptt.o $(HIDAPI_OBJS)
 ifeq ($(HAVE_HERMES_SHM),1)
 HOST_RADIO_OBJS += radio_io/sbitx_io.o radio_io/shm_utils.o
 endif
@@ -534,6 +557,9 @@ libmercury_core_w64.a: $(HIDAPI_W64_OBJ)
 # Makefile knows whether ws_tls.o carries SSL_* references.  It is empty on
 # Windows and macOS, which build without TLS.
 #
+# LIBGPIOD_LDFLAGS: the same again for gpio_ptt.o, built with libgpiod only
+# when pkg-config finds libgpiod >= 2 (Linux).
+#
 # FYNE_UI_TAGS: build tags added to mercury_embedded.  Sailfish OS has no X11
 # and no libGL, and runs the GPU driver through libhybris:
 #   make fyne-ui FYNE_UI_TAGS=wayland,gles2,egl,hybris EXTRA_CFLAGS="-g -O2 -fPIE"
@@ -545,7 +571,7 @@ fyne-ui: libmercury_core.a
 	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 \
 		CGO_CPPFLAGS="$(EXTRA_CPPFLAGS)" \
 		CGO_CFLAGS="$(or $(strip $(EXTRA_CFLAGS)),-g -O2)" \
-		CGO_LDFLAGS="$(COMMON_LDFLAGS) $(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS)" \
+		CGO_LDFLAGS="$(COMMON_LDFLAGS) $(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS) $(LIBGPIOD_LDFLAGS)" \
 		go build -buildmode=pie -tags mercury_embedded$(if $(FYNE_UI_TAGS),$(comma)$(FYNE_UI_TAGS)) \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
 		-o $(abspath mercury-ui) .

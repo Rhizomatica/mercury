@@ -234,6 +234,36 @@ void test_set_ptt_config_cm108_is_saved(void)
     TEST_ASSERT_EQUAL_INT(4, r.ptt.cm108_gpio);
 }
 
+/* GPIO PTT (Raspberry Pi): the chip comes in value2, active-low in value6,
+ * the BCM line in value7.  The serial/Hamlib device stays as it was saved,
+ * so going back to it later needs no retyping. */
+void test_set_ptt_config_gpio_is_saved_and_keeps_the_device(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, send_cmd("set_ptt_config", "gpio", "/dev/gpiochip4",
+                                      "", "", "", "true", "27"));
+    TEST_ASSERT_EQUAL_INT(1, g_radio_restarts);
+    mercury_config r = reload();
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_GPIO, r.ptt.method);
+    TEST_ASSERT_EQUAL_STRING("/dev/gpiochip4", r.ptt.gpio_chip);
+    TEST_ASSERT_EQUAL_UINT(27, r.ptt.gpio_line);
+    TEST_ASSERT_TRUE(r.ptt.gpio_invert);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("/dev/ttyUSB1", r.ptt.device,
+        "choosing GPIO overwrote the saved serial/Hamlib device");
+}
+
+/* A GPIO line that is not a non-negative number is refused, ini untouched. */
+void test_set_ptt_config_gpio_bad_line_is_refused(void)
+{
+    const char *bad[] = { "-1", "abc", "17x" };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        TEST_ASSERT_NOT_EQUAL_MESSAGE(0, send_cmd("set_ptt_config", "gpio", "/dev/gpiochip0",
+                                                  "", "", "", "", bad[i]), bad[i]);
+    }
+    TEST_ASSERT_EQUAL_INT(0, g_radio_restarts);
+    mercury_config r = reload();
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_HAMLIB, r.ptt.method);
+}
+
 /* A change the handler refuses must leave the saved config alone. */
 void test_rejected_set_ptt_config_does_not_touch_the_ini(void)
 {
@@ -323,6 +353,8 @@ int main(void)
     RUN_TEST(test_set_ptt_config_serial_is_saved);
     RUN_TEST(test_set_ptt_config_hermes_shm_is_saved);
     RUN_TEST(test_set_ptt_config_cm108_is_saved);
+    RUN_TEST(test_set_ptt_config_gpio_is_saved_and_keeps_the_device);
+    RUN_TEST(test_set_ptt_config_gpio_bad_line_is_refused);
     RUN_TEST(test_rejected_set_ptt_config_does_not_touch_the_ini);
     RUN_TEST(test_legacy_set_radio_config_is_refused);
     RUN_TEST(test_set_callsign_is_saved);

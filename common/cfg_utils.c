@@ -46,6 +46,9 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->ptt.serial_invert_rts = false;
     cfg->ptt.serial_invert_dtr = false;
     cfg->ptt.cm108_gpio        = PTT_CM108_GPIO_DEFAULT;
+    snprintf(cfg->ptt.gpio_chip, sizeof(cfg->ptt.gpio_chip), "%s", PTT_GPIO_CHIP_DEFAULT);
+    cfg->ptt.gpio_line         = PTT_GPIO_LINE_DEFAULT;
+    cfg->ptt.gpio_invert       = false;
     cfg->ptt.hamlib_model   = RADIO_TYPE_NONE;
     cfg->ptt.hamlib_log_level = 0;
     cfg->ptt.hamlib_serial_speed = 0;
@@ -130,6 +133,7 @@ const char *cfg_ptt_method_name(ptt_method_t method)
     case PTT_METHOD_HAMLIB:     return "hamlib";
     case PTT_METHOD_SERIAL:     return "serial";
     case PTT_METHOD_CM108:      return "cm108";
+    case PTT_METHOD_GPIO:       return "gpio";
     case PTT_METHOD_HERMES_SHM: return "hermes_shm";
     default:                    return "unknown";
     }
@@ -142,6 +146,7 @@ bool cfg_ptt_method_parse(const char *name, ptt_method_t *method)
     else if (!strcmp(name, "hamlib"))     *method = PTT_METHOD_HAMLIB;
     else if (!strcmp(name, "serial"))     *method = PTT_METHOD_SERIAL;
     else if (!strcmp(name, "cm108"))      *method = PTT_METHOD_CM108;
+    else if (!strcmp(name, "gpio"))       *method = PTT_METHOD_GPIO;
     else if (!strcmp(name, "hermes_shm")) *method = PTT_METHOD_HERMES_SHM;
     /* "serial_rts" was the name before DTR and inversion existed.  Keep it
      * working -- it is already in people's mercury.ini -- as plain RTS. */
@@ -339,6 +344,25 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_PTT_CM108_GPIO, cfg->ptt.cm108_gpio);
     if (i >= 1 && i <= 4)
         cfg->ptt.cm108_gpio = i;
+
+    s = iniparser_getstring(ini, CFG_KEY_PTT_GPIO_CHIP, NULL);
+    if (s) {
+        strncpy(cfg->ptt.gpio_chip, s, sizeof(cfg->ptt.gpio_chip) - 1);
+        cfg->ptt.gpio_chip[sizeof(cfg->ptt.gpio_chip) - 1] = '\0';
+    }
+
+    /* A BCM line number: anything else (negative, "abc") keeps the default. */
+    s = iniparser_getstring(ini, CFG_KEY_PTT_GPIO_LINE, NULL);
+    if (s && *s) {
+        char *end = NULL;
+        long line = strtol(s, &end, 10);
+        if (*end == '\0' && line >= 0 && line <= 1023)
+            cfg->ptt.gpio_line = (unsigned int)line;
+    }
+
+    b = iniparser_getboolean(ini, CFG_KEY_PTT_GPIO_INVERT,
+                             cfg->ptt.gpio_invert ? 1 : 0);
+    cfg->ptt.gpio_invert = (bool)b;
 
     i = iniparser_getint(ini, CFG_KEY_PTT_HAMLIB_MODEL,
                          cfg->ptt.hamlib_model);
@@ -600,6 +624,10 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
             cfg_ptt_invert_name(cfg->ptt.serial_invert_rts,
                                 cfg->ptt.serial_invert_dtr));
     fprintf(f, "cm108_gpio = %d\n", cfg->ptt.cm108_gpio);
+    cfg_escape_str(escaped, sizeof(escaped), cfg->ptt.gpio_chip);
+    fprintf(f, "gpio_chip = \"%s\"\n", escaped);
+    fprintf(f, "gpio_line = %u\n", cfg->ptt.gpio_line);
+    fprintf(f, "gpio_invert = %s\n", cfg->ptt.gpio_invert ? "true" : "false");
     fprintf(f, "hamlib_model = %d\n", cfg->ptt.hamlib_model);
     fprintf(f, "hamlib_serial_speed = %d\n", cfg->ptt.hamlib_serial_speed);
     cfg_escape_str(escaped, sizeof(escaped), cfg->ptt.hamlib_conf);

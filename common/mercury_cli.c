@@ -69,7 +69,7 @@ void mercury_cli_print_usage(const char *prog)
     printf(" -d                         Trace mode. Logs the raw bytes of every decoded connect frame (implies -v).\n");
     printf(" -L <path>                  Write log to file (TIMING level and above). Windows default: logs\\mercury_engine.log beside mercury.exe.\n");
     printf(" -J                         Use JSONL format for log file (requires -L).\n");
-    printf(" -P [ptt_method]            PTT method: none, hamlib, serial, cm108, or hermes_shm.\n");
+    printf(" -P [ptt_method]            PTT method: none, hamlib, serial, cm108, hermes_shm, or gpio.\n");
     printf(" -R [radio_model]           Sets HAMLIB radio model and selects Hamlib PTT.\n");
     printf(" -A [ptt_device]            PTT serial device or HAMLIB device/ip:port endpoint.\n");
 #ifdef HAVE_HERMES_SHM
@@ -410,7 +410,7 @@ int mercury_cli_parse(int argc, char **argv,
             {
                 if (!cfg_ptt_config_set_method(&out->cfg.ptt, optarg))
                 {
-                    fprintf(stderr, "Invalid PTT method '%s'. Use none, hamlib, serial, cm108, or hermes_shm.\n",
+                    fprintf(stderr, "Invalid PTT method '%s'. Use none, hamlib, serial, cm108, hermes_shm, or gpio.\n",
                             optarg);
                     return -1;
                 }
@@ -418,6 +418,13 @@ int mercury_cli_parse(int argc, char **argv,
                 if (out->cfg.ptt.method == PTT_METHOD_HERMES_SHM)
                 {
                     fprintf(stderr, "Error: HERMES shared-memory PTT is unavailable in this build.\n");
+                    return -1;
+                }
+#endif
+#ifndef HAVE_LIBGPIOD
+                if (out->cfg.ptt.method == PTT_METHOD_GPIO)
+                {
+                    fprintf(stderr, "Error: GPIO PTT is unavailable in this build (needs libgpiod 2.x, Linux).\n");
                     return -1;
                 }
 #endif

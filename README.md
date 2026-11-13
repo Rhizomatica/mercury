@@ -88,7 +88,7 @@ Options:
  -d                         Trace mode. Logs the raw bytes of every decoded connect frame (implies -v).
  -L <path>                  Write log to file (TIMING level and above). Windows default: logs\mercury_engine.log beside mercury.exe.
  -J                         Use JSONL format for log file (requires -L).
- -P [ptt_method]            PTT method: none, hamlib, serial, cm108, or hermes_shm.
+ -P [ptt_method]            PTT method: none, hamlib, serial, cm108, hermes_shm, or gpio.
  -R [radio_model]           Sets HAMLIB radio model and selects Hamlib PTT.
  -A [ptt_device]            PTT serial device or HAMLIB device/ip:port endpoint.
  -S                         Select HERMES shared-memory PTT (Linux shorthand for -P hermes_shm).
@@ -129,6 +129,7 @@ PTT control notes:
 - The default method is `none`; Mercury then leaves radio keying to the TCP client.
 - `-P serial -A COM7` (or a POSIX device such as `/dev/ttyUSB0`) keys a serial modem-control line. No baud rate is used. Which line, and whether it is inverted, comes from `[ptt] line` and `[ptt] invert` — RTS non-inverted by default.
 - `-P cm108` keys a GPIO pin on a CM108/CM119-class USB sound chip. The device is auto-detected; `[ptt] cm108_gpio` selects the pin (default 3).
+- `-P gpio` keys a Raspberry Pi GPIO line through libgpiod 2.x (Linux; built in when `pkg-config` finds libgpiod >= 2.0, so Raspberry Pi OS / Debian Trixie with `libgpiod-dev`). `[ptt] gpio_chip`, `gpio_line` (the BCM number, not the header pin: GPIO17 is pin 11) and `gpio_invert` select it. A build without libgpiod refuses `-P gpio` at start.
 - `-R` is the compatible Hamlib shorthand: it selects the model and the `hamlib` PTT method. `-A` supplies its device or `ip:port`, and `-K` lists models.
 - `-S` is the compatible shorthand for `hermes_shm` and is unavailable on Windows builds.
 - `-Q` opens the configured backend, keys it for one second, releases it, and exits without starting the modem or audio devices. For example: `mercury -C mercury.ini -Q`.
@@ -556,7 +557,7 @@ method = serial
 device = COM7
 ```
 
-Valid methods are `none`, `hamlib`, `serial`, `cm108`, and `hermes_shm` (`serial_rts` is still accepted and means `serial` with `line = rts`). Legacy
+Valid methods are `none`, `hamlib`, `serial`, `cm108`, `hermes_shm`, and `gpio` (`serial_rts` is still accepted and means `serial` with `line = rts`). Legacy
 `radio_model`, `radio_device`, `radio_serial_speed`, and `hamlib_log_level`
 keys are still read and mapped to the equivalent PTT configuration.
 
@@ -570,6 +571,7 @@ keys are still read and mapped to the equivalent PTT configuration.
 | CM108/CM119 USB dongles | `cm108` | `cm108_gpio = 3` (some use 1 or 4) |
 | CAT-controlled HF rig | `hamlib` | `hamlib_model`, `device` |
 | sBitx | `hermes_shm` | — (or `-S`) |
+| Raspberry Pi GPIO (optocoupler or transistor to the PTT line) | `gpio` | `gpio_chip = /dev/gpiochip0`, `gpio_line = 17` (BCM), `gpio_invert = false` |
 
 The AIOC exposes both a CDC serial port and a CM108-compatible HID endpoint, so
 either method works. `cm108` needs no device path — Mercury finds it — but the
@@ -583,6 +585,11 @@ running as root.
 | Linux | `libhidapi-dev` (`pkg-config`) | Optional — without it Mercury talks to `/dev/hidraw` directly, so a minimal Raspberry Pi build needs no extra package |
 | macOS | `brew install hidapi` | |
 | Windows | vendored in `radio_io/hidapi-w64` | Built from source with the rest of the tree, like `hamlib-w64`; no prebuilt library needed |
+
+`gpio` opens `/dev/gpiochipN`, which Raspberry Pi OS gives to the `gpio`
+group: run Mercury as a user in that group (`sudo usermod -aG gpio $USER`) or
+as root.  On a Raspberry Pi 5 with a kernel older than 6.6.45 the header is on
+`/dev/gpiochip4`; `gpioinfo` lists the chips and their lines.
 
 `pkg-config` detection is deliberately skipped for the Windows cross-build: it
 would find the *host* hidapi and link something that cannot run on the target.
