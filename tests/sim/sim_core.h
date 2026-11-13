@@ -61,6 +61,10 @@ void            sim_set_snr_asym(sim_t *s, double snr_dir0_db, double snr_dir1_d
 /* Rayleigh fading around mean_snr_db at doppler_hz (see sim_channel_set_fading). */
 void            sim_set_fading(sim_t *s, double mean_snr_db, double doppler_hz);
 
+/* B's frames (direction 1) on this mode also lost with this probability:
+ * see sim_channel_set_return_mode_per. */
+void            sim_set_return_mode_per(sim_t *s, int freedv_mode, double per);
+
 /* Empirical per-mode erasure table (see sim_channel_set_mode_per) plus the
  * SNR stamped on delivered frames — models ISI-limited channels (e.g. NVIS
  * disturbed) where the SNR reads healthy while fast modes fail. */

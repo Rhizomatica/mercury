@@ -113,7 +113,8 @@ enum { CAR_T_M, CAR_T_S, CAR_T_F, CAR_T_W, CAR_NTIMERS };   /* M's next decision
                                                     * S's fallback to the floor, and its watch
                                                     * for the round it asked for (listening only);
                                                     * on M, CAR_T_W watches the air in S's answer
-                                                    * slot (carousel.c, m_watch) */
+                                                    * slot (carousel.c, m_watch), and CAR_T_F
+                                                    * ends a CAR_DEAF_LOSS (ctl_loss_expired) */
 
 typedef struct {
     uint8_t  id;
@@ -317,7 +318,12 @@ void car_set_floor_mode(car_t *c, int mode);
  * for good: the station transmits only MFSK (arq:mfsk_tx_only, an FSK-only
  * radio; the connect's TX-MFSK-only bit).  Its peer holds it in ctl_deaf,
  * the station itself in peer_ctl_deaf; nothing the session hears clears it. */
-enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2, CAR_DEAF_MFSK_TX = 3 };
+/* LOSS is deaf by the peer's control going missing while the peer is heard:
+ * two asks unanswered (ctl_deaf_on_asks in carousel.c), where the reading
+ * sits in the band DATAC16 decodes only part of.  Only M sets it.  It ends
+ * after LOSS_HOLD_MS (60 s), back to what the reading says, or sooner on a
+ * reading well above that band. */
+enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2, CAR_DEAF_MFSK_TX = 3, CAR_DEAF_LOSS = 4 };
 /* Seed, from the connect exchange, whether each end hears the other below the
  * control mode (CAR_DEAF_*; see ctl_on_floor in carousel.c).  Frames keep
  * both current, all but MFSK_TX. */

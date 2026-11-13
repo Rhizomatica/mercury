@@ -72,6 +72,9 @@ void test_arq_tunables_roundtrip(void)
     w.busy_on_debounce_ms         = 500;
     w.busy_hang_ms                = 2000;
     w.busy_reseed_on_hop          = true;
+    snprintf(w.input_device, sizeof(w.input_device), "{0.0.1.00000000}.{c64a8dfa}");
+    snprintf(w.input_device_name, sizeof(w.input_device_name), "Microphone (3- USB Audio CODEC )");
+    snprintf(w.output_device_name, sizeof(w.output_device_name), "Speakers \"A\" (3- USB Audio CODEC )");
     TEST_ASSERT_TRUE(cfg_write(&w, TMP));
 
     mercury_config r;
@@ -89,6 +92,24 @@ void test_arq_tunables_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(500,  r.busy_on_debounce_ms);
     TEST_ASSERT_EQUAL_INT(2000, r.busy_hang_ms);
     TEST_ASSERT_TRUE(r.busy_reseed_on_hop);
+    TEST_ASSERT_EQUAL_STRING("{0.0.1.00000000}.{c64a8dfa}", r.input_device);
+    TEST_ASSERT_EQUAL_STRING("Microphone (3- USB Audio CODEC )", r.input_device_name);
+    TEST_ASSERT_EQUAL_STRING("Speakers \"A\" (3- USB Audio CODEC )", r.output_device_name);
+}
+
+/* A config from before the names reads as before: no names, ids unchanged. */
+void test_config_without_device_names_reads_as_before(void)
+{
+    FILE *f = fopen(TMP, "w");
+    TEST_ASSERT_NOT_NULL(f);
+    fputs("[main]\ninput_device = \"{0.0.1.00000000}.{c64a8dfa}\"\n", f);
+    fclose(f);
+    mercury_config r;
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_STRING("{0.0.1.00000000}.{c64a8dfa}", r.input_device);
+    TEST_ASSERT_EQUAL_STRING("", r.input_device_name);
+    TEST_ASSERT_EQUAL_STRING("", r.output_device_name);
 }
 
 void test_legacy_radio_config_maps_to_hamlib_ptt(void)
@@ -537,6 +558,7 @@ int main(void)
     RUN_TEST(test_trace_roundtrips);
     RUN_TEST(test_hl2_settings_roundtrip);
     RUN_TEST(test_arq_tunables_roundtrip);
+    RUN_TEST(test_config_without_device_names_reads_as_before);
     RUN_TEST(test_arq_tunables_clamp_rejects_garbage);
     RUN_TEST(test_removed_arq_keys_are_flagged_not_fatal);
     RUN_TEST(test_legacy_radio_config_maps_to_hamlib_ptt);

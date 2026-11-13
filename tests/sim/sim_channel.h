@@ -41,6 +41,10 @@ typedef struct { int freedv_mode; double per; } sim_mode_per_t;
 #define SIM_MODE_PER_MAX 12
 /* With per-mode PER: the return direction (1) is also lost below this SNR. */
 void           sim_channel_set_return_snr(sim_channel_t *ch, double snr_db);
+/* Direction 1 also loses this share of its frames on this mode, whatever the
+ * SNR says: a control mode that decodes some of the time where the floor gets
+ * through (on air, KG9NI hearing K7EK at -6..-7 dB, 2026-11-11). */
+void sim_channel_set_return_mode_per(sim_channel_t *ch, int freedv_mode, double per);
 void           sim_channel_set_mode_per(sim_channel_t *ch,
                                         const sim_mode_per_t *table, int count);
 

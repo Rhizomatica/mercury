@@ -310,6 +310,11 @@ static void cb_notify_connected(const char *remote_call, const char *local_call,
     HLOGI(LOG_COMP, "Connected to %s", remote_call);
 }
 
+/* When PENDING last went to the host for the call we are answering; 0: none.
+ * Written by the FSM's callbacks and by pending_hold, all on the event loop
+ * under g_sess_lock. */
+static uint64_t g_pending_ms;
+
 static void cb_notify_pending(const char *remote_call, const char *local_call)
 {
     /* An incoming call makes us the callee, whatever an earlier session left
@@ -330,6 +335,7 @@ static void cb_notify_pending(const char *remote_call, const char *local_call)
     g_host_told = false;   /* a new session: its end is owed a notice */
     pthread_mutex_unlock(&g_conn_lock);
     arq_tnc_send_pending();
+    g_pending_ms = time_now_ms();
     HLOGI(LOG_COMP, "Incoming connection from %s on %s (pending)",
           remote_call, (local_call && local_call[0]) ? local_call : "(primary)");
 }
@@ -343,6 +349,7 @@ static void cb_notify_pending_again(const char *remote_call)
 {
     (void)remote_call;   /* the FSM logs the repeat with the callsign */
     arq_tnc_send_pending();
+    g_pending_ms = time_now_ms();
 }
 
 static void cb_notify_cancelpending(void)
@@ -865,6 +872,33 @@ static void call_progress(uint64_t now)
     arq_tnc_send_bitrate(level, bps);
 }
 
+/* While we answer a call, PENDING again every ARQ_PENDING_HOLD_MS.
+ *
+ * A scanning host holds its channel for a fixed time per PENDING: BPQ32 six
+ * scan intervals (VARA.c, "Time out after 6 Scanintervals"), about 60-85 s
+ * on air.  We answer for as long as our ACCEPT retries last, the host's
+ * RETRIES slots from the last CALL heard (RETRIES 20: 20 retry intervals,
+ * about 160 s), and only a repeat of the CALL that we decode sent PENDING
+ * again (#477).  On a weak path that is not enough: on air (K7EK <- KG9NI-7,
+ * 30 m, 2026-11-12 20:49) K7EK decoded 2 of the caller's 13 CALLs, answered
+ * the second, and BPQ32 hopped 66 s later while the caller called on for
+ * another 2 minutes; also 06:23 (63 s).  Held this way, the host keeps the
+ * channel exactly as long as we answer: when the ACCEPT retries run out, or
+ * the caller's DISCONNECT ends it, the FSM's CANCELPENDING releases it.
+ * Not after a LISTEN OFF we are deferring (ARQ_TD_LISTEN_OFF): the host has
+ * asked for the radio back. */
+#define ARQ_PENDING_HOLD_MS 20000
+
+static void pending_hold(uint64_t now)
+{
+    if (g_sess.conn_state != ARQ_CONN_ACCEPTING || g_sess.teardown == ARQ_TD_LISTEN_OFF)
+        return;
+    if (g_pending_ms && now - g_pending_ms < ARQ_PENDING_HOLD_MS)
+        return;
+    arq_tnc_send_pending();
+    g_pending_ms = now;
+}
+
 static void *arq_event_loop_worker(void *arg)
 {
     (void)arg;
@@ -912,6 +946,7 @@ static void *arq_event_loop_worker(void *arg)
             count_listen_end(arq_fsm_dispatch_ends_listening(&g_sess, &tev));
         }
         call_progress(now);
+        pending_hold(now);
         pthread_mutex_unlock(&g_sess_lock);
     }
 
