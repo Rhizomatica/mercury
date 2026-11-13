@@ -853,6 +853,17 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   the peer waited out its 240 s watchdog.  BPQ32 keeps the radio until
   `DISCONNECTED`, now sent when the session has closed, restarts its scan
   15 s after it, and sends `ABORT` if it has waited 30 s.
+- **While BPQ32 calls out, its session has an idle timer.**  A forwarding
+  connect script may set it with `IDLETIME`, as low as 60 s, and only the
+  TNC lines BPQ32's VARA driver passes on to the session reset it
+  (`VARA} BITRATE ...`; it keeps `PTT`, `SN`, `BUSY` and `BUFFER` to
+  itself).  On KG9NI (November 2026) calls were dropped 61-62 s after the
+  last such line, before the first MFSK CALL had gone out.  Mercury now
+  sends a `BITRATE` line on the first CALL and at least every 20 s until the
+  call connects or ends (#539; see [BITRATE](#bitrate)).  A session that
+  has connected and waits longer than `IDLETIME` for the peer's first data
+  is not covered: there BPQ32 passes only data, so raise `IDLETIME` in the
+  connect script.
 
 When `LISTEN OFF` arrives with no session up while a CALL decoder has locked
 onto a frame it has not decoded yet, Mercury logs it:
