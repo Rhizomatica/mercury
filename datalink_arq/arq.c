@@ -96,7 +96,11 @@ static pthread_mutex_t g_app_tx_mtx = PTHREAD_MUTEX_INITIALIZER;
  * notices, the event queue) happens after the lock is released.
  *
  * With [crypto] mode = off none of this is ever touched: the callbacks take
- * their original paths, byte for byte. */
+ * their original paths, byte for byte.
+ *
+ * One of each, as there is one g_sess: the FSM runs one session at a time,
+ * and g_neg below is tied to it by its session id.  Sessions side by side
+ * would need these per session. */
 static arq_xs_t g_xs;
 /* The connect's two encryption bits as they went on air, for the session the
  * FSM is setting up (crypto_negotiate): our CALL's offer and the ACCEPT's

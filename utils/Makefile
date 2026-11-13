@@ -44,6 +44,12 @@ OUT += resampler_bench rxcost_bench idle_cpu_probe
 OUT += bcast_file_tool
 endif
 
+# Keys for the optional encryption: only where this build found libsodium
+# (config.mk, ARQ_CRYPTO).
+ifneq ($(findstring ARQ_HAVE_CRYPTO,$(CRYPTO_CFLAGS)),)
+OUT += mercury_keygen
+endif
+
 # Default target
 all: $(OUT)
 
@@ -63,9 +69,12 @@ broadcast_diag_rx: broadcast_diag_rx.c ../datalink_broadcast/kiss.c ../modem/fra
 watterson_test: watterson_test.c ../common/watterson.c ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
+mercury_keygen: mercury_keygen.c
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) $(CRYPTO_LDFLAGS)
+
 # Clean up build artifacts
 clean:
-	rm -f $(OUT) $(addsuffix .exe, $(OUT)) *.d
+	rm -f $(OUT) mercury_keygen $(addsuffix .exe, $(OUT)) *.d
 
 # Run the program
 run: broadcast_test

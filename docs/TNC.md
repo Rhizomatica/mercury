@@ -775,7 +775,16 @@ the session, and `<destcall>` is always the station that was called.
 
 On an encrypted session `CONNECTED` is sent only once the encryption handshake
 has completed, so a client can never send a byte before the session is
-secure.
+secure.  The handshake is one exchange of the session's first data: the
+station that was called finishes it as it hears the caller's first block, and
+the caller one exchange later, 48-57 s on the MFSK floor (two-daemon harness,
+-10 dB) and a few seconds on a good channel.  Until `CONNECTED` the hosts
+hear what they hear while a call is placed and answered: the caller's a
+`BITRATE` line at least every 20 s, the called station's `PENDING` at least
+every 20 s.  A session that ends before `CONNECTED` (the peer's key did not
+match, or the link was lost) is reported as a call that failed: `DISCONNECTED`
+to the caller's host, `CANCELPENDING` then `DISCONNECTED` to the called
+station's.
 
 ### ENCRYPTED LINK / UNENCRYPTED LINK
 
@@ -793,6 +802,25 @@ key, in hex), since VARA's line has no room for it.
 
 Encryption covers the data stream only.  Callsigns and ARQ headers always
 travel in the clear, for station identification.
+
+**Keys.**  `utils/mercury_keygen new <CALLSIGN> <dir>` writes a station's
+`station.key` (private, stays on the station) and `<CALLSIGN>.pub`, and prints
+the public key's fingerprint; `mercury_keygen fp <file.pub>` prints it for any
+public key.  Two stations exchange their `.pub` files, each into the other's
+`peers_dir`, and compare the fingerprints over a channel they trust (in
+person, by phone) before relying on them: a `.pub` file that arrived by
+email proves nothing by itself.  On every encrypted session Mercury logs the
+fingerprint of the key the peer proved it holds
+(`Session encrypted; peer key fingerprint ...`), the same 16 hex digits.
+
+**Stations without encryption.**  The offer rides in the CALL's minor
+revision (docs/CAROUSEL-ARQ.md, "Wire formats"), which every release since
+1.9.20 reads without acting on.  An `optional` station and a station with
+`[crypto] mode = off`, or any release from 1.9.20 to 1.9.24, connect in the
+clear in both directions; a `required` station does not connect to them.
+Tested against 1.9.20 and 1.9.24 in the two-daemon harness
+(`TestMercuryARQOptionalMeetsAStationWithoutEncryption`,
+`MERCURY_TEST_BIN_B`).
 
 ### CQFRAME
 

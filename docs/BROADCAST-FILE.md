@@ -359,12 +359,19 @@ The format is `datalink_broadcast/bcast_aead.h`, shared with hermes-broadcast.
   loads `[crypto] broadcast_key_file` (default `/etc/mercury/broadcast.key`)
   at startup.  With no key file, files go clear as before.
 * **Command line**: `bcast_file_tool ... -k <keyfile>`.
+* **A new key**: `utils/mercury_keygen broadcast <file>`, the same file on
+  every station of the network.
 
 A receiver with the key opens files sealed with it and still takes clear files,
 so clear and encrypted senders can share a carousel.  A file sealed with a key
 the receiver does not hold does not open: it is saved raw, under a generated
 name, never under the sender's name.  In `required` mode Mercury logs every
 clear file it receives, so none arrives unnoticed.
+
+The key gives secrecy and integrity, not freshness: a sealed file recorded
+off the air and sent again opens again, as it would from its sender.  What
+must not be taken twice has to be told apart above this layer (NNCP drops a
+packet it has already seen).
 
 The name and the size inside the bundle are sealed along with the contents.
 The frame headers are not: the session id, the object length and the RaptorQ

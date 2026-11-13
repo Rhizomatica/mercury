@@ -190,6 +190,15 @@ frame on MFSK.
   the floor (`accept_keys`): silent to a first CALL on DATAC16, it answers
   the repeat, which the caller listens for on the floor
   (specs/connect/ConnectCarrier.tla, `MfskTx`).
+- Minor 2 is the encryption offer and its answer (`[crypto]`, off by
+  default): a CALL at minor 2 offers a Noise_KK session, an ACCEPT at minor
+  2 takes it, and every other frame goes at minor 1.  The extension's five
+  bits were full, and the minor field is the one place a station of 1.9.20
+  to 1.9.24 reads and does not act on: it answers such a CALL at its own
+  minor, and the session is clear.  An ACCEPT at minor 2 is only ever sent
+  to a CALL at minor 2, and a caller ignores one it did not ask for
+  (specs/connect/ConnectHandshake.tla, `Agree`, `Mut_anyaccept`).  Minor 3
+  is the last value free; the next option needs another place.
 - 1.9.x carried a 2-bit protocol version in type CALL's extension: 1 was
   1.9.18 (MFSK at 1531-2500 Hz), 2 was 1.9.19 (MFSK centred on 1500 Hz), 3
   gave a BW500 session its own floor; 3 was the last value it held.

@@ -517,3 +517,47 @@ func TestMercuryARQWrongKeyEndsTheSession(t *testing.T) {
 		l.failWithLogs("B did not log the failed authentication")
 	}
 }
+
+// utils/mercury_keygen makes the files [crypto] reads: station.key is an
+// X25519 private key, <CALLSIGN>.pub its public key under the name Mercury
+// looks up, and the fingerprint it prints is the one Mercury logs.
+func TestKeygenMakesAStationKey(t *testing.T) {
+	tool := filepath.Join(mustRepoRoot(t), "utils", "mercury_keygen")
+	if _, err := os.Stat(tool); err != nil {
+		t.Skip("utils/mercury_keygen is not built (a build without libsodium)")
+	}
+	dir := t.TempDir()
+	out, err := exec.Command(tool, "new", "testa-7", dir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("mercury_keygen new: %v\n%s", err, out)
+	}
+	priv, err := os.ReadFile(filepath.Join(dir, "station.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := os.ReadFile(filepath.Join(dir, "TESTA-7.pub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := ecdh.X25519().NewPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("station.key: %v", err)
+	}
+	if string(k.PublicKey().Bytes()) != string(pub) {
+		t.Fatalf("TESTA-7.pub is not station.key's public key")
+	}
+	if st, _ := os.Stat(filepath.Join(dir, "station.key")); st.Mode().Perm() != 0600 {
+		t.Fatalf("station.key mode %o, want 0600", st.Mode().Perm())
+	}
+	if !strings.Contains(string(out), "fingerprint: "+fingerprint(pub)) {
+		t.Fatalf("fingerprint %s not in:\n%s", fingerprint(pub), out)
+	}
+	fp, err := exec.Command(tool, "fp", filepath.Join(dir, "TESTA-7.pub")).Output()
+	if err != nil || strings.TrimSpace(string(fp)) != fingerprint(pub) {
+		t.Fatalf("mercury_keygen fp: %q (%v), want %s", fp, err, fingerprint(pub))
+	}
+	// A second run never replaces a key.
+	if err := exec.Command(tool, "new", "TESTA-7", dir).Run(); err == nil {
+		t.Fatal("mercury_keygen overwrote an existing key")
+	}
+}

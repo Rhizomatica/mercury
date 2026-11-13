@@ -17,8 +17,9 @@
  *  token and the TX-MFSK bit: the extension field's five bits were already
  *  spoken for, so the offer and the answer take the minor field's fourth
  *  value).  No extra bytes, no extra turnaround.  With crypto off the minor
- *  is 1.  1.9.x drops the 2.0 CALL whatever its bits, so it never meets an
- *  offer.
+ *  is 1.  Releases 1.9.20 to 1.9.24 read any minor and answer at their own,
+ *  so an offer to one of them ends in a clear session (optional) or none
+ *  (required); tested against both ends of that range in the Go harness.
  *
  *    CALL   minor 2   = the initiator offers Noise_KK (mode != off, holds the
  *                       callee's key, and the client has not said ENCRYPT OFF)

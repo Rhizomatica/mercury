@@ -337,8 +337,8 @@ pa = true
 ; amateur rules do in many countries.  Callsigns and ARQ headers always travel
 ; in the clear for identification; only the data stream is encrypted.
 ;
-;   off       never encrypt (default).  On the air this is byte-identical to
-;             Mercury 1.9.x.
+;   off       never encrypt (default).  On the air this is what a release
+;             without encryption sends, byte for byte.
 ;   optional  encrypt whenever both stations hold each other's key; otherwise
 ;             run the session in the clear.  An active attacker on the channel
 ;             can force a clear session in this mode.
@@ -351,7 +351,8 @@ pa = true
 mode = off
 
 ; This station's X25519 private key: 32 raw bytes, readable only by the user
-; Mercury runs as (0600).
+; Mercury runs as (0600).  utils/mercury_keygen new <CALLSIGN> <dir> makes it
+; and the public key to give the other stations (docs/TNC.md, "Keys").
 ;key_file = /etc/mercury/station.key
 
 ; One file per trusted station: <CALLSIGN>.pub, 32 raw bytes, named by the
