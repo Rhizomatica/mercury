@@ -410,7 +410,7 @@ int mercury_cli_parse(int argc, char **argv,
             {
                 if (!cfg_ptt_config_set_method(&out->cfg.ptt, optarg))
                 {
-                    fprintf(stderr, "Invalid PTT method '%s'. Use none, hamlib, serial, cm108, or hermes_shm.\n",
+                    fprintf(stderr, "Invalid PTT method '%s'. Use none, hamlib, serial, cm108, hermes_shm, or gpio.\n",
                             optarg);
                     return -1;
                 }
@@ -418,6 +418,13 @@ int mercury_cli_parse(int argc, char **argv,
                 if (out->cfg.ptt.method == PTT_METHOD_HERMES_SHM)
                 {
                     fprintf(stderr, "Error: HERMES shared-memory PTT is unavailable in this build.\n");
+                    return -1;
+                }
+#endif
+#ifndef HAVE_LIBGPIOD
+                if (out->cfg.ptt.method == PTT_METHOD_GPIO)
+                {
+                    fprintf(stderr, "Error: GPIO PTT is unavailable in this build (needs libgpiod 2.x, Linux).\n");
                     return -1;
                 }
 #endif

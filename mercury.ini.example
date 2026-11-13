@@ -131,6 +131,8 @@ device =
 
 ; Raspberry Pi GPIO via libgpiod 2.x (Linux only).
 ; BCM GPIO offset, not physical header pin. BCM GPIO17 is physical pin 11.
+; Raspberry Pi 5 on a kernel older than 6.6.45: the header is /dev/gpiochip4.
+; The user running Mercury needs access to the chip (the "gpio" group).
 ;gpio_chip = /dev/gpiochip0
 ;gpio_line = 17
 ;gpio_invert = false

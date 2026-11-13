@@ -315,7 +315,9 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
             return -1;
         }
 
-        snprintf(config.device, sizeof(config.device), "%s", cmd->value2);
+        /* GPIO carries its chip in value2; the serial/Hamlib device stays. */
+        if (config.method != PTT_METHOD_GPIO)
+            snprintf(config.device, sizeof(config.device), "%s", cmd->value2);
         if (cmd->value3[0])
             config.hamlib_model = atoi(cmd->value3);
         if (cmd->value4[0])

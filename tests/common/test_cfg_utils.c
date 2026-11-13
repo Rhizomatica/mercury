@@ -285,6 +285,46 @@ void test_invalid_line_and_invert_are_rejected(void)
     TEST_ASSERT_FALSE(cfg_ptt_invert_parse("sometimes", &ir, &id));
 }
 
+/* GPIO PTT (Raspberry Pi): the defaults, the method name, and the chip,
+ * line and polarity through the INI; a line that is not a number keeps the
+ * default. */
+void test_gpio_ptt_config_roundtrips(void)
+{
+    mercury_config w, r;
+    ptt_method_t m = PTT_METHOD_NONE;
+    TEST_ASSERT_TRUE(cfg_ptt_method_parse("gpio", &m));
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_GPIO, m);
+    TEST_ASSERT_EQUAL_STRING("gpio", cfg_ptt_method_name(PTT_METHOD_GPIO));
+
+    cfg_set_defaults(&w);
+    TEST_ASSERT_EQUAL_STRING("/dev/gpiochip0", w.ptt.gpio_chip);
+    TEST_ASSERT_EQUAL_UINT(17, w.ptt.gpio_line);
+    TEST_ASSERT_FALSE(w.ptt.gpio_invert);
+
+    w.ptt.method = PTT_METHOD_GPIO;
+    snprintf(w.ptt.gpio_chip, sizeof(w.ptt.gpio_chip), "/dev/gpiochip4");
+    w.ptt.gpio_line = 27;
+    w.ptt.gpio_invert = true;
+    TEST_ASSERT_TRUE(cfg_write(&w, TMP));
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_GPIO, r.ptt.method);
+    TEST_ASSERT_EQUAL_STRING("/dev/gpiochip4", r.ptt.gpio_chip);
+    TEST_ASSERT_EQUAL_UINT(27, r.ptt.gpio_line);
+    TEST_ASSERT_TRUE(r.ptt.gpio_invert);
+
+    const char *bad[] = { "-1", "abc", "17x" };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        FILE *f = fopen(TMP, "w");
+        TEST_ASSERT_NOT_NULL(f);
+        fprintf(f, "[ptt]\nmethod = gpio\ngpio_line = %s\n", bad[i]);
+        fclose(f);
+        cfg_set_defaults(&r);
+        TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+        TEST_ASSERT_EQUAL_UINT_MESSAGE(PTT_GPIO_LINE_DEFAULT, r.ptt.gpio_line, bad[i]);
+    }
+}
+
 /* The CM108 wire bytes.  GPIO n is bit n-1: byte 2 is its output value and
  * byte 3 is the output mask, which must remain set when unkeying. */
 void test_cm108_report_encoding(void)
@@ -571,6 +611,7 @@ int main(void)
     RUN_TEST(test_aioc_serial_config_roundtrips);
     RUN_TEST(test_ptt_defaults_are_rts_noninverted_gpio3);
     RUN_TEST(test_invalid_line_and_invert_are_rejected);
+    RUN_TEST(test_gpio_ptt_config_roundtrips);
     RUN_TEST(test_cm108_report_encoding);
     RUN_TEST(test_cm108_linux_device_path_validation);
     return UNITY_END();

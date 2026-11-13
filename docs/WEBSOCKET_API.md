@@ -119,18 +119,19 @@ republishes the radio list.
 
 | Field | Meaning | Accepted values |
 |---|---|---|
-| `value` | PTT method | `none`, `hamlib`, `serial`, `cm108`, `hermes_shm` (legacy `serial_rts`) |
-| `value2` | Device path | e.g. `/dev/ttyUSB0`, `127.0.0.1:4532` |
+| `value` | PTT method | `none`, `hamlib`, `serial`, `cm108`, `hermes_shm`, `gpio` (legacy `serial_rts`) |
+| `value2` | Device path; for `gpio`, the GPIO chip | e.g. `/dev/ttyUSB0`, `127.0.0.1:4532`; `/dev/gpiochip0` |
 | `value3` | Hamlib model id | Integer > 0 (required for `hamlib`) |
 | `value4` | Hamlib serial speed | Integer, clamped ≥ 0 |
 | `value5` | Serial PTT line | `rts`, `dtr`, `both` |
-| `value6` | Serial invert | `none`, `rts`, `dtr`, `both` |
-| `value7` | CM108 GPIO pin | Integer 1–4 |
+| `value6` | Serial invert; for `gpio`, active-low | `none`, `rts`, `dtr`, `both`; `true`/`false` (or `1`/`0`) |
+| `value7` | CM108 GPIO pin; for `gpio`, the BCM line | Integer 1–4; integer ≥ 0 |
 
 Validation: `hamlib` requires `value3 > 0`; `serial` requires a non-empty
 `value2`. `value2` always replaces the device path, so an empty one clears it;
 only the omitted advanced fields (`value3`–`value7`) retain their current
-values. Source: `ui_communication.c:278-326`.
+values.  For `gpio`, `value2` is the chip and the saved serial/Hamlib device
+path is left as it is (an empty `value2` keeps the saved chip). Source: `ui_communication.c:278-326`.
 
 ### 3.3 `set_waterfall`
 
@@ -319,10 +320,14 @@ Source: `ui_communication.c:796-800`.
  "ptt_line":"rts",
  "ptt_invert":"none",
  "cm108_gpio":1,
+ "gpio_chip":"/dev/gpiochip0",
+ "gpio_line":17,
+ "gpio_invert":false,
  "list":[{"name":"None","id":"-1"}]}
 ```
 
-`list` is the Hamlib model list with `None` first. Source:
+`list` is the Hamlib model list with `None` first.  `gpio_chip`,
+`gpio_line` and `gpio_invert` are the `gpio` method's settings. Source:
 `ui_communication.c:822-868`.
 
 ### 5.6 `history`

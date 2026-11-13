@@ -351,9 +351,14 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
         cfg->ptt.gpio_chip[sizeof(cfg->ptt.gpio_chip) - 1] = '\0';
     }
 
-    i = iniparser_getint(ini, CFG_KEY_PTT_GPIO_LINE, (int)cfg->ptt.gpio_line);
-    if (i >= 0)
-        cfg->ptt.gpio_line = (unsigned int)i;
+    /* A BCM line number: anything else (negative, "abc") keeps the default. */
+    s = iniparser_getstring(ini, CFG_KEY_PTT_GPIO_LINE, NULL);
+    if (s && *s) {
+        char *end = NULL;
+        long line = strtol(s, &end, 10);
+        if (*end == '\0' && line >= 0 && line <= 1023)
+            cfg->ptt.gpio_line = (unsigned int)line;
+    }
 
     b = iniparser_getboolean(ini, CFG_KEY_PTT_GPIO_INVERT,
                              cfg->ptt.gpio_invert ? 1 : 0);

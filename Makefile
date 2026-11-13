@@ -282,7 +282,7 @@ ifeq ($(HAVE_HERMES_SHM),1)
 HERMES_SHM_CFLAGS = -DHAVE_HERMES_SHM
 endif
 
-CFLAGS = $(COMMON_CFLAGS) -I. -Imodem/freedv -Imodem/mfsk -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Icommon/iniparser -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
+CFLAGS = $(COMMON_CFLAGS) -I. -Imodem/freedv -Imodem/mfsk -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
 
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
@@ -557,6 +557,9 @@ libmercury_core_w64.a: $(HIDAPI_W64_OBJ)
 # Makefile knows whether ws_tls.o carries SSL_* references.  It is empty on
 # Windows and macOS, which build without TLS.
 #
+# LIBGPIOD_LDFLAGS: the same again for gpio_ptt.o, built with libgpiod only
+# when pkg-config finds libgpiod >= 2 (Linux).
+#
 # FYNE_UI_TAGS: build tags added to mercury_embedded.  Sailfish OS has no X11
 # and no libGL, and runs the GPU driver through libhybris:
 #   make fyne-ui FYNE_UI_TAGS=wayland,gles2,egl,hybris EXTRA_CFLAGS="-g -O2 -fPIE"
@@ -568,7 +571,7 @@ fyne-ui: libmercury_core.a
 	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 \
 		CGO_CPPFLAGS="$(EXTRA_CPPFLAGS)" \
 		CGO_CFLAGS="$(or $(strip $(EXTRA_CFLAGS)),-g -O2)" \
-		CGO_LDFLAGS="$(COMMON_LDFLAGS) $(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS)" \
+		CGO_LDFLAGS="$(COMMON_LDFLAGS) $(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS) $(LIBGPIOD_LDFLAGS)" \
 		go build -buildmode=pie -tags mercury_embedded$(if $(FYNE_UI_TAGS),$(comma)$(FYNE_UI_TAGS)) \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
 		-o $(abspath mercury-ui) .
