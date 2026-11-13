@@ -896,7 +896,10 @@ static void process_control_bytes(char *line_buf, int *line_len, const uint8_t *
  * RST, already in), so its new connection replaces it as before.  A client
  * whose peer vanished without a word (a remote host's link down: half-open)
  * reads as there until TCP keepalive (keep_alive) gives up on it, 40-60 s;
- * the next connection then gets in. */
+ * the next connection then gets in.  A host that hangs on this machine
+ * without closing its socket holds the port for good: its kernel answers
+ * the keepalive probes.  Its replacement is refused until the old process
+ * is killed (docs/TNC.md says so; before, the replacement took over). */
 #define REFUSED_SAY_MS 60000
 
 /* The client's socket closed (EOF) or broken: it can be replaced.

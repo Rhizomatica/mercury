@@ -35,6 +35,14 @@ it: 30 s idle, then 3 probes 10 s apart on Linux (about a minute), or 10
 probes 1 s apart on Windows (about 40 s).  After that the next connection
 gets in.
 
+A host program that hangs without closing its connection keeps the port for
+good.  This happens on the same machine: the program is stuck, but its OS still
+answers the keepalive probes for it, so keepalive never gives up.  A new
+instance is refused, with the warning above, until the old one is gone.  So
+when you restart a hung host program, BPQ32 for example, kill the old
+process first, then start the new one.  (Before this rule, the new instance
+took over.)
+
 All control commands and responses are **CR-terminated ASCII** (`\r`).
 
 ---
