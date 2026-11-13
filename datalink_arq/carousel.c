@@ -2177,7 +2177,8 @@ static size_t s_peer_expect(const car_t *c)
 static int deaf_rung(const car_t *c, int lv)
 {
     if (!c->ctl_deaf || !c->io.pattern) return lv;
-    return c->ctl_deaf == CAR_DEAF_HARD && lv > 0 && level_earned(c, lv) <= 1 ? lv : 0;
+    return (c->ctl_deaf == CAR_DEAF_HARD || c->ctl_deaf == CAR_DEAF_LOSS) && lv > 0 && level_earned(c, lv) <= 1
+         ? lv : 0;
 }
 
 static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
@@ -2570,6 +2571,75 @@ static bool fall_back_unconfirmed(car_t *c)
     return true;
 }
 
+/* My asks unanswered while the peer is still heard: its control does not
+ * reach me, whatever my reading says.  S answers an ask on the control mode,
+ * and an ask it did not hear it does not answer at all -- but then nothing of
+ * S's comes either, and the silence rule (car_on_tx_done) has it.  With S
+ * heard within SILENT_MS, two asks in a row unanswered say S's answers are
+ * lost on their way to me.  So I take myself deaf to the control mode
+ * (CAR_DEAF_LOSS), say so in the ask I am about to send, and S's control goes
+ * on MFSK.
+ *
+ * Asks only, not an unanswered round (fell_back): S answers a round only if
+ * it heard it, and a round lost on its way to S -- a rung above the channel,
+ * a probe -- says nothing about S's control.  Counted, it set LOSS 13 to 45
+ * times a run on cliff:-5 at BW500 both ways, where DATAC16 decodes every
+ * frame, and 4 of 120 runs did not finish in 2 h (rafael2k's bench on #538;
+ * all 120 finish without it).  The cost: of the callee ABORT test's 30
+ * callers, 25 told instead of 28 (20 with no LOSS at all).
+ *
+ * LOSS lasts LOSS_HOLD_MS, then I go back to what my reading says (CAR_T_F,
+ * which only S used: I am M).  Held to the end of the session, LOSS kept S's
+ * control on a 26 s MFSK frame for hours on a -5 dB link at BW500 (seed 9:
+ * set at 1094 s, A->B 4854 of 8192 bytes at 2 h).  If the answers are still
+ * lost, two more asks set it again.  With asks only and no hold, 2 of 120
+ * such runs still did not finish and one way took 4-5 % longer at BW500;
+ * held 30, 60 or 120 s, all 120 finished within 0.5 % of no LOSS, and the
+ * ABORT test told the same 25.
+ * A reading of CTL_LOSS_OFF_DB or more clears it sooner: the band DATAC16
+ * decodes part of is behind me.  Not HARD, which only a frame of the peer's
+ * on an OFDM mode clears: S sends me none while I only send, and its control
+ * stayed on MFSK to the end of the run after the channel rose to 10 dB (sim,
+ * ctlloss:10:-6.5:0.4:60 seed 3).
+ *
+ * On air (KG9NI calling K7EK, 1.9.23, 2026-11-11, BW500) KG9NI heard K7EK at
+ * -6 to -7 dB, inside the hysteresis band (CTL_DEAF_ON_DB, CTL_DEAF_OFF_DB),
+ * where DATAC16 decodes about two frames in three (docs/MODES.md).  One MFSK
+ * reading of -3.5 dB put the smoothed one above CTL_DEAF_OFF_DB and K7EK's
+ * control back on DATAC16.  From then on KG9NI decoded K7EK's MFSK rounds and
+ * a third of its control: its asks went unanswered four times running, the
+ * acknowledgement of the B2 "FQ" and both of K7EK's DISCONNECTs were lost,
+ * and KG9NI sat out its 240 s watchdog.  The silence rule needs S_FALLBACK_MS
+ * (54 s) since K7EK was last heard, and its last MFSK round had been heard. */
+#define CTL_LOSS_OFF_DB (CTL_DEAF_OFF_DB + SNR_GATE_DB)
+#define LOSS_HOLD_MS    60000
+static void ctl_deaf_on_asks(car_t *c, uint64_t now)
+{
+    if (c->reqs < 2 || c->ctl_deaf || !c->io.pattern || now >= c->heard_ms + SILENT_MS)
+        return;
+    /* Only where my reading could be the cause: at CTL_LOSS_OFF_DB or more
+     * the next reading clears it at once, and the losses are something else
+     * -- multipath, a fade -- which MFSK control only slows (sim, nvis one
+     * way: 1417 -> 1493 s, one more of 10 runs unfinished at 30 min). */
+    if (!c->snr_valid || c->snr_ema >= CTL_LOSS_OFF_DB)
+        return;
+    c->ctl_deaf = CAR_DEAF_LOSS;
+    arm(c, CAR_T_F, now + LOSS_HOLD_MS);
+    car_trace(c, "%d asks unanswered, the peer heard %d s ago: its control does not reach me "
+              "-- control on MFSK for %d s", c->reqs, (int)((now - c->heard_ms) / 1000),
+              LOSS_HOLD_MS / 1000);
+}
+
+/* LOSS_HOLD_MS over: my control back to what my reading says. */
+static void ctl_loss_expired(car_t *c)
+{
+    if (c->ctl_deaf != CAR_DEAF_LOSS) return;
+    c->ctl_deaf = c->snr_valid && c->snr_ema < CTL_DEAF_OFF_DB ? CAR_DEAF_SNR : 0;
+    car_trace(c, "control loss held %d s: %s", LOSS_HOLD_MS / 1000,
+              c->ctl_deaf ? "I hear the peer below the control mode, control stays on MFSK"
+                          : "control on the control mode again");
+}
+
 static void m_decide_send(car_t *c, uint64_t now)
 {
     bool answered = c->s_answered;
@@ -2597,6 +2667,7 @@ static void m_decide_send(car_t *c, uint64_t now)
         }
         c->reqs++;
         car_trace(c, "tx: no answer -- asking (%d)", c->reqs);
+        ctl_deaf_on_asks(c, now);
         m_plan(c, KD_REQ, 0, 0);
         return;
     }
@@ -3240,7 +3311,15 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
         c->snr_last = snr_db;
         c->snr_ms = now;
         c->snr_valid = true;
-        if (c->ctl_deaf != CAR_DEAF_MFSK_TX && !(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
+        if (c->ctl_deaf == CAR_DEAF_LOSS) {
+            /* Lost control, not the reading, put me here: only a reading
+             * clear of the band DATAC16 decodes part of takes me out. */
+            if (c->snr_ema >= CTL_LOSS_OFF_DB) {
+                c->ctl_deaf = 0;
+                car_trace(c, "I hear the peer well above the control mode (%.1f dB): control on it again",
+                          c->snr_ema);
+            }
+        } else if (c->ctl_deaf != CAR_DEAF_MFSK_TX && !(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
             bool was = c->ctl_deaf != 0;
             /* An MFSK frame's reading alone says I went deaf: 13.8 s of
              * tones average a fade out, and after the channel fell below
@@ -3422,6 +3501,7 @@ void car_on_time(car_t *c, uint64_t now)
         if (due == CAR_T_M) m_timer(c, now);
         else if (due == CAR_T_S) s_slot(c, now);
         else if (due == CAR_T_W && c->master) m_watch(c, now);
+        else if (due == CAR_T_F && c->master) ctl_loss_expired(c);
         else if (due == CAR_T_W) {
             /* Not off the floor once the silence fallback is due: M's control
              * comes there after its own silence (SILENT_MS), and going back to

@@ -187,6 +187,7 @@ static double snr_bias(int mode)
     return b;
 }
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
+static bool ctl_step;                                  /* ctlloss:A:B:P:T: the step ends the loss */
 static double step_back = NAN;                         /* stepa: the way back, this much better */
 
 /* What the delivered frames' estimates read: the control frames' and the
@@ -658,6 +659,16 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
         asym = true;
         snr_db = snr_dir[0] < snr_dir[1] ? snr_dir[0] : snr_dir[1];
     }
+    else if (!strncmp(chan, "ctlloss:", 8)) {   /* ctlloss:A:B:P[:T]  asym:A:B, and P of B's DATAC16
+                                                 * lost; from T s on, A dB both ways and none lost */
+        double p = 0, t = -1.0;
+        sscanf(chan + 8, "%lf:%lf:%lf:%lf", &snr_dir[0], &snr_dir[1], &p, &t);
+        if (t >= 0) { step_at_s = t; step_to = snr_dir[0]; step_back = 0.0; ctl_step = true; }
+        sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
+        sim_channel_set_return_mode_per(ch, FREEDV_MODE_DATAC16, p);
+        asym = true;
+        snr_db = snr_dir[0] < snr_dir[1] ? snr_dir[0] : snr_dir[1];
+    }
     else if (!strcmp(chan, "nvis")) {
         sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
         snr_db = 10.0;
@@ -684,7 +695,7 @@ static void heard(station_t *s)
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res)
 {
     trace = getenv("CAR_TRACE") != NULL;
-    asym = false; step_back = NAN;
+    asym = false; step_back = NAN; ctl_step = false;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
     nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
     nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
@@ -795,6 +806,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             if (!isnan(step_back)) {
                 snr_dir[0] = step_to; snr_dir[1] = step_to + step_back;
                 sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
+                if (ctl_step) sim_channel_set_return_mode_per(ch, -1, 0.0);
             } else {
                 sim_channel_set_snr(ch, step_to); snr_now = step_to;
             }

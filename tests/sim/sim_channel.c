@@ -23,6 +23,8 @@ struct sim_channel {
     double   return_cliff_db; /* with per-mode PER: direction 1 also below this
                                * SNR, as a cliff (sim_channel_set_return_snr) */
     double   snr_dir_db[2];
+    int      ret_mode;        /* direction 1 also loses this share of this */
+    double   ret_per;         /* mode's frames (sim_channel_set_return_mode_per) */
     sim_mode_per_t mode_per[SIM_MODE_PER_MAX]; /* empirical per-mode erasure */
     int      mode_per_count;
     bool     fading;          /* time-varying SNR (see sim_channel_set_fading) */
@@ -74,6 +76,7 @@ sim_channel_t *sim_channel_create(const sim_channel_cfg_t *cfg)
     ch->per      = cfg->per;
     ch->guard_ms = cfg->guard_ms;
     ch->return_cliff_db = NAN;
+    ch->ret_mode = -1;
     return ch;
 }
 
@@ -120,6 +123,19 @@ void sim_channel_set_return_snr(sim_channel_t *ch, double snr_db)
 
 /* Direction 1 behind the return path's cliff (nvisa:B), on top of the
  * per-mode PER. */
+void sim_channel_set_return_mode_per(sim_channel_t *ch, int freedv_mode, double per)
+{
+    if (!ch) return;
+    ch->ret_mode = freedv_mode;
+    ch->ret_per = per;
+}
+
+/* At least the return path's share for its mode (sim_channel_set_return_mode_per). */
+static double return_per(const sim_channel_t *ch, int dir, int freedv_mode, double per)
+{
+    return (dir & 1) && freedv_mode == ch->ret_mode && per < ch->ret_per ? ch->ret_per : per;
+}
+
 static bool below_return(const sim_channel_t *ch, int dir, int freedv_mode)
 {
     return (dir & 1) && !isnan(ch->return_cliff_db) && ch->return_cliff_db < mode_cliff_db(freedv_mode);
@@ -296,7 +312,7 @@ double sim_channel_frame_per(const sim_channel_t *ch, uint64_t now_ms, int dir, 
                        ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode)) {
         per = SIM_CLIFF_PER;
     }
-    return per;
+    return return_per(ch, dir, freedv_mode, per);
 }
 
 bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
@@ -326,6 +342,7 @@ bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
              ctl_adj(ch, freedv_mode,
                      ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode))
         per = SIM_CLIFF_PER;
+    per = return_per(ch, dir, freedv_mode, per);
     bool erased = sim_channel_next_rand(ch) < per;
     uint32_t air = sim_channel_airtime_ms(freedv_mode, frame_size);
     if (freedv_mode >= 0 && freedv_mode < SIM_STAT_MODES) {
