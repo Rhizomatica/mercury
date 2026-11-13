@@ -2097,6 +2097,7 @@ void *radio_capture_thread(void *device_ptr)
     uint64_t cap_last_data_ms   = audioio_monotonic_ms();
     uint32_t diag_reopens       = 0;
     bool     cap_reopened       = false;   /* no samples yet since the last reopen */
+    uint64_t cap_heard_ms       = cap_last_data_ms;  /* last samples; reopens leave it */
 
     /* Reached only after the device, rate and format checks above: the capture
      * path is fully validated and about to stream. */
@@ -2194,7 +2195,9 @@ void *radio_capture_thread(void *device_ptr)
          * and then nothing to tell if audio ever returned). */
         if (cap_reopened)
         {
-            HLOGI("audio-cap", "capture delivering again after reopen #%u", diag_reopens);
+            HLOGI("audio-cap", "capture delivering again after reopen #%u (%llu s without audio)",
+                  diag_reopens,
+                  (unsigned long long)((audioio_monotonic_ms() - cap_heard_ms) / 1000));
             cap_reopened = false;
         }
         if (cap_recover_on_data(&cap_rec))
@@ -2203,6 +2206,7 @@ void *radio_capture_thread(void *device_ptr)
             cap_said_where = false;
         }
         cap_last_data_ms = audioio_monotonic_ms();
+        cap_heard_ms = cap_last_data_ms;
         diag_read_calls++;
         diag_last_read_bytes = r;
 
