@@ -650,6 +650,14 @@ then hops, and the hop's `LISTEN OFF` cancels the incoming connect. On K7EK's
 station (an 11 s dwell) that came 72-85 s after the first `PENDING`, in
 5 incoming connects, one of them 17 s after Mercury had answered a repeated CALL.
 
+Mercury also sends it again every 20 s for as long as it is answering, so a
+scanning host keeps the channel exactly as long as Mercury does. Mercury
+answers until its `ACCEPT` retries run out (`RETRIES`: that many retry
+intervals after the last CALL heard, about 160 s for `RETRIES 20`), and ends
+with `CANCELPENDING`. A repeated CALL is not enough on a weak path: on
+2026-11-12 K7EK decoded 2 of a caller's 13 CALLs, and BPQ32 hopped 66 s after
+the one `PENDING` while the caller went on calling for 2 minutes.
+
 Mercury also sends `PENDING\r` when an outgoing `CQFRAME` actually begins
 transmitting so VARA clients can treat CQ send as an in-progress operation.
 
@@ -765,7 +773,8 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
 
 - **BPQ32 attaches Mercury as a VARA port** and holds its scan from `PENDING`
   until `DISCONNECTED` or `CANCELPENDING`, or until six scan intervals pass
-  with no new `PENDING` (see `PENDING`).  In every session the scanner
+  with no new `PENDING` (see `PENDING`: Mercury repeats it every 20 s while
+  it answers).  In every session the scanner
   stopped once the CALL decoded, including a 32 s connect that needed a
   repeated CALL and a failed one it held for 43 s.
 - **Each hop is `LISTEN OFF`, `LISTEN ON` and a `BW` command.**  The dwell
