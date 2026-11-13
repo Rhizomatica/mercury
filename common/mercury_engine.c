@@ -182,6 +182,7 @@ int mercury_engine_init(const mercury_config *cfg,
 
     snprintf(g_input_dev,  sizeof(g_input_dev),  "%s", cfg->input_device);
     snprintf(g_output_dev, sizeof(g_output_dev), "%s", cfg->output_device);
+    audioio_set_saved_device_names(cfg->input_device_name, cfg->output_device_name);
 
     int rx_input_channel = cfg->capture_channel;
 

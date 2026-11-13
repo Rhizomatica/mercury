@@ -2602,6 +2602,17 @@ int get_soundcard_list(int audio_system, int mode,
 }
 
 
+/* Public face of device_name_of(), for the UI's config save. */
+int audioio_device_name(int audio_subsys, int mode, const char *id, char *name, size_t len)
+{
+    if (!name || !len)
+        return -1;
+    name[0] = '\0';
+    if (!id || !id[0])
+        return -1;
+    return device_name_of(audio_subsys, mode, id, name, len) ? 0 : -1;
+}
+
 /* Resolve a user/config-supplied capture or playback device string to the
  * native device id the active backend expects, in place.
  *
@@ -2617,8 +2628,18 @@ int get_soundcard_list(int audio_system, int mode,
  * enumerable devices (NULL/FIFO/SOCK/SHM), enumeration fails, or a
  * substring match is ambiguous, buf is left untouched -- callers get
  * exactly today's behavior. */
+static char s_capture_saved_name[AUDIO_DEV_STR_MAX];
+static char s_playback_saved_name[AUDIO_DEV_STR_MAX];
+
+void audioio_set_saved_device_names(const char *capture_name, const char *playback_name)
+{
+    snprintf(s_capture_saved_name, sizeof(s_capture_saved_name), "%s", capture_name ? capture_name : "");
+    snprintf(s_playback_saved_name, sizeof(s_playback_saved_name), "%s", playback_name ? playback_name : "");
+}
+
 static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t bufsz,
-                                  const char *log_tag, bool pulse_lock_held)
+                                  const char *log_tag, bool pulse_lock_held,
+                                  const char *saved_name)
 {
     /* An empty device means "the default".  Most backends take that as NULL and
      * choose sensibly, but OSS cannot: ffaudio falls back to /dev/dsp for BOTH
@@ -2698,6 +2719,34 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
         buf[bufsz - 1] = '\0';
     } else if (matches > 1) {
         HLOGW(log_tag, "device name '%s' is ambiguous (%d matches) -- use an exact id from -z instead", buf, matches);
+    } else if (saved_name && saved_name[0] &&
+               (audio_subsys == AUDIO_SUBSYSTEM_WASAPI || audio_subsys == AUDIO_SUBSYSTEM_DSOUND)) {
+        /* The configured id is gone, but the device it named may not be:
+         * Windows gives a USB codec a new id, under the same name, when it
+         * is re-plugged or re-enumerated, and the engine then started deaf
+         * until the operator chose it again (N3JXB 2026-11-11, K7EK
+         * 2026-11-10).  The name saved with the id finds it -- one exact
+         * match only, so two identical codecs are never guessed between.
+         * Windows only: elsewhere a string absent from the list can be a
+         * valid device (ALSA's hw:/plughw:, OSS nodes), typed by hand, and
+         * a stale saved name must not override it. */
+        int hit = -1, hits = 0;
+        for (int i = 0; i < n; i++)
+            if (ffsz_ieq(saved_name, names[i])) {
+                if (hits == 0)
+                    hit = i;
+                hits++;
+            }
+        if (hits == 1) {
+            HLOGI(log_tag, "device id '%s' is gone; found '%s' by its saved name (new id %s)",
+                  buf, names[hit], ids[hit]);
+            snprintf(buf, bufsz, "%s", ids[hit]);
+        } else if (hits > 1)
+            HLOGW(log_tag, "device id '%s' is gone, and its saved name '%s' matches %d devices "
+                           "-- choose the device again", buf, saved_name, hits);
+        else
+            HLOGW(log_tag, "device id '%s' is gone, and no device is named '%s' -- choose the "
+                           "device again", buf, saved_name);
     } else {
         /* Not a prediction of failure: enumeration does not see every valid
          * node.  Every /dev/dsp* symlink is a working OSS device that never
@@ -3067,8 +3116,12 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
     else
         s_playback_dev[0] = '\0';
 
-    resolve_device_string(audio_subsystem, FFAUDIO_DEV_CAPTURE, s_capture_dev, sizeof(s_capture_dev), "audio-cap", false);
-    resolve_device_string(audio_subsystem, FFAUDIO_DEV_PLAYBACK, s_playback_dev, sizeof(s_playback_dev), "audio-play", false);
+    /* The saved names only at start: a restart carries the operator's new
+     * choice, which the names (the old one's) do not describe. */
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_CAPTURE, s_capture_dev, sizeof(s_capture_dev), "audio-cap", false,
+                          s_capture_saved_name);
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_PLAYBACK, s_playback_dev, sizeof(s_playback_dev), "audio-play", false,
+                          s_playback_saved_name);
 
     // Create buffers if not already created
     if (audioio_init_buffers() != 0)
@@ -3203,8 +3256,8 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
         s_playback_dev[sizeof(s_playback_dev) - 1] = '\0';
     }
 
-    resolve_device_string(audio_subsystem, FFAUDIO_DEV_CAPTURE, s_capture_dev, sizeof(s_capture_dev), "audio-cap", true);
-    resolve_device_string(audio_subsystem, FFAUDIO_DEV_PLAYBACK, s_playback_dev, sizeof(s_playback_dev), "audio-play", true);
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_CAPTURE, s_capture_dev, sizeof(s_capture_dev), "audio-cap", true, NULL);
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_PLAYBACK, s_playback_dev, sizeof(s_playback_dev), "audio-play", true, NULL);
 
     // Clear buffers (NEVER destroy/recreate them)
     clear_buffer(capture_buffer);
