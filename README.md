@@ -13,6 +13,7 @@ and no power grid worth speaking of.
 [Graphical interfaces](#graphical-interfaces) · [Configuration](#configuration-file) ·
 [Docs](https://rhizomatica.github.io/mercury/) ·
 [Mailing list](https://lists.riseup.net/www/info/hermes-general) ·
+[Google Play (Android)](https://play.google.com/store/apps/details?id=org.rhizomatica.mercury) ·
 [App Store (iPhone, iPad)](https://apps.apple.com/app/mercury-hf-modem/id6822504870)
 
 **Help wanted: Apple hardware.** We build and test the macOS and iOS apps in a

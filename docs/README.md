@@ -3,6 +3,11 @@
 Start with the [project README](../README.md) if you are new. This page is the
 map of everything else.
 
+**Install the app:** [Google Play (Android)](https://play.google.com/store/apps/details?id=org.rhizomatica.mercury) ·
+[App Store (iPhone, iPad)](https://apps.apple.com/app/mercury-hf-modem/id6822504870) ·
+[Releases (Linux, Windows, macOS)](https://github.com/Rhizomatica/mercury/releases) ·
+[Debian packages](../README.md#install-via-debian-package-on-linux).
+
 Documentation here falls into three kinds, and it helps to know which you are
 reading: **reference** describes how Mercury behaves today and is kept current;
 **guides** are task-oriented; **findings** are dated records of an
