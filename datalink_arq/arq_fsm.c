@@ -634,6 +634,22 @@ static void disconnect_answered(arq_session_t *sess)
  * 61 s, for a peer gone 10 min). */
 #define ARQ_CAR_PEER_QUIET_MS 120000
 
+/* When the lost-peer watchdog ends the session: ARQ_CAR_PEER_LOST_MS after
+ * the last thing heard -- or, if the callee's answer to a keydown of mine
+ * already on the air by then is still due, once that answer's slot is over.
+ * At the floor an answer is a 27 s keydown, and the 240 s fell inside it: on
+ * NW8L's IONOS MPD at -10 dB (1.9.23, BW500) the caller polled at the floor,
+ * the callee keyed its answer at once, and the session ended 6 s before the
+ * frame was through, the file never sent.  Only a keydown that ended by the
+ * 240 s mark: one keyed after it is not waited for, so a caller asking
+ * again and again does not hold the session open. */
+static uint64_t car_lost_at(const arq_session_t *sess)
+{
+    uint64_t at = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
+    uint64_t due = car_answer_due_ms(sess->car, at);
+    return due > at ? due : at;
+}
+
 static bool car_peer_quiet(const arq_session_t *sess, uint64_t now)
 {
     return sess->car_session && now - sess->car_last_rx_ms >= ARQ_CAR_PEER_QUIET_MS;
@@ -1987,10 +2003,10 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         car_on_app_data(sess->car, now);
         break;
     case ARQ_EV_TIMER_CAROUSEL:
-        if (now - sess->car_last_rx_ms >= ARQ_CAR_PEER_LOST_MS)
+        if (now >= car_lost_at(sess))
         {
             HLOGW(LOG_COMP, "carousel: nothing from the peer in %d s%s — link lost",
-                  ARQ_CAR_PEER_LOST_MS / 1000, car_is_idle(sess->car) ? "" : " with data in flight");
+                  (int)((now - sess->car_last_rx_ms) / 1000), car_is_idle(sess->car) ? "" : " with data in flight");
             if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
             notify_session_ended(sess);
             enter_idle_after_call(sess);
@@ -2365,8 +2381,8 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     {
         sess->tx_inflight_bytes = (int)car_tx_inflight(sess->car);
         uint64_t d = car_next_deadline(sess->car);
-        if (sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS < d)
-            d = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
+        if (car_lost_at(sess) < d)
+            d = car_lost_at(sess);
         if (car_peer_ending(sess->car) && sess->car_last_rx_ms + car_peer_end_wait_ms(sess) < d)
             d = sess->car_last_rx_ms + car_peer_end_wait_ms(sess);
         if (sess->teardown == ARQ_TD_DRAINING && sess->teardown_deadline_ms < d)
