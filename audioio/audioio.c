@@ -2602,27 +2602,15 @@ int get_soundcard_list(int audio_system, int mode,
 }
 
 
+/* Public face of device_name_of(), for the UI's config save. */
 int audioio_device_name(int audio_subsys, int mode, const char *id, char *name, size_t len)
 {
-    if (name && len)
-        name[0] = '\0';
-    if (!id || !id[0] || !name || !len)
+    if (!name || !len)
         return -1;
-    char (*ids)[AUDIO_DEV_STR_MAX]   = malloc(sizeof(*ids)   * DEVICE_RESOLVE_MAX);
-    char (*names)[AUDIO_DEV_STR_MAX] = malloc(sizeof(*names) * DEVICE_RESOLVE_MAX);
-    int found = -1;
-    if (ids && names) {
-        int n = get_soundcard_list_int(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX, false);
-        for (int i = 0; i < n; i++)
-            if (strcmp(id, ids[i]) == 0) {
-                snprintf(name, len, "%.*s", (int)sizeof(names[i]) - 1, names[i]);
-                found = 0;
-                break;
-            }
-    }
-    free(ids);
-    free(names);
-    return found;
+    name[0] = '\0';
+    if (!id || !id[0])
+        return -1;
+    return device_name_of(audio_subsys, mode, id, name, len) ? 0 : -1;
 }
 
 /* Resolve a user/config-supplied capture or playback device string to the
