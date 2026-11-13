@@ -302,9 +302,8 @@ jobs:
   # Nothing in CI built macOS, so nothing caught it -- while the repo does ship
   # macOS artifacts (make fyne-ui-macos-universal-dmg).
   #
-  # Build-only on purpose: tests/Makefile links -lrt, which does not exist on
-  # macOS, so `make -C tests test` cannot run here without a separate change.
-  # A build is enough for this class of bug, which fails at link time.
+  # Build-only: the unit tests run on macOS in ut.yml (unit-tests-macos).  A
+  # build is enough for this class of bug, which fails at link time.
   #
   # Note the plain checkout, unlike the four jobs above: they pass
   # ssh-key: secrets.SSH_PRIVATE_KEY, and secrets are not available to pull
