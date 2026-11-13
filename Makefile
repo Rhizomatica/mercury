@@ -245,7 +245,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: check-host-link ios-app fyne-ui-ios fyne-ui-ios-ipa fyne-ui-android fyne-ui-android-aab android-prep
+.PHONY: check-host-link host-ldflags ios-app fyne-ui-ios fyne-ui-ios-ipa fyne-ui-android fyne-ui-android-aab android-prep
 .PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-macos-appstore-pkg sign-macos-bin macos-notarize-dmg fyne-ui-windows windows-installer test integration-test integration-test-random FORCE
 
 prefix ?= /usr
@@ -508,6 +508,14 @@ endif
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	rm -f $@
 	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(HOST_AUDIO_OBJS) $(HOST_API_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
+
+# What this build of libmercury_host.a adds to the host program's link line,
+# beyond freedv's archive and -liniparser: -lsodium where the encryption is
+# built in (config.mk, ARQ_CRYPTO), nothing otherwise.  For the host's
+# Makefile, so the two never disagree:
+#   $(shell $(MAKE) -s -C vendor/mercury host-ldflags MERCURY_HOST=daemon)
+host-ldflags:
+	@echo $(CRYPTO_LDFLAGS)
 
 # Links every object of libmercury_host.a into a program, with what a host
 # supplies (iniparser, the hermes_shm rings) taken from our own copies: a

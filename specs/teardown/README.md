@@ -168,6 +168,16 @@ mid-teardown: `notify_session_ended`).  What else the hosts may do:
   comes before the PENDING of the session the CALL opens, so it is no
   session's and is not counted; the session then ends on that DISCONNECT
   with its own.  `Race.cfg` shows the race is reached.
+- Mercury itself, for an encrypted session that must not go on (`[crypto]`,
+  arq.c `crypto_abort`: the peer's key did not match, a record failed its
+  tag, required mode was not met).  It queues the host's own DISCONNECT
+  event, so here it is `MAppDisc` or `SAppDisc`, which either end may take
+  at any time it is connected: the teardown and its one DISCONNECTED are
+  the ones checked above.  What differs is outside the FSM and this model:
+  the host of a session still in its encryption handshake has not been
+  told CONNECTED, and the called station's, told PENDING, hears
+  CANCELPENDING before that DISCONNECTED (arq.c `cb_notify_disconnected`;
+  Go test `TestMercuryARQWrongKeyEndsTheSession`).
 
 "No notice owed" is `arq_fsm_notice_owed`: no session, and no reply to the
 peer's DISCONNECT still to go.  `arq_session_active()` alone, the first
