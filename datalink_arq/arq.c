@@ -717,9 +717,11 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         /* Dirty disconnect: drop everything still held -- the host's unsent
          * bytes here, the frames awaiting an ACK and the re-staged ones in the
          * FSM (ev.abort) -- and go at once, without the drain DISCONNECT waits
-         * for.  The peer is still told: the FSM sends its DISCONNECT frames,
-         * after any frame on the air ends, so it need not time out (#218: the
-         * comment and docs/TNC.md said no frame went out; one always did).
+         * for.  The peer is still told: the FSM sends one DISCONNECT, never
+         * over a frame on the air, and the callee's out of turn if no slot
+         * comes before a scanning host takes the radio (abort_teardown), so
+         * the peer need not time out (#218: the comment and docs/TNC.md said
+         * no frame went out; one always did).
          *
          * DISCONNECTED goes at once: a host that ABORTs is done waiting
          * (BPQ32 releases the radio on it).  That is this session's notice,

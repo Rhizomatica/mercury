@@ -33,7 +33,8 @@
 (*   session (ARQ_CAR_PEER_LOST_MS).                                       *)
 (*   ABORT (the host's, with ABORT = TRUE): the peer is told once.  M     *)
 (*   sends one DISCONNECT, no retries, also when one is already out; S's  *)
-(*   goes in its next slot only and S ends once it is out.                *)
+(*   goes in its next slot, or out of turn before its host's scan takes  *)
+(*   the radio (SAbortKey), and S ends once it is out.                    *)
 (*   A DISCONNECT is taken on its session id (6 bits on the air) alone:   *)
 (*   its CRC is plain.  Every other in-session frame is seeded with the   *)
 (*   session's nonce, so only its own session decodes it.                 *)
@@ -356,9 +357,20 @@ SSlotDisc == /\ st["S"] = "ending" /\ slot
              /\ IF sab THEN st' = [st EXCEPT !["S"] = "idle"] /\ End("S", "abort")
                        ELSE UNCHANGED <<st, how>>
              /\ UNCHANGED <<gen, sid, tries, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw, mdrain, asked, forced, mend, cut, wordgone, sab>>
+\* ABORT's DISCONNECT with no slot of M's in time (abort_key_by): the host
+\* takes the radio 15 s after its ABORT (BPQ32's SCANSTART 15), so S keys it
+\* out of turn and ends once it is out -- on a clear channel only, never over
+\* a frame of M's it hears (q["S"] empty), which it would be lost on.  Time
+\* is abstract: it may come before any slot or after.
+SAbortKey == /\ st["S"] = "ending" /\ sab /\ ~sent["S"] /\ q["S"] = <<>>
+             /\ sent' = [sent EXCEPT !["S"] = TRUE]
+             /\ Send("M", Frame("disc", sid["S"], gen["S"]))
+             /\ st' = [st EXCEPT !["S"] = "idle"] /\ End("S", "abort")
+             /\ UNCHANGED <<gen, sid, tries, slot, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw, mdrain, asked, forced, mend, cut, wordgone, sab>>
 \* ABORT (#514, abort_teardown).  S, connected or ending: its DISCONNECT goes
-\* in its next slot only, and S ends once it is out; one already out ends S
-\* now.  The wait for the slot is capped (30 s): SGiveUp, a timer, as before.
+\* in its next slot, or out of turn by its key-by time (SAbortKey), and S
+\* ends once it is out; one already out ends S now.  SGiveUp stays, a timer,
+\* as before.
 \* Mutant "abortsilent": S ends at once, its DISCONNECT never keyed.
 \* The host's side (DISCONNECTED at once) is SAbort, below.
 SAbortAir ==
@@ -561,7 +573,7 @@ MEarly == /\ Mutant = "toldearly" /\ st["M"] = "conn" /\ told["M"][gen["M"]] = 0
 
 Air == \/ CallFails \/ Poll \/ MAppDisc \/ MDisc \/ MRetry \/ MGiveUp
        \/ MHold \/ MDrained \/ MDrainEnd \/ MAgain \/ MRedial \/ MEndSilent
-       \/ MWord \/ SAppDisc \/ SWish \/ SDeliver \/ SAck \/ SEndPoll \/ SDrained \/ SSlotDisc \/ SGiveUp
+       \/ MWord \/ SAppDisc \/ SWish \/ SDeliver \/ SAck \/ SEndPoll \/ SDrained \/ SSlotDisc \/ SAbortKey \/ SGiveUp
        \/ \E e \in E : Lost(e) \/ Reply(e) \/ SkipReply(e) \/ Receive(e) \/ Lose(e) \/ Foreign(e)
 
 Next == \/ Done
@@ -574,7 +586,7 @@ Next == \/ Done
 \* stations are not.
 Fair == /\ WF_avars(MDisc) /\ WF_avars(MRetry) /\ WF_avars(MGiveUp) /\ WF_avars(CallFails)
         /\ WF_avars(MDrained) /\ WF_avars(MDrainEnd)
-        /\ WF_avars(SSlotDisc) /\ WF_avars(SGiveUp) /\ WF_avars(Poll)
+        /\ WF_avars(SSlotDisc) /\ WF_avars(SAbortKey) /\ WF_avars(SGiveUp) /\ WF_avars(Poll)
         /\ WF_avars(SEndPoll) /\ WF_avars(SDrained) /\ WF_avars(SDeliver) /\ WF_avars(SAck)
         /\ \A e \in E : WF_avars(Reply(e)) /\ WF_avars(Receive(e)) /\ WF_avars(Lost(e))
         /\ \A e \in E : WF_vars(HostDiscTaken(e))
