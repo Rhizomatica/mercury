@@ -3577,6 +3577,14 @@ void car_on_time(car_t *c, uint64_t now)
             if (c->rx_level == 0 && now >= c->heard_ms + S_FALLBACK_MS) {
                 car_trace(c, "rx: nothing from the peer in %d s -- staying at the floor",
                           (int)((now - c->heard_ms) / 1000));
+            } else if (c->rx_level == 0 && c->poll_level == 0 && c->ctl_deaf == CAR_DEAF_SNR && c->io.pattern) {
+                /* Nor off the floor when I asked for it because I hear M
+                 * below the control mode, below DATAC15 too: M's round on
+                 * the rung before never decodes here, and M's control comes
+                 * to the floor after its silence.  Back on DATAC3 I missed
+                 * it, until my own silence put me at the floor 65 s later
+                 * (sim, step:0:-10:60, messages). */
+                car_trace(c, "rx: no round on the floor -- staying there: I hear the peer below the control mode");
             } else if (c->rx_level == c->poll_level && c->s_prev_lv >= 0 && c->poll_level != c->s_prev_lv) {
                 car_trace(c, "rx: no round on lv=%d -- back to lv=%d", c->poll_level, c->s_prev_lv);
                 c->round_seen = 0; c->round_frames = asked_n(c);
