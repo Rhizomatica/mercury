@@ -133,7 +133,13 @@ func startCryptoLink(t *testing.T, iniA, iniB string) *cryptoLink {
 	}
 	start := func(name, rx, tx, ini string, port int) inst {
 		stdout, stderr := tempLogFilesNamed(t, name)
-		cmd := exec.CommandContext(ctx, bin,
+		// MERCURY_TEST_BIN_A / _B: run that station on another build (a
+		// release without encryption), as in the transfer test.
+		stationBin := bin
+		if v := os.Getenv("MERCURY_TEST_BIN_" + name); v != "" {
+			stationBin = v
+		}
+		cmd := exec.CommandContext(ctx, stationBin,
 			"-x", "fifo", "-i", rx, "-o", tx,
 			"-p", fmt.Sprint(port), "-b", fmt.Sprint(port+100),
 			"-m", "1", "-C", ini)
@@ -407,5 +413,65 @@ func TestMercuryARQOptionalFallsBackToClear(t *testing.T) {
 	}
 	if got := readExactly(t, l.dataB, len(msg), 4*time.Minute); string(got) != string(msg) {
 		l.failWithLogs("clear transfer: got %q", got)
+	}
+}
+
+// A station with encryption optional meets one that has none: [crypto] off
+// here, or a release from before encryption with MERCURY_TEST_BIN_B (1.9.20
+// to 1.9.24 read the offer as a minor revision they need not know).  The
+// session comes up in the clear in both directions, A calling and A called.
+func TestMercuryARQOptionalMeetsAStationWithoutEncryption(t *testing.T) {
+	a := newCryptoStation(t, "TESTA")
+	b := newCryptoStation(t, "TESTB")
+	a.trust(t, b) // A holds B's key, so its CALL offers
+
+	l := startCryptoLink(t, a.ini(t, "optional"), b.ini(t, "off"))
+	defer l.close()
+
+	if got := sendControlCommand(t, l.connA, l.rwA, "CONNECT TESTA TESTB"); !strings.HasPrefix(got, "OK") {
+		l.failWithLogs("CONNECT -> %q", got)
+	}
+	seen, ok := awaitLines(t, l.connA, l.rwA, []string{"CONNECTED", "UNENCRYPTED LINK"},
+		[]string{"DISCONNECTED", "ENCRYPTED LINK"}, 4*time.Minute)
+	if !ok {
+		l.failWithLogs("A calling: expected a clear session; saw %q", seen)
+	}
+	msg := []byte("offered, answered in the clear")
+	if _, err := l.dataA.Write(msg); err != nil {
+		l.failWithLogs("write: %v", err)
+	}
+	if got := readExactly(t, l.dataB, len(msg), 4*time.Minute); string(got) != string(msg) {
+		l.failWithLogs("A -> B: got %q", got)
+	}
+
+	// In a session the reply comes among BUFFER and BITRATE lines.
+	command := func(conn net.Conn, rw *bufio.ReadWriter, cmd string, want ...string) {
+		_ = conn.SetWriteDeadline(time.Time{}) // sendControlCommand left one set
+		if _, err := rw.WriteString(cmd + "\r"); err != nil || rw.Flush() != nil {
+			l.failWithLogs("%s: write failed", cmd)
+		}
+		if seen, ok := awaitLines(t, conn, rw, append([]string{"OK"}, want...), []string{"WRONG"}, 4*time.Minute); !ok {
+			l.failWithLogs("%s: saw %q", cmd, seen)
+		}
+	}
+	command(l.connA, l.rwA, "DISCONNECT", "DISCONNECTED")
+	if seen, ok := awaitLines(t, l.connB, l.rwB, []string{"DISCONNECTED"}, nil, 4*time.Minute); !ok {
+		l.failWithLogs("B: no DISCONNECTED; saw %q", seen)
+	}
+
+	// The other way: B's CALL offers nothing, and A answers it in the clear.
+	command(l.connA, l.rwA, "LISTEN ON")
+	command(l.connB, l.rwB, "CONNECT TESTB TESTA")
+	seen, ok = awaitLines(t, l.connA, l.rwA, []string{"CONNECTED", "UNENCRYPTED LINK"},
+		[]string{"DISCONNECTED", "ENCRYPTED LINK"}, 4*time.Minute)
+	if !ok {
+		l.failWithLogs("A called: expected a clear session; saw %q", seen)
+	}
+	msg = []byte("called, answered in the clear")
+	if _, err := l.dataB.Write(msg); err != nil {
+		l.failWithLogs("write: %v", err)
+	}
+	if got := readExactly(t, l.dataA, len(msg), 4*time.Minute); string(got) != string(msg) {
+		l.failWithLogs("B -> A: got %q", got)
 	}
 }
