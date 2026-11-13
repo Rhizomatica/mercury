@@ -1070,6 +1070,53 @@ void test_car_mfsk_tx_only(void)
     }
 }
 
+
+/* A step drop mid-transfer, BW500: 5 KB from the caller at 5 dB, then the
+ * channel falls to -11 dB both ways, below DATAC16 and the OFDM rungs, where
+ * only the MFSK floor still decodes.  The caller hears nothing until the
+ * session reaches the floor, and its lost-peer watchdog's 240 s may fall
+ * inside the callee's floor answer, a 27 s keydown already on the air.  It
+ * waits that answer out (car_answer_due_ms): every transfer completes, and
+ * no session ends with the callee keyed.  Ended at the 240 s mark, 10 of
+ * these 108 transfers were lost, each with the callee keyed (as NW8L's IONOS
+ * MPD at -10 dB, 1.9.23: 6 s short), and counting the idle sessions after a
+ * transfer, still at -11 dB, 53 of the 108 ended with the callee keyed. */
+void test_car_step_drop_watchdog_waits_for_the_floor_answer(void)
+{
+    static uint8_t blob[5000];
+    fill(blob, sizeof(blob), 41);
+    int bw = arq_conn.bw;
+    arq_conn.bw = ARQ_BANDWIDTH_NARROW_HZ;
+    arq_test_session_bw_hz = ARQ_BANDWIDTH_NARROW_HZ;
+    int runs = 0, done = 0, cut = 0;
+    for (uint64_t seed = 1; seed <= 12; seed++)
+        for (int at = 30; at <= 150; at += 15) {
+            sim_t *s = make_sim(seed, 0.0);
+            sim_set_snr(s, 5.0);
+            sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+            connect_ab(s);
+            sim_run_until_idle(s, (uint64_t)at * 1000);
+            sim_set_snr(s, -11.0);
+            for (int t = 0; t < 3 * 3600 * 10; t++) {
+                sim_run_until_idle(s, 100);
+                if (state(sim_a(s)) != ARQ_CONN_CONNECTED) {
+                    cut += sim_keyed(s, sim_b(s));
+                    break;
+                }
+            }
+            size_t got = 0;
+            TEST_ASSERT_TRUE(intact_prefix(sim_b(s), blob, sizeof(blob), &got));
+            runs++;
+            done += got == sizeof(blob);
+            sim_destroy(s);
+        }
+    arq_conn.bw = bw;
+    char what[96];
+    snprintf(what, sizeof(what), "%d of %d transfers complete, %d ended with the callee keyed", done, runs, cut);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, cut, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(runs, done, what);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1081,6 +1128,7 @@ int main(void)
     RUN_TEST(test_car_accept_fallback_seed_expires);
     RUN_TEST(test_car_idle_peer_loss_disconnects);
     RUN_TEST(test_car_idle_lossy_link_stays_connected);
+    RUN_TEST(test_car_step_drop_watchdog_waits_for_the_floor_answer);
     RUN_TEST(test_car_disconnect_quiet_peer_one_try);
     RUN_TEST(test_car_disconnect_after_reply_is_prompt);
     RUN_TEST(test_car_winlink_tail_ends_cleanly);

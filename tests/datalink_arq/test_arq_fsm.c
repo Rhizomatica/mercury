@@ -1399,6 +1399,47 @@ void test_silent_peer_without_hangup_waits_for_the_watchdog(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 }
 
+/* The lost-peer watchdog waits out the answer to a keydown already on the
+ * air at its 240 s mark: at the floor that answer is a 27 s keydown (NW8L's
+ * IONOS MPD at -10 dB: the session ended 6 s before the callee's floor
+ * answer was through).  A keydown after the mark is not waited for. */
+void test_watchdog_waits_for_an_answer_on_the_air(void)
+{
+    goto_connected();
+    uint64_t mark = sess.car_last_rx_ms + 240000;
+
+    /* My poll ended 2 s before the mark: its answer slot runs past it. */
+    car_log_ctl(sess.car, mark - 2000, ARQ_CHANNEL_GUARD_MS);
+    uint64_t due = car_answer_due_ms(sess.car, mark);
+    TEST_ASSERT_TRUE_MESSAGE(due > mark, "the answer's slot runs past the mark");
+
+    mock_set_uptime_ms(mark);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms > mark && sess.deadline_ms <= due,
+                             "the timer is armed for the end of the slot, not the past mark");
+
+    mock_set_uptime_ms(due);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
+void test_watchdog_does_not_wait_for_a_keydown_after_the_mark(void)
+{
+    goto_connected();
+    uint64_t mark = sess.car_last_rx_ms + 240000;
+
+    car_log_ctl(sess.car, mark + 1000, ARQ_CHANNEL_GUARD_MS);
+    TEST_ASSERT_EQUAL_UINT64(0, car_answer_due_ms(sess.car, mark));
+
+    mock_set_uptime_ms(mark + 1000);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
 /* A deferred APP_DISCONNECT that never drains must still tear down once the
  * drain deadline elapses — guarantees the rig is not keyed indefinitely
  * after the host disconnects (the "Mercury kept hanging on" report). */
@@ -2310,6 +2351,8 @@ int main(void)
     RUN_TEST(test_silent_peer_after_hangup_is_ended_early);
     RUN_TEST(test_silent_peer_after_hangup_waits_the_callees_drain);
     RUN_TEST(test_silent_peer_without_hangup_waits_for_the_watchdog);
+    RUN_TEST(test_watchdog_waits_for_an_answer_on_the_air);
+    RUN_TEST(test_watchdog_does_not_wait_for_a_keydown_after_the_mark);
     RUN_TEST(test_disconnect_waits_out_a_long_keydown);
     RUN_TEST(test_disconnect_keyed_deferral_is_bounded);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);

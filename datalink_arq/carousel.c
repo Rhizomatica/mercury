@@ -3604,6 +3604,21 @@ uint64_t car_drain_budget_ms(const car_t *c)
     return 3 * exchange;
 }
 
+uint64_t car_answer_due_ms(const car_t *c, uint64_t keyed_by)
+{
+    uint64_t due = 0;
+    if (!c || !c->master) return 0;
+    /* Whether I am still waiting or have planned my next keydown, it waits
+     * for these slots too (m_free_from). */
+    for (int j = 0; j < c->nmlog; j++) {
+        const car_mlog_t *l = &c->mlog[j];
+        if (l->e > keyed_by || (l->done & 1u)) continue;
+        uint64_t hi = mslot_hi(c, l, 0) + TURN_G_MS;   /* as car_on_tx_done arms CAR_T_M */
+        if (hi > due) due = hi;
+    }
+    return due;
+}
+
 bool car_is_master(const car_t *c) { return c && c->master; }
 bool car_peer_ending(const car_t *c) { return c && c->master && c->end_req == CAR_END_WISH; }
 

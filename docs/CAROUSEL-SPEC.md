@@ -334,7 +334,7 @@ docs/CAROUSEL-ARQ.md, "Wire formats".
 
 Timer service: `car_on_time` fires, repeatedly, the armed timer with the
 smallest deadline ≤ now (ties: lowest index POLL < SEND < WAIT < SENSE), clearing
-it first (C:1740-1749). The FSM deadline is `min(car_next_deadline, car_last_rx_ms + 240000 if !idle, disconnect_deadline if pending)` (F:4010-4021).
+it first (C:1740-1749). The FSM deadline is `min(car_next_deadline, car_lost_at, disconnect_deadline if pending)` (F:4010-4021; `car_lost_at` in E2).
 
 `arm_poll(x)` ≡ `T_POLL := x + G` (C:1064).
 
@@ -620,7 +620,7 @@ Predicates (`marginal = snr_valid && snr_ema < min_db + 3`, C:797-800):
 | # | Rule | Cite |
 |---|---|---|
 | E1 | `idle` is set only by: T11 (receiver: peer direction done and no own data), PL2 (sender: ack-only poll and no own data), PA2/PA5 (sender: pattern and no own data). Cleared by on_data, take_turn, start_driving, send_handover, PL3. | C:1320, 1505, 1702, 1726 |
-| E2 | Lost peer: on TIMER_CAROUSEL, if `now - car_last_rx_ms ≥ 240000` → session ends locally (no DISCONNECT on air), idle or not (an idle session hears the peer once per idle poll, and the caller asks again 3 s after it decides one went unanswered; exempting it polled a vanished peer for ever, #384). `car_last_rx_ms` is refreshed only by seeded frames and patterns, not carrier. | F:2323-2332, F:2308, F:2316 |
+| E2 | Lost peer: on TIMER_CAROUSEL, if `now ≥ car_lost_at` → session ends locally (no DISCONNECT on air), idle or not. **[#547]** `car_lost_at` is the mark, `car_last_rx_ms + 240000`, or, on the caller, the end of the answer slot (`mslot_hi + TURN_G_MS`, as `car_on_tx_done` arms CAR_T_M) of a keydown of its own that ended by the mark and whose answer has not been heard (`car_answer_due_ms`), whichever is later: at most one answer slot past the mark, and a keydown keyed after the mark is not waited for. The callee's is the mark alone. Idle sessions are not exempt (an idle session hears the peer once per idle poll, and the caller asks again 3 s after it decides one went unanswered; exempting it polled a vanished peer for ever, #384). `car_last_rx_ms` is refreshed only by seeded frames and patterns, not carrier. The log line reports the silence measured, not the constant. | F:2323-2332, F:2308, F:2316 |
 | E3 | APP_DISCONNECT (not abort): if `!car_drained || tx_active` → `teardown = ARQ_TD_DRAINING`, deadline `now + max(45 s, car_drain_budget_ms)`; `car_drained` = delivered both ways (no open block of mine, `peer_direction_done`) `&& tx backlog == 0` -- not the caller's `idle`, which waits for an ack and an idle poll (#384: 41 s after a Winlink FQ, past the B2 client's 30 s). After every carousel event, if pending && drained && !tx_active → DISCONNECTING. Abort → DISCONNECTING immediately.  Peer quiet (nothing heard in 120 s): no drain; the caller sends one DISCONNECT (no retries), the callee ends at once (#384). | F:2335-2365, F:2373-2379, F:1524-1527 |
 | E4 | `car_drain_budget_ms` = `3 × (G + H + ctl + CG + round_air(lv, keydown_cap(lv)) + T + 4000)`, `lv = min(tx_level (or 0), poll_level if drove_peer)`, `ctl = 13500` if either end is control-deaf (and MFSK longer) else 3740. | C:1801-1810 |
 | E5 | Drain deadline elapsed → forced DISCONNECTING (data may be undelivered). | F:2391-2405 |
@@ -701,7 +701,7 @@ which rule last set `T_POLL`. A model should carry a ghost variable
 | TA5 | The floor windows (`FLOOR_LATE_MS 9000`, `peer_floor_wait_max`) must exceed the peer's `arm_sender_wait` answer, i.e. the two ends' formulas are designed as a pair; the receiver uses **its own** view of `ctl_on_floor` to compute the sender's wait (C:665-670 vs C:594). | C:661-670 |
 | TA6 | Clear-of-nudge: the receiver predicts the sender's 90 s repeat from the last round heard (assumes identical constants on both ends). | C:1182-1205 |
 | TA7 | Turn quantum (30/45 s) must stay well under application silence timeouts (NNCP 120 s). | C:55-65 |
-| TA8 | Lost-peer 240 s ≫ longest exchange (~40-50 s at the floor). | F:1391 |
+| TA8 | Lost-peer 240 s ≫ longest exchange (~40-50 s at the floor). Not enough alone: what ends a live session is an answer on the air at the mark, not the exchange's length -- NW8L's IONOS MPD at -10 dB (1.9.23, BW500): the callee's floor answer, a 27 s keydown, was 6 s short of through when the caller's 240 s ran out. So the caller waits out the answer slot of a keydown that ended by the mark (E2, #547). | F:1391 |
 | TA9 | The caller's first round assumes the callee has unkeyed within the 250 ms sync hold after the ACCEPT decodes (R9). | C:1574, F:1245-1258 |
 
 ---

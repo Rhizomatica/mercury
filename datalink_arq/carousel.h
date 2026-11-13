@@ -429,6 +429,10 @@ bool     car_owes_ack(const car_t *c);
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds
  * on a fast rung; minutes at the MFSK floor. */
 uint64_t car_drain_budget_ms(const car_t *c);
+/* The caller: when the answer slot of my keydowns that ended by keyed_by is
+ * over, for an answer not heard yet -- it may be on the air until then.  0
+ * when no such answer is due (only to a later keydown, or none). */
+uint64_t car_answer_due_ms(const car_t *c, uint64_t keyed_by);
 /* The caller has heard the callee say its application has hung up (M_END),
  * whether or not everything of the callee's has arrived since. */
 bool     car_peer_ending(const car_t *c);
