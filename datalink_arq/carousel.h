@@ -228,7 +228,7 @@ typedef struct {
     int      s_prev_lv;             /* the rung M's rounds last came on (-1: none) */
     bool     s_asked_new;           /* my poll on the air asks M for another rung */
     int      ok_lv;                 /* the rung of my last round the peer answered (-1: none) */
-    uint64_t peer_data_ms;          /* when a frame of the peer's data last came */
+    uint64_t peer_data_ms;          /* when a frame of the peer's data last came (M: the offer; both: the SNR estimate) */
     bool     fell_back;             /* M: my last round went back to it */
 
     /* as sender */
