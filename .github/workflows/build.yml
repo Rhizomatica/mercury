@@ -93,6 +93,7 @@ jobs:
             libasound2-dev \
             libhamlib-dev \
             libssl-dev \
+            libiniparser-dev \
             pkg-config
 
       - name: Checkout
