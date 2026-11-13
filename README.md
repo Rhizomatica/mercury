@@ -43,6 +43,7 @@ to each other, but not to 1.9.19 or older in either direction: their connect
 frames have a packet type of their own (and 1.9.18 and 1.9.19 did not connect
 to each other either).  A station with `mfsk_tx_only` set needs 1.9.21 or
 later at the other end.  See
+[docs/RELEASE-1.9.24.md](docs/RELEASE-1.9.24.md),
 [docs/RELEASE-1.9.23.md](docs/RELEASE-1.9.23.md),
 [docs/RELEASE-1.9.22.md](docs/RELEASE-1.9.22.md),
 [docs/RELEASE-1.9.21.md](docs/RELEASE-1.9.21.md),
