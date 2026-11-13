@@ -15,6 +15,7 @@
 #include "arq_modem.h"
 #include "arq_channels.h"
 #include "carousel.h"
+#include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK, _N32 */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -723,9 +724,11 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         /* Dirty disconnect: drop everything still held -- the host's unsent
          * bytes here, the frames awaiting an ACK and the re-staged ones in the
          * FSM (ev.abort) -- and go at once, without the drain DISCONNECT waits
-         * for.  The peer is still told: the FSM sends its DISCONNECT frames,
-         * after any frame on the air ends, so it need not time out (#218: the
-         * comment and docs/TNC.md said no frame went out; one always did).
+         * for.  The peer is still told: the FSM sends one DISCONNECT, never
+         * over a frame on the air, and the callee's out of turn if no slot
+         * comes before a scanning host takes the radio (abort_teardown), so
+         * the peer need not time out (#218: the comment and docs/TNC.md said
+         * no frame went out; one always did).
          *
          * DISCONNECTED goes at once: a host that ABORTs is done waiting
          * (BPQ32 releases the radio on it).  That is this session's notice,
@@ -825,6 +828,50 @@ static void count_listen_end(arq_listen_end_t end)
         g_listen_releases++;
 }
 
+/* While calling, the host hears a line at least every ARQ_CALL_PROGRESS_MS.
+ *
+ * BPQ32 closes a session idle for its IDLETIME, and a forwarding connect
+ * script may set that as low as it likes ("IDLETIME 60": BBSUtilities.c
+ * passes it to ChangeSessionIdletime with no floor, and the BBS does not log
+ * the line).  While its port is attached and not connected, BPQ32's VARA
+ * driver passes the TNC lines it does not know to the session as data
+ * ("VARA} ..."), and that resets the idle timer; PTT, SN, BUSY and BUFFER it
+ * takes itself (VARA.c).  Mercury's BITRATE went out only for frames on a
+ * payload mode (modem.c, publish_link_bitrate), so during the fast CALLs
+ * the host heard nothing: on air (KG9NI, linbpq 6.0.25.41, 2026-11-10/11) 8
+ * calls were dropped 61-62 s after the last line BPQ32 had, the first MFSK
+ * CALL's BITRATE 55 s in or later.  At BW500 even the floor CALLs leave 64.5
+ * s between keydowns (a 27 s frame and its 37.5 s interval), and a CALL held
+ * for a frame arriving (call_must_wait) adds up to 32.5 s.
+ *
+ * So a BITRATE line on entering CALLING and every ARQ_CALL_PROGRESS_MS after,
+ * for the carrier of the CALL out last: the modem's rate for it, where it
+ * has reported one (tnc_send_bitrate_progress), else the mode's net rate,
+ * its payload over its airtime -- the modem never reports the control mode.
+ * Once connected, BITRATE is the modem's alone again. */
+#define ARQ_CALL_PROGRESS_MS 20000
+static uint64_t g_call_progress_ms;   /* the last line's time; 0: none (g_sess_lock) */
+
+static void call_progress(uint64_t now)
+{
+    if (g_sess.conn_state != ARQ_CONN_CALLING)
+    {
+        g_call_progress_ms = 0;
+        return;
+    }
+    if (g_call_progress_ms && now - g_call_progress_ms < ARQ_CALL_PROGRESS_MS)
+        return;
+    g_call_progress_ms = now;
+    int mode = g_sess.call_carrier > 0 ? g_sess.call_carrier : ARQ_CONTROL_MODE;
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(mode);
+    uint32_t bps = tm && tm->frame_duration_s > 0.0f
+                 ? (uint32_t)(tm->payload_bytes * 8 / tm->frame_duration_s + 0.5f) : 0;
+    /* The modem's speed levels (modem.c, bitrate_level_from_payload_mode),
+     * and 16 for the control mode, which it never reports. */
+    uint32_t level = mode == MERCURY_MODE_MFSK ? 100 : mode == MERCURY_MODE_MFSK_N32 ? 103 : 16;
+    arq_tnc_send_bitrate(level, bps);
+}
+
 /* While we answer a call, PENDING again every ARQ_PENDING_HOLD_MS.
  *
  * A scanning host holds its channel for a fixed time per PENDING: BPQ32 six
@@ -898,6 +945,7 @@ static void *arq_event_loop_worker(void *arg)
             arq_event_t tev = { .id = g_sess.deadline_event };
             count_listen_end(arq_fsm_dispatch_ends_listening(&g_sess, &tev));
         }
+        call_progress(now);
         pending_hold(now);
         pthread_mutex_unlock(&g_sess_lock);
     }
