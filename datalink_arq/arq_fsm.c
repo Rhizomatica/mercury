@@ -289,14 +289,26 @@ int arq_call_carrier(const arq_session_t *sess)
 
 /* The carrier an ACCEPT to my last CALL may come back on: the CALL's own, or
  * my floor for a repeat on the control mode, which the callee may answer there
- * (accept_carrier).  The first CALL is no repeat.  An ACCEPT on the floor
- * outlasts the control mode's call interval: the next CALL waits for it while
- * it is arriving (call_must_wait). */
+ * (accept_carrier).  The first CALL is no repeat. */
 static int call_answer_carrier(const arq_session_t *sess)
 {
     if (mercury_mode_is_mfsk(sess->call_carrier) || sess->call_sends_done < 2)
         return sess->call_carrier;
     return arq_floor_mode(arq_get_bw());
+}
+
+/* How long after my last CALL ends the next one is due: the call interval of
+ * the carrier its ACCEPT may come back on (call_answer_carrier), not of the
+ * CALL's own.  An ACCEPT on the floor to a repeat on the control mode is a
+ * 13.5 s frame (26 s at 500 Hz): the control mode's 8 s interval keyed the
+ * next CALL over it, held back only while a decoder of ours was on it
+ * (call_must_wait), and at the SNR that wants the floor one seldom is.  On
+ * air (KG9NI calling K7EK, 1.9.23, 2026-11-10) 5 of K7EK's 6 floor ACCEPTs
+ * were keyed over, 3.7-4.9 s of each; no ACCEPT on the control mode got
+ * through, so the floor's was the one that could have. */
+static float call_interval_s(const arq_session_t *sess)
+{
+    return arq_protocol_call_interval_for_mode_s(call_answer_carrier(sess));
 }
 
 /* The callee's carrier for an ACCEPT to this CALL, of a session it has
@@ -309,10 +321,11 @@ static int call_answer_carrier(const arq_session_t *sess)
 static int accept_carrier(const arq_session_t *sess, const arq_event_t *ev)
 {
     int floor = arq_floor_mode(ev->bw_hz);
-    /* Not twice running: the caller holds its next CALL for our ACCEPT only
-     * while one of its decoders is on it, and keys over one they missed.  On
-     * the control mode then, and its floor CALL after gets ours on the floor
-     * (specs/connect/ConnectCarrier.tla, Connects with Sense "any"). */
+    /* Not twice running: the caller's floor CALL after this one gets ours
+     * on the floor anyway, and the control mode between is the fast path's
+     * second chance.  (It was also there because the caller keyed over a
+     * floor ACCEPT its decoders missed; it now waits one out,
+     * call_interval_s, and specs/connect's Mut_noalt connects too.) */
     if (mercury_mode_is_mfsk(ev->mode) || floor != sess->floor_mode || sess->call_rx_mode == floor)
         return ev->mode;
     return floor;
@@ -781,13 +794,22 @@ static void car_set_seed(arq_session_t *sess, uint16_t seed)
         g_cbs.set_crc_seed(seed);
 }
 
+static void abort_fallback(arq_session_t *sess, uint64_t now);
+
 /* The callee's DISCONNECT, in the slot the carousel was given (car_request_end). */
 static void car_io_end(void *ctx)
 {
     arq_session_t *sess = ctx;
+    /* ABORT's one DISCONNECT, keyed outside the slots, is out already. */
+    if (sess->tx_retries_left == 0 && sess->teardown == ARQ_TD_SENT)
+        return;
     HLOGI(LOG_COMP, "carousel: DISCONNECT in my slot");
     send_disconnect_frame(sess);
     sess->teardown = ARQ_TD_SENT;
+    /* ABORT's: it ends at its TX_COMPLETE, not at the key-by time left in
+     * teardown_deadline_ms (abort_teardown); this is the fallback. */
+    if (sess->tx_retries_left == 0)
+        abort_fallback(sess, time_now_ms());
 }
 
 static void car_io_trace(void *ctx, const char *line)
@@ -945,13 +967,86 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
  * both keyed 640 ms, connected after 24.0 s against 13.8 s; specs/teardown,
  * Mut_abortnow).
  * The callee: its DISCONNECT goes in its next slot only, not again in the
- * slots after, and that slot is waited for ARQ_CAR_ABORT_WAIT_MS at most,
- * not the 180 s of ARQ_CAR_END_WAIT_MS.  One already out and off the air
- * has told the caller: the session ends now.  tx_retries_left at 0 marks it:
- * the callee's DISCONNECT is not retried on the FSM's timers, and its 0
- * otherwise means a quiet caller, which ends the session at once
- * (car_begin_disconnect).  True when the session has ended here. */
-#define ARQ_CAR_ABORT_WAIT_MS 30000
+ * slots after.  One already out and off the air has told the caller: the
+ * session ends now.  tx_retries_left at 0 marks it: the callee's DISCONNECT
+ * is not retried on the FSM's timers, and its 0 otherwise means a quiet
+ * caller, which ends the session at once (car_begin_disconnect).
+ *
+ * If no slot comes by abort_key_by(), the callee's goes out of turn, on a
+ * clear channel only: the host takes the radio soon after its ABORT.  BPQ32
+ * does so as it sends it: CheckForDetach (linbpq CommonCode.c) sends the
+ * ABORT through ForcedClose and goes straight on to CloseComplete, whose
+ * VARAReleaseTNC sends LISTEN ON and SCANSTART 15, whatever our DISCONNECTED
+ * says.  On air (K7EK, 2026-11-10) LISTEN ON came in the ABORT's millisecond
+ * and the first hop's LISTEN OFF 16.6 s later.  The callee's slot wait ran to
+ * 30 s, and the peer was never told.  teardown_deadline_ms holds the key-by
+ * time.
+ *
+ * The ABORT's one DISCONNECT is never keyed over a peer we hear or know to be
+ * keyed: a half-duplex peer can't hear it, and it is not retried (#531
+ * review).  So the caller's keeps to the peer's slots as ever (keyed before
+ * them, it told no peer the wait did not), and its channel deferral waits
+ * out a keydown it hears past the usual cap (ARQ_ABORT_HEARD_MAX); the
+ * callee's out-of-turn one is held while the channel is busy, and the slot
+ * after the caller's keydown carries it.  True when the session has ended
+ * here. */
+#define ARQ_CAR_ABORT_WAIT_MS 30000   /* the callee's DISCONNECT on the air at the ABORT: its end at most */
+#define ARQ_ABORT_RELEASE_MS  15000   /* BPQ32: the scan's first hop after an ABORT (SCANSTART 15) */
+#define ARQ_ABORT_MARGIN_MS    1000
+
+/* When ABORT's DISCONNECT keys at the latest: off the air a margin before
+ * the host's scan takes the radio.  A frame too long for that (the MFSK
+ * floor at 500 Hz: 26 s) keys at once. */
+static uint64_t abort_key_by(const arq_session_t *sess, uint64_t now)
+{
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(session_ctl_mode(sess));
+    uint64_t air = tm ? (uint64_t)(tm->frame_duration_s * 1000.0f) : 4400;
+    return air + ARQ_ABORT_MARGIN_MS < ARQ_ABORT_RELEASE_MS
+         ? now + ARQ_ABORT_RELEASE_MS - air - ARQ_ABORT_MARGIN_MS : now;
+}
+
+/* The callee's ABORTed DISCONNECT is keyed: the session ends at its
+ * TX_COMPLETE; this deadline is the fallback. */
+static void abort_fallback(arq_session_t *sess, uint64_t now)
+{
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(session_ctl_mode(sess));
+    sess->teardown_deadline_ms = now + (tm ? (uint64_t)(tm->frame_duration_s * 1000.0f) : 4400) +
+                                 ARQ_CAR_ABORT_WAIT_MS;
+}
+
+/* The callee's ABORTed DISCONNECT, not yet out, has reached its key-by time. */
+static bool abort_must_key(const arq_session_t *sess, uint64_t now)
+{
+    return callee_ending(sess) && sess->tx_retries_left == 0 &&
+           sess->teardown != ARQ_TD_SENT && sess->teardown_deadline_ms != 0 &&
+           now >= sess->teardown_deadline_ms;
+}
+
+/* When the channel is ours to key on, as far as we can tell: our last
+ * keydown's reply window over (a frame we invited has started by then and a
+ * decoder holds sync on it), and the peer quiet for one reply guard.  With
+ * peer_is_transmitting() false, as disconnect_must_wait() uses it. */
+static uint64_t channel_clear_at(const arq_session_t *sess)
+{
+    uint64_t guard  = (uint64_t)ARQ_CHANNEL_GUARD_MS;
+    uint64_t window = (uint64_t)(ARQ_ISS_POST_ACK_GUARD_MS > ARQ_CHANNEL_GUARD_MS
+                                     ? ARQ_ISS_POST_ACK_GUARD_MS : ARQ_CHANNEL_GUARD_MS) +
+                      ARQ_REPLY_WINDOW_MARGIN_MS;
+    uint64_t clear_at = 0;
+    if (sess->last_tx_end_ms)
+        clear_at = sess->last_tx_end_ms + window;
+    if (sess->last_rx_sync_ms && sess->last_rx_sync_ms + guard > clear_at)
+        clear_at = sess->last_rx_sync_ms + guard;
+    return clear_at;
+}
+
+/* How many ARQ_CHANNEL_DEFER_MS holds the out-of-turn DISCONNECT waits for a
+ * clear channel past its key-by time: to about the 30 s mercuryv2 gave the
+ * slot wait. */
+#define ARQ_ABORT_HOLD_MAX ((ARQ_CAR_ABORT_WAIT_MS - ARQ_ABORT_RELEASE_MS) / ARQ_CHANNEL_DEFER_MS)
+/* ...and how many the caller's waits while it hears the peer on the air. */
+#define ARQ_ABORT_HEARD_MAX (ARQ_CAR_ABORT_WAIT_MS / ARQ_CHANNEL_DEFER_MS)
+
 static bool abort_teardown(arq_session_t *sess, uint64_t now)
 {
     if (sess->conn_state != ARQ_CONN_DISCONNECTING)
@@ -965,16 +1060,24 @@ static bool abort_teardown(arq_session_t *sess, uint64_t now)
         enter_idle_after_call(sess);
         return true;
     }
-    if (callee_ending(sess))
+    if (sess->teardown == ARQ_TD_SENT)
     {
-        if (sess->teardown_deadline_ms > now + ARQ_CAR_ABORT_WAIT_MS)
+        /* On the air now (the callee), or waiting out its answer (the
+         * caller): nothing more to key. */
+        if (callee_ending(sess) && sess->teardown_deadline_ms > now + ARQ_CAR_ABORT_WAIT_MS)
             sess->teardown_deadline_ms = now + ARQ_CAR_ABORT_WAIT_MS;
-        HLOGI(LOG_COMP, "ABORT: one DISCONNECT, in my next slot (waiting %llu s at most)",
-              (unsigned long long)((sess->teardown_deadline_ms - now + 999) / 1000));
+        HLOGI(LOG_COMP, "ABORT: our DISCONNECT is out -- no more retries");
+        return false;
     }
-    else
-        HLOGI(LOG_COMP, sess->teardown == ARQ_TD_SENT ? "ABORT: our DISCONNECT is out -- no more retries"
-                                                      : "ABORT: one DISCONNECT, no retries");
+    if (!callee_ending(sess))
+    {
+        HLOGI(LOG_COMP, "ABORT: one DISCONNECT, no retries");
+        return false;
+    }
+    sess->teardown_deadline_ms = abort_key_by(sess, now);
+    sess->defer_count = 0;
+    HLOGI(LOG_COMP, "ABORT: one DISCONNECT, no retries: in my next slot, or out of turn in %llu ms "
+          "on a clear channel", (unsigned long long)(sess->teardown_deadline_ms - now));
     return false;
 }
 
@@ -1053,7 +1156,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         /* the first CALL's interval: the floor's from a station that
          * transmits only MFSK, or its next CALL keys behind this one */
         sess_enter(sess, ARQ_CONN_CALLING,
-                   deadline_from_s(arq_protocol_call_interval_for_mode_s(sess->call_carrier)),
+                   deadline_from_s(call_interval_s(sess)),
                    ARQ_EV_TIMER_RETRY);
         break;
 
@@ -1192,10 +1295,10 @@ static bool call_over_time(const arq_session_t *sess)
 }
 
 /* A CALL waits while a frame we caught is arriving (decoder_hears_frame; not
- * the energy busy detector, off by default and not to hold CALLs): the
- * ACCEPT to a repeat, on the floor, outlasts the control mode's call interval
- * (accept_carrier), and another station's frame is no place for a CALL
- * either.  Once held, also until that frame could have decoded: a CALL keyed
+ * the energy busy detector, off by default and not to hold CALLs): an ACCEPT
+ * that came late, or another station's frame, is no place for a CALL.  (The
+ * ACCEPT to a repeat, on the floor, no longer outlasts the interval:
+ * call_interval_s.)  Once held, also until that frame could have decoded: a CALL keyed
  * as the ACCEPT ended went out from a caller connected a moment later, and the
  * callee answered it over the caller's first round (sim, asym:-4:-9).  At most
  * one floor frame's airtime and its decode, then we key regardless. */
@@ -1272,7 +1375,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
          * moment the ACCEPT is arriving -- so the retry keys the transmitter on
          * top of the reply it was waiting for, on essentially every connect.
          * Measuring the interval from here gives the peer a full turnaround. */
-        sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_for_mode_s(sess->call_carrier));
+        sess->deadline_ms = retry_deadline_from_s(sess, call_interval_s(sess));
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1294,7 +1397,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             send_call_accept(sess, false);
             /* Deadline is re-anchored on TX_COMPLETE above; this is the
              * fallback if that event is ever missed. */
-            sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_for_mode_s(sess->call_carrier));
+            sess->deadline_ms = retry_deadline_from_s(sess, call_interval_s(sess));
         }
         else
         {
@@ -1589,22 +1692,21 @@ static void fire_deferred_connect(arq_session_t *sess)
 static bool disconnect_must_wait(arq_session_t *sess)
 {
     uint64_t now = time_now_ms();
-    if (sess->defer_count >= (sess->tx_active ? ARQ_CHANNEL_DEFER_KEYED_MAX : ARQ_CHANNEL_DEFER_MAX))
+    unsigned cap = sess->tx_active ? ARQ_CHANNEL_DEFER_KEYED_MAX : ARQ_CHANNEL_DEFER_MAX;
+    /* ABORT's one DISCONNECT is not retried: keyed over a peer we can hear,
+     * it is lost, and the peer sits out its watchdog.  It waits out a long
+     * keydown of the peer's instead (sim, #531 review: a 19.5 s round of the
+     * callee's, the cap reached 10 s into it). */
+    if (sess->tx_retries_left == 0 && !sess->tx_active && peer_is_transmitting(sess))
+        cap = ARQ_ABORT_HEARD_MAX;
+    if (sess->defer_count >= cap)
     {
         HLOGW(LOG_COMP, "DISCONNECT deferral cap reached (%u) - keying anyway",
               (unsigned)sess->defer_count);
         sess->defer_count = 0;
         return false;
     }
-    uint64_t guard  = (uint64_t)ARQ_CHANNEL_GUARD_MS;
-    uint64_t window = (uint64_t)(ARQ_ISS_POST_ACK_GUARD_MS > ARQ_CHANNEL_GUARD_MS
-                                     ? ARQ_ISS_POST_ACK_GUARD_MS : ARQ_CHANNEL_GUARD_MS) +
-                      ARQ_REPLY_WINDOW_MARGIN_MS;
-    uint64_t clear_at = 0;
-    if (sess->last_tx_end_ms)
-        clear_at = sess->last_tx_end_ms + window;
-    if (sess->last_rx_sync_ms && sess->last_rx_sync_ms + guard > clear_at)
-        clear_at = sess->last_rx_sync_ms + guard;
+    uint64_t clear_at = channel_clear_at(sess);
 
     if (!sess->tx_active && !peer_is_transmitting(sess) && now >= clear_at)
     {
@@ -1668,7 +1770,33 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
             car_on_tx_done(sess->car, now);
             return;
         case ARQ_EV_TIMER_CAROUSEL:
-            if (now >= sess->teardown_deadline_ms)
+            /* ABORT's DISCONNECT, no slot of the caller's in time: it goes
+             * now, before the host's scan takes the radio (abort_key_by). */
+            if (abort_must_key(sess, now))
+            {
+                /* Never over a keydown, ours or the caller's: a half-duplex
+                 * caller can't hear it, and with no retries it would be lost.
+                 * Held, the slots go on: the caller's keydown is followed by
+                 * my slot, which carries it (car_io_end). */
+                if (!sess->tx_active && !peer_is_transmitting(sess) && now >= channel_clear_at(sess))
+                {
+                    HLOGI(LOG_COMP, "ABORT: DISCONNECT keyed out of turn on a clear channel, the host's scan due");
+                    send_disconnect_frame(sess);
+                    sess->teardown = ARQ_TD_SENT;
+                    abort_fallback(sess, now);
+                    return;
+                }
+                if (sess->defer_count++ >= ARQ_ABORT_HOLD_MAX)
+                {
+                    HLOGI(LOG_COMP, "Disconnect finalized (ABORT: the channel never came clear, the caller not told)");
+                    notify_session_ended(sess);
+                    if (g_timing) arq_timing_record_disconnect(g_timing, "abort");
+                    enter_idle_after_call(sess);
+                    return;
+                }
+                sess->teardown_deadline_ms = now + ARQ_CHANNEL_DEFER_MS;
+            }
+            else if (now >= sess->teardown_deadline_ms)
             {
                 HLOGI(LOG_COMP, "Disconnect finalized (timeout: the caller never answered)");
                 notify_session_ended(sess);

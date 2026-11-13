@@ -164,14 +164,16 @@ void test_single_static_path_is_rate_invariant(void)
  * not a meaningful assertion, so say so instead of failing.  Building i386
  * with -mfpmath=sse also makes it 0, and then the value matches amd64 exactly.
  *
- * Known mismatch, for the record (measured 2026-10-12, macOS, Apple clang 21,
- * arm64, FLT_EVAL_METHOD 0): this test reports 0xF0EC0E2F both at release
- * 1.9.18 (f609b8f) and on the channel-model branch, with the same value at
- * -O0 and with -ffp-contract=off (built as
- * `cc <flags> -Itests/unity -Icommon tests/common/test_watterson.c
- * tests/unity/unity.c common/watterson.c common/mercury_prng.c -lm`).  The
- * mismatch therefore predates the channel-model change; its cause has not
- * been identified.  The pin is checked on the Linux CI hosts.
+ * The same holds for the C library.  The channel calls sinf, cosf and logf,
+ * and C does not require them to be correctly rounded, so two libms may differ
+ * in the last bit for the same input.  Apple's libm and glibc do (issue #520):
+ * of the test's 180,007 libm calls, 1,399 differ (958 sinf, 409 logf, 32
+ * cosf), and macOS arm64 reports 0xF0EC0E2F.  Replaying glibc's results into
+ * the macOS build gives the golden value, and replaying Apple's into a Linux
+ * arm64 build gives 0xF0EC0E2F, so neither the CPU nor the compiler is the
+ * cause.  The golden value therefore pins glibc's rounding as well as the
+ * model; it is checked where glibc is the libm (the Linux CI hosts), and
+ * reported as ignored elsewhere instead of failing.
  *
  * test_legacy_preset_is_byte_identical_to_the_hand_built_legacy_channel below
  * shows that the "poor" preset builds exactly this channel, so where this pin
@@ -183,6 +185,11 @@ void test_a_pinned_seed_reproduces_a_fixed_realisation(void)
     TEST_IGNORE_MESSAGE("excess floating-point precision (FLT_EVAL_METHOD != 0): "
                         "a bit-exact channel checksum is not reproducible here; "
                         "build with -mfpmath=sse to check it on this target");
+#endif
+#if !defined(__GLIBC__)
+    TEST_IGNORE_MESSAGE("the golden checksum pins glibc's sinf/cosf/logf rounding, "
+                        "and this libm is not glibc (issue #520); "
+                        "it is checked on the Linux CI hosts");
 #endif
     const int   fs = 8000;
     const int   n  = fs;
@@ -1215,8 +1222,8 @@ static COMP *run_tone_1s(watterson_t *w)
 /* A named preset must build EXACTLY the channel its row describes: the same
  * draws in the same order as watterson_add_path() by hand, so the output is
  * byte-identical for the same seed.  This is an in-process comparison rather
- * than a second pinned hash, because a pinned hash fails on this Mac for a
- * cause not yet established (see
+ * than a second pinned hash, because a pinned hash also pins the libm's
+ * rounding and so holds only under glibc (issue #520; see
  * test_a_pinned_seed_reproduces_a_fixed_realisation above).  "poor" is the
  * channel of the pinned-hash test, so where that pin holds it covers the
  * preset table too; the preset must also leave the caller's spectrum
