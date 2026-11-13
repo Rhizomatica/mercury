@@ -355,8 +355,12 @@ It also sets how many CALLs go on the fast control mode (DATAC16) before
 the first MFSK CALL: `RETRIES/2`, at least 2 (the default) and at most 4.
 DATAC16 CALLs are short, so a scanning station is more likely to catch one
 while it is on the frequency, and any listener decodes them whatever its
-bandwidth.  The cap keeps the first MFSK CALL, which a weak path needs, at
-about 47 s (#442).
+bandwidth.  The cap keeps the first MFSK CALL, which a weak path needs,
+from coming too late (#442).  Each DATAC16 CALL after the first is followed by
+the MFSK floor's call interval, about 24 s (37.5 s at 500 Hz), because the
+callee may answer it on the floor (#536), so the first MFSK CALL comes about
+40 s after the first CALL with the default 2 fast CALLs, and about 95 s with
+4 (about 135 s at 500 Hz).
 
 However many CALLs `RETRIES` allows, no new one is keyed after
 `arq:call_max_s` seconds of calling (default 300; 0 = no cap).  `RETRIES 20`

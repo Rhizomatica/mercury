@@ -133,6 +133,10 @@ PTT control notes:
 - `-S` is the compatible shorthand for `hermes_shm` and is unavailable on Windows builds.
 - `-Q` opens the configured backend, keys it for one second, releases it, and exits without starting the modem or audio devices. For example: `mercury -C mercury.ini -Q`.
 
+Sound card notes:
+- A capture device that stops delivering audio is reopened every 2 s. After three reopens in a row that bring nothing (about 6 s, not counting the time Mercury is transmitting), Mercury logs `the capture device delivers no audio` once and reports the audio as failed (`audio_ok: false` in the GUI and the WebSocket status) until samples come back.
+- When it reports the failure, and on every 5th reopen after that, Mercury also lists the sound cards again and looks for the device by the name it had when capture started. Windows can give a USB codec a new id, under the same name, when it resets or is re-plugged. If exactly one device has that name, Mercury opens it under its new id (`listed under a new id: ... -- opening that`). If two have it (two radios with the same codec), Mercury does not guess, and asks you to select it again. The default device (no `-i`) is left to the sound system.
+
 ## Getting Started with Mercury
 
 ### Compile and Install from Git repository on Linux
