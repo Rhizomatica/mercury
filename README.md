@@ -355,6 +355,13 @@ like any other app.
 You need a 64-bit ARM phone or tablet (almost every Android device since
 2017) with Android 11 or later; it was tested on Android 15.
 
+**From Google Play.**  Install
+[Mercury HF Modem](https://play.google.com/store/apps/details?id=org.rhizomatica.mercury)
+on the phone or tablet.  It is free, and updates arrive through Google Play.
+Then go on from step 3 below.
+
+**From the releases page.**
+
 1. On the phone, open the
    [releases page](https://github.com/Rhizomatica/mercury/releases/latest) and
    download `Mercury-<version>-android-arm64.apk`.
