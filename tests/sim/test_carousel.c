@@ -511,9 +511,12 @@ static void test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor(void
      * as the channel reads them. */
     TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)(plain.ctl_snr_db - 10.0), (float)off.ctl_snr_db, what);
     TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)plain.data_snr_db, (float)off.data_snr_db, what);
-    /* ...and the ones below the cliff do not come: the session is on the
-     * floor. */
-    TEST_ASSERT_GREATER_THAN_MESSAGE(plain.done_ms * 3, off.done_ms, what);
+    /* ...and the ones below the cliff do not come: the session spends its
+     * time on the floor.  Twice the offset 0 run, not three times: with the
+     * data frames' readings taken for the estimate (#501) the data still
+     * goes on DATAC3 between the floor's stretches -- 986 s here, 2395 s
+     * before, and 523 to 1092 s on seeds 2-10 against 2071 to 2446. */
+    TEST_ASSERT_GREATER_THAN_MESSAGE(plain.done_ms * 2, off.done_ms, what);
 }
 
 /* Control frames reading low, the data frames reading true: the session
@@ -555,6 +558,32 @@ static void test_carousel_low_control_readings_do_not_hold_the_ladder(void)
     TEST_ASSERT_TRUE_MESSAGE(zero.intact && zero.done_ms, what);
     TEST_ASSERT_TRUE_MESSAGE(off.intact && off.done_ms, what);
     TEST_ASSERT_TRUE_MESSAGE(off.done_ms * 10 <= zero.done_ms * 11, what);   /* within 10 % */
+}
+
+/* The estimate's step up to the first data frame's reading (#501) corrects
+ * the estimate, not the channel: the reading the peer's last report of me is
+ * paired with moves with it.  Without that, peer_hears_me_db took the step
+ * for a channel risen both ways, and the caller, hearing the callee 3 dB up
+ * while the callee heard it 9 dB down, polled it on a DATAC16 it could not
+ * decode: these messages took 3936 s, against 2576 s with the control mode
+ * reading true. */
+static void test_carousel_estimate_step_is_not_a_channel_step(void)
+{
+    car_sim_result_t zero, off;
+    char what[128];
+
+    setenv("CAR_SCRIPT", "A2500+1000,B300+2000,A2000+4000,B300+6000,"
+                         "A2000+8000,B300+10000,A1000+12000,B300+14000", 1);
+    carousel_sim_run(4, "stepa:0:-9:20:12", false, LIMIT_MS, &zero);
+    setenv("CAR_CTL_SNR_OFFSET", "-8", 1);
+    carousel_sim_run(4, "stepa:0:-9:20:12", false, LIMIT_MS, &off);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+    unsetenv("CAR_SCRIPT");
+    snprintf(what, sizeof(what), "stepa:0:-9:20:12 messages at -8 dB: done in %llu ms against %llu ms",
+             (unsigned long long)off.done_ms, (unsigned long long)zero.done_ms);
+    TEST_ASSERT_TRUE_MESSAGE(zero.intact && zero.done_ms, what);
+    TEST_ASSERT_TRUE_MESSAGE(off.intact && off.done_ms, what);
+    TEST_ASSERT_TRUE_MESSAGE(off.done_ms <= zero.done_ms, what);
 }
 
 static void test_carousel_drain_budget_fits_the_floor(void)
@@ -739,6 +768,7 @@ int main(void)
     RUN_TEST(test_carousel_ctl_snr_offset_moves_only_the_control_reading);
     RUN_TEST(test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor);
     RUN_TEST(test_carousel_low_control_readings_do_not_hold_the_ladder);
+    RUN_TEST(test_carousel_estimate_step_is_not_a_channel_step);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }

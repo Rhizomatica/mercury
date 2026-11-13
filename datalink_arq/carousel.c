@@ -1078,12 +1078,21 @@ static float level_min_db(int lv)
  * 86.8 s against 53.2; 63.9 s with this).  Not for a reading below, nor just
  * above: one data frame on a fading channel is one sample of the fade, and
  * taken either way it cost 1-2 % where the two modes read alike (fade:10:2,
- * fade:5:1, 80 seeds). */
+ * fade:5:1, 80 seeds).  The step corrects the estimate, not the channel:
+ * the reading the peer's last report of me is paired with moves with it, or
+ * peer_hears_me_db takes the step for a channel risen both ways.  It did:
+ * hearing the peer 5.6 dB better than its control frames had read, the
+ * caller judged a callee 9 dB down to hear it above the control mode, and
+ * polled it on a DATAC16 it could not decode for the next 300 s (sim,
+ * stepa:0:-9:20:12 with the control mode 8 dB low: messages unfinished in
+ * 1 h on 4 seeds of 10). */
 static void peer_data_heard(car_t *c, uint64_t now)
 {
     if ((!c->peer_data_ms || now - c->peer_data_ms >= CTL_READING_DATA_MS) && c->snr_valid &&
-        c->snr_ms == now && c->snr_last > c->snr_ema + SNR_GATE_DB / 2)
+        c->snr_ms == now && c->snr_last > c->snr_ema + SNR_GATE_DB / 2) {
+        c->peer_snr_mine += c->snr_last - c->snr_ema;
         c->snr_ema = c->snr_last;
+    }
     c->peer_data_ms = now;
 }
 static bool level_marginal(const car_t *c, int lv)
@@ -3258,6 +3267,21 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
          * transfers -- the control frames are all there is, as before. */
         bool ctl_only = control && c->snr_valid && c->peer_data_ms &&
                         now - c->peer_data_ms < CTL_READING_DATA_MS;
+        /* After S_FALLBACK_MS with nothing of the peer's decoded, the
+         * estimate is from before the silence, and the silence says the
+         * channel fell: the first reading after it counts whatever its mode,
+         * and a lower one is taken as it is.  Smoothed from the estimate of
+         * before, a -6 dB MFSK frame after 3 dB read -2.5, above the control
+         * mode, and the peer's control went back on a DATAC16 that did not
+         * get through, for another 90 s of silence (sim, step:3:-6:60 with
+         * the control mode 4 dB low: message traffic unfinished in 1 h on
+         * 10 seeds of 10).  On NW8L's IONOS MPD at -10 dB the caller, 144 s
+         * without a decode, read -8.1 on DATAC16 and kept -6.8, above the
+         * control mode, while the callee's answers on it went unheard. */
+        if (c->snr_valid && now >= c->heard_ms + S_FALLBACK_MS) {
+            ctl_only = false;
+            if (snr_db < ema) ema = snr_db;
+        }
         if (!ctl_only) {
             c->snr_ema = ema;
             /* Two readings in a row more than SNR_GATE_DB to one side of the
