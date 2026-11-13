@@ -34,13 +34,13 @@ int main(int argc, char **argv)
     /* CAR_LIMIT_S: a longer run than the default (the deep fringe is slow). */
     uint64_t limit = getenv("CAR_LIMIT_S") ? (uint64_t)atoll(getenv("CAR_LIMIT_S")) * 1000 : LIMIT_MS;
     carousel_sim_run(seed, argv[2], bidir, limit, &r);
-    printf("seed=%llu chan=%s %s a2b=%zu b2a=%zu integrity=%s done_ms=%llu collisions=%d overruns=%d kd_max=%.1f/%.1f%s\n",
+    printf("seed=%llu chan=%s %s a2b=%zu b2a=%zu integrity=%s done_ms=%llu collisions=%d overruns=%d kd_max=%.1f/%.1f air=%.1f+%.1f keys=%d%s\n",
            (unsigned long long)seed, argv[2], bidir ? "bidir" : "oneway", r.a2b, r.b2a,
            r.intact ? "OK" : "CORRUPT", (unsigned long long)r.done_ms, r.collisions, r.overruns,
-           r.max_kd_ms[0] / 1000.0, r.max_kd_ms[1] / 1000.0, r.stalled ? " STALLED" : "");
-    /* What the delivered frames' estimates read: the control frames' and the
-     * data frames' (CAR_CTL_SNR_OFFSET moves the first). */
-    if (r.ctl_frames && r.data_frames)
+           r.max_kd_ms[0] / 1000.0, r.max_kd_ms[1] / 1000.0,
+           r.air_ms[0] / 1000.0, r.air_ms[1] / 1000.0, r.keydowns,
+           r.stalled ? " STALLED" : "");
+if (r.ctl_frames && r.data_frames)
         printf("readings: ctl=%.1f dB (%d frames) data=%.1f dB (%d frames)\n",
                r.ctl_snr_db, r.ctl_frames, r.data_snr_db, r.data_frames);
     if (r.msgs) {
