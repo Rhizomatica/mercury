@@ -2571,23 +2571,36 @@ static bool fall_back_unconfirmed(car_t *c)
     return true;
 }
 
-/* My keydowns unanswered while the peer is still heard: its control does not
- * reach me, whatever my reading says.  S answers an ask on the control mode, and
- * an ask it did not hear it does not answer at all -- but then nothing of S's
- * comes either, and the silence rule (car_on_tx_done) has it.  With S heard
- * within SILENT_MS, two keydowns of mine in a row unanswered, the last an ask,
- * say S's answers are lost on their way to me.  A round unanswered counts
- * (fell_back: S answers it, and clears that, with anything): a lost answer to
- * a round first sends the next one back a rung, and the ask comes after --
- * counting asks alone, the DISCONNECT of a callee that ABORTed then went on
- * DATAC16 and was lost (sim, ctl-loss ABORT seed 302).  So I take myself
- * deaf to the control mode (CAR_DEAF_LOSS), say so in the ask I am about to
- * send, and S's control goes on MFSK.  Not
- * HARD, which only a frame of the peer's on an OFDM mode clears: S sends me
- * none while I only send, and its control stayed on MFSK to the end of the
- * run after the channel rose to 10 dB (sim, ctlloss:10:-6.5:0.4:60 seed 3).
- * LOSS clears on a reading CTL_LOSS_OFF_DB or more, above the band the losses
- * came from: there S's control was back on DATAC16 15 s after the rise.
+/* My asks unanswered while the peer is still heard: its control does not
+ * reach me, whatever my reading says.  S answers an ask on the control mode,
+ * and an ask it did not hear it does not answer at all -- but then nothing of
+ * S's comes either, and the silence rule (car_on_tx_done) has it.  With S
+ * heard within SILENT_MS, two asks in a row unanswered say S's answers are
+ * lost on their way to me.  So I take myself deaf to the control mode
+ * (CAR_DEAF_LOSS), say so in the ask I am about to send, and S's control goes
+ * on MFSK.
+ *
+ * Asks only, not an unanswered round (fell_back): S answers a round only if
+ * it heard it, and a round lost on its way to S -- a rung above the channel,
+ * a probe -- says nothing about S's control.  Counted, it set LOSS 13 to 45
+ * times a run on cliff:-5 at BW500 both ways, where DATAC16 decodes every
+ * frame, and 4 of 120 runs did not finish in 2 h (rafael2k's bench on #538;
+ * all 120 finish without it).  The cost: of the callee ABORT test's 30
+ * callers, 25 told instead of 28 (20 with no LOSS at all).
+ *
+ * LOSS lasts LOSS_HOLD_MS, then I go back to what my reading says (CAR_T_F,
+ * which only S used: I am M).  Held to the end of the session, LOSS kept S's
+ * control on a 26 s MFSK frame for hours on a -5 dB link at BW500 (seed 9:
+ * set at 1094 s, A->B 4854 of 8192 bytes at 2 h).  If the answers are still
+ * lost, two more asks set it again.  With asks only and no hold, 2 of 120
+ * such runs still did not finish and one way took 4-5 % longer at BW500;
+ * held 30, 60 or 120 s, all 120 finished within 0.5 % of no LOSS, and the
+ * ABORT test told the same 25.
+ * A reading of CTL_LOSS_OFF_DB or more clears it sooner: the band DATAC16
+ * decodes part of is behind me.  Not HARD, which only a frame of the peer's
+ * on an OFDM mode clears: S sends me none while I only send, and its control
+ * stayed on MFSK to the end of the run after the channel rose to 10 dB (sim,
+ * ctlloss:10:-6.5:0.4:60 seed 3).
  *
  * On air (KG9NI calling K7EK, 1.9.23, 2026-11-11, BW500) KG9NI heard K7EK at
  * -6 to -7 dB, inside the hysteresis band (CTL_DEAF_ON_DB, CTL_DEAF_OFF_DB),
@@ -2599,10 +2612,10 @@ static bool fall_back_unconfirmed(car_t *c)
  * and KG9NI sat out its 240 s watchdog.  The silence rule needs S_FALLBACK_MS
  * (54 s) since K7EK was last heard, and its last MFSK round had been heard. */
 #define CTL_LOSS_OFF_DB (CTL_DEAF_OFF_DB + SNR_GATE_DB)
+#define LOSS_HOLD_MS    60000
 static void ctl_deaf_on_asks(car_t *c, uint64_t now)
 {
-    int missed = c->reqs + (c->fell_back ? 1 : 0);
-    if (missed < 2 || c->ctl_deaf || !c->io.pattern || now >= c->heard_ms + SILENT_MS)
+    if (c->reqs < 2 || c->ctl_deaf || !c->io.pattern || now >= c->heard_ms + SILENT_MS)
         return;
     /* Only where my reading could be the cause: at CTL_LOSS_OFF_DB or more
      * the next reading clears it at once, and the losses are something else
@@ -2611,8 +2624,20 @@ static void ctl_deaf_on_asks(car_t *c, uint64_t now)
     if (!c->snr_valid || c->snr_ema >= CTL_LOSS_OFF_DB)
         return;
     c->ctl_deaf = CAR_DEAF_LOSS;
-    car_trace(c, "%d keydowns unanswered, the peer heard %d s ago: its control does not reach me "
-              "-- control on MFSK", missed, (int)((now - c->heard_ms) / 1000));
+    arm(c, CAR_T_F, now + LOSS_HOLD_MS);
+    car_trace(c, "%d asks unanswered, the peer heard %d s ago: its control does not reach me "
+              "-- control on MFSK for %d s", c->reqs, (int)((now - c->heard_ms) / 1000),
+              LOSS_HOLD_MS / 1000);
+}
+
+/* LOSS_HOLD_MS over: my control back to what my reading says. */
+static void ctl_loss_expired(car_t *c)
+{
+    if (c->ctl_deaf != CAR_DEAF_LOSS) return;
+    c->ctl_deaf = c->snr_valid && c->snr_ema < CTL_DEAF_OFF_DB ? CAR_DEAF_SNR : 0;
+    car_trace(c, "control loss held %d s: %s", LOSS_HOLD_MS / 1000,
+              c->ctl_deaf ? "I hear the peer below the control mode, control stays on MFSK"
+                          : "control on the control mode again");
 }
 
 static void m_decide_send(car_t *c, uint64_t now)
@@ -3476,6 +3501,7 @@ void car_on_time(car_t *c, uint64_t now)
         if (due == CAR_T_M) m_timer(c, now);
         else if (due == CAR_T_S) s_slot(c, now);
         else if (due == CAR_T_W && c->master) m_watch(c, now);
+        else if (due == CAR_T_F && c->master) ctl_loss_expired(c);
         else if (due == CAR_T_W) {
             /* Not off the floor once the silence fallback is due: M's control
              * comes there after its own silence (SILENT_MS), and going back to

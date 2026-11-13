@@ -668,6 +668,30 @@ static void test_carousel_max_keydown(void)
     kd_check("cliff:-5", 8, true, "CAR_KEYDOWN_A", 1, false);
 }
 
+/* A control loss (CAR_DEAF_LOSS) on a link where control is not being lost:
+ * BW500, -5 dB both ways, where DATAC16 decodes every frame.  Counting an
+ * unanswered round as a lost answer set it 13-45 times a run, and held to the
+ * end of the session it kept the callee's control on 26 s MFSK frames: these
+ * seeds' A->B did not finish in 2 h (rafael2k's bench on #538: 2, 9, 12, 16,
+ * 17, 26; 31, 45, 107, 118 of 120), where mercuryv2 took 5187-7028 s.  Asks
+ * only, but held for good, 2 and 44 still did not.  Asks only, held 60 s:
+ * all finish, the slowest in 6606 s. */
+void test_carousel_bw500_control_loss_does_not_stall(void)
+{
+    static const uint64_t SEEDS[] = { 2, 9, 12, 16, 17, 26, 31, 44, 45, 107, 118 };
+    setenv("CAR_BW", "500", 1);
+    for (size_t k = 0; k < sizeof(SEEDS) / sizeof(SEEDS[0]); k++) {
+        car_sim_result_t r;
+        char what[64];
+        carousel_sim_run(SEEDS[k], "cliff:-5", true, 7200000, &r);
+        snprintf(what, sizeof(what), "seed %llu cliff:-5 bidir BW500: a2b %d b2a %d",
+                 (unsigned long long)SEEDS[k], (int)r.a2b, (int)r.b2a);
+        TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
+        TEST_ASSERT_EQUAL_MESSAGE(CAR_SIM_BYTES, r.a2b, what);
+        TEST_ASSERT_EQUAL_MESSAGE(CAR_SIM_BYTES, r.b2a, what);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -698,5 +722,6 @@ int main(void)
     RUN_TEST(test_carousel_ctl_snr_offset_moves_only_the_control_reading);
     RUN_TEST(test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
+    RUN_TEST(test_carousel_bw500_control_loss_does_not_stall);
     return UNITY_END();
 }

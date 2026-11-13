@@ -739,11 +739,11 @@ static int ctl_loss_abort_told(int n, uint64_t seed0)
     return told;
 }
 
-/* mercuryv2: 17 of 30.  A caller that misses two answers in a row while it
- * still hears the callee takes itself deaf to the control mode
- * (carousel.c, ctl_deaf_on_asks), and the callee's DISCONNECT goes on MFSK:
- * 27.  The 3 left lost single answers, never two in a row, and then the one
- * DISCONNECT on DATAC16. */
+/* Without CAR_DEAF_LOSS, 20 of 30.  A caller that misses two answers to its
+ * asks in a row while it still hears the callee takes itself deaf to the
+ * control mode for 60 s (carousel.c, ctl_deaf_on_asks), and the callee's
+ * DISCONNECT goes on MFSK: 25.  The 5 left lost single answers, or an answer
+ * to a round, then the one DISCONNECT on DATAC16. */
 void test_car_ctl_loss_callee_abort_tells_the_caller(void)
 {
     int told = ctl_loss_abort_told(30, 300);
