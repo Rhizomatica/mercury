@@ -248,7 +248,7 @@ ifeq ($(UNAME_S),Linux)
 ifneq ($(TARGET_ANDROID),1)
 ifneq ($(TARGET_IOS),1)
 ifneq ($(OS),Windows_NT)
-ifneq ($(shell pkg-config --exists libgpiod 2>/dev/null && echo yes),)
+ifneq ($(shell pkg-config --atleast-version=2.0 libgpiod 2>/dev/null && echo yes),)
 HAVE_LIBGPIOD := 1
 LIBGPIOD_CFLAGS := $(shell pkg-config --cflags libgpiod) -DHAVE_LIBGPIOD
 LIBGPIOD_LDFLAGS := $(shell pkg-config --libs libgpiod)

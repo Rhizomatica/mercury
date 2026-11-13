@@ -73,6 +73,43 @@ extern _Atomic bool mercury_stop;
 
 #define UI_LOG_TAG "ui-comm"
 
+/* Escape strings inserted into JSON values. */
+static bool ui_json_escape_string(const char *src, char *dst, size_t cap)
+{
+    static const char hex[] = "0123456789abcdef";
+    size_t out = 0;
+
+    if (!src || !dst || cap == 0) return false;
+
+    for (const unsigned char *p = (const unsigned char *)src; *p; ++p) {
+        unsigned char c = *p;
+        char e[6];
+        size_t n = 1;
+
+        switch (c) {
+        case '"':  e[0] = '\\'; e[1] = '"';  n = 2; break;
+        case '\\': e[0] = '\\'; e[1] = '\\'; n = 2; break;
+        case '\b': e[0] = '\\'; e[1] = 'b'; n = 2; break;
+        case '\f': e[0] = '\\'; e[1] = 'f'; n = 2; break;
+        case '\n': e[0] = '\\'; e[1] = 'n'; n = 2; break;
+        case '\r': e[0] = '\\'; e[1] = 'r'; n = 2; break;
+        case '\t': e[0] = '\\'; e[1] = 't'; n = 2; break;
+        default:
+            if (c < 0x20) {
+                e[0] = '\\'; e[1] = 'u'; e[2] = '0'; e[3] = '0';
+                e[4] = hex[c >> 4]; e[5] = hex[c & 15]; n = 6;
+            } else e[0] = (char)c;
+        }
+
+        if (out + n >= cap) { dst[0] = '\0'; return false; }
+        memcpy(dst + out, e, n);
+        out += n;
+    }
+
+    dst[out] = '\0';
+    return true;
+}
+
 static const char *ui_arq_mode_name(int mode)
 {
     switch (mode)
@@ -308,8 +345,11 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
 
             if (cmd->value7[0]) {
                 char *end = NULL;
+                errno = 0;
                 unsigned long gpio = strtoul(cmd->value7, &end, 10);
-                if (!end || *end != '\0' || gpio > UINT_MAX) {
+                if (cmd->value7[0] == '-' || errno == ERANGE ||
+                    !end || end == cmd->value7 || *end != '\0' ||
+                    gpio > INT_MAX) {
                     HLOGE(UI_LOG_TAG, "Invalid GPIO line from UI: %s",
                           cmd->value7);
                     return -1;
@@ -933,8 +973,16 @@ void *ui_publisher_thread(void *arg)
                 char ptt_line[16] = "rts", ptt_invert[16] = "none";
                 int  serial_speed = 0, cm108_gpio = PTT_CM108_GPIO_DEFAULT;
                 ptt_config_t current_ptt;
+                char gpio_chip_json[PTT_DEVICE_PATH_MAX * 6 + 1];
                 memset(&current_ptt, 0, sizeof(current_ptt));
                 radio_io_get_config(&current_ptt);
+
+                if (!ui_json_escape_string(current_ptt.gpio_chip,
+                                           gpio_chip_json,
+                                           sizeof(gpio_chip_json))) {
+                    HLOGE(UI_LOG_TAG, "Failed to escape GPIO chip path for JSON");
+                    gpio_chip_json[0] = '\0';
+                }
 
                 int  count = ui_comm_get_radio_list(radios, max_radios, sel, sizeof(sel),
                                                     dev_path, sizeof(dev_path), &serial_speed,
@@ -955,7 +1003,7 @@ void *ui_publisher_thread(void *arg)
                         "\"list\":[",
                         sel, dev_path, serial_speed, ptt_method, ptt_line,
                         ptt_invert, cm108_gpio,
-                        current_ptt.gpio_chip, current_ptt.gpio_line,
+                        gpio_chip_json, current_ptt.gpio_line,
                         current_ptt.gpio_invert ? "true" : "false");
                     for (int i2 = 0; i2 < count && pos < 65536 - 160; i2++)
                         pos += snprintf(buf + pos, 65536 - pos, "%s{\"name\":\"%s\",\"id\":\"%s\"}",
