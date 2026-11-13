@@ -1,3 +1,40 @@
+mercury (1.9.24-1) unstable; urgency=medium
+
+  * Release 1.9.24.
+  * carousel: a round M asks about (REQ) is scored as the frames M sent.
+  * fyne-ui: vendored GLFW takes Wayland touch as the left mouse button (Sailfish taps).
+  * fyne-ui: vendored GLFW's upstreamTreeSHA follows its tree, so #512 is rebuilt.
+  * arq: the callee lets go when the caller's DISCONNECT ends the call it answers.
+  * fyne-ui: Sailfish OS's on-screen keyboard for text fields, through Maliit.
+  * carousel: free the continuation slots of a floor poll the peer never answered.
+  * carousel: a "done" poll asks for nothing, so the round after it is not raised to the old poll size.
+  * main: wake the forced-exit thread through a pipe, so it exists on macOS.
+  * arq: ABORT tells the peer once and lets go, also during a teardown.
+  * carousel: a round with its tail lost is scored as no more frames than fit in its time.
+  * tnc: send DISCONNECTED when the session has closed, as VARA does.
+  * carousel: M's side, and a round M carried with its poll, scored as no more frames than were sent.
+  * log: one line per Hamlib error, a logged exit, a client's close is not a warning.
+  * tnc: a shutdown while keyed tells the host PTT OFF; log when capture returns.
+  * log: no host DISCONNECT where there was none; a broadcast client's leaving is not an error.
+  * macos: pick files and folders in the system's open panel (App Review 2.4.5(i)).
+  * arq: a CALL waits out an ACCEPT that may come on the MFSK floor.
+  * audioio: a capture device that stays dead is reported, and found again by name.
+  * arq: a BITRATE line at least every 20 s while calling.
+  * tests: the watterson golden checksum is checked only under glibc (fixes #520).
+  * sim: CAR_CTL_SNR_OFFSET applied in the channel -- decode failure follows the SNR (alternative to #522).
+  * arq: ABORT's one DISCONNECT keys before a scanning host takes the radio.
+  * audio: a saved device whose Windows id has changed is found by its name.
+  * carousel: control follows the floor when the peer's control goes missing.
+  * arq: PENDING every 20 s while answering a call, so a scanning host keeps the channel.
+  * audioio: the capture recovery line says how long the device was silent.
+  * carousel: the rung estimate goes by the data frames' readings, the control mode's as the fallback.
+  * tcp: one host at a time on the control and data ports.
+  * docs: update HERMES URL in readme.
+  * arq: the lost-peer watchdog waits out an answer already on the air.
+  * carousel: S hearing M below the control mode stays at the floor it asked for.
+
+ -- Rafael Diniz <rafael@riseup.net>  Fri, 13 Nov 2026 17:29:07 +0000
+
 mercury (1.9.23-1) unstable; urgency=medium
 
   * Release 1.9.23.
