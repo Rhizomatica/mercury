@@ -28,7 +28,8 @@ void setUp(void) {}
 void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
-    unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX");
+    unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
+    unsetenv("CAR_CTL_SNR_OFFSET");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -185,6 +186,20 @@ static void test_carousel_request_response_completes(void)
     }
 }
 
+/* Typed lines, as an operator's at a BBS: one that comes while M waits out
+ * the peer's answer slot, or while a keydown is on the air, cannot go at once,
+ * and the log says what it waits for (car_on_app_data).  On air nothing did:
+ * N3JXB's commands took 2-11 s to key and the log was silent about it. */
+static void test_carousel_app_wait_is_said(void)
+{
+    car_sim_result_t r;
+    setenv("CAR_KBD", "10:40:15", 1);
+    carousel_sim_run(3, "clean", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT(0, r.collisions);
+    TEST_ASSERT_GREATER_THAN_INT(0, r.app_wait_says);
+}
+
 /* Idle on a lossy link, with patterns (the floor's continuation slots): each
  * station keeps hearing the other within the 240 s after which the FSM's
  * lost-peer watchdog ends the session.  An unanswered idle poll was asked
@@ -262,6 +277,338 @@ static void test_carousel_no_reprobe_below_gate(void)
             TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
             TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.gated_probes, what);
         }
+}
+
+/* Rounds that bring nothing of the peer at all leave the SNR as old as the
+ * last frame.  On air (NW8L, IONOS MPP, +5 -> -5 dB within a vARIM session,
+ * 1.9.22) the receiver read 4.2 dB throughout and polled DATAC3 and DATAC4
+ * seven times with nothing heard in between; the lost-peer watchdog ended the
+ * session.  The same shape: vARIM's blocks one way, its short acks back, and
+ * the step.  Two dark rounds now let two losses kill a rung.  Before the fix
+ * these runs reached 9 such polls in a row; with it, 5 (200 seeds). */
+static void test_carousel_dark_rounds_drop_the_rung(void)
+{
+    static const char *CHAN[] = { "step:5:-5:60", "step:5:-6:60" };
+    setenv("CAR_SCRIPT", "A1500,B59+500,A1500+500,B59+500,A1500+500,B59+500,"
+                         "A1500+500,B59+500,A1500+500,B59+500", 1);
+    for (size_t k = 0; k < sizeof(CHAN) / sizeof(CHAN[0]); k++)
+        for (uint64_t seed = 1; seed <= 40; seed++) {
+            car_sim_result_t r;
+            char what[64];
+            carousel_sim_run(seed, CHAN[k], false, LIMIT_MS, &r);
+            snprintf(what, sizeof(what), "seed %llu %s", (unsigned long long)seed, CHAN[k]);
+            TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
+            TEST_ASSERT_LESS_OR_EQUAL_INT_MESSAGE(6, r.dark_polls, what);
+        }
+    unsetenv("CAR_SCRIPT");
+}
+
+/* Floor polls B never heard leave nothing for A to wait out: B continues in
+ * a poll's later slots only after a round of its own in its first, and
+ * nothing was on the air there.  Held for them, A kept its next poll off the
+ * air 14 s after each pair of unheard polls (on air, NW8L-KA8RYU, MPD -5 dB:
+ * 97 s, and vARIM gave up on the /OK 25 s before it came).  The frames: A's
+ * message (0), B's poll (1), A's poll (2), B's message, first round (3), A's
+ * poll on DATAC4 (4), B's DATAC4 round (5), then A's floor polls for 2
+ * frames (6, 7, 8), the three lost. */
+static void test_carousel_unheard_polls_free_their_slots(void)
+{
+    static const int lost[] = { 5, 6, 7, 8 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A40,B200+2000", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:-7", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(11, r.frames, "the frame order changed: pick the lost frames again (CAR_TRACE=1)");
+    carousel_sim_force_losses(lost, 4);
+    carousel_sim_run(1, "cliff:-7", false, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT(0, r.kd_overlaps);
+    char what[64];
+    snprintf(what, sizeof(what), "held %llu ms for the slots of unheard polls", (unsigned long long)r.slot_hold_ms);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, (int)r.slot_hold_ms, what);
+}
+
+/* M's own round of one frame, after my "done", lost whole: M asks (REQ)
+ * about the one frame it sent.  Scored as the 8 my last poll had asked for,
+ * one lost frame took QAM16C2 out at 20 dB (on air at its threshold: NW8L-
+ * KA8RYU, IONOS MPD 35 dB, and the rest of the file on DATAC17, #502).  The
+ * frames: A's first round (0), B's poll for 8 (1), A's 5 (2-6), B's "done"
+ * (7), A's poll and B's ack (8, 9), A's ack (10), A's 300 bytes (11). */
+static void test_carousel_req_scores_the_frames_sent(void)
+{
+    static const int lost[] = { 11 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A6000,B59+500,A300+3000", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(12, r.frames, "the frame order changed: pick the lost frame again (CAR_TRACE=1)");
+    carousel_sim_force_losses(lost, 1);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.one_frame_kills, "one lost frame took a rung out");
+}
+
+/* My "done" poll asks for nothing; M's next round comes on its own turn, and
+ * is no answer to the poll before it.  With that round's tail lost, it was
+ * scored as the 8 frames that poll asked for, not the 2 it had: 1 of 8, and
+ * DATAC1 read 0.49 delivered instead of 0.83 (#507).  The frames: A's first
+ * round (0), B's poll for 8 (1), A's 5 (2-6), B's "done" (7), A's poll and
+ * B's 59 bytes (8, 9), A's ack (10), A's 1500 bytes in 2 (11, 12). */
+static void test_carousel_done_poll_asks_for_nothing(void)
+{
+    static const int lost[] = { 12 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A6000,B59+500,A1500+3000", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(13, r.frames, "the frame order changed: pick the lost frame again (CAR_TRACE=1)");
+    carousel_sim_force_losses(lost, 1);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "a round scored as more frames than were sent");
+}
+
+/* My poll asked for 8; M had 5 to send.  With the round's last frame lost,
+ * it was scored as the 8 asked: 4 of 8, QAM16C2 read 0.58 delivered instead
+ * of 0.81 (#516).  It is the 5 that fit between my poll and the round's end.
+ * Its first frame lost too, the frames heard say 4 (seen + left): the time
+ * still says 5, so the lost one is scored.  The frames: A's first round (0),
+ * B's poll for 8 (1), A's 5 (2-6). */
+static void test_carousel_short_round_scored_as_sent(void)
+{
+    static const int tail[] = { 6 }, both[] = { 2, 6 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A6000,B59+500,A1500+3000", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(13, r.frames, "the frame order changed: pick the lost frames again (CAR_TRACE=1)");
+    carousel_sim_force_losses(tail, 1);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "the tail lost: scored as more frames than were sent");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "the tail lost: scored as fewer frames than were sent");
+    carousel_sim_force_losses(both, 2);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "head and tail lost: scored as more frames than were sent");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "head and tail lost: scored as fewer frames than were sent");
+}
+
+/* M's side of #516: A polled B for 8; B had 2 to send, and the second was
+ * lost.  M kept no time to bound the round with, and scored it 1 of 8
+ * (QAM16C2 read 0.31 delivered); S's answer slot opens no sooner
+ * than mslot_lo, so 2 fit, and it is 1 of 2 (0.69).  The frames: A's 30
+ * bytes (0), B's ack (1), A's ack-only poll (2), B's first round (3), A's
+ * poll for 8 (4), B's 2 (5, 6). */
+static void test_carousel_m_scores_a_short_round_as_sent(void)
+{
+    static const int lost[] = { 6 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A30,B3000+500", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(7, r.frames, "the frame order changed: pick the lost frame again (CAR_TRACE=1)");
+    carousel_sim_force_losses(lost, 1);
+    carousel_sim_run(1, "cliff:20", false, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "scored as more frames than were sent");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "scored as fewer frames than were sent");
+}
+
+/* A round M carried with its poll (ANC_BOTH) is the size the poll said: B
+ * asked for 5, A's keydown carried its poll and 2 frames, the second lost.
+ * Scored as the 5 asked (1 of 5) before; 1 of 2 now.  On fade:16:2, seed
+ * 21, at 102.8 s: if this run no longer has the case, pick another seed
+ * (CAR_TRACE=1, "as its poll said"). */
+static void test_carousel_round_with_its_poll_scored_as_declared(void)
+{
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A4096,B59+500,A4096+500,B59+500", 1);
+    carousel_sim_run(21, "fade:16:2", false, LIMIT_MS, &r);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.over_scored, "scored as more frames than were sent");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "scored as fewer frames than were sent");
+}
+
+/* CAR_CTL_SNR_OFFSET: the control frames' estimate reads that much off, and
+ * only theirs (#501).  The frames are still decoded and delivered -- the knob
+ * is the estimate, not the channel -- so the session still completes, and the
+ * data frames' readings do not move.  The default (0) is the channel as it
+ * reads: the same run, down to the frame count. */
+static void test_carousel_ctl_snr_offset_moves_only_the_control_reading(void)
+{
+    car_sim_result_t plain, zero, off;
+    char what[96];
+
+    carousel_sim_run(3, "cliff:10", false, LIMIT_MS, &plain);
+    setenv("CAR_CTL_SNR_OFFSET", "0", 1);
+    carousel_sim_run(3, "cliff:10", false, LIMIT_MS, &zero);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+    snprintf(what, sizeof(what), "the offset 0 run differs from the plain one (seed 3 cliff:10)");
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(plain.done_ms, zero.done_ms, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.frames, zero.frames, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.keydowns, zero.keydowns, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.ctl_frames, zero.ctl_frames, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.data_frames, zero.data_frames, what);
+
+    setenv("CAR_CTL_SNR_OFFSET", "-10", 1);
+    carousel_sim_run(3, "cliff:10", false, LIMIT_MS, &off);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+
+    /* The control frames read ten dB lower than they did ... */
+    snprintf(what, sizeof(what), "the control frames read %.2f dB, the data frames %.2f dB",
+             off.ctl_snr_db, off.data_snr_db);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)(plain.ctl_snr_db - 10.0), (float)off.ctl_snr_db, what);
+    /* ... and the data frames read what they read. */
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)plain.data_snr_db, (float)off.data_snr_db, what);
+    /* The frames are still decoded: the session completes, and what arrives is
+     * what was sent. */
+    TEST_ASSERT_TRUE_MESSAGE(off.intact, what);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, off.done_ms, what);
+    TEST_ASSERT_GREATER_THAN_INT_MESSAGE(0, off.ctl_frames, what);
+    TEST_ASSERT_GREATER_THAN_INT_MESSAGE(0, off.data_frames, what);
+}
+
+/* Below the control mode's cliff the knob takes the frames out, not just the
+ * reading: at cliff:0 with the control mode reading -10 dB it sits below its
+ * -7 dB cliff, the polls mostly stop coming, and the session falls to the
+ * MFSK floor -- the control-deaf regime (#501's other half).  The same
+ * channel at offset 0 rides DATAC3. */
+static void test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor(void)
+{
+    car_sim_result_t plain, off;
+    char what[128];
+
+    carousel_sim_run(1, "cliff:0", false, LIMIT_MS, &plain);
+    setenv("CAR_CTL_SNR_OFFSET", "-10", 1);
+    carousel_sim_run(1, "cliff:0", false, LIMIT_MS, &off);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+
+    TEST_ASSERT_TRUE_MESSAGE(plain.intact, "offset 0 baseline");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, plain.done_ms, "offset 0 baseline");
+    snprintf(what, sizeof(what), "control reads %.1f dB, data %.1f dB, done in %llu ms against %llu ms",
+             off.ctl_snr_db, off.data_snr_db,
+             (unsigned long long)off.done_ms, (unsigned long long)plain.done_ms);
+    TEST_ASSERT_TRUE_MESSAGE(off.intact, what);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, off.done_ms, what);
+    /* The frames that do come through read ten dB low; the data frames read
+     * as the channel reads them. */
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)(plain.ctl_snr_db - 10.0), (float)off.ctl_snr_db, what);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)plain.data_snr_db, (float)off.data_snr_db, what);
+    /* ...and the ones below the cliff do not come: the session spends its
+     * time on the floor.  Twice the offset 0 run, not three times: with the
+     * data frames' readings taken for the estimate (#501) the data still
+     * goes on DATAC3 between the floor's stretches -- 986 s here, 2395 s
+     * before, and 523 to 1092 s on seeds 2-10 against 2071 to 2446. */
+    TEST_ASSERT_GREATER_THAN_MESSAGE(plain.done_ms * 2, off.done_ms, what);
+}
+
+/* Control frames reading low, the data frames reading true: the session
+ * still climbs, its rungs chosen by the data frames' readings (#501).  The
+ * offset's runs within a margin of the offset 0 run: the start rung still
+ * follows the connect hint, a control-mode reading, so one more step of the
+ * climb is left to pay.  Before the fix, the low readings held the estimate
+ * under the top rungs' gates: awgn:0.02 took 84.8 s at -6 and 68.7 s at -10
+ * against 52.1 s, and the messages on cliff:16 never went on QAM16C2. */
+static void test_carousel_low_control_readings_do_not_hold_the_ladder(void)
+{
+    car_sim_result_t zero, off;
+    char what[128];
+    static const char *const offs[] = { "-6", "-10" };
+
+    carousel_sim_run(1, "awgn:0.02", false, LIMIT_MS, &zero);
+    TEST_ASSERT_TRUE_MESSAGE(zero.intact && zero.done_ms, "offset 0 baseline (awgn:0.02)");
+    for (size_t i = 0; i < sizeof offs / sizeof *offs; i++) {
+        setenv("CAR_CTL_SNR_OFFSET", offs[i], 1);
+        carousel_sim_run(1, "awgn:0.02", false, LIMIT_MS, &off);
+        unsetenv("CAR_CTL_SNR_OFFSET");
+        snprintf(what, sizeof(what), "awgn:0.02 at %s dB: done in %llu ms against %llu ms", offs[i],
+                 (unsigned long long)off.done_ms, (unsigned long long)zero.done_ms);
+        TEST_ASSERT_TRUE_MESSAGE(off.intact && off.done_ms, what);
+        TEST_ASSERT_TRUE_MESSAGE(off.done_ms * 4 <= zero.done_ms * 5, what);   /* within 25 % */
+    }
+
+    /* Message traffic on a clean high-SNR channel, the shape of NW8L's MPD
+     * runs: few data frames between many control frames. */
+    setenv("CAR_SCRIPT", "A2500+1000,B300+2000,A2000+4000,B300+6000,"
+                         "A2000+8000,B300+10000,A1000+12000,B300+14000", 1);
+    carousel_sim_run(1, "cliff:16", false, LIMIT_MS, &zero);
+    setenv("CAR_CTL_SNR_OFFSET", "-10", 1);
+    carousel_sim_run(1, "cliff:16", false, LIMIT_MS, &off);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+    unsetenv("CAR_SCRIPT");
+    snprintf(what, sizeof(what), "cliff:16 messages at -10 dB: done in %llu ms against %llu ms",
+             (unsigned long long)off.done_ms, (unsigned long long)zero.done_ms);
+    TEST_ASSERT_TRUE_MESSAGE(zero.intact && zero.done_ms, what);
+    TEST_ASSERT_TRUE_MESSAGE(off.intact && off.done_ms, what);
+    TEST_ASSERT_TRUE_MESSAGE(off.done_ms * 10 <= zero.done_ms * 11, what);   /* within 10 % */
+}
+
+/* The estimate's step up to the first data frame's reading (#501) corrects
+ * the estimate, not the channel: the reading the peer's last report of me is
+ * paired with moves with it.  Without that, peer_hears_me_db took the step
+ * for a channel risen both ways, and the caller, hearing the callee 3 dB up
+ * while the callee heard it 9 dB down, polled it on a DATAC16 it could not
+ * decode: these messages took 3936 s, against 2576 s with the control mode
+ * reading true. */
+static void test_carousel_estimate_step_is_not_a_channel_step(void)
+{
+    car_sim_result_t zero, off;
+    char what[128];
+
+    setenv("CAR_SCRIPT", "A2500+1000,B300+2000,A2000+4000,B300+6000,"
+                         "A2000+8000,B300+10000,A1000+12000,B300+14000", 1);
+    carousel_sim_run(4, "stepa:0:-9:20:12", false, LIMIT_MS, &zero);
+    setenv("CAR_CTL_SNR_OFFSET", "-8", 1);
+    carousel_sim_run(4, "stepa:0:-9:20:12", false, LIMIT_MS, &off);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+    unsetenv("CAR_SCRIPT");
+    snprintf(what, sizeof(what), "stepa:0:-9:20:12 messages at -8 dB: done in %llu ms against %llu ms",
+             (unsigned long long)off.done_ms, (unsigned long long)zero.done_ms);
+    TEST_ASSERT_TRUE_MESSAGE(zero.intact && zero.done_ms, what);
+    TEST_ASSERT_TRUE_MESSAGE(off.intact && off.done_ms, what);
+    TEST_ASSERT_TRUE_MESSAGE(off.done_ms <= zero.done_ms, what);
+}
+
+
+/* A drop below the control mode mid-transfer (step:0:-10:60, messages:
+ * 5 KB from A, a line from B later).  B reads A at -10 dB, below the control
+ * mode, and polls for A's round at the floor; A, deaf to that DATAC16 poll,
+ * sends nothing there.  B stays at the floor (car_on_time, CAR_T_W): back on
+ * DATAC3, where nothing of A's decodes at -10 dB, it missed A's floor
+ * control until its own silence put it at the floor.  The longest B went
+ * without hearing A, over seeds 1-10: 121 s before, 91 s with this. */
+static void test_carousel_drop_below_the_control_mode_stays_at_the_floor(void)
+{
+    uint64_t worst = 0;
+    char what[96];
+    setenv("CAR_SCRIPT", "A5000+1000,B300+150000", 1);
+    for (uint64_t seed = 1; seed <= 10; seed++) {
+        car_sim_result_t r;
+        carousel_sim_run(seed, "step:0:-10:60", false, LIMIT_MS, &r);
+        snprintf(what, sizeof(what), "seed %llu", (unsigned long long)seed);
+        TEST_ASSERT_TRUE_MESSAGE(r.intact && r.done_ms, what);
+        if (r.silent_ms[1] > worst) worst = r.silent_ms[1];
+    }
+    unsetenv("CAR_SCRIPT");
+    snprintf(what, sizeof(what), "B's longest silence %llu ms", (unsigned long long)worst);
+    TEST_ASSERT_TRUE_MESSAGE(worst < 105000, what);
 }
 
 static void test_carousel_drain_budget_fits_the_floor(void)
@@ -416,6 +763,30 @@ static void test_carousel_max_keydown(void)
     kd_check("cliff:-5", 8, true, "CAR_KEYDOWN_A", 1, false);
 }
 
+/* A control loss (CAR_DEAF_LOSS) on a link where control is not being lost:
+ * BW500, -5 dB both ways, where DATAC16 decodes every frame.  Counting an
+ * unanswered round as a lost answer set it 13-45 times a run, and held to the
+ * end of the session it kept the callee's control on 26 s MFSK frames: these
+ * seeds' A->B did not finish in 2 h (rafael2k's bench on #538: 2, 9, 12, 16,
+ * 17, 26; 31, 45, 107, 118 of 120), where mercuryv2 took 5187-7028 s.  Asks
+ * only, but held for good, 2 and 44 still did not.  Asks only, held 60 s:
+ * all finish, the slowest in 6606 s. */
+void test_carousel_bw500_control_loss_does_not_stall(void)
+{
+    static const uint64_t SEEDS[] = { 2, 9, 12, 16, 17, 26, 31, 44, 45, 107, 118 };
+    setenv("CAR_BW", "500", 1);
+    for (size_t k = 0; k < sizeof(SEEDS) / sizeof(SEEDS[0]); k++) {
+        car_sim_result_t r;
+        char what[64];
+        carousel_sim_run(SEEDS[k], "cliff:-5", true, 7200000, &r);
+        snprintf(what, sizeof(what), "seed %llu cliff:-5 bidir BW500: a2b %d b2a %d",
+                 (unsigned long long)SEEDS[k], (int)r.a2b, (int)r.b2a);
+        TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
+        TEST_ASSERT_EQUAL_MESSAGE(CAR_SIM_BYTES, r.a2b, what);
+        TEST_ASSERT_EQUAL_MESSAGE(CAR_SIM_BYTES, r.b2a, what);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -433,8 +804,22 @@ int main(void)
     RUN_TEST(test_carousel_mfsk_tx_only);
     RUN_TEST(test_carousel_max_keydown);
     RUN_TEST(test_carousel_request_response_completes);
+    RUN_TEST(test_carousel_app_wait_is_said);
     RUN_TEST(test_carousel_drop_below_control_mode);
     RUN_TEST(test_carousel_no_reprobe_below_gate);
+    RUN_TEST(test_carousel_dark_rounds_drop_the_rung);
+    RUN_TEST(test_carousel_unheard_polls_free_their_slots);
+    RUN_TEST(test_carousel_req_scores_the_frames_sent);
+    RUN_TEST(test_carousel_done_poll_asks_for_nothing);
+    RUN_TEST(test_carousel_short_round_scored_as_sent);
+    RUN_TEST(test_carousel_m_scores_a_short_round_as_sent);
+    RUN_TEST(test_carousel_round_with_its_poll_scored_as_declared);
+    RUN_TEST(test_carousel_ctl_snr_offset_moves_only_the_control_reading);
+    RUN_TEST(test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor);
+    RUN_TEST(test_carousel_low_control_readings_do_not_hold_the_ladder);
+    RUN_TEST(test_carousel_estimate_step_is_not_a_channel_step);
+    RUN_TEST(test_carousel_drop_below_the_control_mode_stays_at_the_floor);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
+    RUN_TEST(test_carousel_bw500_control_loss_does_not_stall);
     return UNITY_END();
 }

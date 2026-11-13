@@ -179,6 +179,8 @@ struct OFDM {
 
   float fmin;
   float fmax;
+  float freq_search_step;  /* coarse grid step, Hz */
+  float freq_search_fine;  /* fine window half-width, Hz; 0 = derive from step */
 
   // Pointers
 

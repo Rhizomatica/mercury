@@ -44,6 +44,13 @@ input_device =
 ; Run mercury -z to list available devices, and store the id it prints.
 output_device =
 
+; The two devices' names, written by the GUI with the ids above.  On Windows
+; (wasapi, dsound), when a saved id is no longer present -- Windows gives a USB
+; sound card a new id when it is re-plugged -- the device with this exact name
+; is used instead, if exactly one has it.  Leave empty to turn that off.
+;input_device_name =
+;output_device_name =
+
 ; Capture input channel: left, right, or stereo (default: left)
 capture_channel = left
 
@@ -217,9 +224,10 @@ mfsk_tx_only = false
 
 ; The longest transmission of this station, in seconds (default 0: the
 ; protocol's 30 s round; else 5..30).  For TCP clients that abort when PTT
-; stays on too long: vARIM sends ABORT after about 20 s keyed, and a full
-; carousel round is 25-30 s, so set 16 on every station that runs vARIM
-; (#445).  It holds each of this station's keydowns, a poll before a round
+; stays on too long.  vARIM 1.13 and later allow 35 s keyed and need no
+; setting.  vARIM before 1.13 sends ABORT after about 20 s keyed, and a full
+; carousel round is 25-30 s, so set 16 on every station that runs such a
+; vARIM (#445).  It holds each of this station's keydowns, a poll before a round
 ; included, and asks the peer for short rounds; a peer without it can still
 ; key longer.  The MFSK floor's single frame is never split (27 s on the BW500
 ; floor).  The cost is throughput: in the simulator, about 0-6 % on fast

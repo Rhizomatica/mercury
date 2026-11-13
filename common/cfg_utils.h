@@ -43,6 +43,8 @@
 #define CFG_KEY_RADIO_DEVICE        "main:radio_device"
 #define CFG_KEY_INPUT_DEVICE        "main:input_device"
 #define CFG_KEY_OUTPUT_DEVICE       "main:output_device"
+#define CFG_KEY_INPUT_DEVICE_NAME   "main:input_device_name"
+#define CFG_KEY_OUTPUT_DEVICE_NAME  "main:output_device_name"
 #define CFG_KEY_CAPTURE_CHANNEL     "main:capture_channel"
 #define CFG_KEY_SOUND_SYSTEM        "main:sound_system"
 #define CFG_KEY_ARQ_TCP_BASE_PORT   "main:arq_tcp_base_port"
@@ -120,6 +122,11 @@ typedef struct {
     ptt_config_t ptt;               /* selected PTT method and backend config */
     char     input_device[512];
     char     output_device[512];
+    /* The two devices' names when they were chosen: used to find a device
+     * whose id is gone (Windows gives a USB codec a new id when it is
+     * re-plugged or re-enumerated, under the same name). */
+    char     input_device_name[512];
+    char     output_device_name[512];
     int      capture_channel;       /* LEFT / RIGHT / STEREO */
     int      sound_system;          /* AUDIO_SUBSYSTEM_* or -1 for auto */
     int      arq_tcp_base_port;

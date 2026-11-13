@@ -385,6 +385,8 @@ const (
 	// present to tick a box.
 	broadcastRxDirPrefKey = "broadcastFile.rxDir"
 	broadcastRxOnPrefKey  = "broadcastFile.receive"
+	// macOS: the security-scoped bookmark of that folder, base64 (picker_macos.go)
+	broadcastRxBookmarkPrefKey = "broadcastFile.rxDirBookmark"
 
 	// defaultWindowWidth/Height match the previous hard-coded launch size and
 	// are used until the operator has resized the window once.
@@ -887,6 +889,10 @@ func main() {
 				if telemetry.ClientTCPConnected {
 					bindings.tcpText.Text = "On"
 					bindings.tcpText.Color = theme.Color(theme.ColorNameSuccess)
+				} else if engineTNCHeld() {
+					// The chat window holds the TNC in-process, not over TCP.
+					bindings.tcpText.Text = "In app"
+					bindings.tcpText.Color = theme.Color(theme.ColorNameSuccess)
 				} else {
 					bindings.tcpText.Text = "Off"
 					bindings.tcpText.Color = theme.Color(theme.ColorNameError)
@@ -1257,7 +1263,17 @@ func main() {
 				appendLog(fmt.Sprintf("Failed to persist callsign: %v\n", err))
 			}
 		}
-		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort, history, tcpHost, persistCallsign)
+		localEngine := func() (bool, int, int) {
+			state.mu.RLock()
+			link, remote := state.link, state.useRemote
+			state.mu.RUnlock()
+			if eng, ok := link.(*engineLink); ok && !remote {
+				a, b := eng.TCPPorts()
+				return true, a, b
+			}
+			return false, 0, 0
+		}
+		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort, history, tcpHost, localEngine, persistCallsign)
 	})
 
 	topBar := container.NewHBox(
@@ -1787,6 +1803,9 @@ func main() {
 				if cancel != nil {
 					cancel()
 				}
+				// The chat window's in-process TNC reads the engine's ring,
+				// which mercuryStop frees.
+				engineTNCShutdown()
 				mercuryStop()
 				if uiLog != nil {
 					_ = uiLog.Close()
@@ -1855,6 +1874,9 @@ func main() {
 			})
 		}
 	}()
+
+	// Sailfish OS's keyboard for text fields (osk_hybris.go; a no-op elsewhere).
+	startOnScreenKeyboard(myApp, appendLog)
 
 	myWindow.ShowAndRun()
 

@@ -111,7 +111,10 @@ enum { CAR_PATTERN_ACK = 0, CAR_PATTERN_BREAK = 1 };
 
 enum { CAR_T_M, CAR_T_S, CAR_T_F, CAR_T_W, CAR_NTIMERS };   /* M's next decision or keydown; S's next slot;
                                                     * S's fallback to the floor, and its watch
-                                                    * for the round it asked for (listening only) */
+                                                    * for the round it asked for (listening only);
+                                                    * on M, CAR_T_W watches the air in S's answer
+                                                    * slot (carousel.c, m_watch), and CAR_T_F
+                                                    * ends a CAR_DEAF_LOSS (ctl_loss_expired) */
 
 typedef struct {
     uint8_t  id;
@@ -225,7 +228,7 @@ typedef struct {
     int      s_prev_lv;             /* the rung M's rounds last came on (-1: none) */
     bool     s_asked_new;           /* my poll on the air asks M for another rung */
     int      ok_lv;                 /* the rung of my last round the peer answered (-1: none) */
-    uint64_t peer_data_ms;          /* when a frame of the peer's data last came */
+    uint64_t peer_data_ms;          /* when a frame of the peer's data last came (M: the offer; both: the SNR estimate) */
     bool     fell_back;             /* M: my last round went back to it */
 
     /* as sender */
@@ -264,12 +267,13 @@ typedef struct {
     double   loss_est;
     double   polled_loss;        /* the loss my last poll told the sender */
     uint8_t  poll_id;               /* my last poll's keydown id (M), or the one I answer (S) */
-    int      poll_level, poll_n;    /* what I asked the peer for */
+    int      poll_level, poll_n;    /* what I asked the peer for (poll_n < 0: its size, after a poll for nothing) */
     int      round_seen, round_frames;
     int      round_lv;              /* the rung the frames came on */
     bool     rx_tail;               /* ...and its last frame among them */
     bool     status_seen;
-    int      silent_polls;
+    int      silent_polls;          /* bit 0: asked again this round; above it, 2 per scored
+                                     * round in a row with nothing of the peer heard */
     bool     peer_unopened;
     bool     peer_short;            /* the peer speaks the backlog hint (car_set_short_rung) */
     uint8_t  peer_backlog;          /* ...and what it last said it holds (BL_*) */
@@ -314,7 +318,12 @@ void car_set_floor_mode(car_t *c, int mode);
  * for good: the station transmits only MFSK (arq:mfsk_tx_only, an FSK-only
  * radio; the connect's TX-MFSK-only bit).  Its peer holds it in ctl_deaf,
  * the station itself in peer_ctl_deaf; nothing the session hears clears it. */
-enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2, CAR_DEAF_MFSK_TX = 3 };
+/* LOSS is deaf by the peer's control going missing while the peer is heard:
+ * two asks unanswered (ctl_deaf_on_asks in carousel.c), where the reading
+ * sits in the band DATAC16 decodes only part of.  Only M sets it.  It ends
+ * after LOSS_HOLD_MS (60 s), back to what the reading says, or sooner on a
+ * reading well above that band. */
+enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2, CAR_DEAF_MFSK_TX = 3, CAR_DEAF_LOSS = 4 };
 /* Seed, from the connect exchange, whether each end hears the other below the
  * control mode (CAR_DEAF_*; see ctl_on_floor in carousel.c).  Frames keep
  * both current, all but MFSK_TX. */
@@ -420,6 +429,10 @@ bool     car_owes_ack(const car_t *c);
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds
  * on a fast rung; minutes at the MFSK floor. */
 uint64_t car_drain_budget_ms(const car_t *c);
+/* The caller: when the answer slot of my keydowns that ended by keyed_by is
+ * over, for an answer not heard yet -- it may be on the air until then.  0
+ * when no such answer is due (only to a later keydown, or none). */
+uint64_t car_answer_due_ms(const car_t *c, uint64_t keyed_by);
 /* The caller has heard the callee say its application has hung up (M_END),
  * whether or not everything of the callee's has arrived since. */
 bool     car_peer_ending(const car_t *c);

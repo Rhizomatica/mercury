@@ -167,6 +167,30 @@ uint64_t mercury_host_chat_last_seq(void);
 int      mercury_host_chat_send(const char *plane, const char *text);
 size_t   mercury_host_bcast_chat_max(void);
 
+/* ---- the TNC, as its client --------------------------------------------------
+ *
+ * The host drives ARQ with the control port's own commands (docs/TNC.md:
+ * MYCALL, LISTEN, BW, CONNECT, DISCONNECT, ...), one line at a time, without
+ * the "\r", in the control port's one client slot: MERCURY_HOST_BUSY while a
+ * TCP control client is attached.  The replies and the state lines a TCP
+ * client would read go nowhere: follow the session from the status (sync,
+ * transmitting, mercury_host_busy_reason).  A TCP client that connects takes
+ * the slot from the host as from another TCP client, ending the session:
+ * mercury_host_tnc_held then says 0.  A line the control port answers WRONG
+ * is MERCURY_HOST_BAD.  mercury_host_tnc_release gives the slot back, as
+ * that client's leaving would.
+ *
+ * mercury_host_arq_read takes the session's received bytes (up to len, what
+ * there is now; 0 with none) while the host holds the slot and no TCP data
+ * client is attached.  Read them while a session is up, even to drop them:
+ * a full receive ring holds up the ARQ thread.  Chat lines are also in the
+ * chat store (above).  Stop reading, and release the slot, before
+ * mercury_shutdown: it frees the ring. */
+int    mercury_host_tnc_command(const char *line);
+void   mercury_host_tnc_release(void);
+int    mercury_host_tnc_held(void);
+size_t mercury_host_arq_read(uint8_t *buf, size_t len);
+
 /* ---- the listen mode -------------------------------------------------------
  *
  * The payload mode Mercury sits on while no ARQ session is up: what the

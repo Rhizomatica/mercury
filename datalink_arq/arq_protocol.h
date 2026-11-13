@@ -287,6 +287,15 @@ void arq_protocol_session_calls(bool we_called, const char *remote_call,
 #define ARQ_CHANNEL_SYNC_HOLD_MS      250
 #define ARQ_CHANNEL_DEFER_MS          500
 #define ARQ_CHANNEL_DEFER_MAX         20   /* ~10 s, then key regardless */
+/* Our own keydown is no false sync: its end is TX_COMPLETE, and a DISCONNECT
+ * keyed then goes out behind it with no reply window (a frame queued while
+ * keyed plays right after).  So steps while we are keyed have a cap of their
+ * own, the longest keydown (the carousel's 30 s) and a margin, only for a
+ * TX_COMPLETE that never comes; the end of the keydown starts the budget
+ * above afresh.  With the shared 10 s, an MFSK floor round (27 s) used it up
+ * and the DISCONNECT keyed 22 ms after it, over the peer's ACK: both lost,
+ * the teardown 46 s and two retries (NW8L-KA8RYU, IONOS MPD -5 dB, 1.9.22). */
+#define ARQ_CHANNEL_DEFER_KEYED_MAX   64   /* 32 s */
 /* A CALL held for a frame (arq_fsm.c, call_must_wait) waits this long past
  * the frame's end, so that the frame can decode first: an ACCEPT does, and a
  * CALL keyed just before it went out from a caller already connected.  The

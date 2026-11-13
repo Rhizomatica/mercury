@@ -242,6 +242,12 @@ Functions</h2></td></tr>
 <tr class="memitem:a69b46dd4efce4e449be2653957c5935b" id="r_a69b46dd4efce4e449be2653957c5935b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#a69b46dd4efce4e449be2653957c5935b">arq_session_active</a> (void)</td></tr>
 <tr class="memdesc:a69b46dd4efce4e449be2653957c5935b"><td class="mdescLeft">&#160;</td><td class="mdescRight">A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED, DISCONNECTING): what stops a broadcast carousel.  <br /></td></tr>
 <tr class="separator:a69b46dd4efce4e449be2653957c5935b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa9093dbc1d1ef4389f124135d82589fa" id="r_aa9093dbc1d1ef4389f124135d82589fa"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#aa9093dbc1d1ef4389f124135d82589fa">arq_link_has_peer</a> (void)</td></tr>
+<tr class="memdesc:aa9093dbc1d1ef4389f124135d82589fa"><td class="mdescLeft">&#160;</td><td class="mdescRight">The link to the peer exists: CONNECTED or DISCONNECTING.  <br /></td></tr>
+<tr class="separator:aa9093dbc1d1ef4389f124135d82589fa"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a4a312c8647172627a0e564e45a31242f" id="r_a4a312c8647172627a0e564e45a31242f"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#a4a312c8647172627a0e564e45a31242f">arq_channel_heard</a> (void)</td></tr>
+<tr class="memdesc:a4a312c8647172627a0e564e45a31242f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Whether another station is keyed, by the FSM's listen-before-talk test: what a station message waits on before it keys (modem_beacon_send).  <br /></td></tr>
+<tr class="separator:a4a312c8647172627a0e564e45a31242f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aaab420ad37cc5ff46152130992da7fb4" id="r_aaab420ad37cc5ff46152130992da7fb4"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8h.html#aaab420ad37cc5ff46152130992da7fb4">arq_discard_stale_rx</a> (void)</td></tr>
 <tr class="memdesc:aaab420ad37cc5ff46152130992da7fb4"><td class="mdescLeft">&#160;</td><td class="mdescRight">Drop received bytes an ended session left in the RX buffer.  <br /></td></tr>
 <tr class="separator:aaab420ad37cc5ff46152130992da7fb4"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -618,6 +624,26 @@ Variables</h2></td></tr>
 </div>
 </div>
 <h2 class="groupheader">Function Documentation</h2>
+<a id="a4a312c8647172627a0e564e45a31242f" name="a4a312c8647172627a0e564e45a31242f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4a312c8647172627a0e564e45a31242f">&#9670;&#160;</a></span>arq_channel_heard()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_channel_heard </td>
+          <td>(</td>
+          <td class="paramtype">void&#160;</td>
+          <td class="paramname"></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Whether another station is keyed, by the FSM's listen-before-talk test: what a station message waits on before it keys (modem_beacon_send). </p>
+
+</div>
+</div>
 <a id="ae9f7bd1d6a107320c2544fd376913baf" name="ae9f7bd1d6a107320c2544fd376913baf"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ae9f7bd1d6a107320c2544fd376913baf">&#9670;&#160;</a></span>arq_conn_get_calls()</h2>
 
@@ -1005,6 +1031,27 @@ Variables</h2></td></tr>
 
 <p>Check whether ARQ link is connected. </p>
 <dl class="section return"><dt>Returns</dt><dd>true when connected; otherwise false. </dd></dl>
+
+</div>
+</div>
+<a id="aa9093dbc1d1ef4389f124135d82589fa" name="aa9093dbc1d1ef4389f124135d82589fa"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa9093dbc1d1ef4389f124135d82589fa">&#9670;&#160;</a></span>arq_link_has_peer()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_link_has_peer </td>
+          <td>(</td>
+          <td class="paramtype">void&#160;</td>
+          <td class="paramname"></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>The link to the peer exists: CONNECTED or DISCONNECTING. </p>
+<p>What mutes the busy detector (modem.c): the energy then is the peer, not occupancy. </p>
 
 </div>
 </div>

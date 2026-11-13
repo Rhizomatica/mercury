@@ -2311,6 +2311,10 @@ typedef struct {
     bool                monitor;
     _Atomic bool        running;
     _Atomic bool        flush_req;    /* dispatcher asks: drop what you hold  */
+    /* ...and the codec's sync with it: the frame it has part demodulated
+     * (flush_req alone leaves that in the codec, and the rest of the frame
+     * still completes it).  Set together with flush_req. */
+    _Atomic bool        unsync_req;
     /* Metrics this plane observed since the dispatcher last drained them.
      * Merged with max() exactly as the single-threaded path did -- an unsynced
      * decoder reports a low estimate, so max() naturally reports whichever
@@ -2371,9 +2375,10 @@ static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
  * the lock started, 0 when there is none.  Diagnostic only: the host's
  * LISTEN OFF handler reads it, so a scanner hop that cuts a CALL off shows in
  * the log (modem_rx_frame_in_flight).  A lock can also be noise.
- * A LISTEN OFF flushes the MFSK listeners (arq.c counts each spell of
- * listening that ends, and the RX loop flushes when the count moves): their
- * frame is lost on the LISTEN OFF itself, whatever the host does next. */
+ * A LISTEN OFF with no session after it flushes all three (arq.c counts each
+ * spell of listening that ends, and the RX loop flushes when the count
+ * moves): the frame is lost on the LISTEN OFF itself, whatever the host does
+ * next. */
 enum { RX_INFLIGHT_CTRL, RX_INFLIGHT_LISTEN, RX_INFLIGHT_LISTEN_ALT, RX_INFLIGHT_SLOTS };
 static _Atomic uint64_t g_rx_inflight_since_ms[RX_INFLIGHT_SLOTS];
 static _Atomic int      g_rx_inflight_mode[RX_INFLIGHT_SLOTS];
@@ -2392,13 +2397,11 @@ static void rx_inflight_note(int slot, int mode, const rx_metrics_accum_t *m, ui
         atomic_store(&g_rx_inflight_since_ms[slot], 0);
 }
 
-bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms,
-                              bool *lost_on_listen_off)
+bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms)
 {
     uint64_t now = monotonic_ms();
     uint64_t oldest = 0;
     int mode = -1;
-    int slot = -1;
     for (int i = 0; i < RX_INFLIGHT_SLOTS; i++)
     {
         uint64_t since = atomic_load(&g_rx_inflight_since_ms[i]);
@@ -2406,15 +2409,12 @@ bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms,
         {
             oldest = since;
             mode = atomic_load(&g_rx_inflight_mode[i]);
-            slot = i;
         }
     }
     if (oldest == 0)
         return false;
     if (mode_name)
         *mode_name = mode_name_from_enum(mode);
-    if (lost_on_listen_off)
-        *lost_on_listen_off = slot != RX_INFLIGHT_CTRL;
     if (for_ms)
         *for_ms = now > oldest ? now - oldest : 0;
     return true;
@@ -2443,6 +2443,14 @@ static void *rx_worker_thread(void *arg)
     {
         if (atomic_load(&w->flush_req))
         {
+            if (atomic_exchange(&w->unsync_req, false) &&
+                modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync)
+            {
+                pthread_mutex_t *rl = modem_inst_lock_for(w->state.codec.ctx);
+                pthread_mutex_lock(rl);
+                w->state.codec.be->unsync(w->state.codec.ctx);
+                pthread_mutex_unlock(rl);
+            }
             clear_buffer(w->ring);
             w->state.demod_count = 0;   /* owned by this thread */
             atomic_store(&w->flush_req, false);
@@ -3148,6 +3156,7 @@ void *rx_thread(void *g_modem)
     }
     bool listen_fed = false, listen_alt_fed = false;
     uint32_t listen_spells_seen = 0;
+    uint32_t listen_releases_seen = 0;
     bool listen_spells_known = false;
     /* Monitor mode: per-mode passive decoders, started on the MONITOR-ON
      * transition and stopped on OFF. */
@@ -3322,8 +3331,28 @@ void *rx_thread(void *g_modem)
                 atomic_store(&w_listen.flush_req, true);
                 atomic_store(&w_listen_alt.flush_req, true);
             }
-            listen_spells_seen  = arq_snapshot.listen_spells_ended;
-            listen_spells_known = true;
+            /* ...and when it ended with the radio back to the host, the
+             * control and payload decoders too: the DATAC16 CALL decoder kept
+             * a frame across the hop, and a CALL that ended 1.4-1.9 s after
+             * it was answered on the wrong channel (K7EK <- KG9NI-7, 1.9.22,
+             * 2026-11-07, twice; BPQ32 held there ~2 min each time).  Not when
+             * a session follows: the control decoder carries it.
+             *
+             * Their sync goes too.  The codec keeps what it has demodulated of
+             * a frame: emptying the ring alone, a CALL 2.5 s into its 3.7 s
+             * still decoded on a bench, from the audio after the hop. */
+            if (listen_spells_known && arq_snapshot.listen_releases != listen_releases_seen)
+            {
+                rx_worker_t *drop[] = { &w_ctrl, &w_pay, &w_listen, &w_listen_alt };
+                for (size_t k = 0; k < sizeof(drop) / sizeof(drop[0]); k++)
+                {
+                    atomic_store(&drop[k]->unsync_req, true);
+                    atomic_store(&drop[k]->flush_req, true);
+                }
+            }
+            listen_spells_seen    = arq_snapshot.listen_spells_ended;
+            listen_releases_seen  = arq_snapshot.listen_releases;
+            listen_spells_known   = true;
         }
         /* ...and the other floor, for a caller at the other bandwidth */
         int alt_mode = listen_mode == MERCURY_MODE_MFSK_N32 ? MERCURY_MODE_MFSK : MERCURY_MODE_MFSK_N32;

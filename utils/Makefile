@@ -84,6 +84,19 @@ acquire_vs_decode: acquire_vs_decode.c bench_common.c chanutil.c ../common/watte
 acq_tuning_sweep: acq_tuning_sweep.c bench_common.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
+# Sweeps a baseband frequency offset through the acquisition search and
+# reports, per offset, the acquisition rate, the acceptance metric and the
+# frequency estimate the search produced.  The offset question the
+# threshold sweep left open.
+offset_acq_sweep: offset_acq_sweep.c bench_common.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# Self-check for the analytic frequency shift: a pure tone, whose shifted
+# form is known in closed form.  The offset study's instrument has to pass
+# this before any offset number is believed.
+shift_selftest: shift_selftest.c bench_common.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
 # QAM16C2 under the peak-limited-radio model: TX clip variants generated
 # in-chain via freedv_set_tx_clip_config, compared at EQUAL PEAK with the
 # stock (unclipped) waveform and DATAC17.  Measures PAPR, delivery,

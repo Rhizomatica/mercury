@@ -94,6 +94,7 @@ jobs:
             libhamlib-dev \
             libssl-dev \
             libsodium-dev \
+            libiniparser-dev \
             pkg-config
 
       - name: Checkout
@@ -121,6 +122,11 @@ jobs:
             exit 1
           fi
           echo "Linux amd64 build succeeded"
+
+      # hermes-radio-daemon's build (MERCURY_HOST=daemon): every core call
+      # resolves against host/, so the daemon's link can't break on a tag.
+      - name: Daemon build links (libmercury_host.a)
+        run: make -j$(nproc) check-host-link MERCURY_HOST=daemon
 
   build-linux-arm64:
     name: Build Linux arm64 (cross-compile, Debian 13)
@@ -299,9 +305,8 @@ jobs:
   # Nothing in CI built macOS, so nothing caught it -- while the repo does ship
   # macOS artifacts (make fyne-ui-macos-universal-dmg).
   #
-  # Build-only on purpose: tests/Makefile links -lrt, which does not exist on
-  # macOS, so `make -C tests test` cannot run here without a separate change.
-  # A build is enough for this class of bug, which fails at link time.
+  # Build-only: the unit tests run on macOS in ut.yml (unit-tests-macos).  A
+  # build is enough for this class of bug, which fails at link time.
   #
   # Note the plain checkout, unlike the four jobs above: they pass
   # ssh-key: secrets.SSH_PRIVATE_KEY, and secrets are not available to pull
@@ -400,6 +405,7 @@ jobs:
             libhidapi-dev \
             libgl1-mesa-dev \
             libegl1-mesa-dev \
+            libgles-dev \
             xorg-dev \
             libwayland-dev \
             libxkbcommon-dev
@@ -422,6 +428,11 @@ jobs:
           [ -f mercury-ui ] || { echo "::error::no mercury-ui binary produced"; exit 1; }
           file mercury-ui
           echo "OK: native Fyne UI build"
+
+      # osk_hybris.go and tls_hybris.go build only with Sailfish OS's tags
+      # (sailfish/build-mercury-ui.sh), which no other job passes.
+      - name: Vet the Sailfish OS variant (hybris tags)
+        run: cd gui_interface/fyne-ui && go vet -tags mercury_embedded,wayland,gles2,egl,hybris .
 
   build-fyne-ui-linux-arm64:
     name: Build Fyne UI (Linux arm64, Debian 13)
@@ -558,10 +569,11 @@ jobs:
           go-version: '1.26.9'
           cache-dependency-path: gui_interface/fyne-ui/go.sum
 
-      - name: Install the NDK and the fyne CLI
+      # The Makefile builds fyne's tool itself, at minSdkVersion 26
+      # (FYNE_ANDROID), from fyne.io/tools@$FYNE_CLI_VERSION.
+      - name: Install the NDK
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "platforms;android-34" "build-tools;34.0.0" > /dev/null
-          go install fyne.io/tools/cmd/fyne@$FYNE_CLI_VERSION
 
       - name: Build the .apk
         run: |
@@ -579,6 +591,7 @@ jobs:
           grep -E "^package:|native-code" badging.txt
           grep -q "native-code: 'arm64-v8a'" badging.txt || { echo "::error::no arm64-v8a library in $APK"; exit 1; }
           grep -q "android.permission.RECORD_AUDIO" badging.txt || { echo "::error::$APK does not ask for RECORD_AUDIO"; exit 1; }
+          grep -q "^sdkVersion:'26'" badging.txt || { echo "::error::$APK does not need Android 8 (minSdkVersion 26)"; exit 1; }
           "$B/apksigner" verify "$APK"
           echo "OK: $APK"
 

@@ -1,3 +1,83 @@
+mercury (1.9.24-1) unstable; urgency=medium
+
+  * Release 1.9.24.
+  * carousel: a round M asks about (REQ) is scored as the frames M sent.
+  * fyne-ui: vendored GLFW takes Wayland touch as the left mouse button (Sailfish taps).
+  * fyne-ui: vendored GLFW's upstreamTreeSHA follows its tree, so #512 is rebuilt.
+  * arq: the callee lets go when the caller's DISCONNECT ends the call it answers.
+  * fyne-ui: Sailfish OS's on-screen keyboard for text fields, through Maliit.
+  * carousel: free the continuation slots of a floor poll the peer never answered.
+  * carousel: a "done" poll asks for nothing, so the round after it is not raised to the old poll size.
+  * main: wake the forced-exit thread through a pipe, so it exists on macOS.
+  * arq: ABORT tells the peer once and lets go, also during a teardown.
+  * carousel: a round with its tail lost is scored as no more frames than fit in its time.
+  * tnc: send DISCONNECTED when the session has closed, as VARA does.
+  * carousel: M's side, and a round M carried with its poll, scored as no more frames than were sent.
+  * log: one line per Hamlib error, a logged exit, a client's close is not a warning.
+  * tnc: a shutdown while keyed tells the host PTT OFF; log when capture returns.
+  * log: no host DISCONNECT where there was none; a broadcast client's leaving is not an error.
+  * macos: pick files and folders in the system's open panel (App Review 2.4.5(i)).
+  * arq: a CALL waits out an ACCEPT that may come on the MFSK floor.
+  * audioio: a capture device that stays dead is reported, and found again by name.
+  * arq: a BITRATE line at least every 20 s while calling.
+  * tests: the watterson golden checksum is checked only under glibc (fixes #520).
+  * sim: CAR_CTL_SNR_OFFSET applied in the channel -- decode failure follows the SNR (alternative to #522).
+  * arq: ABORT's one DISCONNECT keys before a scanning host takes the radio.
+  * audio: a saved device whose Windows id has changed is found by its name.
+  * carousel: control follows the floor when the peer's control goes missing.
+  * arq: PENDING every 20 s while answering a call, so a scanning host keeps the channel.
+  * audioio: the capture recovery line says how long the device was silent.
+  * carousel: the rung estimate goes by the data frames' readings, the control mode's as the fallback.
+  * tcp: one host at a time on the control and data ports.
+  * docs: update HERMES URL in readme.
+  * arq: the lost-peer watchdog waits out an answer already on the air.
+  * carousel: S hearing M below the control mode stays at the floor it asked for.
+
+ -- Rafael Diniz <rafael@riseup.net>  Fri, 13 Nov 2026 17:29:07 +0000
+
+mercury (1.9.23-1) unstable; urgency=medium
+
+  * Release 1.9.23.
+  * ci: SimplySign login for the November form, and keep the screenshots on a timeout.
+  * sailfish: the Sailfish OS spec lives here, bumped by release.yml.
+  * fyne-ui/android: restart audio when the microphone is granted late.
+  * sailfish: build mercury-ui natively (Wayland, GLES2 via libhybris).
+  * acquisition tuning: measure the DATAC15/16 knee, lower timing_mx_thresh 0.45 -> 0.40.
+  * clipped QAM16C2: measure the top rung under peak-limited radios (stacked on #455).
+  * README: install on iOS from the App Store.
+  * arq: a callee owing the caller's last ack hangs up through M_END.
+  * arq: end a dead-link DISCONNECT promptly, and let a redial through.
+  * carousel: no re-probe of a failed rung the SNR gates.
+  * arq: end the session soon after the callee hangs up and goes silent.
+  * arq: log LISTEN OFF teardown cut-offs; fix stale addresses that silence the next incoming session.
+  * tnc: log a scanner hop that cuts off a CALL; document scanning hosts.
+  * arq: cap a call at arq:call_max_s (default 300 s), whatever RETRIES says.
+  * tnc: accept RETRIES=20 and CALLINT=20; log every WRONG reply.
+  * log: cap the log file at main:log_max_mb (default 20 MB), keep one old file.
+  * arq: send PENDING again on each repeated CALL while answering (BPQ32 scan hold).
+  * docs/presentations: bring the deck up to November 2026.
+  * arq: take the CONNECTED side from the FSM, not from src_addr.
+  * broadcast: station messages (the HERMES beacon), packet type 0x07.
+  * arq: an outgoing call does not keep the last incoming CALL's dialed callsign.
+  * fyne-ui: Help > Submit issue opens the issues list.
+  * fyne-ui: build and test again without the embedded engine.
+  * ci: fix i386 UT and TSan jobs on the ubuntu-26.04 runner image.
+  * modem: keep the busy detector muted until the teardown is over.
+  * modem: log what made each BUSY/CLEAR verdict.
+  * modem: flush the MFSK call listeners at every LISTEN OFF.
+  * log: name the build (version and git hash) at startup.
+  * modem: take a new busy-detector floor at each scan hop.
+  * modem: drop the DATAC16 decoder's frame at a scan hop too.
+  * carousel: say how long the application's data waited to go, and why.
+  * carousel: two dark rounds in a row make a rung dead at two losses.
+  * fyne-ui: broadcast chat and files through the engine's host calls, not its TCP port.
+  * fyne-ui: the chat window drives its own engine's TNC in-process, not over TCP.
+  * README: Sailfish OS has mercury-ui now, from a development snapshot.
+  * arq: a DISCONNECT waits out our own keydown before its deferral cap.
+  * Offset acquisition: fix the 6 dB-low frequency shifter, measure every mode's capture window.
+
+ -- Rafael Diniz <rafael@riseup.net>  Mon, 09 Nov 2026 16:10:12 +0000
+
 mercury (1.9.22-1) unstable; urgency=medium
 
   * Release 1.9.22.

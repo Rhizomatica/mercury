@@ -183,6 +183,7 @@ int mercury_engine_init(const mercury_config *cfg,
 
     snprintf(g_input_dev,  sizeof(g_input_dev),  "%s", cfg->input_device);
     snprintf(g_output_dev, sizeof(g_output_dev), "%s", cfg->output_device);
+    audioio_set_saved_device_names(cfg->input_device_name, cfg->output_device_name);
 
     int rx_input_channel = cfg->capture_channel;
 
@@ -299,6 +300,7 @@ int mercury_engine_init(const mercury_config *cfg,
                                   &g_radio_capture, &g_radio_playback) != 0)
         {
             fprintf(stderr, "mercury_engine: audio I/O init failed\n");
+            HLOGE("engine", "Audio I/O init failed: the engine is exiting");
             engine_log_shutdown();
             return -1;
         }
@@ -308,6 +310,7 @@ int mercury_engine_init(const mercury_config *cfg,
     if (radio_io_init(&ptt_config) != 0)
     {
         fprintf(stderr, "mercury_engine: radio init failed\n");
+        HLOGE("engine", "Radio init failed: the engine is exiting");
         if (!audioio_rings_external(g_audio_system))
             audioio_deinit(&g_radio_capture, &g_radio_playback);
         engine_log_shutdown();
@@ -350,6 +353,7 @@ int mercury_engine_init(const mercury_config *cfg,
     if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
     {
         fprintf(stderr, "mercury_engine: ARQ init failed\n");
+        HLOGE("engine", "ARQ init failed: the engine is exiting");
         mercury_stop = true;
         shutdown_modem(&g_modem);
         if (!audioio_rings_external(g_audio_system))
@@ -372,6 +376,7 @@ int mercury_engine_init(const mercury_config *cfg,
                         g_modem.payload_bytes_per_modem_frame) != EXIT_SUCCESS)
     {
         fprintf(stderr, "mercury_engine: TCP init failed\n");
+        HLOGE("engine", "TCP init failed: the engine is exiting");
         mercury_stop = true;
         interfaces_shutdown();
         shutdown_modem(&g_modem);

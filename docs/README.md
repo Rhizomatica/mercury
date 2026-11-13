@@ -3,6 +3,11 @@
 Start with the [project README](../README.md) if you are new. This page is the
 map of everything else.
 
+**Install the app:** [Google Play (Android)](https://play.google.com/store/apps/details?id=org.rhizomatica.mercury) ·
+[App Store (iPhone, iPad)](https://apps.apple.com/app/mercury-hf-modem/id6822504870) ·
+[Releases (Linux, Windows, macOS)](https://github.com/Rhizomatica/mercury/releases) ·
+[Debian packages](../README.md#install-via-debian-package-on-linux).
+
 Documentation here falls into three kinds, and it helps to know which you are
 reading: **reference** describes how Mercury behaves today and is kept current;
 **guides** are task-oriented; **findings** are dated records of an
@@ -13,6 +18,8 @@ having — they are not updated as the code moves on.
 
 | Document | What it covers |
 |---|---|
+| [RELEASE-1.9.24.md](RELEASE-1.9.24.md) | **1.9.24 talks to 1.9.23 and back to 1.9.20.** Fixes from BPQ32, LinBPQ, vARIM and Pat field reports: `ABORT` tells the peer once, `DISCONNECTED` at the session's end, one host at a time on the TNC ports, control frames that follow the data to the MFSK floor, the rung estimate from the data frames, rungs no longer dropped for frames never sent, and a Windows sound card found again by name. |
+| [RELEASE-1.9.23.md](RELEASE-1.9.23.md) | **1.9.23 talks to 1.9.22, 1.9.21 and 1.9.20.** Fixes for scanning hosts and teardowns from BPQ32, LinBPQ, JNOS and QTermTCP field reports, `call_max_s` and `log_max_mb`, `RETRIES=n`, the GUI's chat window driving its own engine, busy-detector switches, HERMES beacon frames, and each mode's tolerance to a mistuned carrier, measured. |
 | [RELEASE-1.9.22.md](RELEASE-1.9.22.md) | **1.9.22 talks to 1.9.21 and 1.9.20.** Stations on different bandwidths connect on the MFSK floor, `max_keydown_s` for vARIM, the receiver unsync fix (a crash, and a search of old audio), the unanswered-probe fall-back, `silence_fallback_s` and the fast CALL count, and log dates and UTC. |
 | [RELEASE-1.9.21.md](RELEASE-1.9.21.md) | **1.9.21 talks to 1.9.20.** The fix for a session whose link falls below the control mode (Pat stalling at `FF>`, #431), MFSK-only transmit for FSK-only radios, the Hermes-Lite 2 backend, and the Mac App Store package. |
 | [RELEASE-1.9.20.md](RELEASE-1.9.20.md) | **1.9.20 does not talk to 1.9.19 on the air.** The 2.0 architecture: a ladder that starts where the SNR says and falls back fast, quicker connect and teardown, a 500 Hz MFSK floor, high-Doppler channels, and what was tested. Android and iOS as technology previews. |
@@ -61,7 +68,9 @@ them for reasoning, not for current behaviour.
 |---|---|
 | [CAROUSEL-REPORT.md](CAROUSEL-REPORT.md) | Was the carousel with the MFSK floor ready to replace stop-and-wait? On-air and simulator results, what broke on the way, and the deep-fade collisions still open. |
 | [HARQ-FINDINGS.md](HARQ-FINDINGS.md) | Does soft-combining repeated frames actually rescue a link at the fading cliff? (Yes — roughly half the frames, where single-shot delivers none.) |
-| [ACQ-TUNING-FINDINGS.md](ACQ-TUNING-FINDINGS.md) | Can the DATAC15/16 acquisition knee be moved by tuning knobs? (Yes — `timing_mx_thresh` 0.45 -> 0.40, ~1.5-2 dB at ~0-2% noise-only false syncs; the UW budget buys nothing; plus a high-SNR frequency-offset acquisition loss the lower threshold repairs.) |
+| [ACQ-TUNING-FINDINGS.md](ACQ-TUNING-FINDINGS.md) | Can the DATAC15/16 acquisition knee be moved by tuning knobs? (Yes — `timing_mx_thresh` 0.45 -> 0.40, ~1.5-2 dB at ~0-2% noise-only false syncs; the UW budget buys nothing. Its frequency-offset section was wrong — a defective instrument — and is corrected in place.) |
+| [OFFSET-ACQUISITION-FINDINGS.md](OFFSET-ACQUISITION-FINDINGS.md) | How far off carrier can the acquisition capture a mistuned signal, and what does it cost to widen? (±55 Hz today, set by the search's geometry; a ±20 Hz offset is nearly free. A ±150 Hz span captures ±153 Hz for 2.5x the idle CPU. Also the correction of the instrument that got the earlier offset answer wrong.) |
+| [ACQUISITION-WINDOWS.md](ACQUISITION-WINDOWS.md) | How far off carrier can **each** mode be captured? (±55 Hz for every OFDM mode -- the span is a modem-level constant -- and ±100 Hz for the MFSK floor, so a station 80 Hz off connects on the floor and one 140 Hz off cannot connect at all. Each mode measured at its own operating point, with the published numbers reproduced first. Also the channel model's carrier offset, so the window can be run over a session.) |
 | [CLIPPED-QAM16C2-FINDINGS.md](CLIPPED-QAM16C2-FINDINGS.md) | Does QAM16C2's ~10 dB PAPR cost peak-limited radios the top rung, and does the built-in clipper buy it back? (Yes and yes — drive 2.0/gain2 1.0: PAPR 11.4 -> 6.7 dB, AWGN knee -4.5 dB of radio setting, fading goodput crossover vs DATAC17 ~3 dB earlier; drive 3.0 destroys the mode. Findings-only: the one-line mode change rides the OTA bench.) |
 | [FADE-CLIFF-DECISION.md](FADE-CLIFF-DECISION.md) | Should the S1 fade-cliff fix be merged? Simulation evidence behind the decision. |
 | [SPEED-REGRESSION-FINDINGS.md](SPEED-REGRESSION-FINDINGS.md) | Why a pre-2.0 build was slower than v1.9.9 on the bench — FEC under fading and gear-shift oscillation, not the guard intervals everyone suspected. |

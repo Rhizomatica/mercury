@@ -157,7 +157,8 @@ ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size)
 }
 
 void net_set_status(int pt, int st) { (void)pt; (void)st; }
-int net_get_status(int pt) { (void)pt; return NET_CONNECTED; }
+static int mock_net_status[8];   /* NET_CONNECTED for every port: setUp */
+int net_get_status(int pt) { return (pt >= 0 && pt < 8) ? mock_net_status[pt] : NET_CONNECTED; }
 ssize_t tcp_send_some(int port_type, const uint8_t *buffer, size_t len)
 {
     (void)port_type; (void)buffer;
@@ -272,14 +273,12 @@ bool modem_get_busy_reseed_on_hop(void) { return mock_busy_reseed; }
 
 static bool mock_inflight = false;
 
-bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms,
-                              bool *lost_on_listen_off)
+bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms)
 {
     if (!mock_inflight)
         return false;
-    if (mode_name)          *mode_name = "MFSK";
-    if (for_ms)             *for_ms = 2100;
-    if (lost_on_listen_off) *lost_on_listen_off = true;
+    if (mode_name) *mode_name = "MFSK";
+    if (for_ms)    *for_ms = 2100;
     return true;
 }
 
@@ -390,6 +389,9 @@ arq_info arq_conn = {0};
 
 void setUp(void)
 {
+    for (int i = 0; i < 8; i++)
+        mock_net_status[i] = NET_CONNECTED;
+    atomic_store(&host_holds_tnc, false);
     memset(last_tcp_write_buf, 0, sizeof(last_tcp_write_buf));
     last_tcp_write_len = 0;
     tcp_write_call_count = 0;
@@ -2263,6 +2265,45 @@ void test_bcast_shutdown_backpressured_send(void)
     mercury_stop = false;
 }
 
+/* The host as the TNC's client: refused while a TCP control client holds the
+ * slot, a control line otherwise, and its release is that client's leaving. */
+void test_host_tnc_command_busy_while_a_tcp_client_is_attached(void)
+{
+    TEST_ASSERT_EQUAL_INT(-2, tnc_host_command("LISTEN ON"));
+    TEST_ASSERT_EQUAL_INT(0, captured_cmd_count);
+    TEST_ASSERT_FALSE(atomic_load(&host_holds_tnc));
+}
+
+void test_host_tnc_command_runs_a_control_line(void)
+{
+    mock_net_status[CTL_TCP_PORT] = NET_LISTENING;
+    TEST_ASSERT_EQUAL_INT(0, tnc_host_command("CONNECT KO0OOO W1ABC\r"));
+    TEST_ASSERT_EQUAL_INT(1, captured_cmd_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_CONNECT, captured_cmd.type);
+    TEST_ASSERT_EQUAL_STRING("KO0OOO", captured_cmd.arg0);
+    TEST_ASSERT_EQUAL_STRING("W1ABC", captured_cmd.arg1);
+    TEST_ASSERT_EQUAL_INT(-1, tnc_host_command("\r\n"));
+    TEST_ASSERT_EQUAL_INT(-1, tnc_host_command("CONNECT KO0OOO")); /* WRONG */
+    TEST_ASSERT_EQUAL_INT(1, captured_cmd_count);
+}
+
+void test_host_tnc_release_is_a_client_leaving_once(void)
+{
+    mock_net_status[CTL_TCP_PORT] = NET_LISTENING;
+    tnc_host_release();                      /* not holding: nothing */
+    TEST_ASSERT_EQUAL_INT(0, captured_cmd_count);
+    TEST_ASSERT_EQUAL_INT(0, tnc_host_command("LISTEN ON"));
+    TEST_ASSERT_TRUE(tnc_host_holds());
+    mock_monitor_enabled = true;
+    tnc_host_release();
+    TEST_ASSERT_FALSE(tnc_host_holds());
+    TEST_ASSERT_EQUAL_INT(2, captured_cmd_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_CLIENT_DISCONNECT, captured_cmd.type);
+    TEST_ASSERT_FALSE(mock_monitor_enabled);
+    tnc_host_release();
+    TEST_ASSERT_EQUAL_INT(2, captured_cmd_count);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -2377,5 +2418,8 @@ int main(void)
     RUN_TEST(test_bcast_data_lenprefix_roundtrip);
     RUN_TEST(test_sn_query_is_always_answered);
     RUN_TEST(test_bitrate_query_is_always_answered);
+    RUN_TEST(test_host_tnc_command_busy_while_a_tcp_client_is_attached);
+    RUN_TEST(test_host_tnc_command_runs_a_control_line);
+    RUN_TEST(test_host_tnc_release_is_a_client_leaving_once);
     return UNITY_END();
 }

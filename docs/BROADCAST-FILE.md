@@ -142,9 +142,15 @@ Mercury does not guess from the payload's contents. See
   folder and the tick are remembered, so a station configured once comes back up
   receiving after a restart with nobody present.
 
-File transfer shares the broadcast socket with broadcast chat: Mercury's
-broadcast port accepts exactly one client, so the panel filters incoming frames
-and passes anything that is not a file frame through to chat.
+With the engine in the UI (not *Remote*), chat and files go through the
+engine's own calls (`host/mercury_host.h`, as hermes-radio-daemon's do): the
+engine's carousel sends the file, and the broadcast TCP port stays free for a
+client of its own (hermes-broadcast, Reticulum).  Broadcast chat is shown from
+the engine's message store, so with `[store] enabled = false` the window shows
+none.  Attached to a remote engine, the window uses that engine's broadcast
+port: file transfer shares the socket with broadcast chat (the port accepts
+exactly one client), so the panel filters incoming frames and passes anything
+that is not a file frame through to chat.
 
 Progress is reported as frames and cycles, never a percentage. With no return
 path the sender cannot know what any receiver has decoded, and a percentage

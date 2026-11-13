@@ -122,6 +122,12 @@ fallback) does not take a fallen-back S off the floor.
   - Every pair is checked, not only `FS` = 60 % of `FM`, so the check also
     covers two stations configured differently: M's `SILENT_MS` comes from
     its own ini, S's `S_FALLBACK_MS` from its own.
+  - The round timer firing is a choice in `SDeaf` (`w`): it may take S
+    back to `sPrev`, or leave it where it is.  So S staying at the floor it
+    asked for while it reads M below the control mode (`car_on_time`,
+    `CAR_T_W`, #548) is among the behaviours checked, and the result is
+    unchanged: no error, 696 distinct states.  Only taking a fallen-back S
+    off the floor is excluded (`Mut_fs_nostay`).
   - Not modelled: M's shortcut after two unanswered REQs
     (`car_on_tx_done`: `reqs >= 2 ? S_FALLBACK_MS : SILENT_MS`), which takes
     M to the floor after its own `S_FALLBACK_MS`.  It only moves M there
@@ -163,22 +169,25 @@ Which model covers the other 2.0 changes:
   smoothed SNR move it): it changes only the reading S judges rungs by, so
   `RungAgreement` covers the rung S then names (any rung).  It also moves
   when an end decides it hears its peer below the control mode
-  (`ctl_deaf`).  No model has that decision, before or after this change:
-  the models fix the control frame's mode per configuration
-  (`CarouselTurns.cfg`, `CarouselTurns_mfsk.cfg`);
+  (`ctl_deaf`).  The rung models fix the control frame's mode per
+  configuration (`CarouselTurns.cfg`, `CarouselTurns_mfsk.cfg`); the
+  decision itself, for the caller, is `specs/ctldeaf/CtlDeaf.tla`;
 - no first try of a rung while the SNR is well below its threshold (half the gate)
   (`choose_level`'s one-rung-up probe): it only narrows the rungs S may
   name, which `RungAgreement` leaves free (any rung);
 - control on the control mode once the channel has risen past the peer's
   "deaf" (`ctl_on_floor`, `peer_hears_me_db`): it changes only which mode
   a control frame goes on, and only from the floor to the control mode,
-  which the peer always decodes.  Like the `ctl_deaf` decision above, no
-  model has that choice;
+  which the peer always decodes.  No model has that choice (the `ctl_deaf`
+  decision behind it is `specs/ctldeaf`);
 - a pattern only for the rung asked: the floor's patterns are outside
   `RungAgreement`; the rule only narrows when S answers with one, which
   `FloorSilence` does not depend on;
 - an unanswered ask scored, and the next ask one rung lower when the rung
   asked has delivered nothing (`m_timer`, `m_decide_recv`): `PollRung`;
+- a rung dead after 2 unanswered asks, not 4, once two rounds in a row
+  brought nothing of the peer (dark, #497): `PollRung` with `K = 2`
+  (`PollRung_dark.cfg`), a rung killed mid-session;
 - full rounds at once on a rung well above its threshold that has lost
   nothing (`level_earned`): it changes only how many frames a poll asks
   for, within the 1 .. `keydown_cap` that `poll_size` already gave, which
@@ -196,7 +205,7 @@ Which model covers the other 2.0 changes:
   (`deaf_rung`); a decoded OFDM frame, or the peer's report that it hears
   mine, ends the deafness.  The probe is a sized poll naming a rung, which
   `RungAgreement` allows for any rung, so agreement and delivery hold; the
-  deafness itself is the `ctl_deaf` decision no model has (above).
+  deafness itself is the `ctl_deaf` decision of `specs/ctldeaf`.
 
 ## PollRung
 
@@ -204,14 +213,28 @@ The other direction: on which rung the callee's rounds go when the caller
 asks for them (`PollRung.tla`).  Each poll names a rung, the caller binds
 its decoder there as it keys, and the callee answers on the rung named.  The
 rung is the one asked last, or lower (`choose_level`), and one lower than a
-rung that has had the caller's asks and delivered nothing.  Some rungs may
-carry nothing at all; the floor always carries.
+rung that has had the caller's asks and delivered nothing, or that has had
+`K` unanswered scored asks in a row (`level_dead`).  Some rungs may carry
+nothing at all, and the channel may kill a live rung mid-session (`Kill`, at
+most `Kills` times), one that has delivered or not; the floor always
+carries.
 
     java -cp /opt/TLA+Toolbox/tla2tools.jar tlc2.TLC -workers 4 \
         -metadir /tmp/tlc-pollrung -config PollRung.cfg PollRung.tla
 
-- `PollRung.cfg`: the code's rules.  `Agree` and `Delivered` hold: no
-  error, 1477 distinct states (4 rungs, 2 messages, `L = 2`).
+- `PollRung.cfg`: the code's rules, `K = 4` (`DEAD_RUN`), up to two rungs
+  killed mid-session.  `Agree` and `Delivered` hold: no error, 12487
+  distinct states (4 rungs, 3 messages, `L = 2`).
+- `PollRung_dark.cfg`: `K = 2`, the run near a rung's threshold and, since
+  #497, once two rounds in a row brought nothing of the peer (dark).  `Agree`
+  and `Delivered` hold: 8413 states.  Also checked: every `K` in 1..4 with
+  `Kills` in 1..3, `L = 3`, and 5 rungs with 3 kills (up to 57379 states),
+  all no error.  The model does not show what #497 gains, which is time
+  (DATAC3 dead at the third dark round, not the fourth or later: the sim
+  and the NW8L log); it shows that stepping down after a rung dies cannot
+  stall, for any `K`.  The model had no mid-session death before #497: its
+  dead rungs were fixed at `Init`, so a rung that once delivered was live
+  for ever.
 - `Mut_noscore.cfg`: every ask names the rung asked last, as the code did
   before 2026-10-18.  Violates `Delivered`: a session that starts on a rung
   the channel does not carry asks there for ever.  In the sim (nvis, the
@@ -219,5 +242,9 @@ carry nothing at all; the floor always carries.
   lost-peer watchdog ended them; with the rule, 1.
 - `Mut_stale.cfg`: the callee answers on its own last rung, not the one
   named.  Violates `Agree`.
+- `Mut_nodrop.cfg`: no `K` rule, so M may ask on a rung that once delivered
+  for ever.  Violates `Delivered` with one kill: rung 1 delivers, dies, and
+  M asks there again and again (NW8L, IONOS MPP +5 -> -5 dB, DATAC3).  With
+  `Kills = 0` it holds (3597 states), so the kill is what the rule is for.
 
 Give each TLC run its own `-metadir`.

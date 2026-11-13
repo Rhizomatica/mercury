@@ -169,7 +169,7 @@ typedef struct
     uint8_t  session_id;               /* random byte chosen by caller         */
     int      call_sends_done;          /* CALLs sent this attempt (escalation) */
     int      call_carrier;             /* the carrier the last CALL went out on */
-    int      call_rx_mode;             /* the carrier the CALL we answer came on */
+    int      call_rx_mode;             /* the carrier we ACCEPT on (accept_carrier) */
     char     remote_call[CALLSIGN_MAX_SIZE];
     char     local_call[CALLSIGN_MAX_SIZE];  /* our dialed callsign/SSID for an
                                               * accepted incoming CALL (empty =>
@@ -217,7 +217,7 @@ typedef struct
                                         * ABORT, control client gone) sets
                                         * it: it is the one teardown that stays
                                         * CONNECTED (draining the backlog)
-                                        * after the host is told DISCONNECTED.
+                                        * after the host hangs up.
                                         * Peer DISCONNECT, timeouts and LISTEN
                                         * OFF leave CONNECTED at once, so
                                         * nothing is delivered after them. */
@@ -412,17 +412,30 @@ void arq_fsm_release(arq_session_t *sess);
  */
 void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *event);
 
+/* How a spell of listening for calls (LISTENING or ACCEPTING) ended, if the
+ * event ended one.  Zero when it did not, so the result reads as a bool. */
+typedef enum {
+    ARQ_LISTEN_GOES_ON = 0,   /* still listening, or was not                 */
+    ARQ_LISTEN_ENDS_IN_SESSION,  /* a session takes over: CALLING, CONNECTED */
+    ARQ_LISTEN_ENDS_RELEASED, /* to DISCONNECTED: the host has the radio,
+                               * and a scanning host retunes it now         */
+} arq_listen_end_t;
+
 /**
  * @brief arq_fsm_dispatch(), and whether that one event ended a spell of
- * listening for calls (LISTENING or ACCEPTING, to any other state).
+ * listening for calls (LISTENING or ACCEPTING, to any other state), and how.
  *
  * The MFSK call listeners must drop what they hold when such a spell ends --
  * above all at a scanning host's LISTEN OFF, whose LISTEN ON follows within a
  * millisecond, often in the same batch of events, and usually on another
  * channel.  Checked per event, so a spell that ends and restarts at once is
  * still seen (arq.c counts them for the modem).
+ *
+ * ARQ_LISTEN_ENDS_RELEASED is the hop itself: no session goes on, so the
+ * control and payload decoders can drop what they hold as well.  In a session
+ * they cannot: the control decoder is carrying it.
  */
-bool arq_fsm_dispatch_ends_listening(arq_session_t *sess, const arq_event_t *event);
+arq_listen_end_t arq_fsm_dispatch_ends_listening(arq_session_t *sess, const arq_event_t *event);
 
 /**
  * @brief Return milliseconds until the next deadline, or INT_MAX if idle.
@@ -443,6 +456,11 @@ bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now);
 /** Why the channel is busy now (a CAR_KEYED_* sign), 0 when clear: the
  *  listen-before-talk test the FSM keys by. */
 int arq_fsm_channel_keyed(const arq_session_t *sess);
+/** Whether the FSM will still tell the host DISCONNECTED for this session:
+ *  it is up, or it ended on the peer's DISCONNECT and the reply (then the
+ *  notice) is still to go.  A host DISCONNECT or ABORT is answered at once
+ *  only when it is not (arq.c), so the host hears one per session. */
+bool arq_fsm_notice_owed(const arq_session_t *sess);
 
 /**
  * @brief Human-readable name for a connection state (for log output).

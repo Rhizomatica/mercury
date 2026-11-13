@@ -38,6 +38,11 @@ int main(int argc, char **argv)
            (unsigned long long)seed, argv[2], bidir ? "bidir" : "oneway", r.a2b, r.b2a,
            r.intact ? "OK" : "CORRUPT", (unsigned long long)r.done_ms, r.collisions, r.overruns,
            r.max_kd_ms[0] / 1000.0, r.max_kd_ms[1] / 1000.0, r.stalled ? " STALLED" : "");
+    /* What the delivered frames' estimates read: the control frames' and the
+     * data frames' (CAR_CTL_SNR_OFFSET moves the first). */
+    if (r.ctl_frames && r.data_frames)
+        printf("readings: ctl=%.1f dB (%d frames) data=%.1f dB (%d frames)\n",
+               r.ctl_snr_db, r.ctl_frames, r.data_snr_db, r.data_frames);
     if (r.msgs) {
         /* delays in order, mean, the slowest, and the air both stations used */
         uint64_t d[CAR_SIM_MSGS], sum = 0;

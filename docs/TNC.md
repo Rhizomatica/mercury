@@ -13,6 +13,36 @@ The control and data ports are `base_port` and `base_port + 1` respectively;
 override with `-p <base_port>`.  The broadcast port is independent; override
 with `-b <port>`.
 
+**One client at a time.** While a client is connected to the control port,
+another connection to it is closed at once, and the connected client keeps
+the TNC.  The data port works the same way.  Mercury logs the first refusal
+as a warning naming both addresses, then a count once a minute while the
+refusals continue:
+
+    control connection from 127.0.0.1:43866 refused: 127.0.0.1:43850 is connected and keeps the TNC. ...
+
+That line means two host programs, or two ports of one host, are set up for
+the same Mercury.  Before this rule, the newcomer took over and closed the
+connected client.  So two BPQ32 ports pointed at one Mercury took it from
+each other every few seconds, and each takeover would have ended a session in
+progress (KG9NI, 2026-11-12: 16:26 to 18:11).
+
+A client that has gone is replaced as before.  When a host program restarts
+on the same machine, the OS has closed its old connection, so the new one
+gets in at once.  A connection whose other end vanished without closing (a
+remote host whose network went down) is held until TCP keepalive gives up on
+it: 30 s idle, then 3 probes 10 s apart on Linux (about a minute), or 10
+probes 1 s apart on Windows (about 40 s).  After that the next connection
+gets in.
+
+A host program that hangs without closing its connection keeps the port for
+good.  This happens on the same machine: the program is stuck, but its OS still
+answers the keepalive probes for it, so keepalive never gives up.  A new
+instance is refused, with the warning above, until the old one is gone.  So
+when you restart a hung host program, BPQ32 for example, kill the old
+process first, then start the new one.  (Before this rule, the new instance
+took over.)
+
 All control commands and responses are **CR-terminated ASCII** (`\r`).
 
 ---
@@ -221,10 +251,22 @@ DISCONNECT\r
 
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
-`DISCONNECTED\r` is sent on the control port at once (the VARA
-convention); the air side ends after it.  Mercury first delivers what is
-still queued or unconfirmed, for up to three exchanges at the session's
-rung (minutes at the MFSK floor), then sends DISCONNECT frames to the peer.
+`DISCONNECTED\r` is sent on the control port when the session has
+closed, as VARA does ("Disconnect the link, once the TX buffer is empty").
+Mercury first delivers what is still queued or unconfirmed, for up to three
+exchanges at the session's rung (minutes at the MFSK floor), then sends
+DISCONNECT frames to the peer and waits for its answer.  With no session up,
+`DISCONNECTED\r` is sent at once.  A host that cannot wait sends `ABORT`.
+Either way the host hears one `DISCONNECTED\r` per session.  A session
+the peer has just ended still owes its notice until Mercury's reply to the
+peer's DISCONNECT is on the air, so a `DISCONNECT` then waits for that
+notice too.
+
+Up to 1.9.22 `DISCONNECTED\r` was sent at once, before the air side ended.
+A scanning BPQ32 restarts its scan 15 s after it, and its next `LISTEN OFF`
+ended the session before the peer had heard the DISCONNECT, leaving the
+peer to time out (240 s).  BPQ32 keeps the radio while it waits for
+`DISCONNECTED`, and sends `ABORT` after 30 s.
 It does not wait to deliver when nothing has been heard from the peer
 for 120 s, and a delivery under way stops once that silence is reached.
 
@@ -250,10 +292,28 @@ ABORT\r
 `DISCONNECT` first delivers what is still queued: unsent bytes, and the
 pieces the peer has not yet confirmed.  `ABORT` does not wait.  It discards
 the unsent TX data, the unconfirmed pieces and received data not yet read,
-then sends the
-DISCONNECT frames straight away (after any frame already on the air), so
-the peer is told rather than left to time out.  `DISCONNECTED\r` is sent
-on the control port at once, as for `DISCONNECT`.
+then sends one DISCONNECT frame straight away (after any frame already on
+the air, and clear of the peer's reply window), so the peer is told rather
+than left to time out.  It is not retried: the caller is free once the
+peer answers or one retry interval passes, and the callee once its
+DISCONNECT is out.  The callee's waits for its own next slot only so
+long: if none comes in time to be on the air and done within 15 s of the
+`ABORT`, it keys out of turn, because a scanning BPQ32 takes the radio back
+as it sends `ABORT` (see [Scanning hosts](#scanning-hosts-bpq32)).  The one
+DISCONNECT is never keyed over a station Mercury hears on the air, as it is
+not retried and the peer could not hear it: the caller's keeps to the
+callee's slots, and the callee's out-of-turn one waits for a clear channel
+(the slot after the caller's keydown carries it).  A keydown of Mercury's
+already on the air at the `ABORT` still runs to its end first.
+`DISCONNECTED\r` is sent on the control port at once, and it is the
+session's only one: the end of the teardown that follows sends no second
+`DISCONNECTED\r`.
+
+An `ABORT` during a teardown already under way (after a `DISCONNECT`) cuts
+it short the same way: no more retries.  With its DISCONNECT already out,
+the caller is free when the retry interval running ends (or the peer
+answers), and the callee at once.  Its `DISCONNECTED\r` too comes at once
+and is the session's only one.
 
 ---
 
@@ -318,7 +378,18 @@ BITRATE\r
 
 **Response:** `BITRATE (<code>) <bps> BPS\r` on the control port.  `<code>`
 names the mode on the air: 1 DATAC1, 3 DATAC3, 4 DATAC4, 15 DATAC15,
-17 DATAC17, 25 QAM16C2, 100 MFSK.
+16 DATAC16 (the control mode, while calling only), 17 DATAC17, 25 QAM16C2,
+100 MFSK, 103 MFSK at 500 Hz.
+
+Mercury also sends the line unprompted: in a session, for each frame on a
+payload mode keyed or decoded; and while a `CONNECT` is calling, on the
+first CALL and at least every 20 s until the call connects or ends, for the
+carrier of the CALL out last.  The second keeps a host's idle timer from
+running out while the CALLs go unanswered.  BPQ32 passes TNC lines it does
+not handle itself to the session (`VARA} BITRATE ...`), and a forwarding
+connect script may set the session's IDLETIME as low as 60 s: on air
+(KG9NI, November 2026) calls were dropped 61-62 s after the last line,
+before the first MFSK CALL had gone out.
 
 ---
 
@@ -333,8 +404,12 @@ It also sets how many CALLs go on the fast control mode (DATAC16) before
 the first MFSK CALL: `RETRIES/2`, at least 2 (the default) and at most 4.
 DATAC16 CALLs are short, so a scanning station is more likely to catch one
 while it is on the frequency, and any listener decodes them whatever its
-bandwidth.  The cap keeps the first MFSK CALL, which a weak path needs, at
-about 47 s (#442).
+bandwidth.  The cap keeps the first MFSK CALL, which a weak path needs,
+from coming too late (#442).  Each DATAC16 CALL after the first is followed by
+the MFSK floor's call interval, about 24 s (37.5 s at 500 Hz), because the
+callee may answer it on the floor (#536), so the first MFSK CALL comes about
+40 s after the first CALL with the default 2 fast CALLs, and about 95 s with
+4 (about 135 s at 500 Hz).
 
 However many CALLs `RETRIES` allows, no new one is keyed after
 `arq:call_max_s` seconds of calling (default 300; 0 = no cap).  `RETRIES 20`
@@ -359,6 +434,12 @@ DISCONNECT's timing or on a session once it is established.
 Send `0` to restore the compiled default (8 seconds).  The minimum
 enforced value is 4 seconds; values below 4 are clamped to 4 to avoid
 firing a retry before a valid ACCEPT can return over the air.
+
+The default is per carrier: a CALL whose ACCEPT may come back on the MFSK
+floor (a floor CALL, or a repeat on the control mode) waits the floor's
+interval, about 24 s (37.5 s at 500 Hz), so as not to key over that 13.5 s
+ACCEPT.  `CALLINT` overrides that too: below about 20 s a CALL may key
+over a floor ACCEPT its decoders did not catch.
 
 ```
 CALLINT 5\r
@@ -633,7 +714,7 @@ These are sent on the **control port** without a preceding command.
 | `SN <value>\r`                              | SNR update                                   |
 | `BUSY ON\r`                                 | Channel became occupied (busy detector)      |
 | `BUSY OFF\r`                                | Channel became clear (busy detector)         |
-| `BITRATE (<level>) <bps> BPS\r`            | Throughput update                            |
+| `BITRATE (<level>) <bps> BPS\r`            | Throughput update; while calling, every 20 s |
 | `IAMALIVE\r`                                | Heartbeat (sent periodically while idle)     |
 | `REGISTERED <callsign>\r`                  | Callsign registration confirmed (after MYCALL) |
 | `ENCRYPTED LINK\r` / `UNENCRYPTED LINK\r` | After `CONNECTED`, only with `[crypto]` on    |
@@ -651,21 +732,33 @@ then hops, and the hop's `LISTEN OFF` cancels the incoming connect. On K7EK's
 station (an 11 s dwell) that came 72-85 s after the first `PENDING`, in
 5 incoming connects, one of them 17 s after Mercury had answered a repeated CALL.
 
+Mercury also sends it again every 20 s for as long as it is answering, so a
+scanning host keeps the channel exactly as long as Mercury does. Mercury
+answers until its `ACCEPT` retries run out (`RETRIES`: that many retry
+intervals after the last CALL heard, about 160 s for `RETRIES 20`), and ends
+with `CANCELPENDING`. A repeated CALL is not enough on a weak path: on
+2026-11-12 K7EK decoded 2 of a caller's 13 CALLs, and BPQ32 hopped 66 s after
+the one `PENDING` while the caller went on calling for 2 minutes.
+
 Mercury also sends `PENDING\r` when an outgoing `CQFRAME` actually begins
 transmitting so VARA clients can treat CQ send as an in-progress operation.
 
 ### CANCELPENDING
 
 Sent when a previously pending incoming connect request does not complete and
-Mercury returns to the idle/listening state.
+Mercury returns to the idle/listening state: its `ACCEPT`s ran out, the host
+sent `DISCONNECT` or `LISTEN OFF`, or the caller sent a `DISCONNECT` for that
+call (it gave up calling before our `ACCEPT` reached it).  A scanning host
+then resumes its scan at once rather than holding the channel.
 
 Mercury also sends `CANCELPENDING\r` when an outgoing `CQFRAME` transmission
 finishes, which matches the lifecycle expected by VARA clients such as varim.
 
-varim also sends `ABORT` when `PTT ON` lasts about 20 s with no `PTT OFF`,
-whatever else the TNC says meanwhile (#445).  A carousel round can be one
-keydown of 25-30 s; set `[arq] max_keydown_s = 16` on every station that
-runs varim.  It holds each of that station's keydowns, a poll before a round
+varim before 1.13 also sends `ABORT` when `PTT ON` lasts about 20 s with no
+`PTT OFF`, whatever else the TNC says meanwhile (#445).  varim 1.13 and later
+allow 35 s, longer than any Mercury keydown (30 s at most), and need nothing
+set.  With an older varim: a carousel round can be one keydown of 25-30 s, so
+set `[arq] max_keydown_s = 16` on every station that runs it.  It holds each of that station's keydowns, a poll before a round
 included, to 16 s; a peer without it can still key longer.  The BW500
 floor's single MFSK frame is 27 s and is never split, so varim may still
 abort a BW500 session that falls to its floor.
@@ -783,20 +876,26 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
 
 - **BPQ32 attaches Mercury as a VARA port** and holds its scan from `PENDING`
   until `DISCONNECTED` or `CANCELPENDING`, or until six scan intervals pass
-  with no new `PENDING` (see `PENDING`).  In every session the scanner
+  with no new `PENDING` (see `PENDING`: Mercury repeats it every 20 s while
+  it answers).  In every session the scanner
   stopped once the CALL decoded, including a 32 s connect that needed a
   repeated CALL and a failed one it held for 43 s.
 - **Each hop is `LISTEN OFF`, `LISTEN ON` and a `BW` command.**  The dwell
-  was 10.1-10.2 s.  The DATAC16 decoder keeps decoding through them, but the
-  two MFSK call listeners do not:
-  - a `LISTEN OFF` flushes both, so a partly received MFSK CALL is dropped
-    even when `LISTEN ON` follows a moment later on the same frequency.  Up
-    to 1.9.22 it usually did not: the flush waited for the receive loop to
-    see the station not listening, and BPQ32's `LISTEN ON` follows within
-    1 ms.  A CALL cut by the hop was then decoded on the next channel and
-    answered there, where the caller could not hear it (K7EK, 2026-11-06: an
-    MFSK CALL decoded 2.5 s after the hop, BPQ32 held on the wrong channel
-    for 2 min);
+  was 10.1-10.2 s.  What the call decoders hold does not survive them:
+  - a `LISTEN OFF` with no session up drops every partly received frame:
+    the DATAC16 decoder's, the payload decoder's and the two MFSK call
+    listeners', sync included.  A partly received CALL is dropped even when
+    `LISTEN ON` follows a moment later on the same frequency; the caller's
+    next CALL is heard as usual.  Up to 1.9.22 such a CALL could still
+    decode, on the next channel, and was answered there, where the caller
+    could not hear it.  BPQ32 then held the wrong channel for about 2 min
+    (six scan intervals) while the caller's repeats went unheard:
+    - MFSK: the flush waited for the receive loop to see the station not
+      listening, and BPQ32's `LISTEN ON` follows within 1 ms (K7EK,
+      2026-11-06: decoded 2.5 s after the hop; 2026-11-07: four calls,
+      0.2-4.2 s after it);
+    - DATAC16: its decoder was not flushed at all (K7EK, 2026-11-07: two
+      calls decoded 1.4 s and 1.9 s after the hop);
   - a `BW` change between `BW500` and `BW2300`/`BW2750` flushes both too: the
     listeners swap floors, and each swap drops what it holds.
 
@@ -838,20 +937,43 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
   BUSY on noisier channels for missed BUSY on a hop into a wideband
   transmission, which is why it is the operator's choice.
 - **After a host `DISCONNECT`, a scan hop can cut the teardown short.**
-  Mercury answers `DISCONNECTED` straight away and finishes on the air; the
-  scanner's next `LISTEN OFF` releases the radio before that is done (#473).
+  It did up to 1.9.22, when Mercury answered `DISCONNECTED` straight away:
+  the scanner's next `LISTEN OFF` released the radio before the peer had the
+  DISCONNECT (#473).  On K7EK and KG9NI a DISCONNECT retry due 20 s after the
+  first was cut off, and two drains ended with no DISCONNECT sent; each time
+  the peer waited out its 240 s watchdog.  BPQ32 keeps the radio until
+  `DISCONNECTED`, now sent when the session has closed, restarts its scan
+  15 s after it, and sends `ABORT` if it has waited 30 s.
+- **After an `ABORT`, BPQ32 does not wait for `DISCONNECTED`.**  It sends
+  `ABORT` and releases the port in the same step (linbpq `CheckForDetach`:
+  `ForcedClose`, then `CloseComplete`, whose `VARAReleaseTNC` sends
+  `LISTEN ON` and `SCANSTART 15`), so its first hop comes 15 s after the
+  `ABORT` whatever Mercury answers.  On air (K7EK, 2026-11-10) `LISTEN ON`
+  came in the `ABORT`'s millisecond and the hop's `LISTEN OFF` 16.6 s later.
+  So a callee's `ABORT`ed DISCONNECT keys out of turn, on a clear channel,
+  if no slot comes in that time ([ABORT](#abort)).
+- **While BPQ32 calls out, its session has an idle timer.**  A forwarding
+  connect script may set it with `IDLETIME`, as low as 60 s, and only the
+  TNC lines BPQ32's VARA driver passes on to the session reset it
+  (`VARA} BITRATE ...`; it keeps `PTT`, `SN`, `BUSY` and `BUFFER` to
+  itself).  On KG9NI (November 2026) calls were dropped 61-62 s after the
+  last such line, before the first MFSK CALL had gone out.  Mercury now
+  sends a `BITRATE` line on the first CALL and at least every 20 s until the
+  call connects or ends (#539; see [BITRATE](#bitrate)).  A session that
+  has connected and waits longer than `IDLETIME` for the peer's first data
+  is not covered: there BPQ32 passes only data, so raise `IDLETIME` in the
+  connect script.
 
 When `LISTEN OFF` arrives with no session up while a CALL decoder has locked
 onto a frame it has not decoded yet, Mercury logs it:
 
 ```
-[tcp-ctl] LISTEN OFF 2.1 s into a DATAC16 frame not yet decoded: if the host now changes frequency, it is lost (or it was noise)
+[tcp-ctl] LISTEN OFF 2.1 s into a DATAC16 frame not yet decoded: LISTEN OFF drops it (or it was noise)
 [tcp-ctl] LISTEN OFF 6.4 s into a MFSK frame not yet decoded: LISTEN OFF drops it (or it was noise)
 ```
 
-A DATAC16 frame is lost only if the host then retunes; an MFSK one is lost to
-the `LISTEN OFF` itself.  A CALL cut off by a hop shows as one of these lines
-with no `RX_CALL` after it.  The lock can also be noise or another station's
+Either frame is lost to the `LISTEN OFF` itself.  A CALL cut off by a hop
+shows as one of these lines with no `RX_CALL` after it.  The lock can also be noise or another station's
 traffic, so read the line together with the caller's log.
 
 ### DISCONNECTED

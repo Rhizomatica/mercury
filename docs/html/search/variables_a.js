@@ -8,13 +8,15 @@ var searchData=
   ['last_5frx_5fms_5',['last_rx_ms',['../structarq__session__t.html#a359aabbd8838b6d6a895ba3a146aa2a2',1,'arq_session_t']]],
   ['last_5frx_5fsync_5fms_6',['last_rx_sync_ms',['../structarq__session__t.html#a1a7190ad47cfc47d59522ef18c776765',1,'arq_session_t']]],
   ['last_5ftx_5fend_5fms_7',['last_tx_end_ms',['../structarq__session__t.html#a96eae4a24e97ebaf59c8559fa480c5c5',1,'arq_session_t']]],
-  ['len_8',['len',['../structarq__keydown__t.html#ad65d4268959494aac964c1a9935689f1',1,'arq_keydown_t::len'],['../structarq__bytes__msg__t.html#a1773846a897e50573bcd3d7183f3d353',1,'arq_bytes_msg_t::len'],['../structcar__frame__t.html#afa285637c186b97fc050d416056a2243',1,'car_frame_t::len'],['../structcar__sblock__t.html#a3025b50ecb3c3ceada59c1117390ecd3',1,'car_sblock_t::len'],['../structcar__rblock__t.html#acb37750a0b7d4b32bd17858bf0c92a1d',1,'car_rblock_t::len']]],
+  ['len_8',['len',['../structarq__keydown__t.html#ad65d4268959494aac964c1a9935689f1',1,'arq_keydown_t::len'],['../structcar__rblock__t.html#acb37750a0b7d4b32bd17858bf0c92a1d',1,'car_rblock_t::len'],['../structcar__sblock__t.html#a3025b50ecb3c3ceada59c1117390ecd3',1,'car_sblock_t::len'],['../structcar__frame__t.html#afa285637c186b97fc050d416056a2243',1,'car_frame_t::len'],['../structarq__bytes__msg__t.html#a1773846a897e50573bcd3d7183f3d353',1,'arq_bytes_msg_t::len']]],
   ['listen_9',['listen',['../structarq__info.html#a8085c3afdd01d7c8b460b5b50dc5d865',1,'arq_info']]],
   ['listen_5fenabled_10',['listen_enabled',['../structarq__session__t.html#a8aace6029f8eb615b83073da42e2e987',1,'arq_session_t']]],
   ['listen_5ffloor_5fmode_11',['listen_floor_mode',['../structarq__runtime__snapshot__t.html#aafe521fdd0ef04f60491ae08a69f333e',1,'arq_runtime_snapshot_t']]],
-  ['listening_5ffor_5fcalls_12',['listening_for_calls',['../structarq__runtime__snapshot__t.html#ac664d53cd088a907775872a6e3f739c0',1,'arq_runtime_snapshot_t']]],
-  ['local_5fcall_13',['local_call',['../structarq__event__t.html#a0bc5d07bc147ef0f5d3a43ce3227673e',1,'arq_event_t::local_call'],['../structarq__session__t.html#a58168628b2d6f39c974391bd2608e9e5',1,'arq_session_t::local_call']]],
-  ['local_5fsnr_5fx10_14',['local_snr_x10',['../structarq__session__t.html#a78bf273569eb0552386d7dc2cc403db4',1,'arq_session_t']]],
-  ['loss_5fest_15',['loss_est',['../structcar__t.html#a6ffaae0369b0935d39a4b690902b713c',1,'car_t']]],
-  ['lost_16',['lost',['../structcar__t.html#a9338c705f62d4c50d5edb27923601510',1,'car_t']]]
+  ['listen_5freleases_12',['listen_releases',['../structarq__runtime__snapshot__t.html#a09c86a5099f3b048d149c26ea879c874',1,'arq_runtime_snapshot_t']]],
+  ['listen_5fspells_5fended_13',['listen_spells_ended',['../structarq__runtime__snapshot__t.html#a035add08babef3eb7ea668bce71b2702',1,'arq_runtime_snapshot_t']]],
+  ['listening_5ffor_5fcalls_14',['listening_for_calls',['../structarq__runtime__snapshot__t.html#ac664d53cd088a907775872a6e3f739c0',1,'arq_runtime_snapshot_t']]],
+  ['local_5fcall_15',['local_call',['../structarq__event__t.html#a0bc5d07bc147ef0f5d3a43ce3227673e',1,'arq_event_t::local_call'],['../structarq__session__t.html#a58168628b2d6f39c974391bd2608e9e5',1,'arq_session_t::local_call']]],
+  ['local_5fsnr_5fx10_16',['local_snr_x10',['../structarq__session__t.html#a78bf273569eb0552386d7dc2cc403db4',1,'arq_session_t']]],
+  ['loss_5fest_17',['loss_est',['../structcar__t.html#a6ffaae0369b0935d39a4b690902b713c',1,'car_t']]],
+  ['lost_18',['lost',['../structcar__t.html#a9338c705f62d4c50d5edb27923601510',1,'car_t']]]
 ];

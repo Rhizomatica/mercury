@@ -5,7 +5,8 @@
 #   - Manually via workflow_dispatch
 #   - Automatically on every push to mercuryv2
 #
-# Runs the unit tests on Linux amd64, and again in a native i386 userland.
+# Runs the unit tests on Linux amd64, again in a native i386 userland, and
+# natively on macOS arm64.
 
 name: UT
 
@@ -104,3 +105,36 @@ jobs:
               echo "compiler target: $(gcc -dumpmachine), uname -m: $(uname -m)"
               make test
             '
+
+  # The same suite natively on macOS arm64 (Apple Silicon, Apple clang, Apple
+  # libm).  The repo ships macOS builds, and build.yml's macOS job already
+  # catches link breaks like #200/#209, but only the tests catch the
+  # platform's runtime differences: #520 was Apple's libm rounding sinf/cosf/
+  # logf differently from glibc, and it failed `make test` on every Apple
+  # Silicon Mac without any CI job noticing.
+  #
+  # No dependencies to install: the tests link only libpthread and libm, and
+  # tests/Makefile already leaves out -lrt on Darwin.
+  #
+  # Plain checkout (no ssh-key), as in build.yml's macOS job: secrets are not
+  # available to pull requests from forks, so that contributor is covered too.
+  unit-tests-macos:
+    name: Unit Tests (macOS arm64)
+    runs-on: macos-15   # arm64, as build.yml's macOS job
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+
+      - name: Toolchain
+        run: |
+          clang --version | head -1
+          echo "dumpmachine: $(clang -dumpmachine)"
+
+      - name: Run Unit Tests
+        shell: bash
+        run: make test

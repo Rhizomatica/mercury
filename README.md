@@ -1,6 +1,6 @@
 # Mercury — HERMES HF Modem
 
-Mercury is part of the [HERMES project](https://www.rhizomatica.org/hermes/)
+Mercury is part of the [HERMES project](https://hermes.radio/)
 (High-Frequency Emergency and Rural Multimedia Exchange System) by
 [Rhizomatica](https://www.rhizomatica.org/), funded by
 [ARDC](https://www.ardc.net/) and others.
@@ -13,6 +13,7 @@ and no power grid worth speaking of.
 [Graphical interfaces](#graphical-interfaces) · [Configuration](#configuration-file) ·
 [Docs](https://rhizomatica.github.io/mercury/) ·
 [Mailing list](https://lists.riseup.net/www/info/hermes-general) ·
+[Google Play (Android)](https://play.google.com/store/apps/details?id=org.rhizomatica.mercury) ·
 [App Store (iPhone, iPad)](https://apps.apple.com/app/mercury-hf-modem/id6822504870)
 
 **Help wanted: Apple hardware.** We build and test the macOS and iOS apps in a
@@ -42,6 +43,8 @@ to each other, but not to 1.9.19 or older in either direction: their connect
 frames have a packet type of their own (and 1.9.18 and 1.9.19 did not connect
 to each other either).  A station with `mfsk_tx_only` set needs 1.9.21 or
 later at the other end.  See
+[docs/RELEASE-1.9.24.md](docs/RELEASE-1.9.24.md),
+[docs/RELEASE-1.9.23.md](docs/RELEASE-1.9.23.md),
 [docs/RELEASE-1.9.22.md](docs/RELEASE-1.9.22.md),
 [docs/RELEASE-1.9.21.md](docs/RELEASE-1.9.21.md),
 [docs/RELEASE-1.9.20.md](docs/RELEASE-1.9.20.md),
@@ -122,7 +125,7 @@ Mode behavior notes:
   is preserved in `CONNECTED ... BW` only when both peers advertise it.
 - `FSK_LDPC` is currently **experimental** (mainly for lab/test usage), may have longer decode/sync latency depending on setup, and is not recommended for production links yet.
 - `[arq] mfsk_tx_only = true` makes the station transmit MFSK only (CALL/ACCEPT, control and payload) for radios that can only key FSK — the QRP Labs QDX, QRPguys AFSK III and similar.  Its peers keep its transmit direction on the MFSK floor rung for the whole session; receive is unaffected, so the cost is throughput, not reach.  Such a station connects only to releases after 1.9.20; the others still connect to 1.9.20.
-- `[arq] max_keydown_s = 16` holds every transmission of the station to 16 s, a poll sent before a round included, for TCP clients that abort when PTT stays on too long — vARIM gives up after about 20 s keyed, and a full DATAC3 round is 25-30 s (#445).  Set it on every station that runs vARIM: it holds the station's own transmissions and asks the peer for short rounds, but a peer without it can still key longer (a poll before a round, its own floor rounds).  The peer needs no update to talk to it.  The cost is throughput: in the simulator, about 0-6 % on fast channels and 13-30 % on slow ones and at BW500 (8 KB both ways).  `0`, the default, keeps the protocol's 30 s; the MFSK floor's single frame (13.5 s, 27 s on the BW500 floor) is never split, so a BW500 session that falls to its floor still keys for 27 s.
+- `[arq] max_keydown_s = 16` holds every transmission of the station to 16 s, a poll sent before a round included, for TCP clients that abort when PTT stays on too long.  **vARIM 1.13 and later need no setting:** they allow 35 s keyed, longer than any Mercury transmission (30 s at most).  vARIM before 1.13 gives up after about 20 s keyed, and a full DATAC3 round is 25-30 s (#445).  With such a vARIM, set it on every station that runs it: it holds the station's own transmissions and asks the peer for short rounds, but a peer without it can still key longer (a poll before a round, its own floor rounds).  The peer needs no update to talk to it.  The cost is throughput: in the simulator, about 0-6 % on fast channels and 13-30 % on slow ones and at BW500 (8 KB both ways).  `0`, the default, keeps the protocol's 30 s; the MFSK floor's single frame (13.5 s, 27 s on the BW500 floor) is never split, so a BW500 session that falls to its floor still keys for 27 s.
 
 PTT control notes:
 - The default method is `none`; Mercury then leaves radio keying to the TCP client.
@@ -131,6 +134,11 @@ PTT control notes:
 - `-R` is the compatible Hamlib shorthand: it selects the model and the `hamlib` PTT method. `-A` supplies its device or `ip:port`, and `-K` lists models.
 - `-S` is the compatible shorthand for `hermes_shm` and is unavailable on Windows builds.
 - `-Q` opens the configured backend, keys it for one second, releases it, and exits without starting the modem or audio devices. For example: `mercury -C mercury.ini -Q`.
+
+Sound card notes:
+- A capture device that stops delivering audio is reopened every 2 s. After three reopens in a row that bring nothing (about 6 s, not counting the time Mercury is transmitting), Mercury logs `the capture device delivers no audio` once and reports the audio as failed (`audio_ok: false` in the GUI and the WebSocket status) until samples come back. When they do, the log says how long the station was deaf: `capture delivering again after reopen #N (S s without audio)`.
+- When it reports the failure, and on every 5th reopen after that, Mercury also lists the sound cards again and looks for the device by the name it had when capture started. Windows can give a USB codec a new id, under the same name, when it resets or is re-plugged. If exactly one device has that name, Mercury opens it under its new id (`listed under a new id: ... -- opening that`). If two have it (two radios with the same codec), Mercury does not guess, and asks you to select it again. The default device (no `-i`) is left to the sound system.
+- The same at start, on Windows (`wasapi`, `dsound`): when you choose the devices in the GUI, their names are saved next to their ids (`input_device_name`, `output_device_name` in `mercury.ini`). If a saved id is no longer listed when Mercury starts, the device with that exact name is used, if exactly one has it (`device id '...' is gone; found '...' by its saved name`). `-i` and `-o` on the command line drop the saved name. A config without the names works as before.
 
 ## Getting Started with Mercury
 
@@ -208,16 +216,21 @@ make fyne-ui
 ./mercury-ui
 ```
 
-### Build the Android .apk (technology preview)
+### Build the Android .apk or .aab (technology preview)
 
 ```sh
-# Android NDK r27d, the Android SDK (platform 34, build-tools 34) and the
-# fyne CLI (see "GUI build prerequisites" below)
+# Android NDK r27d, the Android SDK (platform 34, build-tools 34) and Go.
+# The Makefile builds its own copy of the fyne CLI, at Android 8 (API 26)
+# as the minimum (.fyne-android/).
 T=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 make fyne-ui-android ANDROID_NDK_HOME=$ANDROID_NDK_HOME ANDROID_HOME=$ANDROID_HOME \
      CC=$T/aarch64-linux-android26-clang AR=$T/llvm-ar
 # -> Mercury-<version>.apk (arm64, debug-signed; ANDROID_RELEASE=1 with
 #    ANDROID_KEYSTORE signs it with a release key)
+
+# For Google Play: bundletool on PATH, and the Play upload key
+make fyne-ui-android-aab ANDROID_UPLOAD_KEYSTORE=upload.jks ...   # same NDK settings
+# -> Mercury-<version>.aab (target SDK 36), the password in ANDROID_UPLOAD_KEYSTORE_PASS
 ```
 
 The GUI with the modem inside, on AAudio, with a vendored Hamlib
@@ -345,6 +358,13 @@ like any other app.
 You need a 64-bit ARM phone or tablet (almost every Android device since
 2017) with Android 11 or later; it was tested on Android 15.
 
+**From Google Play.**  Install
+[Mercury HF Modem](https://play.google.com/store/apps/details?id=org.rhizomatica.mercury)
+on the phone or tablet.  It is free, and updates arrive through Google Play.
+Then go on from step 3 below.
+
+**From the releases page.**
+
 1. On the phone, open the
    [releases page](https://github.com/Rhizomatica/mercury/releases/latest) and
    download `Mercury-<version>-android-arm64.apk`.
@@ -400,20 +420,27 @@ How a version is published to AltStore PAL: ios/ALTSTORE.md.
 
 ### Install on Sailfish OS (technology preview)
 
-You need a 64-bit ARM (aarch64) phone with Sailfish OS 5.  The package was
-built and its `make test` passed on a Jolla phone with Sailfish OS 5.2.0.18;
-it has not been used with a radio there yet (see below).  It is the
-command-line modem only: there is no GUI app on the phone, but `-G` serves
-the WebSocket UI as on Linux.
+You need a 64-bit ARM (aarch64) phone with Sailfish OS 5.  There are two
+packages, built and tested on a Jolla phone with Sailfish OS 5.2; neither
+has been used with a radio there yet (see below):
+- `mercury`, the command-line modem.  `-G` serves the WebSocket UI as on
+  Linux.
+- `mercury-ui`, the GUI (Fyne, on Wayland with GLES2 through libhybris),
+  with the modem built in: it does not need the `mercury` package.  It is in
+  the app list as **Mercury**.
+
+The repository carries the releases, from 1.9.23 (`pkcon refresh && pkcon
+update` moves an install of the earlier `1.9.22+git…` snapshot to it).
 
 1. Turn on **Developer mode** (Settings → Developer tools), open
    **Terminal**, and become root with `devel-su`.
-2. Add the HERMES repository and install Mercury:
+2. Add the HERMES repository and install Mercury, the GUI, or both:
 
     ```bash
     ssu ar hermes http://debian.hermes.radio/sailfish/aarch64/
     pkcon refresh
-    pkcon install mercury
+    pkcon install mercury        # the command-line modem
+    pkcon install mercury-ui     # the GUI
     ```
 
     This also installs HERMES's Hamlib 5, which can drive a radio's USB
@@ -433,6 +460,10 @@ the WebSocket UI as on Linux.
     Mercury also reads `./mercury.ini` and `/etc/mercury/mercury.ini` (see
     `-C`).  The package installs `/usr/bin/mercury` and its man page, but no
     service: start it yourself.
+
+    The GUI starts from its icon, as your user, with its audio through
+    PulseAudio (`mercury-ui -x pulse`).  Opening a radio's USB CAT needs
+    root (below), so from the icon it has audio but no CAT or PTT yet.
 
 **Using it with a radio (untested with Mercury).**  These are the settings
 the HERMES radio daemon uses on the same phone:
@@ -472,7 +503,7 @@ pkcon install rpm-build gcc-c++ make hamlib-devel alsa-lib-devel pulseaudio-deve
 Then leave `devel-su` and build as the normal user:
 
 ```bash
-v=1.9.23    # the release to build (1.9.22 and older have no sailfish/)
+v=1.9.24    # the release to build (1.9.22 and older have no sailfish/)
 mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS
 curl -fsSL -o ~/rpmbuild/SOURCES/mercury-$v.tar.gz \
     https://github.com/Rhizomatica/mercury/archive/refs/tags/v$v.tar.gz
@@ -488,10 +519,16 @@ rpmbuild -ba ../SPECS/mercury.spec
 
 Install that file as root with `pkcon install-local`.
 
-The other HERMES packages (radiod and the libraries it needs) are built the
-same way from `packaging/sailfish` in
+That spec builds the command-line modem only.  The GUI builds from a source
+tree with [`sailfish/build-mercury-ui.sh`](sailfish/build-mercury-ui.sh),
+which lists what it needs besides the modem's dependencies (Go, the Wayland
+and xkbcommon headers, and the Khronos EGL and GLES2 headers).
+
+The packages in the repository, `mercury` and `mercury-ui` among them, are
+built from `packaging/sailfish` in
 [hermes-radio-daemon](https://github.com/Rhizomatica/hermes-radio-daemon)
-(`fetch-sources.sh`, `build-all.sh`).  Source RPMs are in
+(`fetch-sources.sh`, `build-all.sh`), with the other HERMES packages
+(radiod and the libraries it needs).  Source RPMs are in
 `http://debian.hermes.radio/sailfish/source/`.
 
 ## Configuration File
@@ -574,6 +611,8 @@ Rendered HTML: https://rhizomatica.github.io/mercury/
 - `./mercury -v -L /tmp/session.log` — write full DEBUG+TIMING log to file.
 - `./mercury -v -L /tmp/session.log -J` — same, but in **JSONL** format for machine parsing with `jq`.
 - Text log lines start with the date and time, `2026-11-02 23:15:57.123`, in local time; `[main] log_utc = true` writes them in UTC with a `Z` (`2026-11-02 23:15:57.123Z`), to line them up with BPQ32's or another station's log.
+- Right after the logger starts, a line names the build: `Mercury 1.9.23 (git 1234abcd)`.
+- The log file is capped at `[main] log_max_mb` (default 20 MB; 0: no cap).  Past it the file moves to `<file>.1`, replacing the one before, and a new file starts, so at most twice the cap is on disk.  Each file has a line naming the other.
 - TX state transitions are logged with timestamps at INFO level as:
   - `TX enabled (PTT ON)`
   - `TX disabled (PTT OFF)`
@@ -632,7 +671,11 @@ operate.
 The engine and the interface are one binary: no separate modem process to
 start, no ports to wire up. Waterfall and spectrum, telemetry, radio and audio
 settings, and a **Mercury Client** chat window for ARQ and broadcast messaging
-built straight in. Ships as an installer on Windows, a universal `.dmg` on
+built straight in.  With the engine in the same program, the chat window
+drives it directly, so the TNC ports (8300, 8301, 8100) stay free for uucp,
+VarAC or another TCP client; one that connects takes the TNC from the window,
+as it would from another TCP client.  The main window's TCP indicator then
+reads **In app**. Ships as an installer on Windows, a universal `.dmg` on
 macOS, and `make fyne-ui` on Linux.
 
 **Web interface** — runs in a browser, nothing to install, and works against a
