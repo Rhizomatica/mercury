@@ -13,6 +13,36 @@ The control and data ports are `base_port` and `base_port + 1` respectively;
 override with `-p <base_port>`.  The broadcast port is independent; override
 with `-b <port>`.
 
+**One client at a time.** While a client is connected to the control port,
+another connection to it is closed at once, and the connected client keeps
+the TNC.  The data port works the same way.  Mercury logs the first refusal
+as a warning naming both addresses, then a count once a minute while the
+refusals continue:
+
+    control connection from 127.0.0.1:43866 refused: 127.0.0.1:43850 is connected and keeps the TNC. ...
+
+That line means two host programs, or two ports of one host, are set up for
+the same Mercury.  Before this rule, the newcomer took over and closed the
+connected client.  So two BPQ32 ports pointed at one Mercury took it from
+each other every few seconds, and each takeover would have ended a session in
+progress (KG9NI, 2026-11-12: 16:26 to 18:11).
+
+A client that has gone is replaced as before.  When a host program restarts
+on the same machine, the OS has closed its old connection, so the new one
+gets in at once.  A connection whose other end vanished without closing (a
+remote host whose network went down) is held until TCP keepalive gives up on
+it: 30 s idle, then 3 probes 10 s apart on Linux (about a minute), or 10
+probes 1 s apart on Windows (about 40 s).  After that the next connection
+gets in.
+
+A host program that hangs without closing its connection keeps the port for
+good.  This happens on the same machine: the program is stuck, but its OS still
+answers the keepalive probes for it, so keepalive never gives up.  A new
+instance is refused, with the warning above, until the old one is gone.  So
+when you restart a hung host program, BPQ32 for example, kill the old
+process first, then start the new one.  (Before this rule, the new instance
+took over.)
+
 All control commands and responses are **CR-terminated ASCII** (`\r`).
 
 ---

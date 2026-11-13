@@ -1,6 +1,6 @@
 # Mercury — HERMES HF Modem
 
-Mercury is part of the [HERMES project](https://www.rhizomatica.org/hermes/)
+Mercury is part of the [HERMES project](https://hermes.radio/)
 (High-Frequency Emergency and Rural Multimedia Exchange System) by
 [Rhizomatica](https://www.rhizomatica.org/), funded by
 [ARDC](https://www.ardc.net/) and others.
