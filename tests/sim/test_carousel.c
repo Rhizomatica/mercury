@@ -29,6 +29,7 @@ void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
     unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
+    unsetenv("CAR_CTL_SNR_OFFSET");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -445,6 +446,76 @@ static void test_carousel_round_with_its_poll_scored_as_declared(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.under_scored, "scored as fewer frames than were sent");
 }
 
+/* CAR_CTL_SNR_OFFSET: the control frames' estimate reads that much off, and
+ * only theirs (#501).  The frames are still decoded and delivered -- the knob
+ * is the estimate, not the channel -- so the session still completes, and the
+ * data frames' readings do not move.  The default (0) is the channel as it
+ * reads: the same run, down to the frame count. */
+static void test_carousel_ctl_snr_offset_moves_only_the_control_reading(void)
+{
+    car_sim_result_t plain, zero, off;
+    char what[96];
+
+    carousel_sim_run(3, "cliff:10", false, LIMIT_MS, &plain);
+    setenv("CAR_CTL_SNR_OFFSET", "0", 1);
+    carousel_sim_run(3, "cliff:10", false, LIMIT_MS, &zero);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+    snprintf(what, sizeof(what), "the offset 0 run differs from the plain one (seed 3 cliff:10)");
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(plain.done_ms, zero.done_ms, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.frames, zero.frames, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.keydowns, zero.keydowns, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.ctl_frames, zero.ctl_frames, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(plain.data_frames, zero.data_frames, what);
+
+    setenv("CAR_CTL_SNR_OFFSET", "-10", 1);
+    carousel_sim_run(3, "cliff:10", false, LIMIT_MS, &off);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+
+    /* The control frames read ten dB lower than they did ... */
+    snprintf(what, sizeof(what), "the control frames read %.2f dB, the data frames %.2f dB",
+             off.ctl_snr_db, off.data_snr_db);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)(plain.ctl_snr_db - 10.0), (float)off.ctl_snr_db, what);
+    /* ... and the data frames read what they read. */
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)plain.data_snr_db, (float)off.data_snr_db, what);
+    /* The frames are still decoded: the session completes, and what arrives is
+     * what was sent. */
+    TEST_ASSERT_TRUE_MESSAGE(off.intact, what);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, off.done_ms, what);
+    TEST_ASSERT_GREATER_THAN_INT_MESSAGE(0, off.ctl_frames, what);
+    TEST_ASSERT_GREATER_THAN_INT_MESSAGE(0, off.data_frames, what);
+}
+
+/* Below the control mode's cliff the knob takes the frames out, not just the
+ * reading: at cliff:0 with the control mode reading -10 dB it sits below its
+ * -7 dB cliff, the polls mostly stop coming, and the session falls to the
+ * MFSK floor -- the control-deaf regime (#501's other half).  The same
+ * channel at offset 0 rides DATAC3. */
+static void test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor(void)
+{
+    car_sim_result_t plain, off;
+    char what[128];
+
+    carousel_sim_run(1, "cliff:0", false, LIMIT_MS, &plain);
+    setenv("CAR_CTL_SNR_OFFSET", "-10", 1);
+    carousel_sim_run(1, "cliff:0", false, LIMIT_MS, &off);
+    unsetenv("CAR_CTL_SNR_OFFSET");
+
+    TEST_ASSERT_TRUE_MESSAGE(plain.intact, "offset 0 baseline");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, plain.done_ms, "offset 0 baseline");
+    snprintf(what, sizeof(what), "control reads %.1f dB, data %.1f dB, done in %llu ms against %llu ms",
+             off.ctl_snr_db, off.data_snr_db,
+             (unsigned long long)off.done_ms, (unsigned long long)plain.done_ms);
+    TEST_ASSERT_TRUE_MESSAGE(off.intact, what);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, off.done_ms, what);
+    /* The frames that do come through read ten dB low; the data frames read
+     * as the channel reads them. */
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)(plain.ctl_snr_db - 10.0), (float)off.ctl_snr_db, what);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, (float)plain.data_snr_db, (float)off.data_snr_db, what);
+    /* ...and the ones below the cliff do not come: the session is on the
+     * floor. */
+    TEST_ASSERT_GREATER_THAN_MESSAGE(plain.done_ms * 3, off.done_ms, what);
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -624,6 +695,8 @@ int main(void)
     RUN_TEST(test_carousel_short_round_scored_as_sent);
     RUN_TEST(test_carousel_m_scores_a_short_round_as_sent);
     RUN_TEST(test_carousel_round_with_its_poll_scored_as_declared);
+    RUN_TEST(test_carousel_ctl_snr_offset_moves_only_the_control_reading);
+    RUN_TEST(test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     return UNITY_END();
 }
