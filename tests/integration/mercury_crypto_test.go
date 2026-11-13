@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -123,7 +124,17 @@ func startCryptoLink(t *testing.T, iniA, iniB string) *cryptoLink {
 	ctx, cancel := context.WithCancel(context.Background())
 	l.cleanup = append(l.cleanup, cancel)
 
-	bridge := startChannelBridge(ctx, chBin, aTX, bRX, bTX, aRX, DefaultChannelParams())
+	// MERCURY_CH_NO: the channel's noise density, as in the transfer test
+	// (SNR3k = -No - 14.82), to run the handshake on a lower rung.
+	params := DefaultChannelParams()
+	if v := os.Getenv("MERCURY_CH_NO"); v != "" {
+		no, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			t.Fatalf("bad MERCURY_CH_NO %q: %v", v, err)
+		}
+		params.No_dBHz = no
+	}
+	bridge := startChannelBridge(ctx, chBin, aTX, bRX, bTX, aRX, params)
 	l.cleanup = append(l.cleanup, func() { bridge.Close() })
 
 	type inst struct {
@@ -473,5 +484,36 @@ func TestMercuryARQOptionalMeetsAStationWithoutEncryption(t *testing.T) {
 	}
 	if got := readExactly(t, l.dataA, len(msg), 4*time.Minute); string(got) != string(msg) {
 		l.failWithLogs("B -> A: got %q", got)
+	}
+}
+
+// B holds a key for TESTA that is not A's: both agree to encrypt, and the
+// handshake fails authentication on B.  Neither host is ever told CONNECTED;
+// B's, told PENDING, hears CANCELPENDING before DISCONNECTED.
+func TestMercuryARQWrongKeyEndsTheSession(t *testing.T) {
+	a := newCryptoStation(t, "TESTA")
+	b := newCryptoStation(t, "TESTB")
+	impostor := newCryptoStation(t, "TESTA")
+	a.trust(t, b)
+	b.trust(t, impostor)
+
+	l := startCryptoLink(t, a.ini(t, "optional"), b.ini(t, "optional"))
+	defer l.close()
+
+	if got := sendControlCommand(t, l.connA, l.rwA, "CONNECT TESTA TESTB"); !strings.HasPrefix(got, "OK") {
+		l.failWithLogs("CONNECT -> %q", got)
+	}
+	seen, ok := awaitLines(t, l.connB, l.rwB, []string{"PENDING", "CANCELPENDING", "DISCONNECTED"},
+		[]string{"CONNECTED", "ENCRYPTED LINK", "UNENCRYPTED LINK"}, 4*time.Minute)
+	if !ok {
+		l.failWithLogs("B: want PENDING, CANCELPENDING, DISCONNECTED and no CONNECTED; saw %q", seen)
+	}
+	seen, ok = awaitLines(t, l.connA, l.rwA, []string{"DISCONNECTED"},
+		[]string{"CONNECTED", "ENCRYPTED LINK", "UNENCRYPTED LINK"}, 4*time.Minute)
+	if !ok {
+		l.failWithLogs("A: want DISCONNECTED and no CONNECTED; saw %q", seen)
+	}
+	if !logContains(l.logsB, "authentication failed", 10*time.Second) {
+		l.failWithLogs("B did not log the failed authentication")
 	}
 }

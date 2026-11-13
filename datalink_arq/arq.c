@@ -104,6 +104,12 @@ static arq_xs_t g_xs;
  * here, not in the session.  Guarded by g_app_tx_mtx, like g_xs. */
 static struct { uint8_t session_id; bool valid, caller, offer, accept; } g_neg;
 
+/* When PENDING last went to the host for the call we are answering; 0: none
+ * outstanding (the host was told CONNECTED, CANCELPENDING or DISCONNECTED
+ * since).  Written by the FSM's callbacks, cb_deliver_rx_data and
+ * pending_hold, all on the event loop under g_sess_lock. */
+static uint64_t g_pending_ms;
+
 /* Guards the process-global arq_conn.  arq_conn is read and written from five
  * threads (event loop, cmd bridge, modem RX frame handlers, modem TX PTT path,
  * and the GUI status thread), so every field access is a data race without
@@ -390,6 +396,7 @@ static void crypto_session_start(const char *remote_call, const char *local_call
         return;
     }
 
+    g_pending_ms = 0;
     arq_tnc_send_connected();
     arq_tnc_send_encryption(false);
     HLOGI(LOG_COMP, "Connected to %s (not encrypted)", remote_call);
@@ -421,6 +428,7 @@ static void cb_notify_connected(const char *remote_call, const char *local_call,
 
     if (arq_crypto_mode() == ARQ_CRYPTO_OFF)
     {
+        g_pending_ms = 0;
         arq_tnc_send_connected();   /* dispatches to tnc_send_connected, which takes g_conn_lock via arq_conn_get_calls; must be outside our lock */
         HLOGI(LOG_COMP, "Connected to %s", remote_call);
         return;
@@ -428,11 +436,6 @@ static void cb_notify_connected(const char *remote_call, const char *local_call,
 
     crypto_session_start(remote_call, local_call);
 }
-
-/* When PENDING last went to the host for the call we are answering; 0: none.
- * Written by the FSM's callbacks and by pending_hold, all on the event loop
- * under g_sess_lock. */
-static uint64_t g_pending_ms;
 
 static void cb_notify_pending(const char *remote_call, const char *local_call)
 {
@@ -476,6 +479,7 @@ static void cb_notify_cancelpending(void)
     pthread_mutex_lock(&g_conn_lock);
     arq_conn.session_bw = 0;
     pthread_mutex_unlock(&g_conn_lock);
+    g_pending_ms = 0;
     arq_tnc_send_cancelpending();
     HLOGI(LOG_COMP, "Incoming connection cancelled");
 }
@@ -508,10 +512,17 @@ static void cb_notify_disconnected(bool to_no_client)
      * glued onto trailing bytes from this one. */
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
+    /* A PENDING still outstanding: the session ended in its encryption
+     * handshake, before the host was told CONNECTED (crypto_session_start).
+     * The host hears the call is off, as when we stop answering one. */
+    bool pending = g_pending_ms != 0;
+    g_pending_ms = 0;
     if (told)
         HLOGI(LOG_COMP, "Disconnected (the host was told at its ABORT)");
     else
     {
+        if (pending)
+            arq_tnc_send_cancelpending();
         arq_tnc_send_disconnected();
         HLOGI(LOG_COMP, "Disconnected");
     }
@@ -567,6 +578,7 @@ static void cb_deliver_rx_data(const uint8_t *data, size_t len)
     {
         arq_event_t e = { .id = ARQ_EV_APP_DATA_READY };
 
+        g_pending_ms = 0;
         arq_tnc_send_connected();
         arq_tnc_send_encryption(true);
         HLOGI(LOG_COMP, "Session encrypted; peer key fingerprint %s", fp);
@@ -1096,9 +1108,27 @@ static void count_listen_end(arq_listen_end_t end)
 #define ARQ_CALL_PROGRESS_MS 20000
 static uint64_t g_call_progress_ms;   /* the last line's time; 0: none (g_sess_lock) */
 
+/* The session is up on the air and its encryption handshake still runs: the
+ * host has not been told CONNECTED (crypto_session_start).  On the floor that
+ * is one more exchange, 48 s in the harness at -10 dB.  *caller: our side. */
+static bool crypto_handshaking(bool *caller)
+{
+    if (g_sess.conn_state != ARQ_CONN_CONNECTED || g_sess.teardown != ARQ_TD_NONE ||
+        arq_crypto_mode() == ARQ_CRYPTO_OFF)
+        return false;
+    pthread_mutex_lock(&g_app_tx_mtx);
+    bool hs = g_xs.state == ARQ_XS_HANDSHAKE;
+    *caller = g_neg.caller;
+    pthread_mutex_unlock(&g_app_tx_mtx);
+    return hs;
+}
+
 static void call_progress(uint64_t now)
 {
-    if (g_sess.conn_state != ARQ_CONN_CALLING)
+    /* Also through the handshake of a call we placed: to its host the call
+     * is still being placed. */
+    bool caller = false;
+    if (g_sess.conn_state != ARQ_CONN_CALLING && !(crypto_handshaking(&caller) && caller))
     {
         g_call_progress_ms = 0;
         return;
@@ -1135,7 +1165,12 @@ static void call_progress(uint64_t now)
 
 static void pending_hold(uint64_t now)
 {
-    if (g_sess.conn_state != ARQ_CONN_ACCEPTING || g_sess.teardown == ARQ_TD_LISTEN_OFF)
+    /* Also through the handshake of a call we answered: the host was told
+     * PENDING, and CONNECTED waits for the handshake. */
+    bool caller = true;
+    bool answering = g_sess.conn_state == ARQ_CONN_ACCEPTING ||
+                     (g_pending_ms && crypto_handshaking(&caller) && !caller);
+    if (!answering || g_sess.teardown == ARQ_TD_LISTEN_OFF)
         return;
     if (g_pending_ms && now - g_pending_ms < ARQ_PENDING_HOLD_MS)
         return;
