@@ -558,6 +558,7 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "platforms;android-34" "build-tools;34.0.0" > /dev/null
           go install fyne.io/tools/cmd/fyne@$FYNE_CLI_VERSION
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Build the .apk
         run: |

@@ -25,7 +25,7 @@ static enum gpiod_line_value gpio_value(bool on)
                   : GPIOD_LINE_VALUE_INACTIVE;
 }
 
-int gpio_ptt_open(const ptt_config_t *config)
+int mercury_gpio_ptt_open(const ptt_config_t *config)
 {
     struct gpiod_line_settings *settings = NULL;
     struct gpiod_line_config *line_config = NULL;
@@ -37,7 +37,7 @@ int gpio_ptt_open(const ptt_config_t *config)
         return -1;
 
     if (gpio_request || gpio_chip)
-        gpio_ptt_close();
+        mercury_gpio_ptt_close();
 
     chip_path = config->gpio_chip[0]
         ? config->gpio_chip : PTT_GPIO_CHIP_DEFAULT;
@@ -106,12 +106,12 @@ done:
         gpiod_line_settings_free(settings);
 
     if (rc != 0)
-        gpio_ptt_close();
+        mercury_gpio_ptt_close();
 
     return rc;
 }
 
-int gpio_ptt_set(bool on)
+int mercury_gpio_ptt_set(bool on)
 {
     if (!gpio_request)
     {
@@ -131,7 +131,7 @@ int gpio_ptt_set(bool on)
     return 0;
 }
 
-void gpio_ptt_close(void)
+void mercury_gpio_ptt_close(void)
 {
     if (gpio_request)
     {
@@ -156,7 +156,7 @@ void gpio_ptt_close(void)
 
 #else
 
-int gpio_ptt_open(const ptt_config_t *config)
+int mercury_gpio_ptt_open(const ptt_config_t *config)
 {
     (void)config;
     HLOGE(GPIO_LOG_TAG,
@@ -164,13 +164,13 @@ int gpio_ptt_open(const ptt_config_t *config)
     return -1;
 }
 
-int gpio_ptt_set(bool on)
+int mercury_gpio_ptt_set(bool on)
 {
     (void)on;
     return -1;
 }
 
-void gpio_ptt_close(void)
+void mercury_gpio_ptt_close(void)
 {
 }
 

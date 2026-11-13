@@ -25,6 +25,9 @@ void serial_ptt_close(void) { }
 int mercury_cm108_open(const ptt_config_t *config) { (void)config; return -1; }
 int mercury_cm108_set(bool on) { (void)on; return -1; }
 void mercury_cm108_close(void) { }
+int mercury_gpio_ptt_open(const ptt_config_t *config) { (void)config; return -1; }
+int mercury_gpio_ptt_set(bool on) { (void)on; return -1; }
+void mercury_gpio_ptt_close(void) { }
 
 void setUp(void) {}
 void tearDown(void) {}

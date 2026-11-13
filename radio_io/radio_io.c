@@ -518,7 +518,7 @@ static const ptt_backend_t CM108_BACKEND = {
 };
 static int gpio_backend_open(const ptt_config_t *config)
 {
-    if (gpio_ptt_open(config) != 0)
+    if (mercury_gpio_ptt_open(config) != 0)
         return -1;
 
     HLOGI(RADIO_LOG_TAG, "PTT method: GPIO %s line %u%s",
@@ -530,12 +530,12 @@ static int gpio_backend_open(const ptt_config_t *config)
 
 static int gpio_backend_set(bool on)
 {
-    return gpio_ptt_set(on);
+    return mercury_gpio_ptt_set(on);
 }
 
 static void gpio_backend_close(void)
 {
-    gpio_ptt_close();
+    mercury_gpio_ptt_close();
 }
 
 static const ptt_backend_t GPIO_BACKEND = {
