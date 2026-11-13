@@ -503,7 +503,7 @@ pkcon install rpm-build gcc-c++ make hamlib-devel alsa-lib-devel pulseaudio-deve
 Then leave `devel-su` and build as the normal user:
 
 ```bash
-v=1.9.23    # the release to build (1.9.22 and older have no sailfish/)
+v=1.9.24    # the release to build (1.9.22 and older have no sailfish/)
 mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS
 curl -fsSL -o ~/rpmbuild/SOURCES/mercury-$v.tar.gz \
     https://github.com/Rhizomatica/mercury/archive/refs/tags/v$v.tar.gz
