@@ -47,6 +47,7 @@
 #include "hermes_log.h"
 #include "cfg_utils.h"
 #include "resampler.h"
+#include "cap_recover.h"
 #include "pcm24.h"
 #include "hl2.h"
 
@@ -199,7 +200,16 @@ static const char *audio_rate_mismatch_hint(void)
     }
 }
 
+/* From datalink_arq/arq.c (arq.h: not included, see the sock transport
+ * below): 0 = RX, 1 = TX.  The capture thread reads it on every platform
+ * (cap_recover_on_stall). */
+extern int  arq_get_trx(void);
+
+/* Devices an enumeration looks at, at most. */
+#define DEVICE_RESOLVE_MAX 64
+
 static void format_device_display(int audio_subsys, int mode, const char *id, char *out, size_t outsz);
+static bool device_name_of(int audio_subsys, int mode, const char *id, char *out, size_t outsz);
 static int get_soundcard_list_int(int audio_system, int mode,
                                   char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX], int max_count,
                                   bool pulse_lock_held);
@@ -655,9 +665,9 @@ static void fifo_ignore_sigpipe(void)
 
 /* From datalink_arq/arq.c.  Declared here instead of including arq.h so the
  * audioio library keeps its narrow include surface (see audioio/Makefile).
- * arq_get_trx() returns 0 = RX, 1 = TX (arq.h). */
+ * arq_get_trx() is declared with the forward declarations above, outside
+ * any platform block: the capture thread uses it on every platform. */
 extern void arq_notify_virtual_time(void);
-extern int  arq_get_trx(void);
 
 static int sock_connect_retry(const char *path)
 {
@@ -1749,6 +1759,53 @@ finish_play:
 }
 
 
+/* Act on cap_recover_on_stall()'s answer for the capture device: report it
+ * dead, and look it up by name (cap_recover.h).  True when cap_id has changed:
+ * reopen that one. */
+static bool cap_recover_act(int rec, const cap_recover_t *cr, char *cap_id, size_t idsz,
+                            const char *cap_name, bool *said)
+{
+    if (rec & CAP_REC_DEAD)
+    {
+        HLOGE("audio-cap", "the capture device delivers no audio: %u reopens in a row brought "
+              "nothing (unplugged, or its USB codec reset?) -- still trying it", cr->dry - 1);
+        audio_health_set(true, AUDIO_HEALTH_FAILED,
+                         "the capture device delivers no audio (still trying it)");
+    }
+    if (!(rec & CAP_REC_RESOLVE) || !cap_name[0])
+        return false;
+    char (*ids)[AUDIO_DEV_STR_MAX]   = malloc(sizeof(*ids)   * DEVICE_RESOLVE_MAX);
+    char (*names)[AUDIO_DEV_STR_MAX] = malloc(sizeof(*names) * DEVICE_RESOLVE_MAX);
+    int n = (ids && names) ? get_soundcard_list(audio_subsystem, FFAUDIO_DEV_CAPTURE,
+                                                ids, names, DEVICE_RESOLVE_MAX) : 0;
+    int pick = cap_pick_by_name(cap_id, cap_name, (const char (*)[AUDIO_DEV_STR_MAX])ids,
+                                (const char (*)[AUDIO_DEV_STR_MAX])names, n);
+    bool moved = false;
+    if (pick >= 0)
+    {
+        HLOGW("audio-cap", "capture device '%s' is listed under a new id: %s (was %s) -- "
+              "opening that", cap_name, ids[pick], cap_id);
+        snprintf(cap_id, idsz, "%s", ids[pick]);
+        moved = true;
+        *said = true;
+    }
+    else if (!*said && n > 0)
+    {
+        if (pick == CAP_PICK_PRESENT)
+            HLOGW("audio-cap", "capture device '%s' is still listed: trying it again", cap_name);
+        else if (pick == CAP_PICK_AMBIGUOUS)
+            HLOGW("audio-cap", "capture device '%s' is gone, and more than one device has its "
+                  "name: not guessing which -- select it again", cap_name);
+        else
+            HLOGW("audio-cap", "capture device '%s' (%s) is no longer listed: unplugged? -- "
+                  "waiting for it", cap_name, cap_id);
+        *said = true;
+    }
+    free(ids);
+    free(names);
+    return moved;
+}
+
 void *radio_capture_thread(void *device_ptr)
 {
     ffaudio_interface *audio = NULL;
@@ -1895,6 +1952,25 @@ void *radio_capture_thread(void *device_ptr)
     format_device_display(audio_subsystem, FFAUDIO_DEV_CAPTURE,
                            device_ptr ? (const char *)device_ptr : NULL,
                            cap_dev_display, sizeof(cap_dev_display));
+    /* The device's id and name, to find it again if the id goes: a USB codec
+     * that resets can come back under a new one (cap_recover.h).  Not for
+     * the default device, which the backend follows itself. */
+    char cap_id[AUDIO_DEV_STR_MAX] = "", cap_name[AUDIO_DEV_STR_MAX] = "";
+    if (device_ptr && ((const char *)device_ptr)[0] != '\0')
+    {
+        snprintf(cap_id, sizeof(cap_id), "%s", (const char *)device_ptr);
+        device_name_of(audio_subsystem, FFAUDIO_DEV_CAPTURE, cap_id, cap_name, sizeof(cap_name));
+    }
+    cap_recover_t cap_rec = {0};
+    bool cap_said_where = false;    /* the lookup's outcome logged once per outage */
+#if defined(_WIN32)
+#define CAP_USE_ID() do { conf.buf.device_id = cap_id;                               \
+        if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND && cap_id[0] == '{' &&         \
+            str_to_guid(cap_id, &cap_guid) == 0)                                     \
+            conf.buf.device_id = (const char *)&cap_guid; } while (0)
+#else
+#define CAP_USE_ID() do { conf.buf.device_id = cap_id; } while (0)
+#endif
     HLOGI("audio-cap", "I/O capture (%s) %s / %dHz / %dch / %dms buffer",
           cap_dev_display,
           cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
@@ -2047,9 +2123,16 @@ void *radio_capture_thread(void *device_ptr)
             uint64_t now = audioio_monotonic_ms();
             if (now - cap_last_data_ms >= CAP_STALL_MS)
             {
-                HLOGW("audio-cap",
-                      "capture stalled %llu ms, reopening device (reopen #%u)",
-                      (unsigned long long)(now - cap_last_data_ms), ++diag_reopens);
+                int rec = cap_recover_on_stall(&cap_rec, arq_get_trx() == 1);
+                ++diag_reopens;
+                /* One line per stall until it is called dead, then only with
+                 * each lookup: 1380 of them told nothing (K7EK, 2026-11-10). */
+                if (!cap_rec.dead || rec)
+                    HLOGW("audio-cap",
+                          "capture stalled %llu ms, reopening device (reopen #%u)",
+                          (unsigned long long)(now - cap_last_data_ms), diag_reopens);
+                if (cap_recover_act(rec, &cap_rec, cap_id, sizeof(cap_id), cap_name, &cap_said_where))
+                    CAP_USE_ID();
                 audio->free(b);
                 b = NULL;
                 /* Keep trying -- a USB radio interface can come back -- but
@@ -2074,6 +2157,11 @@ void *radio_capture_thread(void *device_ptr)
                         HLOGE("audio-cap", "capture reopen failed (attempt %u): %s",
                               attempt, b ? audio->error(b) : "alloc()");
                     if (b != NULL) { audio->free(b); b = NULL; }
+                    /* A reopen that fails brings no samples either: the device
+                     * gone, perhaps to come back under another id. */
+                    if (cap_recover_act(cap_recover_on_stall(&cap_rec, false), &cap_rec,
+                                        cap_id, sizeof(cap_id), cap_name, &cap_said_where))
+                        CAP_USE_ID();
                     /* Sleep in short steps so a shutdown during recovery is
                      * still prompt: a single ffthread_sleep(5000) here makes
                      * the user wait out the whole backoff before the process
@@ -2108,6 +2196,11 @@ void *radio_capture_thread(void *device_ptr)
         {
             HLOGI("audio-cap", "capture delivering again after reopen #%u", diag_reopens);
             cap_reopened = false;
+        }
+        if (cap_recover_on_data(&cap_rec))
+        {
+            audio_health_set(true, AUDIO_HEALTH_RUNNING, NULL);
+            cap_said_where = false;
         }
         cap_last_data_ms = audioio_monotonic_ms();
         diag_read_calls++;
@@ -2508,7 +2601,6 @@ int get_soundcard_list(int audio_system, int mode,
     return get_soundcard_list_int(audio_system, mode, ids, dev_names, max_count, false);
 }
 
-#define DEVICE_RESOLVE_MAX 64
 
 int audioio_device_name(int audio_subsys, int mode, const char *id, char *name, size_t len)
 {
@@ -2705,27 +2797,32 @@ static void format_device_display(int audio_subsys, int mode, const char *id, ch
         snprintf(out, outsz, "default");
         return;
     }
+    char name[AUDIO_DEV_STR_MAX];
+    if (device_name_of(audio_subsys, mode, id, name, sizeof(name)))
+        snprintf(out, outsz, "%s '%s'", id, name);
+    else
+        snprintf(out, outsz, "%s", id);
+}
 
+/* The enumerated name of the device with this native id, into out; false
+ * (out empty) if it is not listed or the subsystem cannot list devices. */
+static bool device_name_of(int audio_subsys, int mode, const char *id, char *out, size_t outsz)
+{
+    out[0] = '\0';
     /* Heap for the same reason as resolve_device_string() above. */
     char (*ids)[AUDIO_DEV_STR_MAX]   = malloc(sizeof(*ids)   * DEVICE_RESOLVE_MAX);
     char (*names)[AUDIO_DEV_STR_MAX] = malloc(sizeof(*names) * DEVICE_RESOLVE_MAX);
-    if (!ids || !names) {
-        free(ids); free(names);
-        snprintf(out, outsz, "%s", id);
-        return;
+    bool found = false;
+    if (ids && names) {
+        int n = get_soundcard_list(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX);
+        for (int i = 0; i < n && !found; i++)
+            if (strcmp(id, ids[i]) == 0) {
+                snprintf(out, outsz, "%s", names[i]);
+                found = true;
+            }
     }
-
-    int n = get_soundcard_list(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX);
-    for (int i = 0; i < n; i++) {
-        if (strcmp(id, ids[i]) == 0) {
-            snprintf(out, outsz, "%s '%s'", id, names[i]);
-            free(ids); free(names);
-            return;
-        }
-    }
-
     free(ids); free(names);
-    snprintf(out, outsz, "%s", id);
+    return found;
 }
 
 void list_soundcards(int audio_system)

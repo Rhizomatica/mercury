@@ -16,6 +16,7 @@ FAKE_VOID_FUNC(fake_send_connected);
 FAKE_VOID_FUNC(fake_send_cqframe, const char *, int);
 FAKE_VOID_FUNC(fake_send_disconnected);
 FAKE_VOID_FUNC(fake_send_buffer, uint32_t);
+FAKE_VOID_FUNC(fake_send_bitrate, uint32_t, uint32_t);
 
 static const arq_tnc_callbacks_t test_cbs = {
     .send_pending       = fake_send_pending,
@@ -24,6 +25,7 @@ static const arq_tnc_callbacks_t test_cbs = {
     .send_cqframe       = fake_send_cqframe,
     .send_disconnected  = fake_send_disconnected,
     .send_buffer        = fake_send_buffer,
+    .send_bitrate       = fake_send_bitrate,
 };
 
 void setUp(void)
@@ -34,6 +36,7 @@ void setUp(void)
     RESET_FAKE(fake_send_cqframe);
     RESET_FAKE(fake_send_disconnected);
     RESET_FAKE(fake_send_buffer);
+    RESET_FAKE(fake_send_bitrate);
     FFF_RESET_HISTORY();
     arq_set_tnc_callbacks(NULL);   /* start each test unregistered */
 }
@@ -49,6 +52,8 @@ void test_invokers_are_noop_before_registration(void)
     arq_tnc_send_disconnected();
     arq_tnc_send_buffer(42);
     arq_tnc_send_cqframe("W1AW", 2300);
+    arq_tnc_send_bitrate(16, 30);
+    TEST_ASSERT_EQUAL_INT(0, fake_send_bitrate_fake.call_count);
     TEST_ASSERT_EQUAL_INT(0, fake_send_connected_fake.call_count);
     TEST_ASSERT_EQUAL_INT(0, fake_send_cqframe_fake.call_count);
 }
@@ -76,10 +81,13 @@ void test_invokers_forward_arguments(void)
 
     arq_tnc_send_buffer(1234);
     arq_tnc_send_cqframe("KM6LYW", 500);
+    arq_tnc_send_bitrate(100, 63);
 
     TEST_ASSERT_EQUAL_UINT32(1234, fake_send_buffer_fake.arg0_val);
     TEST_ASSERT_EQUAL_STRING("KM6LYW", fake_send_cqframe_fake.arg0_val);
     TEST_ASSERT_EQUAL_INT(500, fake_send_cqframe_fake.arg1_val);
+    TEST_ASSERT_EQUAL_UINT32(100, fake_send_bitrate_fake.arg0_val);
+    TEST_ASSERT_EQUAL_UINT32(63, fake_send_bitrate_fake.arg1_val);
 }
 
 /* A partially-populated table (some NULL fields) does not crash. */

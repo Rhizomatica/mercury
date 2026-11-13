@@ -2106,6 +2106,7 @@ static const arq_tnc_callbacks_t g_arq_tnc_cbs = {
     .send_disconnected  = tnc_send_disconnected,
     .send_buffer        = tnc_send_buffer,
     .send_registered    = tnc_send_registered,
+    .send_bitrate       = tnc_send_bitrate_progress,
 };
 
 void tnc_send_sn(float snr)
@@ -2137,6 +2138,20 @@ void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
     atomic_store_explicit(&last_bitrate_bps, bps, memory_order_relaxed);
     snprintf(buffer, sizeof(buffer), "BITRATE (%u) %u BPS\r", speed_level, bps);
     (void)tnc_queue_line(buffer);
+}
+
+/* A BITRATE line to say the link is still being worked on (the ARQ's
+ * calling keepalive, arq.c call_progress): the rate given, unless the last
+ * BITRATE sent was for the same speed level, whose rate it repeats -- the
+ * modem's, from the codec, where the caller's is from the mode table (an
+ * MFSK CALL read 63 bps from the modem and 58 from the table). */
+void tnc_send_bitrate_progress(uint32_t speed_level, uint32_t bps)
+{
+    if (atomic_load_explicit(&last_bitrate_sl, memory_order_relaxed) == speed_level) {
+        uint32_t last = atomic_load_explicit(&last_bitrate_bps, memory_order_relaxed);
+        if (last) bps = last;
+    }
+    tnc_send_bitrate(speed_level, bps);
 }
 
 void tnc_send_monitor(const char *mode_name, const char *kind,
