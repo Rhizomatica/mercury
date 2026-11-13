@@ -586,6 +586,31 @@ static void test_carousel_estimate_step_is_not_a_channel_step(void)
     TEST_ASSERT_TRUE_MESSAGE(off.done_ms <= zero.done_ms, what);
 }
 
+
+/* A drop below the control mode mid-transfer (step:0:-10:60, messages:
+ * 5 KB from A, a line from B later).  B reads A at -10 dB, below the control
+ * mode, and polls for A's round at the floor; A, deaf to that DATAC16 poll,
+ * sends nothing there.  B stays at the floor (car_on_time, CAR_T_W): back on
+ * DATAC3, where nothing of A's decodes at -10 dB, it missed A's floor
+ * control until its own silence put it at the floor.  The longest B went
+ * without hearing A, over seeds 1-10: 121 s before, 91 s with this. */
+static void test_carousel_drop_below_the_control_mode_stays_at_the_floor(void)
+{
+    uint64_t worst = 0;
+    char what[96];
+    setenv("CAR_SCRIPT", "A5000+1000,B300+150000", 1);
+    for (uint64_t seed = 1; seed <= 10; seed++) {
+        car_sim_result_t r;
+        carousel_sim_run(seed, "step:0:-10:60", false, LIMIT_MS, &r);
+        snprintf(what, sizeof(what), "seed %llu", (unsigned long long)seed);
+        TEST_ASSERT_TRUE_MESSAGE(r.intact && r.done_ms, what);
+        if (r.silent_ms[1] > worst) worst = r.silent_ms[1];
+    }
+    unsetenv("CAR_SCRIPT");
+    snprintf(what, sizeof(what), "B's longest silence %llu ms", (unsigned long long)worst);
+    TEST_ASSERT_TRUE_MESSAGE(worst < 105000, what);
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -793,6 +818,7 @@ int main(void)
     RUN_TEST(test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor);
     RUN_TEST(test_carousel_low_control_readings_do_not_hold_the_ladder);
     RUN_TEST(test_carousel_estimate_step_is_not_a_channel_step);
+    RUN_TEST(test_carousel_drop_below_the_control_mode_stays_at_the_floor);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     RUN_TEST(test_carousel_bw500_control_loss_does_not_stall);
     return UNITY_END();
