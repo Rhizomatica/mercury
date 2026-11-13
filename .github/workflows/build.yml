@@ -121,6 +121,11 @@ jobs:
           fi
           echo "Linux amd64 build succeeded"
 
+      # hermes-radio-daemon's build (MERCURY_HOST=daemon): every core call
+      # resolves against host/, so the daemon's link can't break on a tag.
+      - name: Daemon build links (libmercury_host.a)
+        run: make -j$(nproc) check-host-link MERCURY_HOST=daemon
+
   build-linux-arm64:
     name: Build Linux arm64 (cross-compile, Debian 13)
     runs-on: ubuntu-latest
