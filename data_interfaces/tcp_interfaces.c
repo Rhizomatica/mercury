@@ -34,9 +34,13 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #endif
 
 #include "os_interop.h"
+#if defined(_WIN32)
+#include <mstcpip.h>   /* SIO_KEEPALIVE_VALS: after winsock2.h (os_interop.h) */
+#endif
 
 #include "tcp_interfaces.h"
 #include "arq_tnc.h"
@@ -876,6 +880,121 @@ static void process_control_bytes(char *line_buf, int *line_len, const uint8_t *
     }
 }
 
+/* One host at a time on each TCP port.
+ *
+ * A control (or data) connection that arrives while a client is connected
+ * and still there is refused: closed at once, and the client keeps the TNC.
+ * It used to take over, closing the client, and two host programs set up for
+ * the same Mercury then took it from each other for good: on air (KG9NI,
+ * 2026-11-12, 16:26-18:11) two BPQ32 ports reconnected every 3 to 7 s, 536
+ * control connects in under two hours, and each one was an
+ * ARQ_CMD_CLIENT_DISCONNECT that would have ended a session.  Each reconnect
+ * logged only "Control client connected", so nothing said why.
+ *
+ * "Still there" is a peek at the client's socket (client_gone): a host that
+ * restarts on this machine has had its old socket closed by the OS (FIN or
+ * RST, already in), so its new connection replaces it as before.  A client
+ * whose peer vanished without a word (a remote host's link down: half-open)
+ * reads as there until TCP keepalive (keep_alive) gives up on it, 40-60 s;
+ * the next connection then gets in. */
+#define REFUSED_SAY_MS 60000
+
+/* The client's socket closed (EOF) or broken: it can be replaced.
+ * Non-blocking: data waiting, or none, is a client still there. */
+static bool client_gone(int fd)
+{
+    char probe;
+    ssize_t got = recv(fd, &probe, 1, MSG_PEEK);
+    if (got > 0)
+        return false;
+    if (got == 0)
+        return true;
+    int e = sock_errno();
+    return e != SOCK_EAGAIN && e != SOCK_EWOULDBLOCK && e != SOCK_EINTR;
+}
+
+/* TCP keepalive on a client's socket, so a half-open one is found dead and
+ * stops refusing its replacement: 30 s idle, then 3 probes 10 s apart
+ * (Linux, about a minute) or 10 probes 1 s apart (Windows, about 40 s).
+ * Plain SO_KEEPALIVE alone waits 2 hours.  Best effort: the system's
+ * defaults where an option is missing. */
+static void keep_alive(int fd)
+{
+    int on = 1;
+    (void)setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (const char *)&on, sizeof(on));
+#if defined(_WIN32)
+    /* Windows sends its probes 1 s apart, 10 of them (Vista and later). */
+    struct tcp_keepalive ka = { .onoff = 1, .keepalivetime = 30000, .keepaliveinterval = 1000 };
+    DWORD ret = 0;
+    (void)WSAIoctl((SOCKET)fd, SIO_KEEPALIVE_VALS, &ka, sizeof(ka), NULL, 0, &ret, NULL, NULL);
+#elif defined(TCP_KEEPIDLE)
+    int idle = 30;
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, (const char *)&idle, sizeof(idle));
+#elif defined(TCP_KEEPALIVE)
+    int idle = 30;   /* macOS */
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, (const char *)&idle, sizeof(idle));
+#endif
+#if defined(TCP_KEEPINTVL)
+    int intvl = 10;
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, (const char *)&intvl, sizeof(intvl));
+#endif
+#if defined(TCP_KEEPCNT)
+    int cnt = 3;
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, (const char *)&cnt, sizeof(cnt));
+#endif
+}
+
+/* Who knocked: "127.0.0.1:52344". */
+static void peer_name(int fd, char *out, size_t len)
+{
+    struct sockaddr_storage ss;
+    socklen_t sl = sizeof(ss);
+    snprintf(out, len, "?");
+    if (getpeername(fd, (struct sockaddr *)&ss, &sl) != 0)
+        return;
+    char host[64] = "?";
+    int port = 0;
+    if (ss.ss_family == AF_INET) {
+        struct sockaddr_in *a = (struct sockaddr_in *)&ss;
+        inet_ntop(AF_INET, &a->sin_addr, host, sizeof(host));
+        port = ntohs(a->sin_port);
+    } else if (ss.ss_family == AF_INET6) {
+        struct sockaddr_in6 *a = (struct sockaddr_in6 *)&ss;
+        inet_ntop(AF_INET6, &a->sin6_addr, host, sizeof(host));
+        port = ntohs(a->sin6_port);
+    }
+    snprintf(out, len, "%s:%d", host, port);
+}
+
+/* A refused connection, said once and then counted: the second host knocks
+ * every few seconds for as long as it runs. */
+typedef struct {
+    const char *comp, *port;
+    unsigned    since_said;     /* refused since the last line */
+    uint64_t    said_ms;        /* 0: never said */
+} refusals_t;
+
+static void refuse_client(refusals_t *r, int fd, int holder, uint64_t now_ms)
+{
+    char who[80], holds[80];
+    peer_name(fd, who, sizeof(who));
+    peer_name(holder, holds, sizeof(holds));
+    SOCK_CLOSE(fd);
+    r->since_said++;
+    if (!r->said_ms) {
+        HLOGW(r->comp, "%s connection from %s refused: %s is connected and keeps the TNC. "
+              "Two host programs (or two ports of one) set up for this Mercury? "
+              "Only one can use it at a time", r->port, who, holds);
+        r->said_ms = now_ms;
+        r->since_said = 0;
+    } else if (now_ms - r->said_ms >= REFUSED_SAY_MS) {
+        HLOGW(r->comp, "%u more %s connections refused in %llu s (the last from %s); %s keeps the TNC",
+              r->since_said, r->port, (unsigned long long)((now_ms - r->said_ms) / 1000), who, holds);
+        r->said_ms = now_ms;
+        r->since_said = 0;
+    }
+}
+
 static void close_data_client(int *data_client_fd)
 {
     if (!data_client_fd || *data_client_fd < 0)
@@ -1061,6 +1180,8 @@ void *arq_reactor_thread(void *port)
     int data_listener = -1;
     int ctl_client = -1;
     int data_client = -1;
+    refusals_t ctl_refused  = { .comp = "tcp-ctl",  .port = "control" };
+    refusals_t data_refused = { .comp = "tcp-data", .port = "data" };
     char ctl_line[TCP_BLOCK_SIZE + 1] = {0};
     int ctl_len = 0;
     int last_buffer_report = -1;
@@ -1133,11 +1254,17 @@ void *arq_reactor_thread(void *port)
                 {
                     SOCK_CLOSE(fd);
                 }
+                else if (ctl_client >= 0 && !client_gone(ctl_client))
+                {
+                    refuse_client(&ctl_refused, fd, ctl_client, now_ms);
+                }
                 else
                 {
                     arq_cmd_msg_t cmd;
                     if (ctl_client >= 0)
                         close_ctl_client(&ctl_client, &data_client, true);
+                    keep_alive(fd);
+                    ctl_refused.said_ms = 0;   /* a new holder: a refusal is news again */
                     pthread_mutex_lock(&host_tnc_lock);
                     if (host_release_tnc())
                         HLOGI("tcp-ctl", "Control client connected: it takes the TNC from the host program");
@@ -1167,10 +1294,16 @@ void *arq_reactor_thread(void *port)
                 {
                     SOCK_CLOSE(fd);
                 }
+                else if (data_client >= 0 && !client_gone(data_client))
+                {
+                    refuse_client(&data_refused, fd, data_client, now_ms);
+                }
                 else
                 {
                     if (data_client >= 0)
                         close_data_client(&data_client);
+                    keep_alive(fd);
+                    data_refused.said_ms = 0;
                     /* A client that connects with no session up must not be
                      * handed bytes some earlier session left behind: they were
                      * for a reader that is gone.  (With a session up, a client
