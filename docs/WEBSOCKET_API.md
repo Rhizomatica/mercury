@@ -94,7 +94,10 @@ There are exactly five implemented commands. Dispatch is a `strcmp` chain in
 
 Change the audio subsystem, capture/playback devices and input channel.
 Restarts `audioio`, waits up to 3 s for health, and persists to the INI on
-success.
+success: the device ids, and each device's name as listed then
+(`input_device_name`, `output_device_name`; none for a device not in the
+list), which finds the device at the next start on Windows if its id has
+changed.
 
 | Field | Meaning | Accepted values |
 |---|---|---|

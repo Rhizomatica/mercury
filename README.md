@@ -136,6 +136,7 @@ PTT control notes:
 Sound card notes:
 - A capture device that stops delivering audio is reopened every 2 s. After three reopens in a row that bring nothing (about 6 s, not counting the time Mercury is transmitting), Mercury logs `the capture device delivers no audio` once and reports the audio as failed (`audio_ok: false` in the GUI and the WebSocket status) until samples come back.
 - When it reports the failure, and on every 5th reopen after that, Mercury also lists the sound cards again and looks for the device by the name it had when capture started. Windows can give a USB codec a new id, under the same name, when it resets or is re-plugged. If exactly one device has that name, Mercury opens it under its new id (`listed under a new id: ... -- opening that`). If two have it (two radios with the same codec), Mercury does not guess, and asks you to select it again. The default device (no `-i`) is left to the sound system.
+- The same at start, on Windows (`wasapi`, `dsound`): when you choose the devices in the GUI, their names are saved next to their ids (`input_device_name`, `output_device_name` in `mercury.ini`). If a saved id is no longer listed when Mercury starts, the device with that exact name is used, if exactly one has it (`device id '...' is gone; found '...' by its saved name`). `-i` and `-o` on the command line drop the saved name. A config without the names works as before.
 
 ## Getting Started with Mercury
 
