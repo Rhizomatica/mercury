@@ -382,6 +382,12 @@ Send `0` to restore the compiled default (8 seconds).  The minimum
 enforced value is 4 seconds; values below 4 are clamped to 4 to avoid
 firing a retry before a valid ACCEPT can return over the air.
 
+The default is per carrier: a CALL whose ACCEPT may come back on the MFSK
+floor (a floor CALL, or a repeat on the control mode) waits the floor's
+interval, about 24 s (37.5 s at 500 Hz), so as not to key over that 13.5 s
+ACCEPT.  `CALLINT` overrides that too: below about 20 s a CALL may key
+over a floor ACCEPT its decoders did not catch.
+
 ```
 CALLINT 5\r
 CALLINT 0\r
