@@ -122,6 +122,12 @@ fallback) does not take a fallen-back S off the floor.
   - Every pair is checked, not only `FS` = 60 % of `FM`, so the check also
     covers two stations configured differently: M's `SILENT_MS` comes from
     its own ini, S's `S_FALLBACK_MS` from its own.
+  - The round timer firing is a choice in `SDeaf` (`w`): it may take S
+    back to `sPrev`, or leave it where it is.  So S staying at the floor it
+    asked for while it reads M below the control mode (`car_on_time`,
+    `CAR_T_W`, #548) is among the behaviours checked, and the result is
+    unchanged: no error, 696 distinct states.  Only taking a fallen-back S
+    off the floor is excluded (`Mut_fs_nostay`).
   - Not modelled: M's shortcut after two unanswered REQs
     (`car_on_tx_done`: `reqs >= 2 ? S_FALLBACK_MS : SILENT_MS`), which takes
     M to the floor after its own `S_FALLBACK_MS`.  It only moves M there
