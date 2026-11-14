@@ -45,6 +45,13 @@ void mercury_request_shutdown(void);
  * engine; copy (Go: C.GoString) before it is next set. */
 const char *mercury_log_status(void);
 
+/* The configuration file the engine was started with, as a full path (NULL
+ * before mercury_init), and 1 when it was read, 0 when it was not found and
+ * the engine runs on built-in defaults.  Settings changed in the UI are
+ * written to this path either way.  Owned by the bridge; copy before use. */
+const char *mercury_config_path(void);
+int         mercury_config_loaded(void);
+
 /* ---- In-process UI link ----------------------------------------------------
  * The embedded UI pulls state and pushes commands through these calls instead
  * of opening a websocket back to its own process.  The websocket server keeps

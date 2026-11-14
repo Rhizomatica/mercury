@@ -1747,8 +1747,11 @@ func main() {
 		if isEngine {
 			version, gitHash = engLink.Version()
 		}
-		dialog.ShowInformation("Version",
-			fmt.Sprintf("Mercury Version: %s\nGit Commit: %s", version, gitHash), myWindow)
+		text := fmt.Sprintf("Mercury Version: %s\nGit Commit: %s", version, gitHash)
+		if path, loaded := mercuryConfigStatus(); isEngine && path != "" {
+			text += "\n\n" + configStatusText(path, loaded)
+		}
+		dialog.ShowInformation("Version", text, myWindow)
 	}
 
 	versionItem := fyne.NewMenuItem("Version", showVersionDialog)
@@ -1855,6 +1858,19 @@ func main() {
 		// invisible in the windowsgui build, so ui.log carries it instead.
 		if status := mercuryLogStatus(); status != "" {
 			appendLog(status + "\n")
+		}
+		// Which mercury.ini the engine read. Launched from a desktop menu the
+		// working directory is the home folder, so a file kept elsewhere is
+		// silently not read: say so on screen, not only on stdout.
+		if path, loaded := mercuryConfigStatus(); path != "" {
+			appendLog(configStatusText(path, loaded) + "\n")
+			if !loaded && runtime.GOOS != "android" && runtime.GOOS != "ios" {
+				runOnUI(func() {
+					dialog.ShowInformation("No configuration file",
+						configStatusText(path, loaded)+"\n\n"+configSearchHint(),
+						myWindow)
+				})
+			}
 		}
 		engineReady.Store(true)
 		connectLink()
@@ -2216,6 +2232,28 @@ func getBaseDir() string {
 		return getExeDir()
 	}
 	return "."
+}
+
+// configStatusText says which configuration file the engine runs on.
+func configStatusText(path string, loaded bool) string {
+	if loaded {
+		return "Configuration file: " + path
+	}
+	return "No configuration file found: running on built-in defaults.\n" +
+		"Settings you change are saved to: " + path
+}
+
+// configSearchHint tells the user how to point the engine at an existing
+// mercury.ini (common/mercury_cli.c: the working directory, then
+// cli_find_config; on Windows the UI passes the file next to the .exe).
+func configSearchHint() string {
+	if runtime.GOOS == "windows" {
+		return "To use an existing file, put it next to mercury-ui.exe,\n" +
+			"or start Mercury with:  mercury-ui.exe -C C:\\path\\to\\mercury.ini"
+	}
+	return "To use an existing file, start Mercury from its folder,\n" +
+		"put it in ~/.config/mercury/ or /etc/mercury/,\n" +
+		"or start it with:  mercury-ui -C /path/to/mercury.ini"
 }
 
 func getLogDir() string {

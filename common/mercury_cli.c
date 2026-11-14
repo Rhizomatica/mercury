@@ -174,6 +174,7 @@ int mercury_cli_parse(int argc, char **argv,
         if (cfg_read(&out->cfg, out->cfg_path)) {
             printf("Loaded configuration from %s\n", out->cfg_path);
             cfg_loaded = true;
+            out->cfg_loaded = true;
         } else {
             cfg_error = true;   /* reported once the action is known */
         }
