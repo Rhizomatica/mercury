@@ -140,6 +140,7 @@ jobs:
             libasound2-dev \
             libhamlib-dev \
             libssl-dev \
+            libsodium-dev \
             pkg-config \
             golang-go
 

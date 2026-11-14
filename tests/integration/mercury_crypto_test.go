@@ -176,6 +176,13 @@ func startCryptoLink(t *testing.T, iniA, iniB string) *cryptoLink {
 	}
 
 	if l.connA, err = waitForTCP(ctx, "127.0.0.1", aPort, controlPortTimeout, a.proc); err != nil {
+		// A build without libsodium refuses a [crypto] mode other than off.
+		for _, f := range []string{a.err.Name(), b.err.Name()} {
+			if log, _ := os.ReadFile(f); strings.Contains(string(log), "no crypto backend") {
+				l.close()
+				t.Skip("this build has no crypto backend (libsodium)")
+			}
+		}
 		l.failWithLogs("A control port: %v", err)
 	}
 	if l.connB, err = waitForTCP(ctx, "127.0.0.1", bPort, controlPortTimeout, b.proc); err != nil {
