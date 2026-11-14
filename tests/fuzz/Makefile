@@ -81,7 +81,8 @@ clean:
 	rm -f $(FUZZ_BINS) .preflight.c .preflight.bin crash-* leak-* oom-* timeout-*
 
 fuzz_arq_hdr: fuzz_arq_hdr.c ../../datalink_arq/arq_protocol.c \
-              ../../datalink_arq/arith.c ../../modem/framer.c
+              ../../datalink_arq/arith.c ../../modem/framer.c \
+              ../../common/virtual_clock.c ../../common/hermes_log.c
 	$(FUZZ_CC) $(FUZZ_CFLAGS) $(PROJECT_INC) -o $@ $^ $(FUZZ_LDFLAGS)
 
 fuzz_frame_header: fuzz_frame_header.c ../../modem/framer.c
