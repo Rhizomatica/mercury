@@ -910,15 +910,16 @@ fyne-ui-macos-dmg: fyne-ui-macos
 # for one architecture, so the slice that does not match fails to link, and a
 # universal binary that only builds on half the Macs is worse than one without
 # wss://.  A single-arch `make fyne-ui-macos` still picks up OpenSSL if the
-# system has it.
+# system has it.  libsodium the same (ARQ_CRYPTO=0): Homebrew's is one
+# architecture too.
 
 # Universal, self-contained mercury CLI (pure C).
 macos-universal:
 	@for A in x86_64 arm64; do \
 		echo "== building mercury slice: $$A =="; \
 		$(MAKE) clean >/dev/null; \
-		$(MAKE) internal_deps CC="clang -arch $$A" WS_TLS=0 || exit 1; \
-		$(MAKE) $(BINARY) CC="clang -arch $$A" WS_TLS=0 || exit 1; \
+		$(MAKE) internal_deps CC="clang -arch $$A" WS_TLS=0 ARQ_CRYPTO=0 || exit 1; \
+		$(MAKE) $(BINARY) CC="clang -arch $$A" WS_TLS=0 ARQ_CRYPTO=0 || exit 1; \
 		mv $(BINARY) mercury-$$A || exit 1; \
 	done
 	lipo -create mercury-x86_64 mercury-arm64 -output $(BINARY)
@@ -937,7 +938,7 @@ fyne-ui-macos-universal:
 		case $$A in x86_64) GOA=amd64;; arm64) GOA=arm64;; esac; \
 		echo "== building mercury-ui slice: $$A =="; \
 		$(MAKE) clean >/dev/null; \
-		$(MAKE) libmercury_core.a CC="clang -arch $$A" WS_TLS=0 || exit 1; \
+		$(MAKE) libmercury_core.a CC="clang -arch $$A" WS_TLS=0 ARQ_CRYPTO=0 || exit 1; \
 		( cd $(FYNE_UI_DIR) && CGO_ENABLED=1 GOOS=darwin GOARCH=$$GOA CC="clang -arch $$A" \
 			go build -tags mercury_embedded \
 			-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \

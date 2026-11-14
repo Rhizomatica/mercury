@@ -265,8 +265,8 @@ endif
 #
 # [crypto] mode = optional | required needs libsodium (ISC licence, GPL-
 # compatible), for X25519, ChaCha20-Poly1305 and SHA-256.  Same rule as TLS
-# above: used wherever pkg-config finds it, with the mingw cross-build the one
-# exception, for the same host-versus-target reason.  Without it Mercury still
+# above: used wherever pkg-config finds it, with the cross-builds (mingw, iOS,
+# Android) the exceptions, for the same host-versus-target reason.  Without it Mercury still
 # builds and runs with crypto off, and refuses mode != off at startup rather
 # than silently sending in the clear.
 #
@@ -283,6 +283,13 @@ CRYPTO_LDFLAGS :=
 
 ARQ_CRYPTO_CROSS_SAFE := 1
 ifeq ($(OS),Windows_NT)
+ifneq ($(origin ARQ_CRYPTO),command line)
+  ARQ_CRYPTO_CROSS_SAFE := 0
+endif
+endif
+
+# iOS and Android, as for TLS above: pkg-config answers for the build host.
+ifneq ($(TARGET_IOS)$(TARGET_ANDROID),)
 ifneq ($(origin ARQ_CRYPTO),command line)
   ARQ_CRYPTO_CROSS_SAFE := 0
 endif
