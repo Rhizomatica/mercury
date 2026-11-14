@@ -9,6 +9,7 @@
 #include "arq.h"
 #include "arq_fsm.h"
 #include "arq_tnc.h"
+#include "arq_crypto.h"
 #include "arq_protocol.h"
 #include "arq_trace.h"
 #include "arq_timing.h"
@@ -87,6 +88,31 @@ static pthread_mutex_t  g_sess_lock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
 static uint8_t         g_app_tx_storage[APP_TX_BUF_SIZE];
 static cbuf_handle_t   g_app_tx_buf;
 static pthread_mutex_t g_app_tx_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+/* The encryption state of the current session (arq_crypto.h).  Guarded by
+ * g_app_tx_mtx, the lock the byte-stream callbacks already take: every path to
+ * it is either alone or nested inside g_sess_lock, which is the order
+ * cb_tx_read has always used.  Anything that reaches another subsystem (TNC
+ * notices, the event queue) happens after the lock is released.
+ *
+ * With [crypto] mode = off none of this is ever touched: the callbacks take
+ * their original paths, byte for byte.
+ *
+ * One of each, as there is one g_sess: the FSM runs one session at a time,
+ * and g_neg below is tied to it by its session id.  Sessions side by side
+ * would need these per session. */
+static arq_xs_t g_xs;
+/* The connect's two encryption bits as they went on air, for the session the
+ * FSM is setting up (crypto_negotiate): our CALL's offer and the ACCEPT's
+ * answer at the caller, the CALL's offer and our answer at the callee.  Kept
+ * here, not in the session.  Guarded by g_app_tx_mtx, like g_xs. */
+static struct { uint8_t session_id; bool valid, caller, offer, accept; } g_neg;
+
+/* When PENDING last went to the host for the call we are answering; 0: none
+ * outstanding (the host was told CONNECTED, CANCELPENDING or DISCONNECTED
+ * since).  Written by the FSM's callbacks, cb_deliver_rx_data and
+ * pending_hold, all on the event loop under g_sess_lock. */
+static uint64_t g_pending_ms;
 
 /* Guards the process-global arq_conn.  arq_conn is read and written from five
  * threads (event loop, cmd bridge, modem RX frame handlers, modem TX PTT path,
@@ -283,6 +309,103 @@ static void cb_send_keydown(const arq_keydown_t *kd)
     }
 }
 
+/* End a session that must not continue: the handshake failed, a record failed
+ * its tag, or required mode could not be met.  Nothing more is sent or
+ * delivered; the client gets DISCONNECTED from the normal teardown, having
+ * never been told CONNECTED if the handshake had not finished. */
+static void crypto_abort(const char *why)
+{
+    arq_event_t ev = { .id = ARQ_EV_APP_DISCONNECT };
+
+    HLOGW(LOG_COMP, "Ending the session: %s", why);
+    pthread_mutex_lock(&g_app_tx_mtx);
+    arq_xs_end(&g_xs);
+    g_xs.state = ARQ_XS_FAILED;
+    clear_buffer(g_app_tx_buf);
+    pthread_mutex_unlock(&g_app_tx_mtx);
+    evq_push(&ev);
+}
+
+/* Right after the RF connect, on the event loop (under g_sess_lock, which is
+ * recursive).  The two bits that went on air decide: both set means Noise_KK,
+ * anything else is a clear session -- which required mode refuses. */
+static void crypto_session_start(const char *remote_call, const char *local_call)
+{
+    pthread_mutex_lock(&g_app_tx_mtx);
+    bool initiator  = g_neg.caller;
+    bool negotiated = g_neg.valid && g_neg.session_id == g_sess.session_id &&
+                      g_neg.offer && g_neg.accept;
+    pthread_mutex_unlock(&g_app_tx_mtx);
+    const char *why = NULL;
+    bool secure = false;
+
+    if (negotiated)
+    {
+        uint8_t peer_pub[ARQ_CRYPTO_KEYLEN];
+        char my_call[CALLSIGN_MAX_SIZE];
+        arq_xs_params_t p;
+
+        arq_conn_get_calls(my_call, NULL, NULL, sizeof(my_call));
+
+        /* Both sides must bind the same strings.  The initiator is known by
+         * the source callsign of its CALL; the responder by the callsign the
+         * initiator DIALED -- which, on a station answering several SSIDs, is
+         * the one whose CRC matched, not necessarily its primary. */
+        p.initiator      = initiator;
+        p.initiator_call = initiator ? my_call : remote_call;
+        p.responder_call = initiator ? remote_call
+                                     : ((local_call && local_call[0]) ? local_call : my_call);
+        p.bw_token       = arq_protocol_bw_token_from_hz(arq_reported_bandwidth_hz());
+        p.session_id     = g_sess.session_id;
+        p.offer_bit      = true;
+        p.accept_bit     = true;
+
+        if (arq_crypto_peer_key(remote_call, peer_pub) != 0)
+            why = "the peer's key is no longer readable";
+        else
+        {
+            int rc;
+
+            pthread_mutex_lock(&g_app_tx_mtx);
+            rc = arq_xs_begin_secure(&g_xs, &p, peer_pub);
+            pthread_mutex_unlock(&g_app_tx_mtx);
+            if (rc == 0)
+                secure = true;
+            else
+                why = "the handshake could not start";
+        }
+        memset(peer_pub, 0, sizeof(peer_pub));
+    }
+    else
+    {
+        pthread_mutex_lock(&g_app_tx_mtx);
+        arq_xs_begin_clear(&g_xs);
+        pthread_mutex_unlock(&g_app_tx_mtx);
+        if (arq_crypto_mode() == ARQ_CRYPTO_REQUIRED)
+            why = "encryption is required and the peer did not agree to it";
+    }
+
+    if (why != NULL)
+    {
+        crypto_abort(why);
+        return;
+    }
+
+    if (secure)
+    {
+        /* CONNECTED goes to the client only when the handshake completes
+         * (cb_deliver_rx_data), so it cannot send a byte in the clear. */
+        HLOGI(LOG_COMP, "Connected to %s; encryption handshake started as %s",
+              remote_call, initiator ? "initiator" : "responder");
+        return;
+    }
+
+    g_pending_ms = 0;
+    arq_tnc_send_connected();
+    arq_tnc_send_encryption(false);
+    HLOGI(LOG_COMP, "Connected to %s (not encrypted)", remote_call);
+}
+
 static void cb_notify_connected(const char *remote_call, const char *local_call,
                                 bool we_called)
 {
@@ -306,14 +429,17 @@ static void cb_notify_connected(const char *remote_call, const char *local_call,
      * over from the previous session's feed buffer. */
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
-    arq_tnc_send_connected();   /* dispatches to tnc_send_connected, which takes g_conn_lock via arq_conn_get_calls; must be outside our lock */
-    HLOGI(LOG_COMP, "Connected to %s", remote_call);
-}
 
-/* When PENDING last went to the host for the call we are answering; 0: none.
- * Written by the FSM's callbacks and by pending_hold, all on the event loop
- * under g_sess_lock. */
-static uint64_t g_pending_ms;
+    if (arq_crypto_mode() == ARQ_CRYPTO_OFF)
+    {
+        g_pending_ms = 0;
+        arq_tnc_send_connected();   /* dispatches to tnc_send_connected, which takes g_conn_lock via arq_conn_get_calls; must be outside our lock */
+        HLOGI(LOG_COMP, "Connected to %s", remote_call);
+        return;
+    }
+
+    crypto_session_start(remote_call, local_call);
+}
 
 static void cb_notify_pending(const char *remote_call, const char *local_call)
 {
@@ -357,6 +483,7 @@ static void cb_notify_cancelpending(void)
     pthread_mutex_lock(&g_conn_lock);
     arq_conn.session_bw = 0;
     pthread_mutex_unlock(&g_conn_lock);
+    g_pending_ms = 0;
     arq_tnc_send_cancelpending();
     HLOGI(LOG_COMP, "Incoming connection cancelled");
 }
@@ -380,15 +507,26 @@ static void cb_notify_disconnected(bool to_no_client)
      * next session clears the buffer. */
     pthread_mutex_lock(&g_app_tx_mtx);
     clear_buffer(g_app_tx_buf);
+    /* Keys go, and so does any partial inbound record: its plaintext prefix
+     * is never delivered. */
+    arq_xs_end(&g_xs);
+    g_neg.valid = false;
     pthread_mutex_unlock(&g_app_tx_mtx);
     /* Discard any partial chat line so the next session's first message is not
      * glued onto trailing bytes from this one. */
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
+    /* A PENDING still outstanding: the session ended in its encryption
+     * handshake, before the host was told CONNECTED (crypto_session_start).
+     * The host hears the call is off, as when we stop answering one. */
+    bool pending = g_pending_ms != 0;
+    g_pending_ms = 0;
     if (told)
         HLOGI(LOG_COMP, "Disconnected (the host was told at its ABORT)");
     else
     {
+        if (pending)
+            arq_tnc_send_cancelpending();
         arq_tnc_send_disconnected();
         HLOGI(LOG_COMP, "Disconnected");
     }
@@ -406,10 +544,8 @@ static void cb_notify_disconnected(bool to_no_client)
     }
 }
 
-static void cb_deliver_rx_data(const uint8_t *data, size_t len)
+static void deliver_plaintext(const uint8_t *data, size_t len)
 {
-    if (!data || len == 0 || len > INT_BUFFER_SIZE)
-        return;
     write_buffer(data_rx_buffer_arq, (uint8_t *)data, len);
 
     char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
@@ -418,10 +554,70 @@ static void cb_deliver_rx_data(const uint8_t *data, size_t len)
     msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_RX, peer, data, len);
 }
 
+static void cb_deliver_rx_data(const uint8_t *data, size_t len)
+{
+    /* Only ever called from the event loop, so one static buffer is enough;
+     * it holds a record's worth more than the input (arq_xs_rx_feed). */
+    static uint8_t plain[INT_BUFFER_SIZE + ARQ_CRYPTO_REC_MAX];
+    char fp[ARQ_CRYPTO_FP_HEXLEN + 1] = { 0 };
+    arq_xs_event_t ev = ARQ_XS_EV_NONE;
+    size_t n;
+
+    if (!data || len == 0 || len > INT_BUFFER_SIZE)
+        return;
+
+    if (arq_crypto_mode() == ARQ_CRYPTO_OFF)
+    {
+        deliver_plaintext(data, len);
+        return;
+    }
+
+    pthread_mutex_lock(&g_app_tx_mtx);
+    n = arq_xs_rx_feed(&g_xs, data, len, plain, sizeof(plain), &ev);
+    if (ev == ARQ_XS_EV_SECURE)
+        memcpy(fp, g_xs.fingerprint, sizeof(fp));
+    pthread_mutex_unlock(&g_app_tx_mtx);
+
+    if (ev == ARQ_XS_EV_SECURE)
+    {
+        arq_event_t e = { .id = ARQ_EV_APP_DATA_READY };
+
+        g_pending_ms = 0;
+        arq_tnc_send_connected();
+        arq_tnc_send_encryption(true);
+        HLOGI(LOG_COMP, "Session encrypted; peer key fingerprint %s", fp);
+        /* The responder's reply is queued now, and the client may start
+         * sending: either way ARQ has something to transmit. */
+        evq_push(&e);
+    }
+
+    if (n > 0)
+        deliver_plaintext(plain, n);
+
+    if (ev == ARQ_XS_EV_FAILED)
+        crypto_abort("authentication failed");
+}
+
+/* The crypto layer's view of the client queue.  g_app_tx_mtx is held. */
+static size_t xs_pull(uint8_t *dst, size_t max, void *ctx)
+{
+    size_t avail = size_buffer(g_app_tx_buf);
+
+    (void) ctx;
+    if (avail > max)
+        avail = max;
+    if (avail == 0)
+        return 0;
+    return read_buffer(g_app_tx_buf, dst, avail) == 0 ? avail : 0;
+}
+
 static int cb_tx_backlog(void)
 {
     pthread_mutex_lock(&g_app_tx_mtx);
-    int n = (int)size_buffer(g_app_tx_buf);
+    size_t plain = size_buffer(g_app_tx_buf);
+    int n = (arq_crypto_mode() == ARQ_CRYPTO_OFF)
+            ? (int)plain
+            : (int)arq_xs_tx_pending(&g_xs, plain);
     pthread_mutex_unlock(&g_app_tx_mtx);
     return n;
 }
@@ -430,17 +626,69 @@ static int cb_tx_read(uint8_t *buf, size_t len)
 {
     if (!buf || len == 0) return 0;
     pthread_mutex_lock(&g_app_tx_mtx);
-    size_t avail = size_buffer(g_app_tx_buf);
-    if (avail > len) avail = len;
     int n = 0;
-    if (avail > 0)
-        n = (read_buffer(g_app_tx_buf, buf, avail) == 0) ? (int)avail : 0;
+    if (arq_crypto_mode() == ARQ_CRYPTO_OFF)
+    {
+        size_t avail = size_buffer(g_app_tx_buf);
+        if (avail > len) avail = len;
+        if (avail > 0)
+            n = (read_buffer(g_app_tx_buf, buf, avail) == 0) ? (int)avail : 0;
+    }
+    else
+    {
+        /* `len` is the room left in the carousel block being opened, which a
+         * record fills (arq_crypto.h, RECORD SIZE). */
+        n = (int)arq_xs_tx_read(&g_xs, buf, len, xs_pull, NULL);
+    }
     pthread_mutex_unlock(&g_app_tx_mtx);
     return n;
 }
 
+static bool cb_crypto_negotiate(arq_neg_step_t step, const char *remote_call,
+                                uint8_t session_id, bool peer_bit)
+{
+    bool bit = false;
+
+    if (arq_crypto_mode() == ARQ_CRYPTO_OFF)
+        return false;
+    pthread_mutex_lock(&g_app_tx_mtx);
+    switch (step)
+    {
+    case ARQ_NEG_CALL_OUT:
+        bit = arq_crypto_should_offer(remote_call);
+        g_neg.valid = true; g_neg.session_id = session_id; g_neg.caller = true;
+        g_neg.offer = bit; g_neg.accept = false;
+        break;
+    case ARQ_NEG_CALL_IN:
+        g_neg.valid = true; g_neg.session_id = session_id; g_neg.caller = false;
+        g_neg.offer = peer_bit;
+        g_neg.accept = arq_crypto_answer_call(remote_call, peer_bit) == ARQ_CRYPTO_ANSWER_SECURE;
+        break;
+    case ARQ_NEG_ACCEPT_OUT:
+        bit = g_neg.valid && g_neg.session_id == session_id && g_neg.accept;
+        break;
+    case ARQ_NEG_ACCEPT_IN:
+        if (g_neg.valid && g_neg.session_id == session_id)
+            g_neg.accept = g_neg.offer && peer_bit;
+        break;
+    }
+    pthread_mutex_unlock(&g_app_tx_mtx);
+    return bit;
+}
+
 static void cb_send_buffer_status(int backlog_bytes)
 {
+    /* During the handshake the client has not been told CONNECTED, and the
+     * backlog is only our own handshake message: nothing of the client's. */
+    if (arq_crypto_mode() != ARQ_CRYPTO_OFF)
+    {
+        pthread_mutex_lock(&g_app_tx_mtx);
+        bool handshaking = (g_xs.state == ARQ_XS_HANDSHAKE);
+        pthread_mutex_unlock(&g_app_tx_mtx);
+        if (handshaking)
+            return;
+    }
+
     arq_tnc_send_buffer((uint32_t)(backlog_bytes < 0 ? 0 : backlog_bytes));
 }
 
@@ -625,6 +873,16 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
 
     case ARQ_CMD_CONNECT:
     {
+        /* Required mode: refuse up front a call that could only go clear,
+         * rather than spend a connect on it and hang up. */
+        const char *why = NULL;
+        if (!arq_crypto_may_call(msg->arg1, &why))
+        {
+            HLOGW(LOG_COMP, "Not calling %s: %s", msg->arg1, why);
+            arq_tnc_send_disconnected();
+            return;
+        }
+
         pthread_mutex_lock(&g_conn_lock);
         snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
@@ -757,6 +1015,8 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         char call_copy[CALLSIGN_MAX_SIZE];
         bool has_callsign;
         HLOGD(LOG_COMP, "Client (re)connected");
+        /* ENCRYPT OFF belongs to the client that sent it. */
+        (void)arq_crypto_set_client_off(false);
         pthread_mutex_lock(&g_conn_lock);
         has_callsign = (arq_conn.my_call_sign[0] != '\0');
         if (has_callsign)
@@ -852,9 +1112,27 @@ static void count_listen_end(arq_listen_end_t end)
 #define ARQ_CALL_PROGRESS_MS 20000
 static uint64_t g_call_progress_ms;   /* the last line's time; 0: none (g_sess_lock) */
 
+/* The session is up on the air and its encryption handshake still runs: the
+ * host has not been told CONNECTED (crypto_session_start).  On the floor that
+ * is one more exchange, 48 s in the harness at -10 dB.  *caller: our side. */
+static bool crypto_handshaking(bool *caller)
+{
+    if (g_sess.conn_state != ARQ_CONN_CONNECTED || g_sess.teardown != ARQ_TD_NONE ||
+        arq_crypto_mode() == ARQ_CRYPTO_OFF)
+        return false;
+    pthread_mutex_lock(&g_app_tx_mtx);
+    bool hs = g_xs.state == ARQ_XS_HANDSHAKE;
+    *caller = g_neg.caller;
+    pthread_mutex_unlock(&g_app_tx_mtx);
+    return hs;
+}
+
 static void call_progress(uint64_t now)
 {
-    if (g_sess.conn_state != ARQ_CONN_CALLING)
+    /* Also through the handshake of a call we placed: to its host the call
+     * is still being placed. */
+    bool caller = false;
+    if (g_sess.conn_state != ARQ_CONN_CALLING && !(crypto_handshaking(&caller) && caller))
     {
         g_call_progress_ms = 0;
         return;
@@ -891,7 +1169,12 @@ static void call_progress(uint64_t now)
 
 static void pending_hold(uint64_t now)
 {
-    if (g_sess.conn_state != ARQ_CONN_ACCEPTING || g_sess.teardown == ARQ_TD_LISTEN_OFF)
+    /* Also through the handshake of a call we answered: the host was told
+     * PENDING, and CONNECTED waits for the handshake. */
+    bool caller = true;
+    bool answering = g_sess.conn_state == ARQ_CONN_ACCEPTING ||
+                     (g_pending_ms && crypto_handshaking(&caller) && !caller);
+    if (!answering || g_sess.teardown == ARQ_TD_LISTEN_OFF)
         return;
     if (g_pending_ms && now - g_pending_ms < ARQ_PENDING_HOLD_MS)
         return;
@@ -1101,6 +1384,32 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         return false;
     }
 
+    /* Required mode never answers a CALL it cannot encrypt: there is no
+     * session to disconnect yet, so silence is the refusal.  Checked only
+     * once the DST CRC has matched, so it applies only to calls for us. */
+    bool crypto = arq_protocol_connect_crypto(data);
+    /* An ACCEPT that takes an offer we did not make answers an earlier
+     * CONNECT of the same session id: not ours (specs/connect, Agree). */
+    if (is_accept && crypto)
+    {
+        pthread_mutex_lock(&g_app_tx_mtx);
+        bool offered = g_neg.valid && g_neg.caller && g_neg.session_id == session_id && g_neg.offer;
+        pthread_mutex_unlock(&g_app_tx_mtx);
+        if (!offered)
+        {
+            HLOGI(LOG_COMP, "ACCEPT taking an encryption offer we did not make: ignored");
+            return false;
+        }
+    }
+    if (!is_accept &&
+        arq_crypto_answer_call(caller, crypto) == ARQ_CRYPTO_ANSWER_REFUSE)
+    {
+        HLOGI(LOG_COMP, "Not answering %s: encryption is required and %s",
+              caller, crypto ? "there is no key for that station"
+                             : "the CALL did not offer it");
+        return false;
+    }
+
     arq_event_t ev = {0};
     ev.id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;
     ev.session_id = session_id;
@@ -1119,6 +1428,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     }
     else
         snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", caller);
+    ev.crypto     = crypto;
     /* local = the one of our callsigns the caller dialed (primary or secondary) */
     snprintf(ev.local_call, CALLSIGN_MAX_SIZE, "%s", dialed_call);
     /* The bandwidth the frame advertises: the FSM makes it the session's when
@@ -1245,6 +1555,7 @@ int arq_init(size_t frame_size, int mode)
         .deliver_rx_data     = cb_deliver_rx_data,
         .tx_backlog          = cb_tx_backlog,
         .tx_read             = cb_tx_read,
+        .crypto_negotiate    = cb_crypto_negotiate,
         .send_buffer_status  = cb_send_buffer_status,
         /* Energy-based channel occupancy, so the FSM can avoid keying over a
          * transmission it cannot decode.  modem_channel_busy() returns false

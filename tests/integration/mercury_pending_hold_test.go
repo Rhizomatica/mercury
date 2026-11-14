@@ -104,6 +104,9 @@ func TestAnsweringHoldsTheHostChannel(t *testing.T) {
 	}
 	setup(connA, rwA, "TESTA")
 	setup(connB, rwB, "TESTB", "RETRIES 8", "LISTEN ON")
+	// sendControlCommand left its deadline on A's connection, and A's
+	// DISCONNECT goes out when B hears a CALL, which may be the second one.
+	_ = connA.SetDeadline(time.Time{})
 
 	send := func(rw *bufio.ReadWriter, line string) {
 		if _, err := rw.WriteString(line + "\r"); err != nil {

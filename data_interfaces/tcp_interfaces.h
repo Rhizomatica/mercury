@@ -93,6 +93,7 @@ size_t tnc_host_arq_read(uint8_t *buf, size_t len);
 bool tnc_buffer_report_due(int buffered, int last_reported, bool connected,
                            uint64_t now_ms, uint64_t last_sent_ms);
 void tnc_send_registered(const char *callsign);
+void tnc_send_encryption(bool encrypted);
 void tnc_send_sn(float snr);
 void tnc_send_busy(bool busy);
 void tnc_send_bitrate(uint32_t speed_level, uint32_t bps);

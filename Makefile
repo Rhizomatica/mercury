@@ -245,7 +245,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: check-host-link ios-app fyne-ui-ios fyne-ui-ios-ipa fyne-ui-android fyne-ui-android-aab android-prep
+.PHONY: check-host-link host-ldflags ios-app fyne-ui-ios fyne-ui-ios-ipa fyne-ui-android fyne-ui-android-aab android-prep
 .PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-macos-appstore-pkg sign-macos-bin macos-notarize-dmg fyne-ui-windows windows-installer test integration-test integration-test-random FORCE
 
 prefix ?= /usr
@@ -267,7 +267,7 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS) $(WS_TLS_LDFLAGS)
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS) $(WS_TLS_LDFLAGS) $(CRYPTO_LDFLAGS)
 
 # The modules a host program can replace, one implementation per build
 # (MERCURY_HOST, config.mk).  Each has one interface: audioio/audioio.h,
@@ -306,7 +306,7 @@ HOST_API_OBJS_W64 = host/api_host.w64.o
 MERCURY_LINK_INPUTS = \
 	main.o common/cfg_utils.o $(HOST_INI_OBJS) \
 	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
-	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
+	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o datalink_arq/arq_crypto.o common/noise_kk.o \
 	datalink_arq/carousel.o datalink_arq/rs_erasure.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o \
 	modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
@@ -402,8 +402,8 @@ RAPTORQ_CFLAGS = -Idatalink_broadcast/raptorq/include -Idatalink_broadcast/rapto
 # the two builds simply independent.
 RAPTORQ_OBJS     = $(patsubst %.c,%.o,$(RAPTORQ_SRCS))
 RAPTORQ_OBJS_W64 = $(patsubst %.c,%.w64.o,$(RAPTORQ_SRCS))
-BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o datalink_broadcast/bcast_carousel.o datalink_broadcast/bcast_rx_host.o $(RAPTORQ_OBJS)
-BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o datalink_broadcast/bcast_carousel.w64.o datalink_broadcast/bcast_rx_host.w64.o $(RAPTORQ_OBJS_W64)
+BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o datalink_broadcast/bcast_carousel.o datalink_broadcast/bcast_rx_host.o datalink_broadcast/bcast_aead.o $(RAPTORQ_OBJS)
+BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o datalink_broadcast/bcast_carousel.w64.o datalink_broadcast/bcast_rx_host.w64.o datalink_broadcast/bcast_aead.w64.o $(RAPTORQ_OBJS_W64)
 
 $(RAPTORQ_OBJS): %.o: %.c
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
@@ -436,11 +436,16 @@ datalink_broadcast/bcast_rx_host.w64.o: datalink_broadcast/bcast_rx_host.c
 MODEM_TOP_OBJS = modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
 	modem/mfsk/mfsk_ldpc.o modem/mfsk/mfsk_ldpc_1_16.o modem/mfsk/mfsk_ldpc_2_16.o modem/mfsk/mfsk_ldpc_3_16.o \
 	modem/mfsk/mfsk_ldpc_5_16.o modem/mfsk/mfsk_ldpc_8_16.o
+datalink_broadcast/bcast_aead.o: datalink_broadcast/bcast_aead.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_aead.w64.o: datalink_broadcast/bcast_aead.c
+	$(MINGW_CC) $(CFLAGS) -c $< -o $@
 
 MERCURY_CORE_OBJS = \
 	common/cfg_utils.o $(HOST_INI_OBJS) \
 	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
-	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
+	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o datalink_arq/arq_crypto.o common/noise_kk.o \
 	datalink_arq/carousel.o datalink_arq/rs_erasure.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o \
 	modem/modem.o modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
@@ -484,7 +489,8 @@ libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS) $(MODEM_TOP_O
 
 # The daemon build: everything but the host-replaceable modules, plus host/,
 # for a program that links Mercury in (hermes-radio-daemon).  Link it with
-# modem/freedv/libfreedvdata.a and -liniparser; the host also provides the
+# modem/freedv/libfreedvdata.a, -liniparser and, where this build found
+# libsodium (config.mk, ARQ_CRYPTO), -lsodium; the host also provides the
 # hermes_shm rings (ring_buffer_posix, shm_posix).  It runs the engine through
 # the bridge's mercury_init/mercury_shutdown and host/mercury_host.h.
 HOST_CFLAGS = $(CFLAGS) -Ihost $(INIPARSER_CFLAGS)
@@ -503,6 +509,14 @@ endif
 	rm -f $@
 	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(HOST_AUDIO_OBJS) $(HOST_API_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
 
+# What this build of libmercury_host.a adds to the host program's link line,
+# beyond freedv's archive and -liniparser: -lsodium where the encryption is
+# built in (config.mk, ARQ_CRYPTO), nothing otherwise.  For the host's
+# Makefile, so the two never disagree:
+#   $(shell $(MAKE) -s -C vendor/mercury host-ldflags MERCURY_HOST=daemon)
+host-ldflags:
+	@echo $(CRYPTO_LDFLAGS)
+
 # Links every object of libmercury_host.a into a program, with what a host
 # supplies (iniparser, the hermes_shm rings) taken from our own copies: a
 # function the core calls that host/ doesn't define fails here, not in the
@@ -511,7 +525,7 @@ check-host-link: libmercury_host.a
 	echo 'int main(void) { return 0; }' > .check_host_link.c
 	$(CC) -o .check_host_link .check_host_link.c -Wl,--whole-archive libmercury_host.a -Wl,--no-whole-archive \
 		modem/freedv/libfreedvdata.a common/iniparser/iniparser.o common/iniparser/dictionary.o \
-		common/ring_buffer_posix.o common/shm_posix.o -lm -lpthread $(ATOMIC_LDFLAGS)
+		common/ring_buffer_posix.o common/shm_posix.o -lm -lpthread $(ATOMIC_LDFLAGS) $(CRYPTO_LDFLAGS)
 	rm -f .check_host_link .check_host_link.c
 
 # The OS=Windows_NT internal_deps sub-make compiles cm108_ptt.o with
@@ -556,7 +570,7 @@ fyne-ui: libmercury_core.a
 	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 \
 		CGO_CPPFLAGS="$(EXTRA_CPPFLAGS)" \
 		CGO_CFLAGS="$(or $(strip $(EXTRA_CFLAGS)),-g -O2)" \
-		CGO_LDFLAGS="$(COMMON_LDFLAGS) $(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS)" \
+		CGO_LDFLAGS="$(COMMON_LDFLAGS) $(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS) $(CRYPTO_LDFLAGS)" \
 		go build -buildmode=pie -tags mercury_embedded$(if $(FYNE_UI_TAGS),$(comma)$(FYNE_UI_TAGS)) \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
 		-o $(abspath mercury-ui) .
@@ -896,15 +910,16 @@ fyne-ui-macos-dmg: fyne-ui-macos
 # for one architecture, so the slice that does not match fails to link, and a
 # universal binary that only builds on half the Macs is worse than one without
 # wss://.  A single-arch `make fyne-ui-macos` still picks up OpenSSL if the
-# system has it.
+# system has it.  libsodium the same (ARQ_CRYPTO=0): Homebrew's is one
+# architecture too.
 
 # Universal, self-contained mercury CLI (pure C).
 macos-universal:
 	@for A in x86_64 arm64; do \
 		echo "== building mercury slice: $$A =="; \
 		$(MAKE) clean >/dev/null; \
-		$(MAKE) internal_deps CC="clang -arch $$A" WS_TLS=0 || exit 1; \
-		$(MAKE) $(BINARY) CC="clang -arch $$A" WS_TLS=0 || exit 1; \
+		$(MAKE) internal_deps CC="clang -arch $$A" WS_TLS=0 ARQ_CRYPTO=0 || exit 1; \
+		$(MAKE) $(BINARY) CC="clang -arch $$A" WS_TLS=0 ARQ_CRYPTO=0 || exit 1; \
 		mv $(BINARY) mercury-$$A || exit 1; \
 	done
 	lipo -create mercury-x86_64 mercury-arm64 -output $(BINARY)
@@ -923,7 +938,7 @@ fyne-ui-macos-universal:
 		case $$A in x86_64) GOA=amd64;; arm64) GOA=arm64;; esac; \
 		echo "== building mercury-ui slice: $$A =="; \
 		$(MAKE) clean >/dev/null; \
-		$(MAKE) libmercury_core.a CC="clang -arch $$A" WS_TLS=0 || exit 1; \
+		$(MAKE) libmercury_core.a CC="clang -arch $$A" WS_TLS=0 ARQ_CRYPTO=0 || exit 1; \
 		( cd $(FYNE_UI_DIR) && CGO_ENABLED=1 GOOS=darwin GOARCH=$$GOA CC="clang -arch $$A" \
 			go build -tags mercury_embedded \
 			-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \

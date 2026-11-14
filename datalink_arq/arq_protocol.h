@@ -439,8 +439,9 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  *
  * 14 bytes (a DATAC16 frame), padded to the frame on MFSK.  Byte 0 is the
  * framer: type CALL2, and in its extension the bandwidth token (2 bits), the
- * 2.x minor revision (2 bits, 1) and the TX-MFSK-only bit.  Every 1.9.x
- * release drops the type,
+ * 2.x minor revision (2 bits, 1; 2 = the encryption negotiation is offered on
+ * a CALL and taken on an ACCEPT, ARQ_CONNECT_MINOR_CRYPTO) and the TX-MFSK-only
+ * bit.  Every 1.9.x release drops the type,
  * and a CALL of theirs (PACKET_TYPE_ARQ_CALL) addressed to this station is
  * logged, not answered: the versions do not connect (docs/CAROUSEL-ARQ.md,
  * "Wire formats").
@@ -471,6 +472,14 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  *           9: the SNR the callee read the CALL at, dB + 128 (0: unknown)
  *           10-13: zero */
 #define ARQ_CONNECT_MINOR             1
+/* Minor 2 is the encryption negotiation (ARQ_CRYPTO_EXT_MINOR): a CALL sent
+ * at minor 2 offers an encrypted session, an ACCEPT at minor 2 takes it.
+ * A station of minor 0 or 1 accepts the frame (version_ok takes any minor),
+ * reads the bandwidth, and never sets the bit back: the session goes clear,
+ * which optional mode falls back to and required mode refuses.  The CALL2
+ * extension field is five bits and full (bandwidth 2, minor 2, TX-MFSK 1),
+ * so the negotiation rides in the minor field's fourth value. */
+#define ARQ_CONNECT_MINOR_CRYPTO      2
 #define ARQ_CONNECT_EXT_BW_MASK       0x03
 #define ARQ_CONNECT_EXT_MINOR_SHIFT   2
 #define ARQ_CONNECT_EXT_MINOR_MASK    0x0C
@@ -483,30 +492,34 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                                                the control mode */
 #define ARQ_ACCEPT_SNR_IDX            9
 
-/** Build a CALL.  tx_mfsk: this station can only transmit MFSK.  @return
- *  ARQ_CONTROL_FRAME_SIZE (14), or -1. */
+/** Build a CALL.  tx_mfsk: this station can only transmit MFSK.  crypto:
+ *  offer an encrypted session.  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
                             uint8_t session_id,
                             const char *caller, const char *called,
-                            int bw_hz, bool tx_mfsk);
+                            int bw_hz, bool tx_mfsk, bool crypto);
 
 /** Build an ACCEPT.  called: the callsign the CALL was addressed to (the
  *  callee's primary or a secondary); start_level 0..6; ctl_deaf: the callee
  *  hears the caller below the control mode; call_snr_db: what it read the
  *  CALL at (NAN: unknown); tx_mfsk: this station can only transmit MFSK.
+ *  crypto: take the encrypted session the CALL offered.
  *  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                               uint8_t session_id,
                               const char *called, const char *caller,
                               int bw_hz, int start_level, bool ctl_deaf,
                               float call_snr_db, uint16_t nonce,
-                              bool tx_mfsk);
+                              bool tx_mfsk, bool crypto);
 
 /** Is buf a CALL or ACCEPT of this protocol (2.0, any minor revision)? */
 bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len);
 
 /** The 2.x minor revision of a CALL or ACCEPT (version_ok already checked). */
 int arq_protocol_connect_minor(const uint8_t *buf);
+
+/** A CALL's or ACCEPT's encryption negotiation (ARQ_CONNECT_MINOR_CRYPTO). */
+bool arq_protocol_connect_crypto(const uint8_t *buf);
 
 /** Is a CALL or ACCEPT addressed to callsign (bytes 2-3, all 16 bits)?
  *  Requires at least ARQ_CONNECT_PAYLOAD_IDX + 2 bytes in @p buf. */
