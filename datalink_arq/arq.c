@@ -899,6 +899,67 @@ static void pending_hold(uint64_t now)
     g_pending_ms = now;
 }
 
+/* After an ABORT, PENDING holds a scanning host on the channel until our one
+ * DISCONNECT is out.
+ *
+ * ABORT answers the host at once (DISCONNECTED, g_host_told), and BPQ32
+ * releases the port on it: LISTEN ON and SCANSTART 15 (VARA.c,
+ * VARAReleaseTNC), so its scan's first hop comes about 15 s later, and the
+ * hop's LISTEN OFF releases the radio.  Our DISCONNECT is never keyed over
+ * the peer (abort_teardown), and at BW500 a peer's floor frame is 26 s: on
+ * air (K7EK, callee, ABORT 2026-11-13 15:17:40.8, KG9NI on the air with an
+ * MFSK500 frame to about 15:18:08) the hop came at 15:17:57, the DISCONNECT
+ * was never sent, and KG9NI sat out its 240 s watchdog.
+ *
+ * A hop is refused while the port reports a connect pending (VARA.c: scan
+ * permission is refused while ConnectPending, set to 6 scan intervals by
+ * PENDING, cleared by CANCELPENDING or DISCONNECTED).  So, with the host
+ * told and our DISCONNECT not yet out: PENDING, after the DISCONNECTED (it
+ * would clear it), again every ARQ_PENDING_HOLD_MS, and CANCELPENDING once
+ * the DISCONNECT has gone (its keydown over) or the teardown has ended.  The
+ * FSM's ABORT bounds (ARQ_CAR_ABORT_WAIT_MS) end it; ARQ_ABORT_SCAN_HOLD_MS
+ * is the backstop.  Mercury already holds a scanner this way while a CQ is
+ * on the air (arq_notify_cq_tx_started).  A plain DISCONNECT needs none:
+ * its DISCONNECTED comes when the session has closed (#493). */
+#define ARQ_ABORT_SCAN_HOLD_MS 60000
+static uint64_t g_abort_hold_ms;   /* the hold's first PENDING; 0: none (g_sess_lock) */
+static uint64_t g_abort_hold_last; /* its last PENDING */
+
+static void abort_hold(uint64_t now)
+{
+    pthread_mutex_lock(&g_conn_lock);
+    bool told = g_host_told;
+    pthread_mutex_unlock(&g_conn_lock);
+    bool owed = told && g_sess.conn_state == ARQ_CONN_DISCONNECTING &&
+                !(g_sess.teardown == ARQ_TD_SENT && !g_sess.tx_active);
+    if (owed && g_abort_hold_ms && now - g_abort_hold_ms >= ARQ_ABORT_SCAN_HOLD_MS)
+        owed = false;
+    if (!owed)
+    {
+        if (g_abort_hold_ms)
+        {
+            arq_tnc_send_cancelpending();
+            HLOGI(LOG_COMP, "ABORT: the scanner released (%llu s held)",
+                  (unsigned long long)((now - g_abort_hold_ms) / 1000));
+            g_abort_hold_ms = 0;
+        }
+        if (!told || g_sess.conn_state != ARQ_CONN_DISCONNECTING)
+            g_abort_hold_last = 0;   /* a new teardown may hold again */
+        return;
+    }
+    if (g_abort_hold_ms && now - g_abort_hold_last < ARQ_PENDING_HOLD_MS)
+        return;
+    if (!g_abort_hold_ms)
+    {
+        if (g_abort_hold_last)
+            return;                  /* this teardown has had its hold */
+        g_abort_hold_ms = now;
+        HLOGI(LOG_COMP, "ABORT: holding a scanning host on the channel until our DISCONNECT is out (PENDING)");
+    }
+    arq_tnc_send_pending();
+    g_abort_hold_last = now;
+}
+
 static void *arq_event_loop_worker(void *arg)
 {
     (void)arg;
@@ -947,6 +1008,7 @@ static void *arq_event_loop_worker(void *arg)
         }
         call_progress(now);
         pending_hold(now);
+        abort_hold(now);
         pthread_mutex_unlock(&g_sess_lock);
     }
 

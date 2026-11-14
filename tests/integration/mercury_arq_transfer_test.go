@@ -61,6 +61,21 @@ func TestMercuryARQConnectNarrowCallerWideCallee(t *testing.T) {
 	TestMercuryARQTransfer(t)
 }
 
+// The callee ABORTs at BW500: the host has its DISCONNECTED at once, and a
+// scanning host (BPQ32) restarts its scan 15 s later, so the callee holds
+// it with PENDING until its one DISCONNECT is out, then CANCELPENDING
+// (arq.c, abort_hold).  On air (K7EK, 2026-11-13 15:17) the scan hopped
+// 16.6 s after the ABORT while the caller's 26 s MFSK500 frame was on the
+// air, the DISCONNECT was never sent, and the caller waited 240 s.
+func TestMercuryARQCalleeAbortHoldsTheScan(t *testing.T) {
+	t.Setenv("MERCURY_TEST_DISCONNECT_BY", "B")
+	t.Setenv("MERCURY_TEST_ABORT", "1")
+	t.Setenv("MERCURY_TEST_BW_A", "500")
+	t.Setenv("MERCURY_TEST_BW_B", "500")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "64")
+	TestMercuryARQTransfer(t)
+}
+
 func TestMercuryARQTransfer(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
@@ -509,7 +524,13 @@ func TestMercuryARQTransfer(t *testing.T) {
 		// travel on separate sockets, and on air the DISCONNECT overtook it
 		// and the session ended with the word dropped.
 		lastWord := []byte("LAST-WORD-0123")
-		if _, err := hangData.Write(lastWord); err != nil {
+		// MERCURY_TEST_ABORT=1: ABORT instead, which drops what is undelivered,
+		// so no last word; the host's lines after it are checked instead.
+		abort := os.Getenv("MERCURY_TEST_ABORT") != ""
+		hangCmd := "DISCONNECT"
+		if abort {
+			hangCmd = "ABORT"
+		} else if _, err := hangData.Write(lastWord); err != nil {
 			t.Fatalf("write last word: %v", err)
 		}
 		// Not sendControlCommand: the control port is busy with notifications
@@ -517,20 +538,55 @@ func TestMercuryARQTransfer(t *testing.T) {
 		if err := hang.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := hangRW.WriteString("DISCONNECT\r"); err != nil {
-			t.Fatalf("write DISCONNECT: %v", err)
+		if _, err := hangRW.WriteString(hangCmd + "\r"); err != nil {
+			t.Fatalf("write %s: %v", hangCmd, err)
 		}
 		if err := hangRW.Flush(); err != nil {
-			t.Fatalf("flush DISCONNECT: %v", err)
+			t.Fatalf("flush %s: %v", hangCmd, err)
 		}
+		var after []string // the host's lines from the reply on
 		for {
 			line, err := hangRW.ReadString('\r')
 			if err != nil {
-				failWithLogs("no OK for DISCONNECT: %v", err)
+				failWithLogs("no OK for %s: %v", hangCmd, err)
 			}
 			if line = strings.TrimSpace(line); strings.HasPrefix(line, "OK") {
 				break
 			}
+			after = append(after, line)
+		}
+		if abort {
+			// DISCONNECTED, then PENDING (the scan held), then CANCELPENDING
+			// once the one DISCONNECT is out: never PENDING before
+			// DISCONNECTED, which would clear it in BPQ32.
+			_ = hang.SetDeadline(time.Now().Add(90 * time.Second))
+			// The lines before it are the session's own (the connect's
+			// PENDING among them): look from the ABORT's DISCONNECTED on.
+			idx := func(want string, from int) int {
+				for i := from; i >= 0 && i < len(after); i++ {
+					if after[i] == want {
+						return i
+					}
+				}
+				return -1
+			}
+			done := func() bool {
+				d := idx("DISCONNECTED", 0)
+				p := idx("PENDING", d+1)
+				return d >= 0 && p >= 0 && idx("CANCELPENDING", p+1) >= 0
+			}
+			for !done() {
+				line, err := hangRW.ReadString('\r')
+				if err != nil {
+					break
+				}
+				after = append(after, strings.TrimSpace(line))
+			}
+			if !done() {
+				failWithLogs("%s's host after ABORT: want DISCONNECTED, then PENDING, then CANCELPENDING, got %q",
+					by, after)
+			}
+			t.Logf("%s's host after ABORT: %q", by, after)
 		}
 		_ = hang.SetDeadline(time.Time{})
 		t0 := time.Now()
@@ -548,6 +604,10 @@ func TestMercuryARQTransfer(t *testing.T) {
 		}
 		if !heard {
 			failWithLogs("%s never heard %s's DISCONNECT", name, by)
+		}
+		if abort {
+			t.Logf("%s heard %s's DISCONNECT after %.1f s", name, by, time.Since(t0).Seconds())
+			return
 		}
 		var got []byte
 		_ = otherData.SetReadDeadline(time.Now().Add(5 * time.Second))
