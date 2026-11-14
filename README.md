@@ -211,7 +211,7 @@ build without it using `HAVE_HAMLIB=0`.
 ### Build the Fyne GUI (Linux)
 
 ```bash
-sudo apt install golang-go libhamlib-dev libpulse-dev libasound2-dev
+sudo apt install golang-go libhamlib-dev libpulse-dev libasound2-dev libxxf86vm-dev
 make fyne-ui
 ./mercury-ui
 ```
