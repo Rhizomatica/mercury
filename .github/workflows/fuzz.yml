@@ -7,8 +7,6 @@
 name: Fuzz
 
 on:
-  push:                       # TEMP: fork trial run only, drop before upstream PR
-    branches: [security/fuzz-ci]
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
@@ -25,8 +23,8 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Build targets
-        run: make -C tests/fuzz all
+      - name: Build targets, smoke run, replay saved regressions
+        run: make -C tests/fuzz check
       - name: Fuzz
         env:
           SECS: ${{ inputs.seconds || '600' }}
