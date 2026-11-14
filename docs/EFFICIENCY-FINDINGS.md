@@ -1,7 +1,12 @@
 # Efficiency and performance: throughput, airtime, and CPU on current trunk
 
 Measured 2026-11-12/13 on `mercuryv2` at `237481e7`, bench and simulation
-only, no radio. Three instruments: the integration harness
+only, no radio. **Freshness note (2026-11-14): trunk has moved 62 commits
+and one release since (v1.9.24), including #545, which changes the rung
+estimate to prefer data frames' readings (#501's fix), #548, and #538 --
+the very machinery these rows exercise. The tables below describe
+`237481e7`; re-running the grid on current trunk is a rerun of the same
+drivers, not a rewrite.** Three instruments: the integration harness
 (`TestMercuryARQTransfer`, `MERCURY_CH_ENGINE=watterson`, fixed seeds), the
 carousel simulator (`carousel_bench` with `SIM_STATS=1` and a new per-station
 air/keydown line), and two CPU probes (`utils/modem_cpu_probe`, new, next to
