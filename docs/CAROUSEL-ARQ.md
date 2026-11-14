@@ -138,6 +138,16 @@ DATA, in a payload mode, filling the frame:
 A block is the application's bytes and then its 4-byte check: CRC-32 of the
 seed (4 bytes), the block's id and K, and those bytes.
 
+In a session that negotiated compression (`[compression]`, minor 3), a block
+carries a tag byte first: 1 for a payload compressed with zstd, 0 for one
+stored as it came (the compression did not pay for itself).  The tag is
+inside the check -- the check covers the tag too -- and the segment header
+has no bit to give (its last two bits are the first header's flags).  A
+stored block is the application's bytes behind the tag; a compressed one is
+a zstd frame behind it, and each block ends its frame, so a block decodes
+on its own.  The receiver decompresses a compressed block whole, when it has
+all of it; a stored block streams as it always did.
+
 POLL / HANDOVER / STATUS, in DATAC16 (14 bytes):
 
 | byte | field |
@@ -161,7 +171,7 @@ frame on MFSK.
 
 | byte | CALL | ACCEPT |
 |---|---|---|
-| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 1; = 2 when encryption is offered (on a CALL, `[crypto]`) or taken (on an ACCEPT) -- the extension's five bits are otherwise full), the sender transmits only MFSK (1) | the same, the minor revision: encryption taken |
+| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 1; = 2 when encryption is offered (on a CALL, `[crypto]`) or taken (on an ACCEPT); = 3 when payload compression is offered (on a CALL, `[compression]`) or taken (on an ACCEPT) -- the extension's five bits are otherwise full), the sender transmits only MFSK (1) | the same, the minor revision: encryption or compression taken |
 | 1 | 0, session id (7) | 1, session id (7) |
 | 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
 | 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |
@@ -199,6 +209,13 @@ frame on MFSK.
   to a CALL at minor 2, and a caller ignores one it did not ask for
   (specs/connect/ConnectHandshake.tla, `Agree`, `Mut_anyaccept`).  Minor 3
   is the last value free; the next option needs another place.
+- Minor 3 is the payload compression offer and its answer (`[compression]`,
+  off by default): a CALL at minor 3 offers compression, an ACCEPT at minor 3
+  takes it, and every other frame goes at minor 1.  One minor value cannot
+  carry both offers: a station that would offer encryption and compression
+  offers the encryption, and the combination waits for the capability
+  vector -- which needs a place of its own: the ACCEPT's bytes 10-13 are
+  zero on every ACCEPT and the parser insists on it.
 - 1.9.x carried a 2-bit protocol version in type CALL's extension: 1 was
   1.9.18 (MFSK at 1531-2500 Hz), 2 was 1.9.19 (MFSK centred on 1500 Hz), 3
   gave a BW500 session its own floor; 3 was the last value it held.

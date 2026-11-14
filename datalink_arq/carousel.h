@@ -150,6 +150,20 @@ typedef struct {
 typedef struct {
     car_io_t io;
     bool     master;                /* the caller: the session's only timing master */
+    bool     zstd;                  /* payload compression negotiated (#506): blocks
+                                     * carry a one-byte tag (0 stored, 1 zstd) and
+                                     * compress before their check; the peer's
+                                     * decompress after theirs */
+    void    *zstd_cs;               /* the session's compress stream (car_zstd) */
+    void    *zstd_ds;               /* the session's decompress stream (car_zstd) */
+    uint8_t *zstd_buf;              /* the application's bytes read but not yet in
+                                     * a block (#506): a compressed block holds
+                                     * more of them than the wire does, and the
+                                     * window counts blocks, so the in-flight
+                                     * bytes must not fall with the compression */
+    size_t  zstd_len, zstd_pos;     /* ...how many, and how many are cut in */
+    uint8_t *zstd_app;              /* the peer's decompressed bytes: as many as
+                                     * a block may carry (CAR_ZSTD_READ_MAX) */
     bool     idle;                  /* nothing in flight either way */
     int      rx_level;              /* what the payload decoder is bound to */
     int      snr_level;             /* where the SNR measured here starts the peer */
@@ -389,6 +403,10 @@ bool car_slot_reserved(const car_t *m, uint64_t start, uint64_t end);
  * car_wants_nav() says the peer may not sense it otherwise (car_set_nav_below_db). */
 void car_set_nav_ms(uint32_t ms);
 void car_set_short_rung(bool on);   /* small backlogs on the shortest rung (default on) */
+/* Payload compression (#506): on, blocks compress before their check and the
+ * peer's decompress after theirs (the negotiation said yes).  Off frees the
+ * streams.  Needs the zstd backend (car_zstd_available) to do anything. */
+void car_set_zstd(car_t *c, bool on);
 /* The longest keydown this station keys, in ms (0: the protocol's 30 s
  * round); rounds it accepts stay at 30 s (arq:max_keydown_s, #445).  A
  * session takes it at car_init unless its car_io_t sets one. */

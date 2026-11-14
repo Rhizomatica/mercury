@@ -330,6 +330,27 @@ tx_drive = 128
 ; The 5 W PA (default true); false = the ~10 mW low-power output.
 pa = true
 
+[compression]
+; Payload compression on the carousel (zstd), negotiated like the encryption
+; offer: both ends take it or the session runs uncompressed.
+;
+;   off       never compress (default).  On the air this is what a release
+;             without compression sends, byte for byte.
+;   optional  compress whenever both ends can: the offer is on the CALL and
+;             the answer on the ACCEPT, and a peer that does not answer takes
+;             the session uncompressed.
+;
+; Needs a build with libzstd; without it the setting is ignored and the
+; session runs uncompressed (compression costs airtime only, so a build
+; without the backend is not a safety question, as encryption is).
+;
+; The payload is compressed before its block's check and the peer's
+; decompressed after it: erasure coding and compression never meet.  A
+; payload that does not shrink is stored as it came, so the worst case is
+; the tag byte per block.
+;
+mode = off
+
 [crypto]
 ; Encryption of ARQ sessions (Noise_KK_25519_ChaChaPoly_SHA256).
 ;

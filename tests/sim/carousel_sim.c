@@ -765,6 +765,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         car_seed_ctl_deaf(&s->car, peers ? CAR_DEAF_MFSK_TX : hears < ARQ_SNR_MIN_DATAC15_DB,
                           mine ? CAR_DEAF_MFSK_TX : heard < ARQ_SNR_MIN_DATAC15_DB);
         if (!getenv("CAR_NOHINT")) car_seed_snr(&s->car, (float)hears, (float)heard);   /* as arq_fsm.c's car_start */
+        /* CAR_ZSTD=1: payload compression on (#506).  The harness has no
+         * config file, so the knob stands in for [compression]: both ends
+         * on, the negotiation said yes. */
+        if (getenv("CAR_ZSTD")) car_set_zstd(&s->car, strcmp(getenv("CAR_ZSTD"), "0") != 0);
         /* CAR_BW=500: a BW500 session, capped at DATAC3 on the 500 Hz floor */
         if (getenv("CAR_BW")) {
             int bw = atoi(getenv("CAR_BW"));
@@ -777,6 +781,16 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     for (int i = 0; i < CAR_SIM_BYTES; i++) {
         S[0].tx[i] = (uint8_t)((i * 13 + 7) & 0xFF);
         S[1].tx[i] = (uint8_t)((i * 29 + 3) & 0xFF);
+    }
+    /* CAR_RANDOM_PAYLOAD=1: payload that does not compress, so the stored
+     * fallback (#506) is the path -- the block goes out as it came, tagged
+     * 0, and the session is the one without compression. */
+    if (getenv("CAR_RANDOM_PAYLOAD")) {
+        uint64_t x = 20261112u;
+        for (int i = 0; i < CAR_SIM_BYTES; i++) {
+            S[0].tx[i] = (uint8_t)(sc_rand(&x) >> 24);
+            S[1].tx[i] = (uint8_t)(sc_rand(&x) >> 24);
+        }
     }
     S[0].tx_len = CAR_SIM_BYTES;
     S[1].tx_len = bidir ? CAR_SIM_BYTES : 0;

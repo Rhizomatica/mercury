@@ -39,6 +39,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "carousel.h"
+#include "car_zstd.h"
+#include "defines_modem.h"
 #include "arq.h"                   /* ARQ_BANDWIDTH_* */
 #include "arq_protocol.h"
 #include "freedv_api.h"
@@ -48,6 +50,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* ---- parameters ---------------------------------------------------------- *
  * Data pieces per block (CAR_MAX_K): K + repair <= 256, so K is kept well
@@ -106,6 +109,46 @@ void car_set_nav_ms(uint32_t ms) { g_nav_ms = ms; }
  * older peer leaves zero: it is never asked to do anything new. */
 static bool g_short_rung = true;
 void car_set_short_rung(bool on) { g_short_rung = on; }
+
+/* Payload compression (#506).  On: a block's payload compresses through
+ * the session's stream before its check, and a block whose compression did
+ * not pay for itself is stored as it came -- the segment header's bit says
+ * which, and the stored path leaves the session stream untouched, so both
+ * ends stay in sync.  The peer's decompressor runs one stream per
+ * direction, fed in block order, which the window already guarantees.
+ * Off frees the streams. */
+/* How much of the application's bytes one block may carry when they are
+ * compressed (#506).  A compressed block holds more of them than the wire
+ * does -- the window counts blocks, so without this the in-flight bytes
+ * would fall with the compression and the session would get slower. */
+#define CAR_ZSTD_READ_MAX (8 * CAR_MAX_K * CAR_PIECE)
+
+void car_set_zstd(car_t *c, bool on)
+{
+    if (!c || on == c->zstd) return;
+    if (on && !car_zstd_available()) return;
+    car_zstd_stream_free(c->zstd_cs, true);
+    c->zstd_cs = on ? car_zstd_stream_open(true) : NULL;
+    car_zstd_stream_free(c->zstd_ds, false);
+    c->zstd_ds = on ? car_zstd_stream_open(false) : NULL;
+    free(c->zstd_buf);
+    c->zstd_buf = NULL; c->zstd_len = c->zstd_pos = 0;
+    free(c->zstd_app);
+    c->zstd_app = NULL;
+    if (on) {
+        c->zstd_buf = malloc(CAR_ZSTD_READ_MAX);
+        c->zstd_app = malloc(CAR_ZSTD_READ_MAX);
+        if (!c->zstd_buf || !c->zstd_app || !c->zstd_cs || !c->zstd_ds) {  /* allocation failed: stay clear */
+            free(c->zstd_buf); c->zstd_buf = NULL;
+            free(c->zstd_app); c->zstd_app = NULL;
+            car_zstd_stream_free(c->zstd_cs, true); c->zstd_cs = NULL;
+            car_zstd_stream_free(c->zstd_ds, false); c->zstd_ds = NULL;
+            c->zstd = false;
+            return;
+        }
+    }
+    c->zstd = on;
+}
 enum { BL_NONE, BL_SMALL, BL_MEDIUM, BL_LARGE };
 #define BL_SMALL_BYTES  90    /* one DATAC3 frame's pieces, with the check and a margin */
 #define BL_MEDIUM_BYTES 460   /* ...one DATAC1 frame's */
@@ -702,11 +745,17 @@ static void bind_rx(car_t *c, int lv)
  * pieces that fit every mode, and the poll reports what each still needs. */
 static bool has_data(const car_t *c)
 {
-    return c->nsb > 0 || (c->io.tx_pending && c->io.tx_pending(c->io.ctx) > 0);
+    if (c->nsb > 0) return true;
+    if (c->zstd && c->zstd_len > c->zstd_pos) return true;   /* #506: in the car's buffer */
+    return c->io.tx_pending && c->io.tx_pending(c->io.ctx) > 0;
 }
 
 static bool unopened(const car_t *c)
 {
+    /* The application's bytes waiting in the car's buffer (#506) count as
+     * unopened: they are read out of the application already, so the
+     * application has nothing pending, but a block is still owed. */
+    if (c->zstd && c->zstd_len > c->zstd_pos) return true;
     return c->io.tx_pending && c->io.tx_pending(c->io.ctx) > 0;
 }
 
@@ -732,12 +781,72 @@ static void open_block(car_t *c, int max_k)
 {
     int P = piece_of(c);
     uint8_t buf[CAR_MAX_K * CAR_PIECE];
-    size_t len = c->io.tx_read(c->io.ctx, buf, (size_t)max_k * P - BLOCK_CHECK);
-    if (!len) return;
+    size_t len, plen = 0;
+    const uint8_t *pay = NULL;
+    size_t app_len = 0;              /* the application's bytes this block carries */
+
+    uint8_t *comp = NULL;           /* the compressed bytes, until the block holds them */
+    if (c->zstd) {
+        /* The application's bytes wait in the car's buffer until they fill a
+         * block: a compressed block holds many of them, and the window
+         * counts blocks -- read one block's worth and the in-flight bytes
+         * would fall with the compression. */
+        if (c->zstd_pos >= c->zstd_len) {
+            c->zstd_pos = c->zstd_len = 0;
+            size_t n = c->io.tx_read(c->io.ctx, c->zstd_buf, CAR_ZSTD_READ_MAX);
+            if (!n) return;
+            c->zstd_len = n;
+        }
+        const uint8_t *app = c->zstd_buf + c->zstd_pos;
+        size_t avail = c->zstd_len - c->zstd_pos;
+        /* Does compression pay?  Decided on a scratch stream: a stored block
+         * must leave the session's stream untouched, or the peer's
+         * decompressor walks off the blocks it was fed.  The stored check
+         * costs a second encode of every block; encode is 0.3 % of a core
+         * (EFFICIENCY-FINDINGS), the airtime it saves is half a session. */
+        comp = malloc(CAR_MAX_K * CAR_PIECE);
+        size_t clen = 0;
+        if (comp) {
+            void *try = car_zstd_stream_open(true);
+            if (try) {
+                clen = car_zstd_compress_block(try, app, avail, comp, CAR_MAX_K * CAR_PIECE);
+                car_zstd_stream_free(try, true);
+                /* the tagged block has to fit the rung that will carry it */
+                if (clen && clen + 1 + BLOCK_CHECK > (size_t)max_k * P) clen = 0;
+            }
+        }
+        if (clen) {
+            /* the real one goes through the session stream; each block ends
+             * its frame, so a block decodes on its own */
+            clen = car_zstd_compress_block(c->zstd_cs, app, avail, comp, CAR_MAX_K * CAR_PIECE);
+            if (clen && clen + 1 + BLOCK_CHECK <= (size_t)max_k * P) {
+                memmove(comp + 1, comp, clen);   /* room for the tag */
+                comp[0] = 1;
+                pay = comp; plen = clen + 1;
+                app_len = avail;
+            }
+        }
+        if (!plen) {                 /* stored: the tag says so */
+            size_t take = avail;
+            size_t room = (size_t)max_k * P - BLOCK_CHECK - 1;
+            if (take > room) take = room;
+            if (!take) { free(comp); return; }
+            memcpy(buf + 1, app, take);
+            buf[0] = 0;
+            pay = buf; plen = take + 1;
+            app_len = take;
+        }
+        c->zstd_pos += app_len;
+    } else {
+        len = c->io.tx_read(c->io.ctx, buf, (size_t)max_k * P - BLOCK_CHECK);
+        if (!len) return;
+        pay = buf; plen = len; app_len = len;
+    }
+
     car_sblock_t *s = &c->sb[c->nsb++];
     s->id = c->next_blk_id++;
-    s->app_len = (int)len;
-    s->len = (int)len + BLOCK_CHECK;
+    s->app_len = (int)app_len;
+    s->len = (int)plen + BLOCK_CHECK;
     s->K = (s->len + P - 1) / P;
     s->next = 0;
     s->need = s->K;
@@ -745,10 +854,12 @@ static void open_block(car_t *c, int max_k)
     s->sent = 0;
     s->stopped = false;
     memset(s->data, 0, sizeof(s->data));
-    for (size_t o = 0; o < len; o++) s->data[o / P][o % P] = buf[o];   /* rows of P */
-    uint32_t chk = block_check(c, s->id, s->K, (const uint8_t (*)[CAR_PIECE])s->data, (int)len);
-    for (int i = 0; i < BLOCK_CHECK; i++, len++)
-        s->data[len / P][len % P] = (uint8_t)(chk >> (8 * i));
+    for (size_t o = 0; o < plen; o++) s->data[o / P][o % P] = pay[o];   /* rows of P */
+    size_t wlen = plen;
+    uint32_t chk = block_check(c, s->id, s->K, (const uint8_t (*)[CAR_PIECE])s->data, (int)wlen);
+    for (int i = 0; i < BLOCK_CHECK; i++, wlen++)
+        s->data[wlen / P][wlen % P] = (uint8_t)(chk >> (8 * i));
+    free(comp);
 }
 
 static void piece_bytes(const car_sblock_t *s, int idx, uint8_t *out, int P)
@@ -1488,6 +1599,39 @@ static void deliver_in_order(car_t *c)
         car_rblock_t *r = &c->rb[c->rbase % CAR_WIN];
         if (!r->known) break;
         int len = r->len - BLOCK_CHECK, upto;   /* the check is not the application's */
+        /* A compressed block (#506) is tagged with a 1 in its first byte: it
+         * waits for the whole block, then goes through the session's
+         * decompressor.  A stored block is tagged 0 and delivers its bytes
+         * past the tag, the way it always did.  A session that negotiated
+         * nothing has no tags at all. */
+        int tag = c->zstd ? r->piece[0][0] : -1;
+        if (tag == 1) {
+            if (!r->done) break;              /* wait for the whole block */
+            int n = 0;
+            for (int off = 1; off < len; off++, n++)
+                buf[n] = r->piece[off / P][off % P];
+            if (!c->zstd_app) break;            /* no buffer: nothing to deliver into */
+            size_t app_len = car_zstd_decompress_block(c->zstd_ds, buf, (size_t)n,
+                                                       c->zstd_app, CAR_ZSTD_READ_MAX);
+            if (app_len == (size_t)-1) {
+                car_trace(c, "rx block %d did not decompress", r->id);
+                if (!c->failed) c->failed = "a block did not decompress";
+                break;
+            }
+            /* In chunks the host's buffer takes (INT_BUFFER_SIZE): the
+             * application's bytes arrive in the pieces of a block, and one
+             * block's worth can be more than the host's buffer. */
+            for (size_t off = 0; off < app_len; off += INT_BUFFER_SIZE) {
+                size_t chunk = app_len - off < INT_BUFFER_SIZE ? app_len - off : INT_BUFFER_SIZE;
+                if (c->io.deliver) c->io.deliver(c->io.ctx, c->zstd_app + off, chunk);
+            }
+            c->rx_run += app_len;
+            r->delivered = app_len;
+            c->deliver_seq++;
+            memset(r, 0, sizeof(*r));
+            c->rbase++;
+            continue;
+        }
         if (r->done) {
             upto = len;
         } else {
@@ -1495,9 +1639,10 @@ static void deliver_in_order(car_t *c)
             while (j < r->K && r->got[j]) j++;
             upto = j * P < len ? j * P : len;
         }
-        if (upto > r->delivered) {
+        int skip = tag == 0 && r->delivered == 0 ? 1 : 0;   /* the tag is not the application's */
+        if (upto > r->delivered + skip) {
             int n = 0;
-            for (int off = r->delivered; off < upto; off++, n++)
+            for (int off = r->delivered + skip; off < upto; off++, n++)
                 buf[n] = r->piece[off / P][off % P];
             if (c->io.deliver) c->io.deliver(c->io.ctx, buf, (size_t)n);
             c->rx_run += (size_t)n;
@@ -3162,6 +3307,7 @@ int car_start_level(float snr_db)
 
 void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
 {
+    car_set_zstd(c, false);              /* a reused car's streams go first */
     memset(c, 0, sizeof(*c));
     c->io = *io;
     c->loss_est = c->tx_loss = 0.1;
@@ -3414,8 +3560,14 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
         return m.type == M_POLL && peer_ended(c, m.ending);
     }
     int lv = level_of_mode(mode);
-    if (lv < 0 || !decode_data(bytes, len, &m, piece_of(c))) return false;
-    if (m.left >= peer_keydown_cap(c, lv)) return false;   /* corrupt: no keydown on the rung is that long */
+    if (lv < 0 || !decode_data(bytes, len, &m, piece_of(c))) {
+        fprintf(stderr, "DBG decode_data failed mode=%d len=%zu rx_level=%d\n", mode, len, c->rx_level);
+        return false;
+    }
+    if (m.left >= peer_keydown_cap(c, lv)) {
+        fprintf(stderr, "DBG left=%d cap=%d lv=%d rx_level=%d\n", m.left, peer_keydown_cap(c, lv), lv, c->rx_level);
+        return false;
+    }
     peer_heard(c, now);
     note_peer_ctl_deaf(c, m.ctl_deaf);
     msg_t k;

@@ -32,6 +32,7 @@
 #include "ui_communication.h"
 #include "mercury_engine.h"
 #include "arq_crypto.h"
+#include "car_zstd.h"
 #include "virtual_clock.h"
 #include "message_store.h"
 #include "mercury_version.h"
@@ -267,6 +268,16 @@ int mercury_engine_init(const mercury_config *cfg,
     {
         fprintf(stderr, "mercury_engine: async logger unavailable\n");
     }
+
+    /* ---- ARQ payload compression (#506) ----
+     * Off, or a build without the zstd backend: nothing compresses, and
+     * the session is the one without compression -- the airtime it costs is
+     * the only price, so unlike encryption a missing backend is a warning,
+     * not a refusal to start. */
+    if (strcmp(cfg->compression_mode, "off") != 0 && !car_zstd_available())
+        fprintf(stderr, "mercury_engine: [compression] mode = %s needs a build with "
+                "libzstd; running without compression\n", cfg->compression_mode);
+    arq_compression_configure(strcmp(cfg->compression_mode, "off") != 0);
 
     /* ---- ARQ session encryption ----
      * Before any audio or radio is touched: an operator who configured

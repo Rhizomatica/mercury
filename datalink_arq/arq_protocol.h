@@ -484,6 +484,19 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
 #define ARQ_CONNECT_EXT_MINOR_SHIFT   2
 #define ARQ_CONNECT_EXT_MINOR_MASK    0x0C
 #define ARQ_CONNECT_EXT_TXMFSK        0x10  /* the sender transmits only MFSK */
+/* Minor 3 is the compression negotiation's interim carrier (#506): a CALL at
+ * minor 3 offers payload compression, an ACCEPT at minor 3 takes it -- the
+ * same offer/echo as crypto's minor 2.  It can only ever mean
+ * compression-only: one minor value cannot also carry the crypto offer, so
+ * a session that wants both waits for the capability vector in the ACCEPT's
+ * spare bytes (ARQ_ACCEPT_CAPS_IDX), which is this byte's home once the
+ * vector lands. */
+#define ARQ_CONNECT_MINOR_COMPRESS    3
+/* The ACCEPT's bytes 10-13 are zero on every ACCEPT, and the parser insists
+ * on it: a frame that passed its CRC with any of them set is not an
+ * ACCEPT.  The capability vector (#506) has to change that rule when it
+ * lands; until then the minor revision alone carries the offer and its
+ * answer, as it carries the encryption's. */
 #define ARQ_ACCEPT_CALLED_CRC_IDX     4
 #define ARQ_ACCEPT_NONCE_IDX          6
 #define ARQ_ACCEPT_LEVEL_IDX          8
@@ -497,7 +510,8 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
                             uint8_t session_id,
                             const char *caller, const char *called,
-                            int bw_hz, bool tx_mfsk, bool crypto);
+                            int bw_hz, bool tx_mfsk, bool crypto,
+                            bool compress);
 
 /** Build an ACCEPT.  called: the callsign the CALL was addressed to (the
  *  callee's primary or a secondary); start_level 0..6; ctl_deaf: the callee
@@ -510,7 +524,7 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                               const char *called, const char *caller,
                               int bw_hz, int start_level, bool ctl_deaf,
                               float call_snr_db, uint16_t nonce,
-                              bool tx_mfsk, bool crypto);
+                              bool tx_mfsk, bool crypto, bool compress);
 
 /** Is buf a CALL or ACCEPT of this protocol (2.0, any minor revision)? */
 bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len);
@@ -520,6 +534,12 @@ int arq_protocol_connect_minor(const uint8_t *buf);
 
 /** A CALL's or ACCEPT's encryption negotiation (ARQ_CONNECT_MINOR_CRYPTO). */
 bool arq_protocol_connect_crypto(const uint8_t *buf);
+
+/** A CALL's compression offer or an ACCEPT's acceptance of one
+ *  (ARQ_CONNECT_MINOR_COMPRESS).  False for every stock frame. */
+bool arq_protocol_connect_compress(const uint8_t *buf);
+
+
 
 /** Is a CALL or ACCEPT addressed to callsign (bytes 2-3, all 16 bits)?
  *  Requires at least ARQ_CONNECT_PAYLOAD_IDX + 2 bytes in @p buf. */

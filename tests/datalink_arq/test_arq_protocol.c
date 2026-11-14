@@ -384,12 +384,12 @@ void test_callsign_too_long_is_refused_not_truncated(void)
 
     TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame),
                                                          0x42, too_long,
-                                                         "PU2UIT-3", 2300, false, false));
+                                                         "PU2UIT-3", 2300, false, false, false));
     /* The ACCEPT carries both callsigns as CRCs, so any callsign answers. */
     TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame),
                                                               0x42, too_long,
                                                               "PU2UIT-3", 2300, 0, false, NAN, 0,
-                                                              false, false));
+                                                              false, false, false));
     /* Not asserted for CQ: its SRC slot is 13 bytes (ARQ_CQ_SRC_MAX_ENCODED)
      * against CALL/ACCEPT's 10, and the longest callsign that fits
      * CALLSIGN_MAX_SIZE encodes to about 10 bytes -- so the CQ encoder cannot
@@ -408,7 +408,7 @@ void test_connect_call(void)
     {
         uint8_t frame[INT_BUFFER_SIZE];
         TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame), 0x21,
-                                                                calls[i], "PU2UIT-3", 2300, false, false));
+                                                                calls[i], "PU2UIT-3", 2300, false, false, false));
         TEST_ASSERT_EQUAL_INT(PACKET_TYPE_ARQ_CALL2, frame_header_packet_type(frame[0]));
         TEST_ASSERT_TRUE(arq_protocol_connect_version_ok(frame, ARQ_CONTROL_FRAME_SIZE));
         uint8_t sid = 0; char src[CALLSIGN_MAX_SIZE] = {0}; int bw = 0; bool tx_mfsk = true;
@@ -439,7 +439,7 @@ void test_connect_accept(void)
                 uint16_t nonce = (uint16_t)(0x1234 * (lv + 1) + 7 + deaf);
                 TEST_ASSERT_EQUAL_INT(ARQ_CONTROL_FRAME_SIZE,
                                       arq_protocol_build_accept(frame, sizeof(frame), 0x21, "PU2UIT-3", "PU2UIT",
-                                                                2300, lv, deaf, snr_in[k], nonce, false, false));
+                                                                2300, lv, deaf, snr_in[k], nonce, false, false, false));
                 arq_accept_t acc;
                 TEST_ASSERT_EQUAL_INT(0, arq_protocol_parse_accept(frame, sizeof(frame), &acc));
                 TEST_ASSERT_EQUAL_UINT8(0x21, acc.session_id);
@@ -477,10 +477,10 @@ void test_connect_accept(void)
     uint8_t frame[INT_BUFFER_SIZE];
     TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame), 0x21,
                                                            "PU2UIT-3", "PU2UIT", 2300, 8, false, NAN, 0,
-                                                           false, false));
+                                                           false, false, false));
     TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame), 0x21,
                                                            "PU2UIT-3", "PU2UIT", 2300, -1, false, NAN, 0,
-                                                           false, false));
+                                                           false, false, false));
 }
 
 /* A 1.9.x CALL -- packet type CALL, its extension holding the bandwidth
@@ -491,7 +491,7 @@ void test_connect_other_version_refused(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
     TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame), 0x21,
-                                                            "PU2UIT", "PU2UIT-3", 2300, false, false));
+                                                            "PU2UIT", "PU2UIT-3", 2300, false, false, false));
     for (unsigned v = 0; v < 4; v++)
         for (unsigned car = 0; car <= 1; car++)
         {
@@ -520,7 +520,7 @@ void test_connect_dst_matches_short_buf_refused(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
     TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame), 0x21,
-                                                            "PU2UIT", "PU2UIT-3", 2300, false, false));
+                                                            "PU2UIT", "PU2UIT-3", 2300, false, false, false));
     for (size_t n = 0; n < ARQ_CONNECT_PAYLOAD_IDX + 2; n++)
         TEST_ASSERT_FALSE(arq_protocol_connect_dst_matches(frame, n, "PU2UIT-3"));
     TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, ARQ_CONNECT_PAYLOAD_IDX + 2,
@@ -536,7 +536,7 @@ void test_connect_tx_mfsk_flag(void)
     uint8_t frame[INT_BUFFER_SIZE];
     for (int tx = 0; tx <= 1; tx++) {
         TEST_ASSERT_EQUAL_INT(ARQ_CONTROL_FRAME_SIZE,
-            arq_protocol_build_call(frame, sizeof(frame), 0x7F, "PU2UIT", "PU2UIT-3", 2300, tx, false));
+            arq_protocol_build_call(frame, sizeof(frame), 0x7F, "PU2UIT", "PU2UIT-3", 2300, tx, false, false));
         uint8_t sid = 0; char src[CALLSIGN_MAX_SIZE] = {0}; int bw = 0; bool got = !tx;
         TEST_ASSERT_EQUAL_INT(0, arq_protocol_parse_call(frame, sizeof(frame), &sid, src, &bw, &got));
         TEST_ASSERT_EQUAL_UINT8(0x7F, sid);
@@ -550,7 +550,7 @@ void test_connect_tx_mfsk_flag(void)
 
         TEST_ASSERT_EQUAL_INT(ARQ_CONTROL_FRAME_SIZE,
             arq_protocol_build_accept(frame, sizeof(frame), 0x7F,
-                                      "PU2UIT-3", "PU2UIT", 2300, 3, true, NAN, 0x42, tx, false));
+                                      "PU2UIT-3", "PU2UIT", 2300, 3, true, NAN, 0x42, tx, false, false));
         arq_accept_t acc;
         TEST_ASSERT_EQUAL_INT(0, arq_protocol_parse_accept(frame, sizeof(frame), &acc));
         TEST_ASSERT_EQUAL_UINT8(0x7F, acc.session_id);
@@ -560,7 +560,7 @@ void test_connect_tx_mfsk_flag(void)
     }
     /* 1.9.20's CALL: the extension holds only the token */
     TEST_ASSERT_EQUAL_INT(ARQ_CONTROL_FRAME_SIZE,
-        arq_protocol_build_call(frame, sizeof(frame), 0x21, "PU2UIT", "PU2UIT-3", 2300, false, false));
+        arq_protocol_build_call(frame, sizeof(frame), 0x21, "PU2UIT", "PU2UIT-3", 2300, false, false, false));
     write_frame_header(frame, PACKET_TYPE_ARQ_CALL2, ARQ_BW_TOKEN_2300);
     uint8_t sid = 0; char src[CALLSIGN_MAX_SIZE] = {0}; int bw = 0; bool got = true;
     TEST_ASSERT_EQUAL_INT(0, arq_protocol_parse_call(frame, sizeof(frame), &sid, src, &bw, &got));
@@ -580,7 +580,7 @@ void test_callsign_roundtrip_realistic(void)
     {
         uint8_t frame[INT_BUFFER_SIZE];
         int n = arq_protocol_build_call(frame, sizeof(frame), 0x21,
-                                        calls[i], "PU2UIT-3", 2300, false, false);
+                                        calls[i], "PU2UIT-3", 2300, false, false, false);
         TEST_ASSERT_GREATER_THAN_INT(0, n);
 
         uint8_t sid = 0;
@@ -645,7 +645,7 @@ void test_connect_crypto_bit(void)
     for (int on = 0; on <= 1; on++)
     {
         int n = arq_protocol_build_call(frame, sizeof(frame), 0x21, "PU2UIT-2",
-                                        "PU2UIT-3", 2300, false, on);
+                                        "PU2UIT-3", 2300, false, on, false);
         TEST_ASSERT_EQUAL_INT(ARQ_CONTROL_FRAME_SIZE, n);
         TEST_ASSERT_TRUE(arq_protocol_connect_version_ok(frame, (size_t)n));
         TEST_ASSERT_EQUAL(on, arq_protocol_connect_crypto(frame));
@@ -658,7 +658,7 @@ void test_connect_crypto_bit(void)
         TEST_ASSERT_EQUAL_STRING("PU2UIT-2", src);
 
         n = arq_protocol_build_accept(frame, sizeof(frame), 0x21, "PU2UIT-3", "PU2UIT-2",
-                                      500, 2, false, 3.0f, 0x1234, false, on);
+                                      500, 2, false, 3.0f, 0x1234, false, on, false);
         TEST_ASSERT_EQUAL_INT(ARQ_CONTROL_FRAME_SIZE, n);
         TEST_ASSERT_EQUAL(on, arq_protocol_connect_crypto(frame));
         arq_accept_t acc;
@@ -667,6 +667,40 @@ void test_connect_crypto_bit(void)
         TEST_ASSERT_EQUAL_INT(2, acc.start_level);
         TEST_ASSERT_EQUAL_HEX16(0x1234, acc.nonce);
     }
+}
+
+/* #506: the compression negotiation rides the minor revision's fourth
+ * value (minor 3), offered on the CALL and taken on the ACCEPT.  A stock
+ * frame (minor 1) carries neither. */
+void test_connect_compress_minor_and_caps(void)
+{
+    uint8_t frame[INT_BUFFER_SIZE];
+    /* a CALL at minor 3 offers compression */
+    int n = arq_protocol_build_call(frame, sizeof(frame), 0x21, "PU2UIT-2",
+                                    "PU2UIT-3", 2300, false, false, true);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONTROL_FRAME_SIZE, n);
+    TEST_ASSERT_TRUE(arq_protocol_connect_version_ok(frame, (size_t)n));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONNECT_MINOR_COMPRESS, arq_protocol_connect_minor(frame));
+    TEST_ASSERT_TRUE(arq_protocol_connect_compress(frame));
+    TEST_ASSERT_FALSE(arq_protocol_connect_crypto(frame));
+    /* an ACCEPT at minor 3 takes it, and says so in its caps byte */
+    n = arq_protocol_build_accept(frame, sizeof(frame), 0x21, "PU2UIT-3", "PU2UIT-2",
+                                  500, 2, false, 3.0f, 0x1234, false, false, true);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONTROL_FRAME_SIZE, n);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONNECT_MINOR_COMPRESS, arq_protocol_connect_minor(frame));
+    TEST_ASSERT_TRUE(arq_protocol_connect_compress(frame));
+    /* a stock frame carries neither: minor 1, no caps */
+    n = arq_protocol_build_call(frame, sizeof(frame), 0x21, "PU2UIT-2",
+                                "PU2UIT-3", 2300, false, false, false);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONNECT_MINOR, arq_protocol_connect_minor(frame));
+    TEST_ASSERT_FALSE(arq_protocol_connect_compress(frame));
+    /* the crypto offer keeps its own minor: one minor value cannot carry
+     * both, and the combo waits for the capability vector (#506) */
+    n = arq_protocol_build_call(frame, sizeof(frame), 0x21, "PU2UIT-2",
+                                "PU2UIT-3", 2300, false, true, true);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONNECT_MINOR_CRYPTO, arq_protocol_connect_minor(frame));
+    TEST_ASSERT_TRUE(arq_protocol_connect_crypto(frame));
+    TEST_ASSERT_FALSE(arq_protocol_connect_compress(frame));
 }
 
 int main(void)
@@ -718,5 +752,6 @@ int main(void)
     RUN_TEST(test_connect_other_version_refused);
     RUN_TEST(test_connect_dst_matches_short_buf_refused);
     RUN_TEST(test_connect_crypto_bit);
+    RUN_TEST(test_connect_compress_minor_and_caps);
     return UNITY_END();
 }

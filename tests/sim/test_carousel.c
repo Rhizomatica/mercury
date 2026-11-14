@@ -29,6 +29,7 @@ void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
     unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
+    unsetenv("CAR_ZSTD"); unsetenv("CAR_RANDOM_PAYLOAD");
     unsetenv("CAR_CTL_SNR_OFFSET");
 }
 
@@ -787,6 +788,54 @@ void test_carousel_bw500_control_loss_does_not_stall(void)
     }
 }
 
+/* #506: payload compression.  With the knob on, the blocks go out
+ * compressed and the bytes come back the same; with a payload that does not
+ * compress, the blocks go out stored (the tag says so) and the bytes still
+ * come back the same.  The compressed run is also the shorter one: fewer
+ * pieces, fewer keydowns. */
+static void test_carousel_zstd_round_trip(void)
+{
+    car_sim_result_t plain, zstd;
+    char what[96];
+
+    carousel_sim_run(3, "cliff:8", false, LIMIT_MS, &plain);
+    setenv("CAR_ZSTD", "1", 1);
+    carousel_sim_run(3, "cliff:8", false, LIMIT_MS, &zstd);
+    unsetenv("CAR_ZSTD");
+
+    snprintf(what, sizeof(what), "compressed: a2b %d intact %d done %llu against %llu",
+             (int)zstd.a2b, (int)zstd.intact, (unsigned long long)zstd.done_ms,
+             (unsigned long long)plain.done_ms);
+    TEST_ASSERT_TRUE_MESSAGE(zstd.intact, what);
+    TEST_ASSERT_EQUAL_MESSAGE(CAR_SIM_BYTES, zstd.a2b, what);
+    /* the compressed session carries the same bytes in less air */
+    TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(plain.done_ms, zstd.done_ms, what);
+}
+
+/* The stored fallback: a payload that does not shrink is sent as it came
+ * (tagged 0), and the peer delivers it byte for byte. */
+static void test_carousel_zstd_stores_what_does_not_compress(void)
+{
+    car_sim_result_t plain, zstd;
+    char what[96];
+
+    setenv("CAR_RANDOM_PAYLOAD", "1", 1);
+    carousel_sim_run(3, "cliff:8", false, LIMIT_MS, &plain);
+    setenv("CAR_ZSTD", "1", 1);
+    carousel_sim_run(3, "cliff:8", false, LIMIT_MS, &zstd);
+    unsetenv("CAR_ZSTD");
+    unsetenv("CAR_RANDOM_PAYLOAD");
+
+    snprintf(what, sizeof(what), "stored: a2b %d intact %d done %llu against %llu",
+             (int)zstd.a2b, (int)zstd.intact, (unsigned long long)zstd.done_ms,
+             (unsigned long long)plain.done_ms);
+    TEST_ASSERT_TRUE_MESSAGE(zstd.intact, what);
+    TEST_ASSERT_EQUAL_MESSAGE(CAR_SIM_BYTES, zstd.a2b, what);
+    /* the tag byte per block is the whole cost: the session is not longer
+     * than one that never compressed, by more than a round's worth */
+    TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(plain.done_ms + 30000, zstd.done_ms, what);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -820,6 +869,8 @@ int main(void)
     RUN_TEST(test_carousel_estimate_step_is_not_a_channel_step);
     RUN_TEST(test_carousel_drop_below_the_control_mode_stays_at_the_floor);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
+    RUN_TEST(test_carousel_zstd_round_trip);
+    RUN_TEST(test_carousel_zstd_stores_what_does_not_compress);
     RUN_TEST(test_carousel_bw500_control_loss_does_not_stall);
     return UNITY_END();
 }

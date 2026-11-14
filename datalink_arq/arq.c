@@ -10,6 +10,7 @@
 #include "arq_fsm.h"
 #include "arq_tnc.h"
 #include "arq_crypto.h"
+#include "car_zstd.h"
 #include "arq_protocol.h"
 #include "arq_trace.h"
 #include "arq_timing.h"
@@ -107,6 +108,10 @@ static arq_xs_t g_xs;
  * answer at the caller, the CALL's offer and our answer at the callee.  Kept
  * here, not in the session.  Guarded by g_app_tx_mtx, like g_xs. */
 static struct { uint8_t session_id; bool valid, caller, offer, accept; } g_neg;
+/* The compression negotiation (#506): the same shape as g_neg, without the
+ * key exchange -- offer on our CALL, echo on our ACCEPT, the session's car
+ * compresses when both sides said yes. */
+static struct { uint8_t session_id; bool valid, caller, offer, accept; } g_cneg;
 
 /* When PENDING last went to the host for the call we are answering; 0: none
  * outstanding (the host was told CONNECTED, CANCELPENDING or DISCONNECTED
@@ -430,6 +435,10 @@ static void cb_notify_connected(const char *remote_call, const char *local_call,
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
 
+    /* Payload compression (#506): the car is told after the session is up
+     * (the FSM's ARQ_NEG_SESSION_UP step), not here: notify_connected comes
+     * before the car exists, and car_init would wipe the setting. */
+
     if (arq_crypto_mode() == ARQ_CRYPTO_OFF)
     {
         g_pending_ms = 0;
@@ -511,7 +520,12 @@ static void cb_notify_disconnected(bool to_no_client)
      * is never delivered. */
     arq_xs_end(&g_xs);
     g_neg.valid = false;
+    g_cneg.valid = false;
     pthread_mutex_unlock(&g_app_tx_mtx);
+    /* The car's compression streams go with the session (car_set_zstd(false)
+     * frees them; a build without the backend never allocated any). */
+    if (g_sess.car)
+        car_set_zstd(g_sess.car, false);
     /* Discard any partial chat line so the next session's first message is not
      * glued onto trailing bytes from this one. */
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
@@ -642,6 +656,55 @@ static int cb_tx_read(uint8_t *buf, size_t len)
     }
     pthread_mutex_unlock(&g_app_tx_mtx);
     return n;
+}
+
+/* The compression negotiation (#506): the same four steps as crypto's,
+ * without the key exchange -- offer on our CALL, echo on our ACCEPT, and
+ * the session's car compresses when both sides said yes. */
+
+static bool s_compression_on;          /* [compression] mode = optional */
+
+void arq_compression_configure(bool on)
+{
+    s_compression_on = on;
+}
+
+bool arq_compression_enabled(void)
+{
+    return s_compression_on;
+}
+
+static bool cb_compression_negotiate(arq_neg_step_t step, const char *remote_call,
+                                     uint8_t session_id, bool peer_bit)
+{
+    bool bit = false;
+    if (!s_compression_on || !car_zstd_available())
+        return false;
+    switch (step)
+    {
+    case ARQ_NEG_CALL_OUT:
+        bit = true;
+        g_cneg.valid = true; g_cneg.session_id = session_id; g_cneg.caller = true;
+        g_cneg.offer = true; g_cneg.accept = false;
+        break;
+    case ARQ_NEG_CALL_IN:
+        g_cneg.valid = true; g_cneg.session_id = session_id; g_cneg.caller = false;
+        g_cneg.offer = peer_bit;
+        g_cneg.accept = peer_bit;          /* optional: take whatever is offered */
+        bit = g_cneg.accept;
+        break;
+    case ARQ_NEG_ACCEPT_OUT:
+        bit = g_cneg.valid && g_cneg.session_id == session_id && g_cneg.accept;
+        break;
+    case ARQ_NEG_ACCEPT_IN:
+        if (g_cneg.valid && g_cneg.session_id == session_id)
+            g_cneg.accept = g_cneg.offer && peer_bit;
+        break;
+    case ARQ_NEG_SESSION_UP:
+        bit = g_cneg.valid && g_cneg.session_id == session_id && g_cneg.accept;
+        break;
+    }
+    return bit;
 }
 
 static bool cb_crypto_negotiate(arq_neg_step_t step, const char *remote_call,
@@ -1388,6 +1451,20 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
      * session to disconnect yet, so silence is the refusal.  Checked only
      * once the DST CRC has matched, so it applies only to calls for us. */
     bool crypto = arq_protocol_connect_crypto(data);
+    bool compress = arq_protocol_connect_compress(data);
+    /* An ACCEPT taking a compression offer we did not make answers an
+     * earlier CONNECT of the same session id: not ours, as with crypto. */
+    if (is_accept && compress)
+    {
+        pthread_mutex_lock(&g_app_tx_mtx);
+        bool offered = g_cneg.valid && g_cneg.caller && g_cneg.session_id == session_id && g_cneg.offer;
+        pthread_mutex_unlock(&g_app_tx_mtx);
+        if (!offered)
+        {
+            HLOGI(LOG_COMP, "ACCEPT taking a compression offer we did not make: ignored");
+            compress = false;
+        }
+    }
     /* An ACCEPT that takes an offer we did not make answers an earlier
      * CONNECT of the same session id: not ours (specs/connect, Agree). */
     if (is_accept && crypto)
@@ -1429,6 +1506,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     else
         snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", caller);
     ev.crypto     = crypto;
+    ev.compress   = compress;
     /* local = the one of our callsigns the caller dialed (primary or secondary) */
     snprintf(ev.local_call, CALLSIGN_MAX_SIZE, "%s", dialed_call);
     /* The bandwidth the frame advertises: the FSM makes it the session's when
@@ -1556,6 +1634,7 @@ int arq_init(size_t frame_size, int mode)
         .tx_backlog          = cb_tx_backlog,
         .tx_read             = cb_tx_read,
         .crypto_negotiate    = cb_crypto_negotiate,
+        .compression_negotiate = cb_compression_negotiate,
         .send_buffer_status  = cb_send_buffer_status,
         /* Energy-based channel occupancy, so the FSM can avoid keying over a
          * transmission it cannot decode.  modem_channel_busy() returns false

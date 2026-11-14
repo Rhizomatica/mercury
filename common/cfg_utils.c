@@ -39,6 +39,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->tls_enabled        = false;                 /* ws     */
     snprintf(cfg->tls_cert, sizeof(cfg->tls_cert), "%s", CFG_SSL_CERT);
     snprintf(cfg->tls_key,  sizeof(cfg->tls_key),  "%s", CFG_SSL_KEY);
+    snprintf(cfg->compression_mode, sizeof(cfg->compression_mode), "off");
     snprintf(cfg->crypto_mode, sizeof(cfg->crypto_mode), "off");
     snprintf(cfg->crypto_key_file, sizeof(cfg->crypto_key_file), "%s",
              CFG_CRYPTO_DEFAULT_KEY_FILE);
@@ -505,6 +506,19 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
 
     cfg->hl2_pa = (bool) iniparser_getboolean(ini, CFG_KEY_HL2_PA, cfg->hl2_pa ? 1 : 0);
 
+    /* Payload compression (#506).  An unknown mode is refused, like crypto's:
+     * a typo must not read as "off" silently -- but here the cost of a typo
+     * is only that nothing compresses, not cleartext. */
+    s = iniparser_getstring(ini, CFG_KEY_COMPRESSION_MODE, NULL);
+    if (s) {
+        if (strcmp(s, "off") && strcmp(s, "optional")) {
+            fprintf(stderr, "cfg_read: invalid [compression] mode '%s' "
+                    "(use off or optional)\n", s);
+            iniparser_freedict(ini);
+            return false;
+        }
+        snprintf(cfg->compression_mode, sizeof(cfg->compression_mode), "%s", s);
+    }
     /* An unknown crypto mode is refused, never read as "off": a typo such as
      * "requierd" from an operator who meant to encrypt must not quietly give
      * them cleartext. */
@@ -672,6 +686,9 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "rx_gain_db = %d\n", cfg->hl2_rx_gain_db);
     fprintf(f, "tx_drive = %d\n", cfg->hl2_tx_drive);
     fprintf(f, "pa = %s\n", cfg->hl2_pa ? "true" : "false");
+
+    fprintf(f, "\n[compression]\n");
+    fprintf(f, "mode = %s\n", cfg->compression_mode);
 
     fprintf(f, "\n[crypto]\n");
     fprintf(f, "mode = %s\n", cfg->crypto_mode);

@@ -28,6 +28,28 @@ import (
 // listens, or the caller polls a closed session.  (The caller hanging up to a
 // floor-only callee -- MERCURY_TEST_DISCONNECT_BY=A, NO_FWD=0, NO_REV=-24.82
 // -- takes ~5 min at the floor, so it is left to be run by hand.)
+// stationIni writes the station's config: a missing file, unless
+// MERCURY_TEST_COMPRESSION asks for compression, then one with the section
+// the mode lives in (#506).  The mode is per station, so a test can have one
+// end compress and the other not.
+func stationIni(name string) string {
+	mode := os.Getenv("MERCURY_TEST_COMPRESSION")
+	if mode == "" {
+		return filepath.Join(os.TempDir(), "missing-mercury.ini")
+	}
+	dir, err := os.MkdirTemp("", "mercury-it-ini-")
+	if err != nil {
+		return filepath.Join(os.TempDir(), "missing-mercury.ini")
+	}
+	p := filepath.Join(dir, name+".ini")
+	body := fmt.Sprintf("[compression]\nmode = %s\n", mode)
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		return filepath.Join(os.TempDir(), "missing-mercury.ini")
+	}
+	return p
+}
+
+// MERCURY_CH_TRANSPORT=sock runs the deterministic lockstep bench
 func TestMercuryARQDisconnectReachesFloorPeer(t *testing.T) {
 	t.Setenv("MERCURY_TEST_DISCONNECT_BY", "B")
 	t.Setenv("MERCURY_CH_NO_FWD", "-24.82")
@@ -182,7 +204,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 			"-p", fmt.Sprint(port),
 			"-b", fmt.Sprint(bcastPort),
 			"-m", "1",
-			"-C", filepath.Join(t.TempDir(), "missing-mercury.ini"),
+			"-C", stationIni(name),
 		)
 		// MERCURY_TEST_VERBOSE=1: -v on both stations, for diagnosis (it
 		// perturbs timing, see -L above).

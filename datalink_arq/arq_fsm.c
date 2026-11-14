@@ -396,6 +396,9 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     bool crypto = g_cbs.crypto_negotiate &&
                   g_cbs.crypto_negotiate(is_accept ? ARQ_NEG_ACCEPT_OUT : ARQ_NEG_CALL_OUT,
                                          sess->remote_call, sess->session_id, false);
+    bool compress = g_cbs.compression_negotiate &&
+                    g_cbs.compression_negotiate(is_accept ? ARQ_NEG_ACCEPT_OUT : ARQ_NEG_CALL_OUT,
+                                                sess->remote_call, sess->session_id, false);
     if (is_accept)
     {
         /* The callsign the caller dialed: a station answering on a secondary
@@ -405,7 +408,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
                                       called, sess->remote_call, bw_hz,
                                       accept_level(sess), sess->car_ctl_deaf,
                                       sess->car_call_snr != 0.0f ? sess->car_call_snr : NAN,
-                                      sess->car_nonce, ARQ_TX_MFSK_ONLY, crypto);
+                                      sess->car_nonce, ARQ_TX_MFSK_ONLY, crypto, compress);
         /* The ACCEPT is the carousel's first poll: from here the caller's
          * frames carry the session seed, and its first round comes on the rung
          * the ACCEPT names. */
@@ -416,7 +419,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     else
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
                                     my_call, sess->remote_call, bw_hz,
-                                    ARQ_TX_MFSK_ONLY, crypto);
+                                    ARQ_TX_MFSK_ONLY, crypto, compress);
     if (n > 0)
     {
         /* A CALL escalates to the MFSK floor once the fast slots are spent; an
@@ -1223,6 +1226,8 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
              * answer's ACCEPT still in the air). */
             if (g_cbs.crypto_negotiate)
                 g_cbs.crypto_negotiate(ARQ_NEG_CALL_IN, ev->remote_call, ev->session_id, ev->crypto);
+            if (g_cbs.compression_negotiate)
+                g_cbs.compression_negotiate(ARQ_NEG_CALL_IN, ev->remote_call, ev->session_id, ev->compress);
             /* A new session takes the CALL's bandwidth; a repeat keeps the
              * session's, like its nonce and rung: the caller adopts whatever
              * an ACCEPT of it says (specs/connect/ConnectHandshake.tla). */
@@ -1379,6 +1384,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         sess->car_my_snr   = ev->rx_snr;
         if (g_cbs.crypto_negotiate)
             g_cbs.crypto_negotiate(ARQ_NEG_ACCEPT_IN, sess->remote_call, sess->session_id, ev->crypto);
+        if (g_cbs.compression_negotiate)
+            g_cbs.compression_negotiate(ARQ_NEG_ACCEPT_IN, sess->remote_call, sess->session_id, ev->compress);
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call, true);
         if (g_timing)
@@ -1387,6 +1394,11 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         sess->car_nonce = ev->car_nonce;
         car_set_seed(sess, car_seed(sess, true));
         car_start(sess, true, time_now_ms());
+        /* The car exists now (car_start car_init's it), so the session's
+         * compression decision reaches it (#506). */
+        if (g_cbs.compression_negotiate &&
+            g_cbs.compression_negotiate(ARQ_NEG_SESSION_UP, sess->remote_call, sess->session_id, false))
+            car_set_zstd(sess->car, true);
         break;
 
     case ARQ_EV_TX_COMPLETE:
@@ -1481,6 +1493,9 @@ static void car_connect_callee(arq_session_t *sess, const arq_event_t *ev)
     }
     uint64_t now = time_now_ms();
     car_start(sess, false, now);
+    if (g_cbs.compression_negotiate &&
+        g_cbs.compression_negotiate(ARQ_NEG_SESSION_UP, sess->remote_call, sess->session_id, false))
+        car_set_zstd(sess->car, true);
     if (g_timing) g_timing->frames_rx++;
     car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr,
                      ev->rx_age_ms);

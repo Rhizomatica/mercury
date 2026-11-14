@@ -98,6 +98,7 @@
  * amateur rules forbid encryption in many places.  The paths are the ones the
  * HERMES installer writes; they are config keys, not constants, so a station
  * can run as a normal user or on a system where /etc/mercury does not exist. */
+#define CFG_KEY_COMPRESSION_MODE              "compression:mode"
 #define CFG_KEY_CRYPTO_MODE                   "crypto:mode"
 #define CFG_KEY_CRYPTO_KEY_FILE               "crypto:key_file"
 #define CFG_KEY_CRYPTO_PEERS_DIR              "crypto:peers_dir"
@@ -114,6 +115,7 @@ typedef struct {
     bool     tls_enabled;           /* false = ws, true = wss */
     char     tls_cert[512];         /* PEM certificate chain, wss only */
     char     tls_key[512];          /* PEM private key, wss only */
+    char     compression_mode[16];  /* "off" | "optional" (#506) */
     char     crypto_mode[16];       /* "off" | "optional" | "required" */
     char     crypto_key_file[512];
     char     crypto_peers_dir[512];

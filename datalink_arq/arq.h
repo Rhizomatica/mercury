@@ -429,3 +429,12 @@ void call_remote();
 void callee_accept_connection();
 
 #endif
+
+
+/* ---- Payload compression (#506) ----
+ * Configured before arq_init (the engine, next to the crypto backend's
+ * configuration): on means the session offers compression when the zstd
+ * backend was built in, and enables it on the car of a session whose peer
+ * took the offer.  Off, or a build without the backend, never offers. */
+void arq_compression_configure(bool on);
+bool arq_compression_enabled(void);

@@ -141,8 +141,10 @@ typedef struct
      * address so a station listening on multiple SSIDs shows the dialed one. */
     char     local_call[CALLSIGN_MAX_SIZE];
 
-    /* RX_CALL / RX_ACCEPT: the frame's encryption bit (arq_crypto.h). */
+    /* RX_CALL / RX_ACCEPT: the frame's encryption bit (arq_crypto.h), and
+     * its compression offer or acceptance (#506, minor 3 / the caps byte). */
     bool     crypto;
+    bool     compress;
 } arq_event_t;
 
 /* The steps of a connect's encryption negotiation (crypto_negotiate). */
@@ -151,6 +153,7 @@ typedef enum {
     ARQ_NEG_CALL_IN,      /* we take a CALL: what it offered               */
     ARQ_NEG_ACCEPT_OUT,   /* our ACCEPT is built: take the offer?          */
     ARQ_NEG_ACCEPT_IN,    /* the ACCEPT of our CALL: what it took          */
+    ARQ_NEG_SESSION_UP,   /* the session is up: the car may compress (#506) */
 } arq_neg_step_t;
 
 /* ======================================================================
@@ -375,6 +378,11 @@ typedef struct
      *  encrypts. */
     bool (*crypto_negotiate)(arq_neg_step_t step, const char *remote_call,
                              uint8_t session_id, bool peer_bit);
+    /* The compression negotiation (#506), the same four steps: offer on our
+     * CALL, what a taken CALL offered, echo on our ACCEPT, what the ACCEPT
+     * of our CALL took.  Optional: NULL never offers. */
+    bool (*compression_negotiate)(arq_neg_step_t step, const char *remote_call,
+                                  uint8_t session_id, bool peer_bit);
 } arq_fsm_callbacks_t;
 
 /**

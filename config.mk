@@ -306,6 +306,27 @@ endif
 endif
 COMMON_CFLAGS += $(CRYPTO_CFLAGS)
 
+# Payload compression (#506), the same optional-backend pattern: every file
+# that asks "is there a backend" sees the same answer, the daemon and the
+# tests alike.
+#
+#   ARQ_ZSTD=0     never use libzstd
+#   ARQ_ZSTD=1     use it if pkg-config finds it (default)
+ARQ_ZSTD ?= 1
+ZSTD_CFLAGS :=
+ZSTD_LDFLAGS :=
+ZSTD_CROSS_SAFE := $(ARQ_CRYPTO_CROSS_SAFE)
+ifeq ($(ARQ_ZSTD),1)
+ifeq ($(ZSTD_CROSS_SAFE),1)
+  ZSTD_OK := $(shell pkg-config --exists libzstd 2>/dev/null && echo 1)
+  ifeq ($(ZSTD_OK),1)
+    ZSTD_CFLAGS := -DARQ_HAVE_ZSTD $(shell pkg-config --cflags libzstd)
+    ZSTD_LDFLAGS := $(shell pkg-config --libs libzstd)
+  endif
+endif
+endif
+COMMON_CFLAGS += $(ZSTD_CFLAGS)
+
 GIT_HASH ?= $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo unknown000)
 COMMON_CFLAGS += -DGIT_HASH=\"$(GIT_HASH)\"
 
