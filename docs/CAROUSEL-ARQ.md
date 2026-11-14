@@ -220,6 +220,19 @@ frame on MFSK.
   the dead-forward cells unchanged, nvis (random DATAC16 loss) +9.7 s on
   the 8 seeds that lose one ACCEPT and -21..-30 s on the 2 that lose two
   (specs/connect/ConnectCarrier.tla).
+- The callee answers a CALL one channel guard after it decodes it, in the
+  gap the caller opened by dropping PTT.  A CALL whose gap has gone is not
+  answered: one decoded later than its mode's decode bound (R4 in
+  CAROUSEL-TURNS.md: 1 s OFDM, 4.5 s MFSK; the modem's backlog is the
+  frame's age), or one decoded while the callee is keyed (half duplex: its
+  audio came before the keydown, so the ACCEPT on the air already answers
+  the caller's latest gap).  It still says the caller is there: PENDING
+  again, the ACCEPT retries restart, and a first CALL still takes the callee
+  to ACCEPTING.  The caller's next CALL, decoded on time, is answered.  On
+  air (K7EK answering N3MEL-7, BW500, 2026-11-13 14:55) an MFSK500 CALL
+  decoded 3.9 s late, while K7EK's ACCEPT to the caller's newer DATAC16 CALL
+  was on the air, drew a second, 26 s ACCEPT straight after the first (1 of
+  86 CALLs decoded at K7EK and KG9NI on 12-13 Nov; `call_too_late`).
 - The callee's callsign is not on the air in full: the caller knows whom it
   called, and the CRC confirms it.
 

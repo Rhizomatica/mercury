@@ -359,6 +359,35 @@ static bool accept_keys(const arq_session_t *sess)
     return !ARQ_TX_MFSK_ONLY || mercury_mode_is_mfsk(sess->call_rx_mode);
 }
 
+/* Is this CALL too old to answer?  An ACCEPT goes one channel guard after
+ * the CALL it answers, in the gap the caller opened by dropping PTT; for a
+ * CALL decoded late the gap is partly or wholly gone, and an ACCEPT keyed
+ * then may run into the caller's next keydown.  Not answered, then, when:
+ *   - it decoded later than its mode's decode bound (car_decode_bound_ms,
+ *     R4 in docs/CAROUSEL-TURNS.md, the carousel's rule for its frames);
+ *   - or it decoded while we are keyed: half duplex, its audio came in before
+ *     our keydown, so its gap is already behind the ACCEPT we are sending,
+ *     and another could start only when ours ends.
+ * On air (K7EK <- N3MEL-7, BW500, 2026-11-13 14:55): an MFSK500 CALL
+ * decoded 3.9 s late (decoder backlog) while K7EK's ACCEPT to the caller's
+ * newer DATAC16 CALL was on the air drew a second, 26 s ACCEPT straight
+ * after it, where the caller would send its first frame or next CALL.
+ * The CALL still says the caller is there: PENDING again, and the retries
+ * restart.  Its next CALL, decoded on time, is answered. */
+static bool call_too_late(const arq_session_t *sess, const arq_event_t *ev)
+{
+    uint32_t bound = car_decode_bound_ms(ev->mode);
+    if (ev->rx_age_ms > bound || sess->tx_active) {
+        HLOGI(LOG_COMP, "CALL from %s %s: not answered, its gap has gone (the next CALL is)",
+              ev->remote_call,
+              sess->tx_active ? "decoded while we are keyed" : "decoded too late");
+        HLOGD(LOG_COMP, "late CALL: age %u ms (bound %u ms), keyed %d",
+              (unsigned)ev->rx_age_ms, (unsigned)bound, (int)sess->tx_active);
+        return true;
+    }
+    return false;
+}
+
 /* The ACCEPT names the caller's start rung and says whether we hear it below
  * the control mode (then the rung is the floor).  A floor-only caller's first
  * control from us would otherwise be its only way to learn that, and at the
@@ -1239,7 +1268,9 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         }
         sess->car_peer_ctl_deaf = false;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
-        sess->accept_tx_pending = accept_keys(sess);   /* answering a CALL we just heard */
+        /* answering a CALL we just heard, unless it is too old: then the
+         * caller's next CALL is answered (pending, the scanner held) */
+        sess->accept_tx_pending = accept_keys(sess) && !call_too_late(sess, ev);
         /* Off the listen mode: here, not in sess_enter, because LISTENING
          * keeps peer_tx_mode on the broadcast mode.  The carousel binds the
          * decoder to the peer's rung once it runs. */
@@ -1492,6 +1523,16 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
             strcasecmp(ev->remote_call, sess->remote_call) != 0)
         {
             HLOGI(LOG_COMP, "CALL from %s while answering %s: ignored", ev->remote_call, sess->remote_call);
+            break;
+        }
+        /* Too old to answer (call_too_late): the caller is there, so the
+         * window stays open and the scanner held, but no ACCEPT, and the
+         * carrier the next one goes on is left as it was. */
+        if (call_too_late(sess, ev))
+        {
+            sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
+            if (g_cbs.notify_pending_again)
+                g_cbs.notify_pending_again(sess->remote_call);
             break;
         }
         /* Caller is still retrying CALL (our previous ACCEPT was lost). Reset

@@ -450,6 +450,117 @@ void test_accepting_repeat_call_sends_pending_again(void)
     TEST_ASSERT_EQUAL_INT(first, fake_notify_pending_fake.call_count);
 }
 
+/* A CALL whose gap has gone is not answered (arq_fsm.c, call_too_late).  On
+ * air (K7EK <- N3MEL-7, BW500, 2026-11-13 14:55): an MFSK500 CALL decoded
+ * 3.9 s late, while K7EK's ACCEPT to the caller's newer DATAC16 CALL was on
+ * the air, drew a second, 26 s ACCEPT straight after the first. */
+static arq_event_t call_ev(int mode, uint32_t age_ms)
+{
+    arq_event_t ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    ev.rx_snr = 5.0f;
+    ev.bw_hz = 2300;
+    ev.mode = mode;
+    ev.rx_age_ms = age_ms;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    return ev;
+}
+
+/* One channel guard on, and the ACCEPT to its end: how many frames went out. */
+static int accepts_after_guard(void)
+{
+    RESET_FAKE(fake_send_tx_frame);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    int sent = fake_send_tx_frame_fake.call_count;
+    if (sent) {
+        ev = make_event(ARQ_EV_TX_STARTED);
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_TX_COMPLETE);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+    return sent;
+}
+
+void test_accepting_call_decoded_while_keyed_is_not_answered(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = call_ev(FREEDV_MODE_DATAC16, 0);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());          /* the first CALL answered */
+
+    ev = call_ev(FREEDV_MODE_DATAC16, 0);                      /* a repeat: answered */
+    arq_fsm_dispatch(&sess, &ev);
+    RESET_FAKE(fake_send_tx_frame);
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+    ev = make_event(ARQ_EV_TX_STARTED);                        /* that ACCEPT on the air */
+    arq_fsm_dispatch(&sess, &ev);
+
+    int again = fake_notify_pending_again_fake.call_count;
+    ev = call_ev(MERCURY_MODE_MFSK, 3920);                     /* the stale CALL, decoded now */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(again + 1, fake_notify_pending_again_fake.call_count);
+
+    /* One guard on, ours still on the air (as on air: the second ACCEPT was
+     * queued at 14:55:44.1 and keyed when the first ended, 14:55:46.8). */
+    RESET_FAKE(fake_send_tx_frame);
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);   /* no second ACCEPT */
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, accepts_after_guard());
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+}
+
+void test_accepting_call_decoded_too_late_is_not_answered(void)
+{
+    enter_accepting();
+    (void)accepts_after_guard();
+    int again = fake_notify_pending_again_fake.call_count;
+    arq_event_t ev = call_ev(MERCURY_MODE_MFSK, 5000);         /* past MFSK's 4.5 s */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(again + 1, fake_notify_pending_again_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, accepts_after_guard());
+    ev = call_ev(MERCURY_MODE_MFSK, 0);                        /* the next, on time */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
+}
+
+/* Late, but within the mode's decode bound: answered as before. */
+void test_accepting_call_within_the_decode_bound_is_answered(void)
+{
+    enter_accepting();
+    (void)accepts_after_guard();
+    arq_event_t ev = call_ev(MERCURY_MODE_MFSK, 3900);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
+    ev = call_ev(FREEDV_MODE_DATAC16, 900);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
+}
+
+/* A first CALL too late to answer: pending (a scanner holds), but the
+ * ACCEPT waits for the caller's next CALL. */
+void test_listening_late_first_call_waits_for_the_next(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    int pend = fake_notify_pending_fake.call_count;
+    ev = call_ev(FREEDV_MODE_DATAC16, 2000);                   /* past OFDM's 1 s */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(pend + 1, fake_notify_pending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, accepts_after_guard());
+    ev = call_ev(FREEDV_MODE_DATAC16, 0);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
+}
+
 /* Connection-setup slots must stay short by default so a failed connect and
  * its mirror ACCEPT window give up quickly. */
 void test_default_call_accept_slots_are_short(void)
@@ -2373,6 +2484,10 @@ int main(void)
     RUN_TEST(test_ended_session_is_not_resurrected_by_a_late_frame);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
     RUN_TEST(test_accepting_repeat_call_sends_pending_again);
+    RUN_TEST(test_accepting_call_decoded_while_keyed_is_not_answered);
+    RUN_TEST(test_accepting_call_decoded_too_late_is_not_answered);
+    RUN_TEST(test_accepting_call_within_the_decode_bound_is_answered);
+    RUN_TEST(test_listening_late_first_call_waits_for_the_next);
     RUN_TEST(test_default_call_accept_slots_are_short);
     RUN_TEST(test_retries_scale_fast_call_slots);
     RUN_TEST(test_stop_listen);
