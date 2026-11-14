@@ -493,6 +493,55 @@ static void test_sanitiser_keeps_every_valid_length(void)
     TEST_ASSERT_EQUAL_STRING("\xF4\x8F\xBF\xBF", s);
 }
 
+static bool origin_ok(const char *origin, const char *host, bool tls)
+{
+    return ws_origin_allowed(origin, origin ? strlen(origin) : 0,
+                             host, host ? strlen(host) : 0, tls);
+}
+
+/* A client that sends no Origin is not a browser: Fyne, Pat, scripts. */
+void test_origin_absent_is_allowed(void)
+{
+    TEST_ASSERT_TRUE(origin_ok(NULL, "127.0.0.1:10000", false));
+    TEST_ASSERT_TRUE(origin_ok(NULL, "anything.example.com", false));
+}
+
+/* Mercury's own pages: Origin is the page's scheme://host:port = Host. */
+void test_same_origin_pages_are_allowed(void)
+{
+    TEST_ASSERT_TRUE(origin_ok("http://127.0.0.1:10000", "127.0.0.1:10000", false));
+    TEST_ASSERT_TRUE(origin_ok("http://localhost:10000", "LOCALHOST:10000", false));
+    TEST_ASSERT_TRUE(origin_ok("http://192.168.1.20:10000", "192.168.1.20:10000", false));
+    TEST_ASSERT_TRUE(origin_ok("http://hermes-pi:10000", "hermes-pi:10000", false));
+    TEST_ASSERT_TRUE(origin_ok("http://hermes.local:10000", "hermes.local:10000", false));
+    TEST_ASSERT_TRUE(origin_ok("http://[::1]:10000", "[::1]:10000", false));
+    TEST_ASSERT_TRUE(origin_ok("https://station.hermes.radio", "station.hermes.radio", true));
+}
+
+/* Another site's page, even one aimed at 127.0.0.1, is refused. */
+void test_cross_origin_pages_are_refused(void)
+{
+    TEST_ASSERT_FALSE(origin_ok("https://evil.example", "127.0.0.1:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://127.0.0.1:8080", "127.0.0.1:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("null", "127.0.0.1:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://127.0.0.1:10000", NULL, false));
+    TEST_ASSERT_FALSE(origin_ok("http://127.0.0.1:1000", "127.0.0.1:10000", false));
+}
+
+/* DNS rebinding: Origin and Host agree but name a domain the attacker owns.
+ * Over ws that must be refused; over wss the certificate would not match. */
+void test_rebindable_hosts_are_refused_over_plain_ws(void)
+{
+    TEST_ASSERT_FALSE(origin_ok("http://evil.example:10000", "evil.example:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://127.0.0.1.evil.example:10000",
+                                "127.0.0.1.evil.example:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://1.2.3.4.5:10000", "1.2.3.4.5:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://256.0.0.1:10000", "256.0.0.1:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://x.local.evil.example:10000",
+                                "x.local.evil.example:10000", false));
+    TEST_ASSERT_TRUE(origin_ok("https://evil.example", "evil.example", true));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -523,6 +572,11 @@ int main(void)
     RUN_TEST(test_malformed_json_is_refused_not_guessed);
     RUN_TEST(test_sanitiser_rejects_the_invalid_utf8_that_looks_well_formed);
     RUN_TEST(test_sanitiser_keeps_every_valid_length);
+
+    RUN_TEST(test_origin_absent_is_allowed);
+    RUN_TEST(test_same_origin_pages_are_allowed);
+    RUN_TEST(test_cross_origin_pages_are_refused);
+    RUN_TEST(test_rebindable_hosts_are_refused_over_plain_ws);
 
     return UNITY_END();
 }

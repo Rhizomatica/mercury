@@ -60,4 +60,14 @@ size_t ws_frame_header(uint8_t hdr[WS_FRAME_MAX_HEADER], int opcode,
 /* True for opcodes 0x8..0xF. */
 bool ws_frame_is_control(int opcode);
 
+/* May this upgrade proceed?  `origin`/`host` are the raw header values (NULL
+ * when absent).  No Origin: not a browser (Fyne, Pat, scripts), allowed.  A
+ * browser's Origin must name the same authority as Host, which stops another
+ * web page in the operator's browser from opening the UI socket.  Over plain
+ * ws the Host must also be a name DNS rebinding cannot hand an attacker: an IP
+ * literal, "localhost", a single label or a .local name.  Over wss a rebound
+ * name fails certificate validation anyway, so any Host is accepted. */
+bool ws_origin_allowed(const char *origin, size_t origin_len,
+                       const char *host, size_t host_len, bool tls);
+
 #endif /* WS_FRAME_H_ */

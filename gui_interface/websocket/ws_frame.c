@@ -8,6 +8,8 @@
 
 #include "ws_frame.h"
 
+#include <string.h>
+
 bool ws_frame_is_control(int opcode)
 {
     return (opcode & 0x08) != 0;
@@ -135,4 +137,94 @@ size_t ws_frame_header(uint8_t hdr[WS_FRAME_MAX_HEADER], int opcode,
             hdr[2 + i] = (uint8_t) ((uint64_t) payload_len >> (56 - i * 8));
         return 10;
     }
+}
+
+static bool ci_eq(const char *a, const char *b, size_t n)
+{
+    for (size_t i = 0; i < n; i++)
+    {
+        char x = a[i], y = b[i];
+        if (x >= 'A' && x <= 'Z') x = (char) (x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = (char) (y - 'A' + 'a');
+        if (x != y)
+            return false;
+    }
+    return true;
+}
+
+/* "a.b.c.d", each part 1-3 digits and <= 255. */
+static bool is_ipv4_literal(const char *h, size_t n)
+{
+    int parts = 0, digits = 0, val = 0;
+
+    for (size_t i = 0; i <= n; i++)
+    {
+        if (i == n || h[i] == '.')
+        {
+            if (digits == 0 || val > 255)
+                return false;
+            parts++;
+            digits = val = 0;
+        }
+        else if (h[i] >= '0' && h[i] <= '9' && digits < 3)
+        {
+            val = val * 10 + (h[i] - '0');
+            digits++;
+        }
+        else
+            return false;
+    }
+    return parts == 4;
+}
+
+/* Hostnames an attacker's DNS cannot point at us. */
+static bool host_is_rebind_safe(const char *h, size_t n)
+{
+    if (n == 0)
+        return false;
+    if (h[0] == '[' || is_ipv4_literal(h, n))           /* IP literal */
+        return true;
+    if (n == 9 && ci_eq(h, "localhost", 9))
+        return true;
+    if (memchr(h, '.', n) == NULL)                      /* single label */
+        return true;
+    return n > 6 && ci_eq(h + n - 6, ".local", 6);      /* mDNS */
+}
+
+bool ws_origin_allowed(const char *origin, size_t origin_len,
+                       const char *host, size_t host_len, bool tls)
+{
+    const char *sep, *auth;
+    size_t auth_len, hn;
+
+    if (origin == NULL)
+        return true;
+    if (host == NULL || host_len == 0)
+        return false;
+
+    /* "scheme://authority"; "null" and anything else is refused. */
+    sep = NULL;
+    for (size_t i = 0; i + 3 <= origin_len; i++)
+        if (memcmp(origin + i, "://", 3) == 0) { sep = origin + i; break; }
+    if (sep == NULL)
+        return false;
+    auth = sep + 3;
+    auth_len = origin_len - (size_t) (auth - origin);
+    if (auth_len != host_len || !ci_eq(auth, host, host_len))
+        return false;
+    if (tls)
+        return true;
+
+    /* The host part of Host: up to the port, or the whole "[v6]". */
+    if (host[0] == '[')
+    {
+        const char *e = memchr(host, ']', host_len);
+        hn = e ? (size_t) (e - host) + 1 : host_len;
+    }
+    else
+    {
+        const char *c = memchr(host, ':', host_len);
+        hn = c ? (size_t) (c - host) : host_len;
+    }
+    return host_is_rebind_safe(host, hn);
 }

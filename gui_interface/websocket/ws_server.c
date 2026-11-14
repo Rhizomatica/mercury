@@ -667,6 +667,25 @@ static int conn_handle_request(ws_conn_t *c, const char *req, size_t req_len)
             return 0;
         }
 
+        /* Browsers let any page open a WebSocket to any host, 127.0.0.1
+         * included, and send nothing to authenticate it: refuse a page that
+         * is not Mercury's own.  Clients without an Origin are unaffected. */
+        {
+            size_t olen = 0, hlen = 0;
+            const char *origin = header_find(hdrs, hdrs_len, "Origin", &olen);
+            const char *host = header_find(hdrs, hdrs_len, "Host", &hlen);
+
+            if (!ws_origin_allowed(origin, olen, host, hlen, s->opts.tls_enabled))
+            {
+                HLOGW(WS_LOG_TAG, "refused a cross-origin upgrade (Origin \"%.*s\", Host \"%.*s\")",
+                      (int) (olen > 128 ? 128 : olen), origin ? origin : "",
+                      (int) (hlen > 128 ? 128 : hlen), host ? host : "");
+                http_reply(c, 403, "Forbidden", NULL, "text/plain",
+                           "origin not allowed", 18, true);
+                return 0;
+            }
+        }
+
         key = header_find(hdrs, hdrs_len, "Sec-WebSocket-Key", &key_len);
         if (key == NULL || key_len == 0 ||
             key_len + strlen(WS_GUID) >= sizeof(accept_src))
