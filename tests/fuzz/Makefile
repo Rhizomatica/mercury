@@ -42,8 +42,11 @@ FUZZ_BINS = fuzz_arq_hdr fuzz_frame_header fuzz_kiss fuzz_arith fuzz_ws_json
 # build+no-crash gate, not a fuzzing campaign).
 CHECK_RUNS ?= 20000
 
-.PHONY: all check preflight clean
+.PHONY: all check preflight clean print-bins
 all: preflight $(FUZZ_BINS)
+
+print-bins:
+	@echo $(FUZZ_BINS)
 
 # Fail loudly and early if the chosen compiler cannot do libFuzzer.
 preflight:

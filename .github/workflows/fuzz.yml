@@ -1,0 +1,49 @@
+# Mercury CI - libFuzzer campaigns over the untrusted-byte parsers (tests/fuzz).
+#
+# Non-blocking: runs weekly and on manual dispatch, never on PRs, so it adds
+# nothing to the required gates. Any crash/leak/timeout reproducer is uploaded
+# as an artifact; copy it into tests/fuzz/regressions/<target>/ when fixing.
+
+name: Fuzz
+
+on:
+  push:                       # TEMP: fork trial run only, drop before upstream PR
+    branches: [security/fuzz-ci]
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'Seconds per target'
+        required: false
+        type: string
+        default: '600'
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build targets
+        run: make -C tests/fuzz all
+      - name: Fuzz
+        env:
+          SECS: ${{ inputs.seconds || '600' }}
+        run: |
+          cd tests/fuzz
+          fail=0
+          for t in $(make -s -f Makefile print-bins); do
+            echo "::group::$t"
+            mkdir -p "out/$t"
+            ./$t -max_total_time="$SECS" -artifact_prefix="out/$t/" \
+                 -print_final_stats=1 "corpus/$t" || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail
+      - name: Upload reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-reproducers
+          path: tests/fuzz/out/
