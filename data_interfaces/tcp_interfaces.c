@@ -964,6 +964,46 @@ static void execute_control_command(char *buffer)
         return;
     }
 
+    /* VARA's CLEANTXBUFFER: BPQ32 sends it before DISCONNECT at a session
+     * time limit.  Answered WRONG, the DISCONNECT after it drained the whole
+     * backlog first. */
+    if (!strcmp(buffer, "CLEANTXBUFFER"))
+    {
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_CLEAN_TX_BUFFER;
+        if (arq_submit_tcp_cmd(&cmd) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else
+            reply_wrong(received);
+        return;
+    }
+
+    /* "WINLINK SESSION": Pat sends it (or P2P SESSION) before each CONNECT.
+     * No-op like P2P: Mercury runs both the same way. */
+    if (!strcmp(buffer, "WINLINK SESSION"))
+    {
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        return;
+    }
+
+    /* CWID ON|OFF: Pat sends it after PUBLIC ON when the operator enables
+     * it.  Mercury keys no CW ID; each frame carries the callsigns.  Accepted
+     * so the host's init does not fail, and ON says so in the log. */
+    if (!strncmp(buffer, "CWID", 4) && (buffer[4] == '\0' || buffer[4] == ' '))
+    {
+        char arg[16] = {0};
+        if (sscanf(buffer + 4, " %15s", arg) != 1 ||
+            (strcasecmp(arg, "ON") && strcasecmp(arg, "OFF")))
+        {
+            reply_wrong(received);
+            return;
+        }
+        if (!strcasecmp(arg, "ON"))
+            HLOGW("tcp-ctl", "CWID ON: Mercury sends no CW ID (callsigns are in every frame)");
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        return;
+    }
+
     if (!strncmp(buffer, "IGNOREKISSDCD", strlen("IGNOREKISSDCD")))
     {
         /* VARA compatibility no-op. */

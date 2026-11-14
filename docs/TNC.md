@@ -211,6 +211,51 @@ P2P\r
 
 ---
 
+### WINLINK SESSION
+
+No-op for VARA client compatibility.  Pat sends it (or `P2P SESSION`)
+before each `CONNECT`; Mercury runs both kinds of session the same way.
+
+```
+WINLINK SESSION\r
+```
+
+**Response:** `OK\r` (always).
+
+---
+
+### CLEANTXBUFFER
+
+Drop the host's bytes not yet sent, and keep the session.
+
+```
+CLEANTXBUFFER\r
+```
+
+**Response:** `OK\r` on success, `WRONG\r` on error.
+
+Frames already on the air and waiting for an ACK are kept (`ABORT` drops
+those too).  BPQ32 sends `CLEANTXBUFFER` right before `DISCONNECT` when a
+session reaches its time limit, so the disconnect does not wait for the
+backlog to be sent.
+
+---
+
+### CWID
+
+Accepted for VARA client compatibility.  Mercury sends no CW ID: the
+callsigns are carried in every frame.
+
+```
+CWID ON\r
+CWID OFF\r
+```
+
+**Response:** `OK\r` for `ON` or `OFF`, `WRONG\r` otherwise.  `CWID ON` logs
+a warning that no CW ID is sent.
+
+---
+
 ### CONNECT
 
 Initiate an ARQ connection to a remote station.

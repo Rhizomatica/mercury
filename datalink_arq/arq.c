@@ -690,6 +690,23 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         arq_set_retry_slots(msg->value);   /* outside lock: takes g_sess_lock internally */
         return;
 
+    case ARQ_CMD_CLEAN_TX_BUFFER:
+    {
+        /* VARA's CLEANTXBUFFER: drop the host's bytes not yet sent, keep the
+         * session.  BPQ32 sends it right before DISCONNECT at its session
+         * time limit, so the DISCONNECT's drain has nothing left to wait
+         * for.  Frames already on the air (awaiting an ACK) stay: the FSM
+         * owns those, and clearing them is ABORT's job.  The host's bytes
+         * sent before this command count as unsent too. */
+        wait_payload_written();
+        pthread_mutex_lock(&g_app_tx_mtx);
+        size_t dropped = size_buffer(g_app_tx_buf);
+        clear_buffer(g_app_tx_buf);
+        pthread_mutex_unlock(&g_app_tx_mtx);
+        HLOGI(LOG_COMP, "CLEANTXBUFFER: dropped %zu unsent bytes", dropped);
+        return;
+    }
+
     case ARQ_CMD_SET_CALLINT:
         if (msg->value <= 0)
         {
