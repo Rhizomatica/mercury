@@ -598,13 +598,21 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
          * time limit, so the DISCONNECT's drain has nothing left to wait
          * for.  Frames already on the air (awaiting an ACK) stay: the FSM
          * owns those, and clearing them is ABORT's job.  The host's bytes
-         * sent before this command count as unsent too. */
-        wait_payload_written();
-        pthread_mutex_lock(&g_app_tx_mtx);
-        size_t dropped = size_buffer(g_app_tx_buf);
-        clear_buffer(g_app_tx_buf);
-        pthread_mutex_unlock(&g_app_tx_mtx);
+         * sent before this command count as unsent too.  Clear before
+         * waiting as well: with g_app_tx_buf full the payload bridge is
+         * parked in write_buffer, and only a clear lets it finish. */
+        size_t dropped = 0;
+        for (int pass = 0; pass < 2; pass++)
+        {
+            pthread_mutex_lock(&g_app_tx_mtx);
+            dropped += size_buffer(g_app_tx_buf);
+            clear_buffer(g_app_tx_buf);
+            pthread_mutex_unlock(&g_app_tx_mtx);
+            if (pass == 0)
+                wait_payload_written();
+        }
         HLOGI(LOG_COMP, "CLEANTXBUFFER: dropped %zu unsent bytes", dropped);
+        arq_tnc_send_cleantxbuffer(dropped > 0);
         return;
     }
 
