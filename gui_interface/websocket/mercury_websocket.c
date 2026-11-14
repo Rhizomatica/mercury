@@ -109,6 +109,13 @@ static void on_ws_message(ws_conn_t *c, const void *data, size_t len,
 
 /* ---- public API ---- */
 
+static char s_allowed_origins[512];
+
+void ui_transport_set_allowed_origins(const char *list)
+{
+    snprintf(s_allowed_origins, sizeof(s_allowed_origins), "%s", list ? list : "");
+}
+
 int ui_transport_init(uint16_t port, bool tls_enabled,
                       const char *tls_cert_path, const char *tls_key_path,
                       ui_transport_command_fn on_command,
@@ -130,6 +137,7 @@ int ui_transport_init(uint16_t port, bool tls_enabled,
     opts.port = port;
     opts.bind_addr = NULL;                      /* 0.0.0.0, as before */
     opts.ws_path = "/websocket";
+    opts.allowed_origins = s_allowed_origins;
     opts.max_message_size = UI_MAX_MESSAGE_SIZE;
     opts.tls_enabled = tls_enabled;
     opts.tls_cert_path = tls_cert_path;

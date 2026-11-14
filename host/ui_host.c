@@ -32,6 +32,8 @@ void mercury_host_set_ui(const mercury_host_ui_ops *ops)
     pthread_mutex_unlock(&s_lock);
 }
 
+void ui_transport_set_allowed_origins(const char *list) { (void) list; }
+
 int ui_transport_init(uint16_t port, bool tls_enabled,
                       const char *tls_cert_path, const char *tls_key_path,
                       ui_transport_command_fn on_command,

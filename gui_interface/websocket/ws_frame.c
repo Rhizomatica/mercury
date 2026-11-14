@@ -177,6 +177,12 @@ static bool is_ipv4_literal(const char *h, size_t n)
     return parts == 4;
 }
 
+static bool has_suffix(const char *h, size_t n, const char *sfx)
+{
+    size_t k = strlen(sfx);
+    return n > k && ci_eq(h + n - k, sfx, k);
+}
+
 /* Hostnames an attacker's DNS cannot point at us. */
 static bool host_is_rebind_safe(const char *h, size_t n)
 {
@@ -188,16 +194,41 @@ static bool host_is_rebind_safe(const char *h, size_t n)
         return true;
     if (memchr(h, '.', n) == NULL)                      /* single label */
         return true;
-    return n > 6 && ci_eq(h + n - 6, ".local", 6);      /* mDNS */
+    /* Names that only resolve on the local network: mDNS, the RFC 8375 and
+     * ICANN-reserved private zones, and the common undelegated .lan. */
+    return has_suffix(h, n, ".local") || has_suffix(h, n, ".home.arpa") ||
+           has_suffix(h, n, ".internal") || has_suffix(h, n, ".lan");
+}
+
+/* Is origin one of the comma- or space-separated entries of list? */
+static bool origin_listed(const char *origin, size_t origin_len, const char *list)
+{
+    const char *p = list;
+
+    while (p != NULL && *p != '\0')
+    {
+        size_t n;
+
+        while (*p == ',' || *p == ' ')
+            p++;
+        n = strcspn(p, ", ");
+        if (n != 0 && n == origin_len && ci_eq(p, origin, n))
+            return true;
+        p += n;
+    }
+    return false;
 }
 
 bool ws_origin_allowed(const char *origin, size_t origin_len,
-                       const char *host, size_t host_len, bool tls)
+                       const char *host, size_t host_len, bool tls,
+                       const char *allowed_origins)
 {
     const char *sep, *auth;
     size_t auth_len, hn;
 
     if (origin == NULL)
+        return true;
+    if (origin_listed(origin, origin_len, allowed_origins))
         return true;
     if (host == NULL || host_len == 0)
         return false;

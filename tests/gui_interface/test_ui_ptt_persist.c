@@ -131,6 +131,7 @@ int  ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
 int  ui_transport_broadcast_binary(const void *data, size_t len)
 { (void)data; (void)len; return 0; }
 int  ui_transport_broadcast_json(const char *json) { (void)json; return 0; }
+void ui_transport_set_allowed_origins(const char *list) { (void)list; }
 int  ui_transport_init(uint16_t port, bool tls_enabled, const char *tls_cert_path,
                        const char *tls_key_path, ui_transport_command_fn on_command,
                        ui_transport_connect_fn on_connect, void *user)

@@ -65,9 +65,13 @@ bool ws_frame_is_control(int opcode);
  * browser's Origin must name the same authority as Host, which stops another
  * web page in the operator's browser from opening the UI socket.  Over plain
  * ws the Host must also be a name DNS rebinding cannot hand an attacker: an IP
- * literal, "localhost", a single label or a .local name.  Over wss a rebound
- * name fails certificate validation anyway, so any Host is accepted. */
+ * literal, "localhost", a single label, or a .local, .home.arpa, .internal or
+ * .lan name.  Over wss a rebound name fails certificate validation anyway, so
+ * any Host is accepted.  An Origin listed exactly in `allowed_origins` (comma
+ * or space separated, NULL for none) is allowed outright: the hosted web app,
+ * or a LAN name the rules above cannot vouch for. */
 bool ws_origin_allowed(const char *origin, size_t origin_len,
-                       const char *host, size_t host_len, bool tls);
+                       const char *host, size_t host_len, bool tls,
+                       const char *allowed_origins);
 
 #endif /* WS_FRAME_H_ */

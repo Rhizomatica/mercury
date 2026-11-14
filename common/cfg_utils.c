@@ -37,6 +37,8 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->ui_enabled         = false;
     cfg->ui_port            = UI_DEFAULT_PORT;       /* 10000  */
     cfg->tls_enabled        = false;                 /* ws     */
+    snprintf(cfg->ui_allowed_origins, sizeof(cfg->ui_allowed_origins), "%s",
+             CFG_UI_ALLOWED_ORIGINS_DEFAULT);
     snprintf(cfg->tls_cert, sizeof(cfg->tls_cert), "%s", CFG_SSL_CERT);
     snprintf(cfg->tls_key,  sizeof(cfg->tls_key),  "%s", CFG_SSL_KEY);
     cfg->waterfall_enabled  = true;
@@ -248,6 +250,10 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
 
     i = iniparser_getint(ini, CFG_KEY_UI_PORT, cfg->ui_port);
     cfg->ui_port = (uint16_t) i;
+
+    s = iniparser_getstring(ini, CFG_KEY_UI_ALLOWED_ORIGINS, NULL);
+    if (s)
+        snprintf(cfg->ui_allowed_origins, sizeof(cfg->ui_allowed_origins), "%s", s);
 
     s = iniparser_getstring(ini, CFG_KEY_UI_PROTOCOL, cfg->tls_enabled ? "wss" : "ws");
     cfg->tls_enabled = (s && !strcmp(s, "wss"));
@@ -566,6 +572,11 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "ui_enabled = %s\n",      cfg->ui_enabled ? "true" : "false");
     fprintf(f, "ui_port = %d\n",          cfg->ui_port);
     fprintf(f, "ui_protocol = %s\n",      cfg->tls_enabled ? "wss" : "ws");
+    /* Written only when changed, so a later default reaches existing files. */
+    if (strcmp(cfg->ui_allowed_origins, CFG_UI_ALLOWED_ORIGINS_DEFAULT) != 0) {
+        cfg_escape_str(escaped, sizeof(escaped), cfg->ui_allowed_origins);
+        fprintf(f, "ui_allowed_origins = \"%s\"\n", escaped);
+    }
     fprintf(f, "ui_tls_cert = %s\n",      cfg->tls_cert);
     fprintf(f, "ui_tls_key = %s\n",       cfg->tls_key);
     fprintf(f, "waterfall_enabled = %s\n", cfg->waterfall_enabled ? "true" : "false");

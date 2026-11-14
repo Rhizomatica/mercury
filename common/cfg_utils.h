@@ -31,6 +31,9 @@
 #define CFG_KEY_UI_PROTOCOL         "main:ui_protocol"
 #define CFG_KEY_UI_TLS_CERT         "main:ui_tls_cert"
 #define CFG_KEY_UI_TLS_KEY          "main:ui_tls_key"
+#define CFG_KEY_UI_ALLOWED_ORIGINS  "main:ui_allowed_origins"
+/* The hosted web app (README, docs/app/), served from GitHub Pages. */
+#define CFG_UI_ALLOWED_ORIGINS_DEFAULT "https://rhizomatica.github.io"
 
 /* Defaults for wss://.  Overridable because these are only reachable by root
  * on Linux and do not exist at all on Windows or macOS, which made wss://
@@ -103,6 +106,8 @@ typedef struct {
     bool     tls_enabled;           /* false = ws, true = wss */
     char     tls_cert[512];         /* PEM certificate chain, wss only */
     char     tls_key[512];          /* PEM private key, wss only */
+    char     ui_allowed_origins[512]; /* browser Origins the UI accepts besides
+                                       * its own pages; comma/space separated */
     bool     waterfall_enabled;
     ptt_config_t ptt;               /* selected PTT method and backend config */
     char     input_device[512];

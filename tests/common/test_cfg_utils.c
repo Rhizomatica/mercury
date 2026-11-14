@@ -97,6 +97,33 @@ void test_arq_tunables_roundtrip(void)
     TEST_ASSERT_EQUAL_STRING("Speakers \"A\" (3- USB Audio CODEC )", r.output_device_name);
 }
 
+/* ui_allowed_origins: defaults to the hosted app, is not written while at the
+ * default, round-trips when changed, and can be emptied. */
+void test_ui_allowed_origins_default_roundtrip_and_empty(void)
+{
+    mercury_config w, r;
+    cfg_set_defaults(&w);
+    TEST_ASSERT_EQUAL_STRING(CFG_UI_ALLOWED_ORIGINS_DEFAULT, w.ui_allowed_origins);
+    TEST_ASSERT_TRUE(cfg_write(&w, TMP));
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_STRING(CFG_UI_ALLOWED_ORIGINS_DEFAULT, r.ui_allowed_origins);
+
+    snprintf(w.ui_allowed_origins, sizeof(w.ui_allowed_origins),
+             "https://rhizomatica.github.io, http://pi.fritz.box:10000");
+    TEST_ASSERT_TRUE(cfg_write(&w, TMP));
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_STRING("https://rhizomatica.github.io, http://pi.fritz.box:10000",
+                             r.ui_allowed_origins);
+
+    w.ui_allowed_origins[0] = '\0';
+    TEST_ASSERT_TRUE(cfg_write(&w, TMP));
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_STRING("", r.ui_allowed_origins);
+}
+
 /* A config from before the names reads as before: no names, ids unchanged. */
 void test_config_without_device_names_reads_as_before(void)
 {
@@ -573,5 +600,6 @@ int main(void)
     RUN_TEST(test_invalid_line_and_invert_are_rejected);
     RUN_TEST(test_cm108_report_encoding);
     RUN_TEST(test_cm108_linux_device_path_validation);
+    RUN_TEST(test_ui_allowed_origins_default_roundtrip_and_empty);
     return UNITY_END();
 }

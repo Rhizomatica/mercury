@@ -675,7 +675,8 @@ static int conn_handle_request(ws_conn_t *c, const char *req, size_t req_len)
             const char *origin = header_find(hdrs, hdrs_len, "Origin", &olen);
             const char *host = header_find(hdrs, hdrs_len, "Host", &hlen);
 
-            if (!ws_origin_allowed(origin, olen, host, hlen, s->opts.tls_enabled))
+            if (!ws_origin_allowed(origin, olen, host, hlen, s->opts.tls_enabled,
+                                   s->opts.allowed_origins))
             {
                 HLOGW(WS_LOG_TAG, "refused a cross-origin upgrade (Origin \"%.*s\", Host \"%.*s\")",
                       (int) (olen > 128 ? 128 : olen), origin ? origin : "",

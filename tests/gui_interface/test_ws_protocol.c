@@ -496,7 +496,39 @@ static void test_sanitiser_keeps_every_valid_length(void)
 static bool origin_ok(const char *origin, const char *host, bool tls)
 {
     return ws_origin_allowed(origin, origin ? strlen(origin) : 0,
-                             host, host ? strlen(host) : 0, tls);
+                             host, host ? strlen(host) : 0, tls, NULL);
+}
+
+static bool listed_ok(const char *origin, const char *host, const char *list)
+{
+    return ws_origin_allowed(origin, strlen(origin), host, strlen(host), false, list);
+}
+
+/* ui_allowed_origins: the hosted web app reaching a Pi, and a LAN name the
+ * built-in rules cannot vouch for.  Exact, case-insensitive entries only. */
+void test_listed_origins_are_allowed_exactly(void)
+{
+    const char *list = "https://rhizomatica.github.io, http://pi.fritz.box:10000";
+
+    TEST_ASSERT_TRUE(listed_ok("https://rhizomatica.github.io", "pi:10000", list));
+    TEST_ASSERT_TRUE(listed_ok("https://Rhizomatica.GitHub.io", "192.168.1.5:10000", list));
+    TEST_ASSERT_TRUE(listed_ok("http://pi.fritz.box:10000", "pi.fritz.box:10000", list));
+    TEST_ASSERT_FALSE(listed_ok("https://rhizomatica.github.io.evil.example", "pi:10000", list));
+    TEST_ASSERT_FALSE(listed_ok("https://evil.github.io", "pi:10000", list));
+    TEST_ASSERT_FALSE(listed_ok("https://rhizomatica.github", "pi:10000", list));
+    TEST_ASSERT_FALSE(listed_ok("http://pi.fritz.box:10000", "pi.fritz.box:10000", ""));
+    TEST_ASSERT_FALSE(listed_ok("https://evil.example", "pi:10000", " , ,"));
+}
+
+/* Private-only DNS zones count as rebind-safe like .local. */
+void test_private_zone_names_are_allowed_over_plain_ws(void)
+{
+    TEST_ASSERT_TRUE(origin_ok("http://pi.home.arpa:10000", "pi.home.arpa:10000", false));
+    TEST_ASSERT_TRUE(origin_ok("http://pi.internal:10000", "pi.internal:10000", false));
+    TEST_ASSERT_TRUE(origin_ok("http://pi.lan:10000", "pi.lan:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://pi.lan.evil.example:10000",
+                                "pi.lan.evil.example:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://evil-lan:10000", "x.evil-lan.com:10000", false));
 }
 
 /* A client that sends no Origin is not a browser: Fyne, Pat, scripts. */
@@ -577,6 +609,8 @@ int main(void)
     RUN_TEST(test_same_origin_pages_are_allowed);
     RUN_TEST(test_cross_origin_pages_are_refused);
     RUN_TEST(test_rebindable_hosts_are_refused_over_plain_ws);
+    RUN_TEST(test_listed_origins_are_allowed_exactly);
+    RUN_TEST(test_private_zone_names_are_allowed_over_plain_ws);
 
     return UNITY_END();
 }

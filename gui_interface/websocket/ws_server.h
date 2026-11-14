@@ -39,6 +39,9 @@ typedef struct {
     uint16_t port;
     const char *bind_addr;        /* NULL or "" means 0.0.0.0 */
     const char *ws_path;          /* endpoint that upgrades, e.g. "/websocket" */
+    const char *allowed_origins;  /* browser Origins allowed besides the
+                                   * server's own (ws_origin_allowed); must
+                                   * outlive the server.  NULL: none */
     size_t max_message_size;      /* inbound cap; 0 means the built-in default */
 
     bool tls_enabled;

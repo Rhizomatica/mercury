@@ -1101,6 +1101,7 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
     // connect callback is registered before the server thread starts to avoid
     // a race on aarch64 where the callback ptr and data could be seen
     // out-of-order by the server thread.
+    ui_transport_set_allowed_origins(ctx->cfg.ui_allowed_origins);
     if (ui_transport_init(ws_port, tls_enabled,
                           initial_cfg ? initial_cfg->tls_cert : CFG_SSL_CERT,
                           initial_cfg ? initial_cfg->tls_key  : CFG_SSL_KEY,

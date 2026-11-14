@@ -28,6 +28,16 @@ ui_protocol = ws
 ;ui_tls_cert = /etc/ssl/certs/hermes.radio.crt
 ;ui_tls_key = /etc/ssl/private/hermes.radio.key
 
+; Web pages, besides Mercury's own, that may open the UI WebSocket: exact
+; origins (scheme://host[:port]), comma or space separated.  Other sites'
+; pages are refused so they cannot drive the station from your browser.
+; Mercury's own pages are always allowed when reached by IP address,
+; localhost, a single-label name or a .local/.home.arpa/.internal/.lan name;
+; reaching it by another LAN name over ws needs that origin listed here,
+; e.g. "http://pi.fritz.box:10000".  Empty allows no other sites.
+; (default: the hosted web app, https://rhizomatica.github.io)
+;ui_allowed_origins = "https://rhizomatica.github.io"
+
 ; Enable waterfall / spectrum data sent to the UI (default: true)
 waterfall_enabled = true
 

@@ -35,6 +35,11 @@ typedef int (*ui_transport_command_fn)(const ws_command_t *cmd, void *user);
  * gets once (device lists, radio list, history). */
 typedef void (*ui_transport_connect_fn)(void *user);
 
+/* Browser Origins a listening transport accepts besides its own pages (comma
+ * or space separated; see ws_origin_allowed).  Set before ui_transport_init;
+ * a transport that does not listen ignores it. */
+void ui_transport_set_allowed_origins(const char *list);
+
 /* Start the transport.  port and the TLS settings are the standalone
  * server's; a transport that does not listen ignores them.  Both callbacks
  * are registered before any client can be seen.  Returns 0 on success. */
