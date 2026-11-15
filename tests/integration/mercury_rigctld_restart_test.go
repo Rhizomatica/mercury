@@ -166,6 +166,13 @@ func TestHamlibSessionSurvivesRigctldRestart(t *testing.T) {
 	if count("Hamlib reopen failed") < 1 {
 		fail("keying with rigctld down did not try a reopen")
 	}
+	// The PTT OFF that follows finds no session; that must be said, not lost.
+	for count("PTT OFF not sent") < 1 && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if count("PTT OFF not sent") < 1 {
+		fail("a PTT OFF with no Hamlib session was not logged")
+	}
 	startRig()
 	time.Sleep(4 * time.Second) // HAMLIB_REOPEN_INTERVAL_MS is 3 s
 	transmit("after rigctld came back", 3, 3)
@@ -174,7 +181,8 @@ func TestHamlibSessionSurvivesRigctldRestart(t *testing.T) {
 	}
 	for _, l := range strings.Split(readLog(t, logPath), "\n") {
 		if strings.Contains(l, "[radio-io]") &&
-			(strings.Contains(l, "Hamlib session") || strings.Contains(l, "reopen") || strings.Contains(l, "failed")) {
+			(strings.Contains(l, "Hamlib session") || strings.Contains(l, "reopen") ||
+				strings.Contains(l, "failed") || strings.Contains(l, "not sent")) {
 			t.Log(strings.TrimSpace(l))
 		}
 	}

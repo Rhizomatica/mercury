@@ -405,10 +405,15 @@ static bool hamlib_reopen(void)
 static int hamlib_set(bool on)
 {
     /* NULL here only after a failed reopen: keep trying, at the same pace. */
-    if (!g_radio && !hamlib_reopen())
+    bool reopened = !g_radio && hamlib_reopen();
+    if (!g_radio)
+    {
+        HLOGW(RADIO_LOG_TAG, "PTT %s not sent: no Hamlib session (reopen pending)",
+              on ? "ON" : "OFF");
         return -1;
+    }
     int ret = hamlib_ptt(on);
-    if (ret == -RIG_EIO && hamlib_reopen())
+    if (ret == -RIG_EIO && !reopened && hamlib_reopen())
         ret = hamlib_ptt(on);
     if (ret != RIG_OK)
     {
