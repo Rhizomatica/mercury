@@ -63,7 +63,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_cap_recover test_arq_sim \
-            test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
+            test_arq_conn test_cfg_utils test_arq_tnc test_arq_early_pending test_channel_busy \
             test_freedv_harq test_sock_wire test_rtp_wire test_hl2_wire test_hl2_dsp test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
@@ -251,6 +251,10 @@ test_hermes_log: common/test_hermes_log.c $(UNITY_SRC) ../common/hermes_log.c
 
 # ARQ→TNC seam test (standalone TU, no threads/bus)
 test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# Early PENDING decision logic (pure state machine, caller's clock)
+test_arq_early_pending: datalink_arq/test_arq_early_pending.c $(UNITY_SRC) ../datalink_arq/arq_early_pending.c
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # Channel-busy classifier test (pure state machine, virtual clock)

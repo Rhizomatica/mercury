@@ -301,6 +301,18 @@ keepalive_s = 60
 ; Interval between BUFFER reports sent to the TNC control port, telling
 ; clients how many bytes are queued for TX. Valid range: 100..10000 ms. (default: 1000)
 buffer_report_ms = 1000
+; Send PENDING as soon as a CALL decoder locks onto a frame while listening,
+; before the callsign is known, and CANCELPENDING if no CALL for us comes of
+; it -- what VARA and ARDOP do.  A scanning host (BPQ32) stops on PENDING, so
+; it stays on the channel long enough to receive the whole CALL: without it a
+; DATAC16 CALL starting late in a 10 s dwell is cut off by the hop, and an
+; MFSK CALL (13.5 s, 27 s at BW500) never fits in one.  The cost is a
+; scanner held on a channel for a frame that turns out to be noise or another
+; station's: the PENDING is withdrawn within 2 s of the lock ending, and after
+; 3 such false alarms in 2 minutes locks send nothing until the oldest ages
+; out.  Experimental (default: false).  A host can switch it while running
+; with EARLYPENDING ON|OFF.
+early_pending = false
 
 [store]
 ; Persist ARQ and broadcast chat messages to a JSONL file so the conversation

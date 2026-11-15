@@ -193,6 +193,7 @@ int mercury_engine_init(const mercury_config *cfg,
     arq_protocol_set_call_max_s(cfg->call_max_s);
     arq_set_tx_mfsk_only(cfg->mfsk_tx_only);
     arq_set_max_keydown_s(cfg->max_keydown_s);
+    arq_set_early_pending(cfg->tnc_early_pending);
     modem_set_tx_gain(powf(10.0f, cfg->tx_gain_db / 20.0f));
     modem_set_tx_delay_ms(cfg->tx_delay_ms);
     modem_set_busy_cfg((float)cfg->busy_threshold_db,

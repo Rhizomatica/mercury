@@ -506,8 +506,10 @@ static void execute_control_command(char *buffer)
 
     /* BUSYDETECT ON|OFF  -- the channel-busy detector (ini busy_detect);
      * BUSYRESEED ON|OFF  -- its new noise floor at each scan hop (ini
-     * busy_reseed_on_hop).  Bare, each reports its state.  Neither is saved:
-     * the ini sets them again at the next start. */
+     * busy_reseed_on_hop);
+     * EARLYPENDING ON|OFF -- PENDING as a CALL starts arriving (ini [tnc]
+     * early_pending).  Bare, each reports its state.  None is saved: the ini
+     * sets them again at the next start. */
     {
         static const struct {
             const char *name;
@@ -516,6 +518,7 @@ static void execute_control_command(char *buffer)
         } busy_switches[] = {
             { "BUSYDETECT", modem_set_busy_detect_enabled, modem_get_busy_detect_enabled },
             { "BUSYRESEED", modem_set_busy_reseed_on_hop,  modem_get_busy_reseed_on_hop  },
+            { "EARLYPENDING", arq_set_early_pending,       arq_get_early_pending         },
         };
         for (size_t k = 0; k < sizeof(busy_switches) / sizeof(busy_switches[0]); k++)
         {

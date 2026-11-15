@@ -15,6 +15,7 @@
 #include "arq_modem.h"
 #include "arq_channels.h"
 #include "carousel.h"
+#include "arq_early_pending.h"
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK, _N32 */
 
 #include <stdbool.h>
@@ -899,6 +900,68 @@ static void pending_hold(uint64_t now)
     g_pending_ms = now;
 }
 
+/* Early PENDING (arq_early_pending.h): PENDING as soon as a CALL decoder
+ * locks on a frame while we listen, CANCELPENDING if no CALL for us comes of
+ * it.  Off by default (ini [tnc] early_pending, EARLYPENDING ON|OFF).  Runs on
+ * the event loop under g_sess_lock, after the pass's events are dispatched,
+ * so a CALL for us has already moved the FSM to ACCEPTING when it is seen. */
+static atomic_bool    g_early_pending_on = false;
+static arq_ep_state_t g_ep;
+
+/* modem.c; declared here rather than including modem.h, which needs the
+ * freedv include path that this directory is not built with. */
+bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms);
+
+void arq_set_early_pending(bool on)
+{
+    atomic_store(&g_early_pending_on, on);
+    HLOGI(LOG_COMP, "Early PENDING %s", on ? "enabled" : "disabled");
+}
+
+bool arq_get_early_pending(void)
+{
+    return atomic_load(&g_early_pending_on);
+}
+
+static void early_pending(uint64_t now)
+{
+    bool on = atomic_load(&g_early_pending_on);
+    if (!on && !g_ep.active)
+        return;
+    if (g_ep.active && g_sess.conn_state == ARQ_CONN_ACCEPTING)
+    {
+        /* the CALL was for us: the FSM's PENDING (cb_notify_pending) took over */
+        arq_ep_promoted(&g_ep);
+        HLOGI(LOG_COMP, "Early PENDING: the CALL was for us "
+              "(sent %u, for us %u, cancelled %u, suppressed %u)",
+              g_ep.n_sent, g_ep.n_promoted, g_ep.n_cancelled, g_ep.n_suppressed);
+    }
+    bool eligible = on && g_sess.conn_state == ARQ_CONN_LISTENING;
+    const char *mode = NULL;
+    uint64_t age = 0;
+    bool in_flight = eligible && modem_rx_frame_in_flight(&mode, &age);
+    unsigned suppressed_before = g_ep.n_suppressed;
+    switch (arq_ep_step(&g_ep, now, eligible, in_flight, age))
+    {
+    case ARQ_EP_SEND_PENDING:
+        arq_tnc_send_pending();
+        HLOGI(LOG_COMP, "Early PENDING: %s decoder locked %.1f s on a frame not yet decoded",
+              mode ? mode : "?", (double)age / 1000.0);
+        break;
+    case ARQ_EP_SEND_CANCEL:
+        arq_tnc_send_cancelpending();
+        HLOGI(LOG_COMP, "Early PENDING cancelled: no CALL for us came of it "
+              "(sent %u, for us %u, cancelled %u, suppressed %u)",
+              g_ep.n_sent, g_ep.n_promoted, g_ep.n_cancelled, g_ep.n_suppressed);
+        break;
+    case ARQ_EP_NONE:
+        if (g_ep.n_suppressed != suppressed_before)
+            HLOGI(LOG_COMP, "Early PENDING suppressed: %d false alarms in the last %d s",
+                  ARQ_EP_FALSE_BUDGET, ARQ_EP_FALSE_WINDOW_MS / 1000);
+        break;
+    }
+}
+
 static void *arq_event_loop_worker(void *arg)
 {
     (void)arg;
@@ -947,6 +1010,7 @@ static void *arq_event_loop_worker(void *arg)
         }
         call_progress(now);
         pending_hold(now);
+        early_pending(now);
         pthread_mutex_unlock(&g_sess_lock);
     }
 
