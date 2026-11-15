@@ -171,9 +171,13 @@ develop, because both live above the protocol layer it measures:
   carries — NNCP packets, Winlink B2F, plain text — compresses 2–4x. No
   modem gain in the table is worth more than a 2x multiplier on real
   message bytes, and VARA has no compression: this is a differentiator the
-  bps tables cannot see. It needs a capability bit (D's CALL bits would
-  carry one) and it changes what the tables measure — bytes per message,
-  not bps — which is why it is not costed here.
+  bps tables cannot see. A first cut is up as #562 (#506's proposal on
+  #410's CALL2 negotiation, every knob off by default): the offer rides the
+  CALL minor field, and the open wire question is that one minor value
+  cannot carry both the encryption and the compression offer — the
+  capability vector needs the ACCEPT's zero-checked bytes 10–13 back by a
+  rule change of its own. It is not costed here because it changes what
+  the tables measure — bytes per message, not bps.
 - **Session reuse across queued messages.** The 4 KB rows run at 40–75 %
   of the 32 KB rows' bps because connect and climb amortize badly over
   short payloads, and real traffic is a queue of short messages, not one
