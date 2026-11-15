@@ -77,6 +77,9 @@ void radio_io_shutdown(void)
         radio_host_key(false);
 }
 
+/* Keying is the host app's; nothing is left to retry here. */
+void radio_io_service(void) { }
+
 bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz, uint64_t *age_ms)
 {
     (void) allow_poll;
