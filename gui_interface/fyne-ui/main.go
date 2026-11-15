@@ -2237,7 +2237,8 @@ func getBaseDir() string {
 // configStatusText says which configuration file the engine runs on.
 func configStatusText(path string, loaded bool) string {
 	if loaded {
-		return "Configuration file: " + path
+		return "Configuration file: " + path + "\n" +
+			"Settings you change are saved to this file."
 	}
 	return "No configuration file found: running on built-in defaults.\n" +
 		"Settings you change are saved to: " + path
@@ -2251,9 +2252,12 @@ func configSearchHint() string {
 		return "To use an existing file, put it next to mercury-ui.exe,\n" +
 			"or start Mercury with:  mercury-ui.exe -C C:\\path\\to\\mercury.ini"
 	}
-	return "To use an existing file, start Mercury from its folder,\n" +
-		"put it in ~/.config/mercury/ or /etc/mercury/,\n" +
-		"or start it with:  mercury-ui -C /path/to/mercury.ini"
+	// ~/.config/mercury/ first: a menu launch starts in the home folder,
+	// so "the folder you start it from" rarely helps there.
+	return "To use an existing file, put it in ~/.config/mercury/\n" +
+		"(or /etc/mercury/), start Mercury with:\n" +
+		"  mercury-ui -C /path/to/mercury.ini\n" +
+		"or start mercury-ui from a terminal in the file's folder."
 }
 
 func getLogDir() string {
