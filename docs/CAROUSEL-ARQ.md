@@ -233,6 +233,11 @@ frame on MFSK.
   decoded 3.9 s late, while K7EK's ACCEPT to the caller's newer DATAC16 CALL
   was on the air, drew a second, 26 s ACCEPT straight after the first (1 of
   86 CALLs decoded at K7EK and KG9NI on 12-13 Nov; `call_too_late`).
+  If every CALL from a caller logs "decoded too late: not answered", the
+  callee's decoder is behind on every frame and the callee never answers:
+  look at the `age=` of its "Decoded frame" lines (the modem's backlog, for
+  example a CPU too slow for the bandwidth).  The carousel's frames would
+  go unanswered by the same bound.
 - The callee's callsign is not on the air in full: the caller knows whom it
   called, and the CRC confirms it.
 

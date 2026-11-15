@@ -112,6 +112,20 @@ The carriers and timing ConnectHandshake leaves out, in 0.25 s steps
   floor's decode allowance and a deferral step).  The energy busy detector
   holds no CALL.
 - Any frame may be lost, and a decoder may miss an ACCEPT arriving (`Sense`).
+- The callee keys an ACCEPT only for a CALL decoded within `D(carrier)` of
+  its end (1 s on the control mode, 4.5 s on the floor: the carousel's
+  decode bound, `car_decode_bound_ms`) and while it is not keyed
+  (`call_too_late`).  A later CALL is not answered: it still holds the
+  scanner and restarts the ACCEPT retries (`notify_pending_again`), and the
+  caller's next CALL is answered.  The model's callee decodes within D by
+  construction (`CEnd`), so that is the code meeting the model's assumption;
+  before `call_too_late` the code answered a CALL decoded at any age.
+- Not modelled: a CALL decoded while the callee is keyed.  `eDec` holds one
+  pending decode, and a CALL that overlaps the callee's own keydown is lost
+  (half duplex), so a second CALL decoded during the callee's ACCEPT (the
+  on-air case: a decoder behind delivering an older CALL) can't be
+  expressed.  The code's keyed check covers it; the unit tests
+  (`test_accepting_call_decoded_while_keyed_is_not_answered`) pin it.
 
 Properties: `NoOverlap` (no two keydowns at once; with decoders always
 catching an ACCEPT, and since `call_interval_s` with `Sense` "any" too); `Early` (the fast forward path and the floor delivering, the fast
@@ -156,6 +170,12 @@ Results:
     `_f10_emfsk_floor` now check 1250: 964335 and 773661).  The same for
     an MFSK-only callee.  That is the cost of more fast CALLs on a path
     only the floor carries: ~28 s per fast repeat now, so the cap at 4.
+- `Mut_lateanswer.cfg` (`ConnectCarrier.cfg` with the callee also
+  answering a CALL decoded up to `IvFast` past D, as before
+  `call_too_late`): violates `NoOverlap`.  The first CALL ends at 3.75 s
+  and decodes 6 s late; the ACCEPT is keyed at 10.5 s, and the caller's
+  repeat, due at 11.75 s, goes before its decoder is on that ACCEPT
+  (`SA`, 1.5 s in) and keys over it.  1880 states.
 - `Mut_old.cfg`, the code before (no floor answer, no floor listening, no
   hold): violates `Early` (a third CALL, the floor one, 22 s later).
 - `Mut_nohold.cfg`: the CALL goes when due.  Violated `NoOverlap` before
