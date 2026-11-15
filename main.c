@@ -328,7 +328,10 @@ int main(int argc, char *argv[])
     }
 
     while (!mercury_stop)
+    {
+        radio_io_service();         /* e.g. a PTT OFF lost while rigctld was down */
         msleep(500);
+    }
 
     /* Diagnosis build only: the answerer never disconnects, so its trace would
      * otherwise be lost.  No-op unless ARQ_TRACE_ENABLED. */

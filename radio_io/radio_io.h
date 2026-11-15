@@ -90,6 +90,12 @@ int radio_io_key_on(void);
 /* Key transmitter off (PTT OFF). Returns 0 on success, -1 on failure. */
 int radio_io_key_off(void);
 
+/* Idle housekeeping for the main loop: retries a PTT OFF that could not be
+ * delivered (a network rig whose server was down).  Never waits for the
+ * radio lock; once it holds it, a reopen against an unreachable server can
+ * take a connect timeout, the same bound the keying path accepts. */
+void radio_io_service(void);
+
 /* List all hamlib-supported radio models and exit. */
 void radio_io_list_models(void);
 
