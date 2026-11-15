@@ -123,8 +123,30 @@ LEAD_MAX_MS + EARLY_SENSE_MS` after the slot opens (`m_early_ms` /
 TURN_G_MS` otherwise.  On air this is the 6.5-10.8 s a host write waits
 when it arrives just after M's ack (#495, N3JXB-K7EK: `since_tx_end` 6.95 s
 on every such turn).  **Off by default** (`car_set_early_slot`); nothing in
-the daemon turns it on.  Unlike `MWatch` this is not in the model -- it is
-the prototype's own trade, pending the decision on #495.
+the daemon turns it on.  The trade itself is pending the decision on #495.
+
+In the model, `EARLY = TRUE` adds `MEarly`: a keydown with no continuation
+slots (`m_early_ms` returns 0 when `m_kd.k` is set), not a DISCONNECT, has
+its response slot closed at `SLo + D + ES` if nothing of S's was sensed
+since the slot opened.  Carrier sense is ideal but needs S on the air for
+`ES` (`EARLY_SENSE_MS`); `sBeg`, S's latest start, is tracked only with
+`EARLY`, so the other configurations' state spaces are unchanged.
+
+- `CarouselTurns_early.cfg`: `CarouselTurns_watch.cfg` with one-frame
+  keydowns (`ONE`) and `EARLY`, so the early close runs next to `MWatch`.
+  No error, 10.48 M distinct states, depth 46 (24 min 40 s, 6 workers).
+- `Mut_csmiss_early.cfg`: M's carrier sense misses S's answer, and the
+  early close takes the slot as empty.  `K = 0`, so `MWatch` has nothing to
+  watch and the violation is `EARLY`'s; the same configuration with
+  `Mutant = "none"` has no error (2.30 M distinct states, 1 min 11 s).
+  Violates `NoOverlap`: S answers `D` late, M closes at `SLo + D + ES`
+  without having sensed it and keys over it.  This is the residual risk of
+  #495, next to `Mut_csmiss`'s and `FalsePattern`'s.
+- `Mut_earlynod.cfg`: the early time forgets S's decode delay (`SLo + ES`).
+  Violates `NoOverlap`: S, keying in its slot `D` late, is keyed over before
+  it can be sensed.  It is why the code's early time is `d + LEAD_MAX_MS +
+  EARLY_SENSE_MS`, and why `EARLY_SENSE_MS` must cover the real decoders'
+  sync time on air.
 
 What keeps it safe is what it waits for: S's answer in these cases opens
 with a DATAC16 control frame, and the control decoder always runs, so the
