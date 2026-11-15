@@ -297,7 +297,7 @@ static int hamlib_open(const ptt_config_t *config)
                                                config->hamlib_conf);
     radio_io_warn_port_mismatch(config->hamlib_model, config->device);
 
-    errno = 0;                      /* see hamlib_set */
+    errno = 0;                      /* see hamlib_ptt */
     int ret = rig_open(g_radio);
     /* A port without modem-control lines -- a pty from socat or ser2net, a
      * com0com pair, some Bluetooth serial links -- refuses the ioctl, and
@@ -356,13 +356,60 @@ static int hamlib_open(const ptt_config_t *config)
  * byte -- ~60 ms more key-up for an Icom CI-V echo + ack (seen as 23 -> 134
  * ms get_level in hermes-radio-daemon).  So errno is cleared before every
  * Hamlib call that talks to the radio: open, keying, frequency poll, close. */
+static int hamlib_ptt(bool on)
+{
+    errno = 0;
+    return rig_set_ptt(g_radio, RIG_VFO_CURR, on ? RIG_PTT_ON : RIG_PTT_OFF);
+}
+
+/* A network rig's session does not survive its server: when rigctld (or
+ * FLRig, a FlexRadio...) restarts, Hamlib's socket is dead and every later
+ * call fails with -RIG_EIO ("Broken pipe"), so the station never keys again,
+ * and a PTT OFF that fails leaves a rig keyed that Mercury can no longer
+ * release.  Reopen the session from the same config and retry the one call.
+ * Serial rigs are left alone: their open can take seconds and a USB fd handed
+ * over by the UI cannot be opened twice.  At most one attempt every
+ * HAMLIB_REOPEN_INTERVAL_MS, since an unreachable server costs a connect
+ * timeout on the keying path.  Caller holds g_radio_mutex. */
+#define HAMLIB_REOPEN_INTERVAL_MS 3000U
+static uint64_t g_hamlib_reopen_ms = 0;
+
+static bool hamlib_reopen(void)
+{
+    if (radio_io_port_kind(g_config.hamlib_model) != RADIO_PORT_KIND_NETWORK)
+        return false;
+    uint64_t now = hermes_uptime_ms();
+    if (g_hamlib_reopen_ms != 0 && now - g_hamlib_reopen_ms < HAMLIB_REOPEN_INTERVAL_MS)
+        return false;
+    g_hamlib_reopen_ms = now;
+
+    HLOGW(RADIO_LOG_TAG, "Hamlib session to %s lost; reopening",
+          g_config.device[0] ? g_config.device : "default");
+    if (g_radio)
+    {
+        errno = 0;                  /* see hamlib_ptt */
+        rig_close(g_radio);
+        rig_cleanup(g_radio);
+        g_radio = NULL;
+    }
+    if (hamlib_open(&g_config) != 0)
+    {
+        HLOGW(RADIO_LOG_TAG, "Hamlib reopen failed; next attempt at the next "
+              "PTT change at least %u ms from now", HAMLIB_REOPEN_INTERVAL_MS);
+        return false;
+    }
+    HLOGI(RADIO_LOG_TAG, "Hamlib session reopened");
+    return true;
+}
+
 static int hamlib_set(bool on)
 {
-    if (!g_radio)
+    /* NULL here only after a failed reopen: keep trying, at the same pace. */
+    if (!g_radio && !hamlib_reopen())
         return -1;
-    errno = 0;
-    int ret = rig_set_ptt(g_radio, RIG_VFO_CURR,
-                          on ? RIG_PTT_ON : RIG_PTT_OFF);
+    int ret = hamlib_ptt(on);
+    if (ret == -RIG_EIO && hamlib_reopen())
+        ret = hamlib_ptt(on);
     if (ret != RIG_OK)
     {
         char err[512];
@@ -378,9 +425,10 @@ static int hamlib_set(bool on)
 
 static void hamlib_close(void)
 {
+    g_hamlib_reopen_ms = 0;         /* a new backend starts with no history */
     if (!g_radio)
         return;
-    errno = 0;                      /* see hamlib_set */
+    errno = 0;                      /* see hamlib_ptt */
     (void)rig_set_ptt(g_radio, RIG_VFO_CURR, RIG_PTT_OFF);
     errno = 0;                      /* ...which Hamlib's own reads may set */
     rig_close(g_radio);
@@ -801,7 +849,7 @@ bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz,
         freq_t freq = 0;
         uint64_t started_ms = now;
         g_frequency_attempt_ms = now;
-        errno = 0;                  /* see hamlib_set */
+        errno = 0;                  /* see hamlib_ptt */
         int ret = rig_get_freq(g_radio, RIG_VFO_CURR, &freq);
         if (ret != RIG_OK)
         {
