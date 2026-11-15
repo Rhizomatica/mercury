@@ -67,6 +67,8 @@ them for reasoning, not for current behaviour.
 | Document | The question it answered |
 |---|---|
 | [CAROUSEL-REPORT.md](CAROUSEL-REPORT.md) | Was the carousel with the MFSK floor ready to replace stop-and-wait? On-air and simulator results, what broke on the way, and the deep-fade collisions still open. |
+| [EFFICIENCY-FINDINGS.md](EFFICIENCY-FINDINGS.md) | Where a session's time and CPU actually go: throughput vs VARA's published figures, the control tax on message traffic, and the modem's cost per mode — measured, on the bench and the simulator. |
+| [EFFICIENCY-FOLLOWUPS.md](EFFICIENCY-FOLLOWUPS.md) | Which of those measured losses a protocol change can buy back, and which are waveform ceilings: per-peer rung memory, HARQ in the retx path, the connect round trip, and the two codec2-scale asks. |
 | [HARQ-FINDINGS.md](HARQ-FINDINGS.md) | Does soft-combining repeated frames actually rescue a link at the fading cliff? (Yes — roughly half the frames, where single-shot delivers none.) |
 | [ACQ-TUNING-FINDINGS.md](ACQ-TUNING-FINDINGS.md) | Can the DATAC15/16 acquisition knee be moved by tuning knobs? (Yes — `timing_mx_thresh` 0.45 -> 0.40, ~1.5-2 dB at ~0-2% noise-only false syncs; the UW budget buys nothing. Its frequency-offset section was wrong — a defective instrument — and is corrected in place.) |
 | [OFFSET-ACQUISITION-FINDINGS.md](OFFSET-ACQUISITION-FINDINGS.md) | How far off carrier can the acquisition capture a mistuned signal, and what does it cost to widen? (±55 Hz today, set by the search's geometry; a ±20 Hz offset is nearly free. A ±150 Hz span captures ±153 Hz for 2.5x the idle CPU. Also the correction of the instrument that got the earlier offset answer wrong.) |
