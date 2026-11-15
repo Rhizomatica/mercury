@@ -54,11 +54,13 @@ all of Mercury's files into the VARA folder, rename `VARA.exe` to
 
 ### Channel settings
 
-- **Use one channel entry, with VARA and ARDOP both enabled on it.** Trimode
-  stays on each channel entry for a few seconds (4 s in the setup we saw) and
-  is deaf for 500 ms while switching. A Mercury call frame is 3.74 s long, and
-  later calls are longer, so with more than one entry most calls are missed.
-  This is being worked on in #527.
+- **Use one channel entry, with VARA and ARDOP both enabled on it.** An RMS
+  gateway dwells 4 s on each channel entry: VARA's command reference says so
+  for `WINLINK SESSION`, whose connect retries follow "a 4.0 seconds cycle,
+  necessary to connect with the RMS Gateways (dwell time 4 s)". In the setup
+  we saw, Trimode was also deaf for 500 ms while switching. A Mercury call
+  frame is 3.74 s long, and later calls are longer, so with more than one
+  entry most calls are missed. This is being worked on in #527.
 - **Service code `MERCURY`.** Trimode takes one service code per channel:
   `PUBLIC MERCURY` does not work. The code applies to everything on that
   channel, so ARDOP on the same entry is listed under `MERCURY` too, and
@@ -88,11 +90,15 @@ for example, gives "Enhanced" and "Standard".
 
 - **Calls missed by a scanning gateway**: see above and #527.
 - **`WRONG Last cmd=PUBLIC ON` in Trimode's log**: Mercury supports
-  `PUBLIC ON`, so the `WRONG` is probably the answer to a different command.
-  Mercury logs every command it rejects as
-  `Command rejected (WRONG): <command>`; that line shows which one. The
-  Mercury window writes it to `mercury_engine.log`, in the `logs` folder next
-  to `mercury-ui.exe` on Windows (see also [Logging](ARQ.md#logging)).
+  `PUBLIC ON`, so the `WRONG` is the answer to a different command, most
+  likely `CWID ON`. Pat sends `CWID ON` right after `PUBLIC ON` at every VARA
+  HF start, without waiting for the answer, and Mercury answers it `WRONG`
+  until #561 is merged. If Trimode does the same, that is the command, and
+  the `WRONG` goes away with #561. Mercury logs every command
+  it rejects as `Command rejected (WRONG): <command>`; that line shows which
+  one. The Mercury window writes it to `mercury_engine.log`, in the `logs`
+  folder next to `mercury-ui.exe` on Windows (see also
+  [Logging](ARQ.md#logging)).
 
 ## Scanning BBS software (BPQ32, LinBPQ)
 
