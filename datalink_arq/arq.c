@@ -917,13 +917,18 @@ static void pending_hold(uint64_t now)
  * told and our DISCONNECT not yet out: PENDING, after the DISCONNECTED (it
  * would clear it), again every ARQ_PENDING_HOLD_MS, and CANCELPENDING once
  * the DISCONNECT has gone (its keydown over) or the teardown has ended.  The
- * FSM's ABORT bounds (ARQ_CAR_ABORT_WAIT_MS) end it; ARQ_ABORT_SCAN_HOLD_MS
- * is the backstop.  Mercury already holds a scanner this way while a CQ is
+ * FSM's ABORT bounds (ARQ_CAR_ABORT_WAIT_MS) end it: the callee's
+ * out-of-turn DISCONNECT that never finds a clear channel gives up about
+ * 30 s after the ABORT (abort_key_by, then ARQ_ABORT_HOLD_MAX holds), and
+ * the CANCELPENDING then comes with no DISCONNECT sent.  ARQ_ABORT_SCAN_HOLD_MS is only the
+ * backstop.  The repeat is the answering hold's (pending_hold), the same
+ * ARQ_PENDING_HOLD_MS.  Mercury already holds a scanner this way while a CQ is
  * on the air (arq_notify_cq_tx_started).  A plain DISCONNECT needs none:
  * its DISCONNECTED comes when the session has closed (#493). */
 #define ARQ_ABORT_SCAN_HOLD_MS 60000
 static uint64_t g_abort_hold_ms;   /* the hold's first PENDING; 0: none (g_sess_lock) */
 static uint64_t g_abort_hold_last; /* its last PENDING */
+static bool     g_abort_hold_done; /* this teardown has had its hold */
 
 static void abort_hold(uint64_t now)
 {
@@ -944,15 +949,16 @@ static void abort_hold(uint64_t now)
             g_abort_hold_ms = 0;
         }
         if (!told || g_sess.conn_state != ARQ_CONN_DISCONNECTING)
-            g_abort_hold_last = 0;   /* a new teardown may hold again */
+            g_abort_hold_done = false;   /* a new teardown may hold again */
         return;
     }
     if (g_abort_hold_ms && now - g_abort_hold_last < ARQ_PENDING_HOLD_MS)
         return;
     if (!g_abort_hold_ms)
     {
-        if (g_abort_hold_last)
-            return;                  /* this teardown has had its hold */
+        if (g_abort_hold_done)
+            return;
+        g_abort_hold_done = true;
         g_abort_hold_ms = now;
         HLOGI(LOG_COMP, "ABORT: holding a scanning host on the channel until our DISCONNECT is out (PENDING)");
     }

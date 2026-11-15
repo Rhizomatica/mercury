@@ -310,8 +310,12 @@ session's only one: the end of the teardown that follows sends no second
 `DISCONNECTED\r`.
 
 After that `DISCONNECTED\r`, while the one DISCONNECT is still to go out,
-Mercury sends `PENDING\r` (again every 20 s), then `CANCELPENDING\r` once
-the DISCONNECT is out or the teardown has ended (at most 60 s).  The reason
+Mercury sends `PENDING\r` (again every 20 s, as when answering a call: see
+`PENDING`), then `CANCELPENDING\r` once the DISCONNECT is out or the
+teardown has ended. As the callee, the teardown ends about 30 s after the
+`ABORT` at the latest: a DISCONNECT that never finds a clear channel is then
+dropped, and the `CANCELPENDING\r` comes without it. A 60 s limit on the hold is only a
+backstop.  The reason
 is a scanning BPQ32: it restarts its scan 15 s after it sends `ABORT`, and
 the hop's `LISTEN OFF` takes the radio.  At BW500 the peer's frame on the
 air can be 26 s.  On 2026-11-13 the hop came 16.6 s after K7EK's `ABORT`,
@@ -734,8 +738,9 @@ Mercury also sends `PENDING\r` when an outgoing `CQFRAME` actually begins
 transmitting so VARA clients can treat CQ send as an in-progress operation.
 
 And after an `ABORT`, following its `DISCONNECTED\r`, until the one
-DISCONNECT frame is out (see `ABORT`): a scanning host does not take the
-radio before the peer has been told.
+DISCONNECT frame is out or the teardown ends (see `ABORT`): a scanning host
+does not take the radio before the peer has been told. This is a second hold,
+apart from the answering hold above; both repeat `PENDING\r` every 20 s.
 
 ### CANCELPENDING
 
