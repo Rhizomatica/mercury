@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <limits.h>
+#include <math.h>
 #include <stdatomic.h>
 #include <sys/types.h>
 #if !defined(_WIN32)
@@ -355,10 +356,144 @@ static void reply_wrong(const char *command)
     tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
 }
 
+/* The arguments of command NAME, or NULL when BUFFER is not that command.
+ * A whole-word match: "LISTEN ON" is LISTEN, "LISTENING" is not.  Prefix
+ * matching with strncmp alone sent any line that merely started with a
+ * command's name to that command's handler. */
+static const char *command_args(const char *buffer, const char *name)
+{
+    size_t n = strlen(name);
+    if (strncmp(buffer, name, n) != 0)
+        return NULL;
+    if (buffer[n] != '\0' && buffer[n] != ' ' && buffer[n] != '\t')
+        return NULL;
+    return buffer + n;
+}
+
+#define CMD_MAX_WORDS 8
+
+/* Split LINE into at most CMD_MAX_WORDS words of fewer than
+ * ARQ_EVENT_TEXT_MAX characters.  Returns the number of words, or -1 when
+ * there are more words than that or one is too long: positional sscanf
+ * read the words it wanted and ignored the rest, so "CONNECT A B VIA C"
+ * connected A to B direct and answered OK. */
+static int split_words(const char *line, char words[][ARQ_EVENT_TEXT_MAX])
+{
+    int count = 0;
+    const char *p = line;
+    for (;;)
+    {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
+            p++;
+        if (*p == '\0')
+            return count;
+        size_t len = strcspn(p, " \t\r\n");
+        if (count == CMD_MAX_WORDS || len >= ARQ_EVENT_TEXT_MAX)
+            return -1;
+        memcpy(words[count], p, len);
+        words[count][len] = '\0';
+        count++;
+        p += len;
+    }
+}
+
+/* Can CALL go on the air as the SENDING station's callsign?  A CALL and a
+ * CQ carry it arithmetic-coded over an alphabet of A-Z, 0-9 and '-' (arith.c;
+ * lower case is folded first); any other character fails to encode.  The
+ * code takes 10 bytes for 13 or 14 characters and 11 for 15, so a CALL
+ * (10 bytes for it, ARQ_CONNECT_SRC_MAX_ENCODED) carries at most 14 and a CQ
+ * (13, ARQ_CQ_SRC_MAX_ENCODED) all 15.  Measured with arith.c itself.
+ *
+ * Mercury's own rule, not VARA's: VARA allows a base of at most 7 characters,
+ * and Mercury stations use longer names.  A called station or a secondary
+ * callsign goes as a CRC16 and has no alphabet. */
+/* The number at the front of S as VARA, a Visual Basic program, reads it
+ * with Val(): blanks anywhere are skipped ("- 5" is -5), then an optional
+ * sign, digits, an optional fraction and an optional exponent written E or D;
+ * reading stops at the first other character ("-5dB" is -5, "-0x5" is -0).
+ * False when there is no digit at all ("abc").  Modelled on XARA's vb_num
+ * (crates/xara-host/src/command.rs, MIT); VB's &H / &O hexadecimal and
+ * octal forms are not taken, so such a line is ignored. */
+static bool vb_val_number(const char *s, double *out)
+{
+    char b[64];
+    size_t n = 0;
+    for (; *s && n < sizeof(b) - 1; s++)
+        if (*s != ' ' && *s != '\t' && *s != '\r' && *s != '\n')
+            b[n++] = *s;
+    b[n] = '\0';
+    /* Too long to read whole: no number, rather than a cut one ("-000...05"
+     * cut short would read as -0, the loudest level). */
+    s += strspn(s, " \t\r\n");
+    if (*s != '\0')
+        return false;
+
+    char num[64];
+    size_t i = 0, k = 0;
+    if (b[i] == '-' || b[i] == '+')
+        num[k++] = b[i++];
+    size_t digits = 0;
+    while (b[i] >= '0' && b[i] <= '9')
+        num[k++] = b[i++], digits++;
+    if (b[i] == '.')
+    {
+        num[k++] = b[i++];
+        while (b[i] >= '0' && b[i] <= '9')
+            num[k++] = b[i++], digits++;
+    }
+    if (digits == 0)
+        return false;
+    if (b[i] == 'E' || b[i] == 'e' || b[i] == 'D' || b[i] == 'd')
+    {
+        size_t j = i + 1;
+        if (b[j] == '-' || b[j] == '+')
+            j++;
+        if (b[j] >= '0' && b[j] <= '9')
+        {
+            num[k++] = 'e';
+            for (size_t m = i + 1; m < j; m++)
+                num[k++] = b[m];
+            while (b[j] >= '0' && b[j] <= '9' && k < sizeof(num) - 1)
+                num[k++] = b[j++];
+        }
+    }
+    num[k] = '\0';
+    double v = strtod(num, NULL);
+    if (!isfinite(v))
+        return false;
+    *out = v;
+    return true;
+}
+
+#define CALL_FRAME_MAX_CALLSIGN 14
+#define CQ_FRAME_MAX_CALLSIGN   15
+
+/* Set by MYCALL when the primary it took cannot be coded into a CALL, so a
+ * CONNECT after it answers WRONG instead of OK and then sending nothing
+ * (arq_fsm.c skips a CALL that fails to build).  Kept here, set before
+ * MYCALL's OK, rather than read back from the ARQ layer: MYCALL reaches that
+ * through a queue, and a CONNECT sent right behind it would be checked
+ * against the previous callsign.  False until a MYCALL says otherwise, so a
+ * callsign set only in the ini is not checked, as before. */
+static atomic_bool mycall_cannot_call = false;
+static bool callsign_encodable(const char *call, size_t max_len)
+{
+    size_t n = strlen(call);
+    if (n < 1 || n > max_len)
+        return false;
+    for (size_t i = 0; i < n; i++)
+    {
+        char c = call[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '-'))
+            return false;
+    }
+    return true;
+}
+
 static void execute_control_command(char *buffer)
 {
     arq_cmd_msg_t cmd;
-    char temp[16] = {0};
 
     if (!buffer)
         return;
@@ -369,7 +504,7 @@ static void execute_control_command(char *buffer)
     char received[128];
     snprintf(received, sizeof(received), "%s", buffer);
 
-    if (!strncmp(buffer, "MYCALL", strlen("MYCALL")))
+    if (command_args(buffer, "MYCALL"))
     {
         /* VARA-style: MYCALL PRIMARY [SECONDARY1 SECONDARY2 ...]
          * First token sets the primary callsign (clears any previous secondaries).
@@ -385,6 +520,14 @@ static void execute_control_command(char *buffer)
             reply_wrong(received);
             return;
         }
+        /* The primary is what this station's CALLs carry.  One that cannot be
+         * coded still answers calls (an ACCEPT carries only CRC16s), so it is
+         * taken as before, but the log says why its own calls will fail. */
+        bool cannot_call = !callsign_encodable(tok, CALL_FRAME_MAX_CALLSIGN);
+        if (cannot_call)
+            HLOGW("tcp-ctl", "MYCALL %s: this station can answer calls but not "
+                  "make them: a CALL carries only A-Z, 0-9 and '-', at most %d "
+                  "characters", tok, CALL_FRAME_MAX_CALLSIGN);
 
         /* Primary callsign */
         memset(&cmd, 0, sizeof(cmd));
@@ -399,6 +542,8 @@ static void execute_control_command(char *buffer)
             reply_wrong(received);
             return;
         }
+        /* Only once the primary is taken: a refused MYCALL changes nothing. */
+        atomic_store(&mycall_cannot_call, cannot_call);
 
         /* Secondary callsigns (remaining tokens).  Accepted ones are kept so
          * each can be acknowledged below: "REGISTERED <Call>" is per call
@@ -436,14 +581,19 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "LISTEN", strlen("LISTEN")))
+    if (command_args(buffer, "LISTEN"))
     {
+        /* LISTEN ON | LISTEN OFF | LISTEN CQ (VARA's CHAT ON).  The whole
+         * word: deciding on its second letter took "LISTEN NO" for ON. */
         memset(&cmd, 0, sizeof(cmd));
-        sscanf(buffer, "LISTEN %15s", temp);
-        if (temp[1] == 'N' || temp[1] == 'Q')
-            cmd.type = ARQ_CMD_LISTEN_ON;
-        if (temp[1] == 'F')
-            cmd.type = ARQ_CMD_LISTEN_OFF;
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) == 2)
+        {
+            if (!strcmp(words[1], "ON") || !strcmp(words[1], "CQ"))
+                cmd.type = ARQ_CMD_LISTEN_ON;
+            else if (!strcmp(words[1], "OFF"))
+                cmd.type = ARQ_CMD_LISTEN_OFF;
+        }
         /* A scanning host (BPQ32) sends LISTEN OFF at every hop.  If a CALL
          * is half received at that moment, nothing else would show it is
          * lost: say so, with no session up (a LISTEN OFF in a session is
@@ -545,15 +695,20 @@ static void execute_control_command(char *buffer)
         }
     }
 
-    if (!strncmp(buffer, "PUBLIC", strlen("PUBLIC")))
+    if (command_args(buffer, "PUBLIC"))
     {
+        /* PUBLIC ON | PUBLIC OFF.  Anything else used to be taken as OFF
+         * and answered OK. */
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_PUBLIC;
-        sscanf(buffer, "PUBLIC %15s", temp);
-        if (temp[1] == 'N')
-            cmd.flag = true;
-        if (temp[1] == 'F')
-            cmd.flag = false;
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 2 ||
+            (strcmp(words[1], "ON") && strcmp(words[1], "OFF")))
+        {
+            reply_wrong(received);
+            return;
+        }
+        cmd.flag = !strcmp(words[1], "ON");
         if (arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
@@ -568,12 +723,19 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "CHAT", strlen("CHAT")))
+    if (command_args(buffer, "CHAT"))
     {
         /* CHAT ON implies LISTEN ON (VARA compatibility).
-         * CHAT OFF is a no-op — Mercury does not limit idle loops. */
-        sscanf(buffer, "CHAT %15s", temp);
-        if (temp[1] == 'N')
+         * CHAT OFF is a no-op — Mercury does not limit idle loops.
+         * Anything else is WRONG; it used to be answered OK as CHAT OFF. */
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 2 ||
+            (strcmp(words[1], "ON") && strcmp(words[1], "OFF")))
+        {
+            reply_wrong(received);
+            return;
+        }
+        if (!strcmp(words[1], "ON"))
         {
             memset(&cmd, 0, sizeof(cmd));
             cmd.type = ARQ_CMD_LISTEN_ON;
@@ -782,27 +944,76 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "CONNECT", strlen("CONNECT")))
+    if (command_args(buffer, "CONNECT"))
     {
+        /* CONNECT <mycall> <remote>, and nothing after.  The digipeated form,
+         * CONNECT <mycall> <remote> VIA <v1> [v2], is WRONG: Mercury has no
+         * relay, and VARA HF refuses it too (XARA's HF station: VIAS = false;
+         * only VARA FM digipeats).  It used to be answered OK and connected
+         * direct, the path dropped without a word. */
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_CONNECT;
-        if (sscanf(buffer, "CONNECT %15s %15s", cmd.arg0, cmd.arg1) == 2 &&
-            arq_submit_tcp_cmd(&cmd) == 0)
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        int n = split_words(buffer, words);
+        if (n >= 4 && !strcmp(words[3], "VIA"))
+        {
+            HLOGW("tcp-ctl", "CONNECT VIA: Mercury cannot connect through a digipeater");
+            reply_wrong(received);
+            return;
+        }
+        /* No check on these callsigns beyond split_words' length limit (an
+         * over-long one used to be cut to 15 characters, a different
+         * station): the called station goes as a CRC16, and words[1] is only
+         * echoed back in CONNECTED.  The CALL carries MYCALL's primary. */
+        if (n != 3)
+        {
+            reply_wrong(received);
+            return;
+        }
+        if (atomic_load(&mycall_cannot_call))
+        {
+            HLOGW("tcp-ctl", "CONNECT refused: MYCALL's primary callsign cannot be "
+                  "coded into a CALL (A-Z, 0-9 and '-', at most %d characters)",
+                  CALL_FRAME_MAX_CALLSIGN);
+            reply_wrong(received);
+            return;
+        }
+        snprintf(cmd.arg0, sizeof(cmd.arg0), "%s", words[1]);
+        snprintf(cmd.arg1, sizeof(cmd.arg1), "%s", words[2]);
+        if (arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
             reply_wrong(received);
         return;
     }
 
-    if (!strncmp(buffer, "CQFRAME", strlen("CQFRAME")))
+    if (command_args(buffer, "CQFRAME"))
     {
+        /* CQFRAME <call> <bw>.  The bandwidth stays mandatory: XARA accepts a
+         * bare CQFRAME <call> at the parser, but its HF station refuses it
+         * (station/hf.rs cq_frame: no bw, false), so VARA HF answers WRONG
+         * as Mercury does.  Extra words used to be ignored. */
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SEND_CQ;
-        if (sscanf(buffer, "CQFRAME %15s %d", cmd.arg0, &cmd.value) == 2 &&
-            (cmd.value == ARQ_BANDWIDTH_NARROW_HZ ||
-             cmd.value == ARQ_BANDWIDTH_FULL_HZ ||
-             cmd.value == ARQ_BANDWIDTH_TACTICAL_HZ) &&
-            arq_submit_tcp_cmd(&cmd) == 0)
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 3 ||
+            !callsign_encodable(words[1], CQ_FRAME_MAX_CALLSIGN))
+        {
+            reply_wrong(received);
+            return;
+        }
+        char *end = NULL;
+        long bw = strtol(words[2], &end, 10);
+        if (*end != '\0' ||
+            (bw != ARQ_BANDWIDTH_NARROW_HZ && bw != ARQ_BANDWIDTH_FULL_HZ &&
+             bw != ARQ_BANDWIDTH_TACTICAL_HZ))
+        {
+            reply_wrong(received);
+            return;
+        }
+        snprintf(cmd.arg0, sizeof(cmd.arg0), "%s", words[1]);
+        cmd.value = (int)bw;
+        if (arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
             reply_wrong(received);
@@ -863,20 +1074,66 @@ static void execute_control_command(char *buffer)
     }
 
     /* CWID ON|OFF: Pat sends CWID ON after PUBLIC ON at every VARA HF
-     * start, without waiting for the answer.  Mercury keys no CW ID; each
-     * frame carries the callsigns.  Accepted so the host's init does not
-     * fail, and ON says so in the log. */
-    if (!strncmp(buffer, "CWID", 4) && (buffer[4] == '\0' || buffer[4] == ' '))
+     * start, without waiting for the answer.  Mercury sends no CW ID and no
+     * periodic ID: a CALL or CQ carries the sending station's callsign, other
+     * frames do not (arq_protocol.h).  Accepted so the host's init does not
+     * fail, and ON says so in the log.  Upper case only, as VARA matches
+     * "CWID ON" exactly (XARA's parser); Pat and BPQ32 send upper case. */
+    if (command_args(buffer, "CWID"))
     {
-        char arg[16] = {0};
-        if (sscanf(buffer + 4, " %15s", arg) != 1 ||
-            (strcasecmp(arg, "ON") && strcasecmp(arg, "OFF")))
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 2 ||
+            (strcmp(words[1], "ON") && strcmp(words[1], "OFF")))
         {
             reply_wrong(received);
             return;
         }
-        if (!strcasecmp(arg, "ON"))
-            HLOGI("tcp-ctl", "CWID ON: Mercury sends no CW ID (callsigns are in every frame)");
+        if (!strcmp(words[1], "ON"))
+            HLOGI("tcp-ctl", "CWID ON: Mercury sends no CW ID");
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        return;
+    }
+
+    /* GATEWAY <arg>: accepted and ignored, as XARA's HF station does
+     * (CWID_GATEWAY = true; VARA FM refuses it).  Mercury runs a gateway and
+     * a client the same way.  XARA takes any line starting "GATEWAY ",
+     * whatever its length; bare GATEWAY, with no space, is not a command. */
+    const char *gateway_args = command_args(buffer, "GATEWAY");
+    if (gateway_args)
+    {
+        if (*gateway_args == '\0')
+            reply_wrong(received);
+        else
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        return;
+    }
+
+    /* DRIVELEVEL <-dB>: the drive level, without keying.  VARA answers OK
+     * whatever follows, and takes a number in [-30, 0] rounded to a whole dB
+     * (XARA: tune_and_drivelevel_follow_vara); anything else leaves the level
+     * as it was.  In Mercury the level is the tuning carrier's: TUNE ? reports
+     * it and a carrier already on follows it.  Data frames keep the ini's
+     * gain, and the log says so each time: a host lowering its drive to
+     * protect an amplifier must be able to see that data power did not
+     * change. */
+    const char *drive_args = command_args(buffer, "DRIVELEVEL");
+    if (drive_args)
+    {
+        if (*drive_args == '\0')
+        {
+            reply_wrong(received);
+            return;
+        }
+        double db = 0.0;
+        if (vb_val_number(drive_args, &db) && db >= -30.0 && db <= 0.0)
+        {
+            modem_tune_set_level_dbfs((float)rint(db));
+            HLOGW("tcp-ctl", "DRIVELEVEL %.0f: sets the TUNE carrier only; data "
+                  "frames keep the drive level from the ini", rint(db));
+        }
+        else
+            HLOGW("tcp-ctl", "DRIVELEVEL '%s' ignored: want a number from -30 to 0",
+                  drive_args + strspn(drive_args, " \t"));
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
