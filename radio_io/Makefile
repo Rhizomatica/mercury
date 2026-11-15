@@ -43,13 +43,6 @@ endif
 endif
 endif
 
-# A system Hamlib is a shared library whose struct rig_caps layout changes
-# between releases without a soname bump (4.6 inserted stop_voice_mem ahead of
-# macro_name, both libhamlib.so.4).  Record the headers' version so
-# rigctl_parse.c only reads tail fields from a matching runtime library
-# (issue #568).  The vendored static Hamlib trees cannot mismatch.
-HAMLIB_BUILD_VERSION_DEF = -DMERCURY_HAMLIB_BUILD_VERSION='"$(shell pkg-config --modversion hamlib 2>/dev/null)"'
-
 ifeq ($(HAVE_HAMLIB),1)
 ifeq ($(OS),Windows_NT)
 HAMLIB_CFLAGS_LOCAL = -Ihamlib-w64/include -DHAVE_HAMLIB
@@ -59,10 +52,10 @@ else ifeq ($(UNAME_S),Darwin)
 ifneq ($(wildcard hamlib-macos/lib/libhamlib*.a),)
 HAMLIB_CFLAGS_LOCAL = -Ihamlib-macos/include -DHAVE_HAMLIB
 else
-HAMLIB_CFLAGS_LOCAL = $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB $(HAMLIB_BUILD_VERSION_DEF)
+HAMLIB_CFLAGS_LOCAL = $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB
 endif
 else
-HAMLIB_CFLAGS_LOCAL = $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB $(HAMLIB_BUILD_VERSION_DEF)
+HAMLIB_CFLAGS_LOCAL = $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB
 endif
 else
 HAMLIB_CFLAGS_LOCAL =

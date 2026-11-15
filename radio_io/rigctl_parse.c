@@ -47,7 +47,6 @@ struct mod_entry
     char model_name[32];
     char version[32];
     char status[32];
-    char macro_name[32];
     char port[8];
 };
 
@@ -56,55 +55,18 @@ static int g_count = 0;
 static int g_capacity = 0;
 
 /*
- * Hamlib keeps the libhamlib.so.4 soname across 4.x releases but does not keep
- * struct rig_caps stable: 4.6 inserted stop_voice_mem ahead of macro_name,
- * shifting it by one pointer.  A Mercury built against 4.6 headers (e.g. the
- * .deb, built on Debian trixie) that loads Ubuntu 24.04's 4.5.5 library reads
- * caps->macro_name past the end of the old field into non-pointer data, and
- * snprintf crashes (issue #568, `mercury -K`; the GUI radio list takes the same
- * path).  The other direction silently reads clone_combo_get instead.
- * The fields at the head of rig_caps (model,
- * names, version, status, port type) have not moved, but macro_name sits at the
- * tail behind every function pointer, so only read it when the runtime library
- * is the version we were compiled against.
- *
- * MERCURY_HAMLIB_BUILD_VERSION comes from `pkg-config --modversion hamlib`; it
- * is absent for the vendored static Hamlib builds, which cannot mismatch.
+ * Read everything through Hamlib's accessors, never struct rig_caps offsets.
+ * Hamlib keeps the libhamlib.so.4 soname across 4.x but not the rig_caps
+ * layout (4.6 inserted stop_voice_mem ahead of macro_name), so a Mercury built
+ * against one Hamlib and run on another read macro_name from the wrong slot
+ * and crashed here (issue #568: the Trixie-built .deb on Ubuntu 24.04's 4.5.5).
+ * rig_model is the first member and cannot move; there is no accessor for
+ * macro_name, so that column is gone.
  */
-static void hamlib_version_numbers(const char *s, char *out, size_t out_len)
+static void copy_caps_str(char *dst, size_t len, rig_model_t model, enum rig_caps_cptr_e what)
 {
-    size_t n = 0;
-
-    out[0] = '\0';
-    if (!s)
-        return;
-    while (*s && !(*s >= '0' && *s <= '9'))
-        s++;
-    while (*s && ((*s >= '0' && *s <= '9') || *s == '.') && n + 1 < out_len)
-        out[n++] = *s++;
-    while (n > 0 && out[n - 1] == '.')
-        n--;
-    out[n] = '\0';
-}
-
-static int hamlib_layout_matches(void)
-{
-#ifdef MERCURY_HAMLIB_BUILD_VERSION
-    static int cached = -1;
-
-    if (cached < 0)
-    {
-        char built[32], running[32];
-
-        hamlib_version_numbers(MERCURY_HAMLIB_BUILD_VERSION, built, sizeof(built));
-        hamlib_version_numbers(hamlib_version, running, sizeof(running));
-        /* Unknown build version (pkg-config gave nothing): don't guess. */
-        cached = built[0] != '\0' && strcmp(built, running) == 0;
-    }
-    return cached;
-#else
-    return 1;
-#endif
+    const char *v = rig_get_caps_cptr(model, what);
+    snprintf(dst, len, "%s", v ? v : "");
 }
 
 static int collect_model(const struct rig_caps *caps, void *data)
@@ -124,18 +86,16 @@ static int collect_model(const struct rig_caps *caps, void *data)
 
     struct mod_entry *e = &g_models[g_count++];
     e->id = caps->rig_model;
-    snprintf(e->mfg_name, sizeof(e->mfg_name), "%s", caps->mfg_name ? caps->mfg_name : "");
-    snprintf(e->model_name, sizeof(e->model_name), "%s", caps->model_name ? caps->model_name : "");
-    snprintf(e->version, sizeof(e->version), "%s", caps->version ? caps->version : "");
-    snprintf(e->macro_name, sizeof(e->macro_name), "%s",
-             hamlib_layout_matches() && caps->macro_name ? caps->macro_name : "-");
-    snprintf(e->status, sizeof(e->status), "%s", rig_strstatus(caps->status));
+    copy_caps_str(e->mfg_name, sizeof(e->mfg_name), e->id, RIG_CAPS_MFG_NAME_CPTR);
+    copy_caps_str(e->model_name, sizeof(e->model_name), e->id, RIG_CAPS_MODEL_NAME_CPTR);
+    copy_caps_str(e->version, sizeof(e->version), e->id, RIG_CAPS_VERSION_CPTR);
+    copy_caps_str(e->status, sizeof(e->status), e->id, RIG_CAPS_STATUS_CPTR);
 
     /* Which port this rig speaks is the one fact you need before setting
      * radio_device, and it was previously invisible here (issue #179: a
      * FlexRadio was configured with a COM port because the listing gave no
      * hint it is a network rig). */
-    switch (caps->port_type)
+    switch ((rig_port_t)rig_get_caps_int(e->id, RIG_CAPS_PORT_TYPE))
     {
     case RIG_PORT_SERIAL:                 snprintf(e->port, sizeof(e->port), "serial"); break;
     case RIG_PORT_NETWORK:
@@ -252,16 +212,7 @@ void list_models(void)
     close(saved_stderr);
 #endif
 
-#ifdef MERCURY_HAMLIB_BUILD_VERSION
-    if (!hamlib_layout_matches())
-        fprintf(stderr,
-                "Warning: Mercury was built against Hamlib %s but is running with %s;\n"
-                "         the Macro column is omitted. Rebuild Mercury against this Hamlib\n"
-                "         (or remove the other copy) so radio control uses matching headers.\n",
-                MERCURY_HAMLIB_BUILD_VERSION, hamlib_version);
-#endif
-
-    printf(" Rig #  Mfg                    Model                   Version         Status      Port    Macro\n");
+    printf(" Rig #  Mfg                    Model                   Version         Status      Port\n");
     status = rig_list_foreach(collect_model, NULL);
 
     if (status != RIG_OK)
@@ -275,14 +226,13 @@ void list_models(void)
     for (int i = 0; i < g_count; i++)
     {
         struct mod_entry *e = &g_models[i];
-        printf("%6d  %-23s%-24s%-16s%-12s%-8s%s\n",
+        printf("%6d  %-23s%-24s%-16s%-12s%s\n",
                e->id,
                e->mfg_name,
                e->model_name,
                e->version,
                e->status,
-               e->port,
-               e->macro_name);
+               e->port);
     }
 
     free(g_models);
