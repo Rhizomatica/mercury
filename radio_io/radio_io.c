@@ -367,6 +367,13 @@ static int hamlib_ptt(bool on)
  * call fails with -RIG_EIO ("Broken pipe"), so the station never keys again,
  * and a PTT OFF that fails leaves a rig keyed that Mercury can no longer
  * release.  Reopen the session from the same config and retry the one call.
+ * A server on another host can also vanish without closing the connection
+ * (power lost, Wi-Fi dropped, a NAT forgetting the flow): writes still
+ * succeed, and the call fails with -RIG_ETIMEOUT instead.  That session is
+ * just as dead, and even when the server only answered late, its late reply
+ * would be read as the answer to the next command; so a timeout reopens it
+ * too.  The cost, when the server is fine but the radio behind it does not
+ * answer, is one more timeout on a call that was failing anyway.
  * Serial rigs are left alone: their open can take seconds and a USB fd handed
  * over by the UI cannot be opened twice.  Key-ups (and the idle retry below)
  * make at most one attempt every HAMLIB_REOPEN_INTERVAL_MS, since an
@@ -398,6 +405,13 @@ static bool hamlib_reopen(bool paced)
           g_config.device[0] ? g_config.device : "default");
     if (g_radio)
     {
+        /* This session is being thrown away.  rig_close() says goodbye to
+         * the server and waits for the answer, which a silent server never
+         * sends: a full timeout (10 s with netrigctl) more on the keying
+         * path.  Shorten it first.  Through rig_set_conf, not the port
+         * struct, whose layout differs between Hamlib releases. */
+        (void)rig_set_conf(g_radio, rig_token_lookup(g_radio, "timeout"), "100");
+        (void)rig_set_conf(g_radio, rig_token_lookup(g_radio, "retry"), "0");
         errno = 0;                  /* see hamlib_ptt */
         rig_close(g_radio);
         rig_cleanup(g_radio);
@@ -429,7 +443,8 @@ static int hamlib_send(bool on, bool paced)
     else
     {
         ret = hamlib_ptt(on);
-        if (ret == -RIG_EIO && !reopened && hamlib_reopen(paced))
+        if ((ret == -RIG_EIO || ret == -RIG_ETIMEOUT) && !reopened &&
+            hamlib_reopen(paced))
             ret = hamlib_ptt(on);
         if (ret != RIG_OK)
         {
