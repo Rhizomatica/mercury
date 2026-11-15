@@ -2651,6 +2651,15 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
      * Capture then opens a playback device and spins on EACCES/EBUSY.  So for
      * OSS resolve an empty device to the first one enumerated for THIS
      * direction. */
+    /* PulseAudio has no device called "default": the name reaches the server
+     * as the stream's target, and a stream that names its target is not
+     * routed by the server's memory of where the user moved it (pavucontrol,
+     * stream-restore), so a choice made there was undone at every start
+     * (IW2DHW, #550).  No name lets PulseAudio choose: its default device,
+     * or the one the user picked for Mercury. */
+    if (audio_subsys == AUDIO_SUBSYSTEM_PULSE && strcmp(buf, "default") == 0)
+        buf[0] = '\0';
+
     bool want_default = (buf[0] == '\0');
     if (want_default && audio_subsys != AUDIO_SUBSYSTEM_OSS)
         return;
