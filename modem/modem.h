@@ -159,6 +159,9 @@ void  modem_tune_stop(void);
 bool  modem_tune_active(void);
 // Most recently requested tuning level in dBFS (what "TUNE ?" reports).
 float modem_tune_level_dbfs(void);
+// Set the tuning level without keying (host DRIVELEVEL).  A carrier already
+// on follows it.  -1 when dbfs is outside what TUNE accepts.
+int   modem_tune_set_level_dbfs(float dbfs);
 
 // Monitor mode: decode EVERY Mercury mode in parallel and report each decoded
 // frame to the host as a "MONITOR ..." line on the control port.  Passive by

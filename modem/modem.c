@@ -247,6 +247,18 @@ float modem_tune_level_dbfs(void)
     return (float)atomic_load(&g_tune_dbfs_milli) / 1000.0f;
 }
 
+/* Host DRIVELEVEL: the level only, no key.  tune_thread reads the level for
+ * every chunk, so a carrier already on changes level within ~100 ms, and its
+ * safety deadline is left alone. */
+int modem_tune_set_level_dbfs(float dbfs)
+{
+    if (!isfinite(dbfs) || dbfs < MODEM_TUNE_MIN_DBFS || dbfs > MODEM_TUNE_MAX_DBFS)
+        return -1;
+    atomic_store(&g_tune_dbfs_milli, (int)lrintf(dbfs * 1000.0f));
+    HLOGI("tune", "drive level set to %.1f dBFS", (double)dbfs);
+    return 0;
+}
+
 static void *tune_thread(void *unused)
 {
     (void)unused;

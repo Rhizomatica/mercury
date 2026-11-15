@@ -75,7 +75,7 @@ MYCALL <callsign> [<secondary1> <secondary2> ...]\r
 asynchronous `REGISTERED <callsign>\r` notification confirms the callsign is
 recognised (VARA compatibility).
 
-The first token is the **primary callsign** (up to 15 characters), used as the
+The first token is the **primary callsign**, used as the
 source address for outgoing `CALL` and `ACCEPT` frames.  Any additional
 space-separated tokens are registered as **secondary callsigns** — Mercury will
 accept incoming `CALL` frames addressed to any of them, up to a maximum of
@@ -85,6 +85,17 @@ Sending a new `MYCALL` command replaces the primary callsign and **clears all
 previously registered secondary callsigns**.
 
 Must be set before `LISTEN ON` or `CONNECT`.
+
+The primary callsign is what this station's `CALL` frames carry, coded over
+the letters `A`–`Z` (either case), the digits and `-`, in at most 14
+characters.  A primary outside that is still taken (`OK`): the station can
+answer calls, since an `ACCEPT` carries only CRC16s of the callsigns, but it
+cannot make them: Mercury logs a warning saying so, and every `CONNECT`
+after it answers `WRONG` until a `MYCALL` gives a primary a `CALL` can
+carry.  (A callsign set only in the ini is not checked.)  Secondary callsigns
+go on the air only as a CRC16 and have no such limit.  This is Mercury's
+rule, wider than VARA's (a base of at most 7 characters): longer station
+names work.
 
 Examples:
 
@@ -110,7 +121,9 @@ LISTEN CQ\r
 When enabled, Mercury enters the LISTENING state and will accept incoming
 CALL frames addressed to the local callsign (or any callsign if PUBLIC is ON).
 
-`LISTEN CQ` is treated as `LISTEN ON` (VARA compatibility).
+`LISTEN CQ` is treated as `LISTEN ON` (VARA compatibility).  Any other
+argument is `WRONG`: the argument is compared as a whole word, in upper case,
+as it is for `PUBLIC`, `CHAT` and `CWID`.
 
 ---
 
@@ -197,7 +210,7 @@ state.  This matches VARA behavior, where chat applications expect the modem
 to be ready for incoming connections after `CHAT ON`.
 
 `CHAT OFF` is acknowledged but has no effect — Mercury does not currently
-differentiate chat and file-transfer timing.
+differentiate chat and file-transfer timing.  Any other argument is `WRONG`.
 
 ---
 
@@ -272,6 +285,50 @@ CWID OFF\r
 an info line that no CW ID is sent.  Pat sends `CWID ON` at every VARA HF
 start.
 
+Mercury sends no CW ID and no periodic ID.  A `CALL` or `CQ` frame carries
+the sending station's callsign; other frames do not (an `ACCEPT` carries only
+CRC16s of the callsigns, data and `DISCONNECT` frames only the session id).
+Identifying the station as your licence requires is up to the operator or
+the host program.
+
+---
+
+### GATEWAY
+
+Accepted for VARA HF compatibility, and ignored.
+
+```
+GATEWAY <argument>\r
+```
+
+**Response:** `OK\r` for `GATEWAY` followed by a space and anything at all;
+`WRONG\r` for a bare `GATEWAY`.
+Mercury runs a gateway and a client the same way.  (XARA, a VARA
+reimplementation tested against VARA HF 4.9.0, answers `OK` on HF and
+refuses it on FM.)
+
+---
+
+### DRIVELEVEL
+
+Set the drive level without keying the transmitter.
+
+```
+DRIVELEVEL <-dB>\r
+```
+
+**Response:** `OK\r` whatever the argument, as VARA does; `WRONG\r` for a
+bare `DRIVELEVEL` with no space after it.  The number is read the way
+VARA's `Val()` reads it: blanks are skipped and reading stops at the first
+other character (`-5dB` is -5).  A number from `-30` to `0` sets the level,
+rounded to a whole dB (`-9.5` gives `-10`); anything else is logged and
+leaves the level as it was.
+
+**Only the [tuning carrier](#tune) follows it.**  `TUNE ?` reports the level
+and a carrier already on changes to it, but **data frames keep the drive
+level the ini sets**: lowering `DRIVELEVEL` does not lower data power.
+Mercury logs a warning saying so each time.
+
 ---
 
 ### CONNECT
@@ -282,7 +339,18 @@ Initiate an ARQ connection to a remote station.
 CONNECT <mycall> <theircall>\r
 ```
 
-**Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
+**Response:** `OK\r` if the command was accepted, `WRONG\r` on error,
+including anything after `<theircall>` and a callsign longer than 15
+characters (it used to be cut short, which named a different station).
+The `CALL` carries [`MYCALL`](#mycall)'s primary callsign; `<mycall>` is
+reported back in `CONNECTED`.  When the last `MYCALL` gave a primary a
+`CALL` cannot carry, `CONNECT` is `WRONG` (before, `OK` and then nothing
+was sent).
+
+The digipeated form, `CONNECT <mycall> <theircall> VIA <digi1> [<digi2>]`,
+is `WRONG`: Mercury has no relay, and VARA HF refuses it too (only VARA FM
+digipeats).  Before, it was answered `OK` and connected direct, the path
+dropped.
 
 Mercury will transmit CALL frames on DATAC16 (the control mode) -- the first
 two, then MFSK and DATAC16 alternately, so a station that cannot hear DATAC16
@@ -307,7 +375,11 @@ Transmit a compact CQ frame on the control mode (DATAC16).
 CQFRAME <sourcecall> <bandwidth>\r
 ```
 
-`<bandwidth>` must be one of `500`, `2300`, or `2750`.
+`<bandwidth>` must be one of `500`, `2300`, or `2750`, and nothing may
+follow it.  It is not optional: VARA HF refuses a bare `CQFRAME <sourcecall>`
+too (VARA FM takes it).  `<sourcecall>` is coded into the CQ frame over the
+same alphabet as [`MYCALL`](#mycall)'s primary (`A`–`Z`, digits and `-`);
+a CQ has room for 15 characters, one more than a `CALL`.
 
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
