@@ -367,7 +367,12 @@ static bool accept_keys(const arq_session_t *sess)
  *     R4 in docs/CAROUSEL-TURNS.md, the carousel's rule for its frames);
  *   - or it decoded while we are keyed: half duplex, its audio came in before
  *     our keydown, so its gap is already behind the ACCEPT we are sending,
- *     and another could start only when ours ends.
+ *     and another could start only when ours ends.  tx_active follows the
+ *     radio's PTT (ptt_event_inject in arq.c), so any keydown counts, not
+ *     only this session's ACCEPT (a CQ, a broadcast): the radio is keyed
+ *     all the same, and the CALL's gap is gone all the same.
+ * Of the two, the keyed check is the one that fired on air (below); the age
+ * check covers a late CALL decoded after our keydown is over.
  * On air (K7EK <- N3MEL-7, BW500, 2026-11-13 14:55): an MFSK500 CALL
  * decoded 3.9 s late (decoder backlog) while K7EK's ACCEPT to the caller's
  * newer DATAC16 CALL was on the air drew a second, 26 s ACCEPT straight
@@ -1269,8 +1274,10 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->car_peer_ctl_deaf = false;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
         /* answering a CALL we just heard, unless it is too old: then the
-         * caller's next CALL is answered (pending, the scanner held) */
-        sess->accept_tx_pending = accept_keys(sess) && !call_too_late(sess, ev);
+         * caller's next CALL is answered (pending, the scanner held).
+         * call_too_late first, so its log line is written even when
+         * accept_keys would hold the ACCEPT anyway. */
+        sess->accept_tx_pending = !call_too_late(sess, ev) && accept_keys(sess);
         /* Off the listen mode: here, not in sess_enter, because LISTENING
          * keeps peer_tx_mode on the broadcast mode.  The carousel binds the
          * decoder to the peer's rung once it runs. */
