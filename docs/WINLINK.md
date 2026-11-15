@@ -64,22 +64,25 @@ all of Mercury's files into the VARA folder, rename `VARA.exe` to
   channel, so ARDOP on the same entry is listed under `MERCURY` too, and
   clients that search only `PUBLIC` do not see it.
 
-### Two Trimode instances (being tested)
+### Two Trimode instances
 
-To list Mercury under `MERCURY` and ARDOP under `PUBLIC`, a sysop is testing
-two copies of Trimode on one radio: one for Mercury, one for ARDOP. Both
-modems then listen at the same time, instead of taking turns.
+To list Mercury under `MERCURY` and ARDOP under `PUBLIC`, run two copies of
+Trimode on one radio: one for Mercury, one for ARDOP. Both modems then listen
+at the same time, instead of taking turns. YO4CIL runs it this way (#554).
 
 Mercury opens its PTT serial port when it starts and keeps it open, with
 exclusive access on Windows (`radio_io/serial_ptt.c`), so no other program can
-open that port while Mercury runs. We have not checked ARDOP or Trimode, but
-programs that key a radio usually hold their port the same way. So:
+open that port while Mercury runs. Keying both copies with RTS on the same COM
+port did not work in that test. So:
 
 - turn off CAT control in both copies and set the radio to the channel by
   hand; and
-- key each modem through a different port, or use the radio's DATA VOX so
-  neither needs a port. Some radios give two virtual COM ports on one USB
-  cable; the FTDX10, for example, gives "Enhanced" and "Standard".
+- use the radio's DATA VOX, so neither modem needs a port. This is what
+  works: on YO4CIL's radio, with the VOX delay at its minimum, 30 ms.
+
+Keying each modem through its own port should also work, but has not been
+tried. Some radios give two virtual COM ports on one USB cable; the FTDX10,
+for example, gives "Enhanced" and "Standard".
 
 ## Known issues
 
