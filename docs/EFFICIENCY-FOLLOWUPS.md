@@ -4,9 +4,10 @@ Reads [EFFICIENCY-FINDINGS.md](EFFICIENCY-FINDINGS.md) and asks the question
 its numbers leave open: which of the losses it measured can a protocol change
 buy back, and which are waveform ceilings no protocol change touches. Desk
 analysis, 2026-11-14, on `mercuryv2` at `274bd5c9`; every claim below cites a
-row in the efficiency tables, a findings doc, or a line of `carousel.c`. One
-prototype (candidate A) exists on a side branch; its A/B numbers are listed
-here once measured.
+row in the efficiency tables, a findings doc, or a line of `carousel.c`.
+Candidate A is prototyped and measured against trunk in the carousel sim
+(6 channels x 5 seeds, bulk one-way, warm = the same seed after a cold run
+wrote its hint):
 
 ## The residue, decomposed
 
@@ -38,7 +39,7 @@ And two ceilings protocol work cannot move:
 
 | # | candidate | layer | expected gain | cost |
 |---|---|---|---|---|
-| A | per-peer rung memory | protocol, receiver-only, no wire change | the climb, ~10–25 s a session at high SNR | small: a state file + seeding the estimator |
+| A | per-peer rung memory | protocol, receiver-only, no wire change | measured below: -11 % clean, up to -55 % fading; +6 % on cliff:8 | small: a state file + seeding the estimator |
 | B | HARQ in the carousel's retx path | modem + protocol glue | large at low SNR and under fading | medium: hook exists, integration open |
 | C | clipped QAM16C2 (2.0/1.0) | modem config, TX-only | fading crossover vs DATAC17 ~3 dB earlier | one line, held for the OTA bench (#464) |
 | D | trim the connect handshake | protocol | ~4 s a session | small, touches the connect FSM |
@@ -46,6 +47,36 @@ And two ceilings protocol work cannot move:
 | F | rungs above QAM16C2 | upstream codec2 | closes the >13 dB VARA gap | large: a new waveform |
 
 ### A. Per-peer rung memory
+
+Measured against trunk, 6 channels x 5 seeds, bulk one-way, warm = the same
+seed run again after its cold run wrote the hint (the prototype branch,
+`MERCURY_RUNG_HINTS=<file>`; cold cells fresh):
+
+| channel | cold median s | warm median s | delta |
+|---|---|---|---|
+| awgn:0.02 | 52.1 | 46.3 | **-11.1 %**, all 5 seeds |
+| cliff:3 | 361.7 | 361.7 | 0 (1 seed -14.7 %) |
+| cliff:8 | 75.0 | 79.4 | **+5.9 %**, all 5 seeds |
+| fade:3:0.5 | 575.6 | 521.6 | median 0 (2 seeds -12..-17 %) |
+| fade:8:0.5 | 199.0 | 199.0 | median 0 (2 seeds -16.5, -55.2 %) |
+| nvis | 1473.4 | 1397.9 | median -11.3 %; one seed +12 %, one past the bench's cap |
+
+The wins are where a rung clearly delivers and the cold session spends
+early rounds failing on the one above it. The two honest losses: on
+cliff:8, where the cold session never leaves DATAC17, the hint buys
+nothing but re-aligns the poll schedule (+6 %, deterministic, all seeds);
+on nvis, where nothing delivers above ~0.7, the hint steers early rounds
+into re-measuring a mid rung and cost one seed its bench cap (the run
+still delivered intact, slower). Seeding only what delivered (a rung that
+lost half its frames seeds nothing) was needed even to get that far: the
+first cut seeded DATAC1's 89 % loss into the next session's probe and it
+probed that rung four times.
+
+The original estimate -- "a stale hint costs one probe frame" -- is too
+kind: on a channel that moved, the cost is a few rounds of re-measuring.
+The knob is `MERCURY_RUNG_MEMORY=0`, and the open question for this
+prototype is whether the hint should carry a "settled" mark only when the
+top rung delivered cleanly, so a struggling channel writes no hint at all.
 
 The link adaptation is the best-measured part of the protocol — per-level
 delivery estimated from frame counts, dead levels verdict-ed, probes priced
@@ -119,10 +150,11 @@ tables as the case, is worth more than any local patch.
 
 ## Offer
 
-Happy to take any of these as far as wanted: A is prototyped (the branch
-carries `datalink_arq/rung_hint.c`, seeding at session start, decayed write
-at teardown, and the sim knob `CAR_RUNG_HINTS` for A/B); D is a connect-FSM
-change I can measure the same way; B needs a design pass with Rafael and
-Pedro before code; C is Rafael's OTA run, where help with the A/B protocol
-or the bench scripts is on offer; E and F are letters to write, and the
-efficiency tables are the case to attach.
+Happy to take any of these as far as wanted: A is prototyped on the branch
+`rung-hint` (`datalink_arq/rung_hint.c`, half-weight seed at session start,
+write at teardown, `MERCURY_RUNG_MEMORY=0` off switch, sim A/B via
+`MERCURY_RUNG_HINTS`); D is a connect-FSM change I can measure the same way;
+B needs a design pass with Rafael and Pedro before code; C is Rafael's OTA
+run on the sBitx pair (#464), where help with the A/B protocol or the bench
+scripts is on offer; E and F are letters to write, and the efficiency
+tables are the case to attach.
