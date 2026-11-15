@@ -586,6 +586,66 @@ void test_cmd_compression(void)
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }
 
+/* ---- VARA commands real hosts send (BPQ32 VARA.c, Pat's vara transport) */
+
+void test_cmd_cleantxbuffer(void)
+{
+    char cmd[] = "CLEANTXBUFFER";
+    execute_control_command(cmd);
+
+    /* no OK: the ARQ thread answers with VARA's line after the clear */
+    TEST_ASSERT_EQUAL(0, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_CLEAN_TX_BUFFER, captured_cmd.type);
+}
+
+void test_cmd_cleantxbuffer_submit_fails(void)
+{
+    arq_submit_return = -1;
+    char cmd[] = "CLEANTXBUFFER";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("CLEANTXBUFFER FAILED\r", (char *)last_tcp_write_buf, 21);
+}
+
+void test_tnc_send_cleantxbuffer(void)
+{
+    tnc_send_cleantxbuffer(true);
+    TEST_ASSERT_EQUAL_STRING("CLEANTXBUFFER OK\r", last_queued_line);
+    tnc_send_cleantxbuffer(false);
+    TEST_ASSERT_EQUAL_STRING("CLEANTXBUFFER BUFFEREMPTY\r", last_queued_line);
+}
+
+void test_cmd_winlink_session(void)
+{
+    char cmd[] = "WINLINK SESSION";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+void test_cmd_cwid_on_off(void)
+{
+    char on[] = "CWID ON";
+    execute_control_command(on);
+    assert_ok_response();
+
+    tcp_write_call_count = 0;
+    char off[] = "CWID OFF";
+    execute_control_command(off);
+    assert_ok_response();
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+void test_cmd_cwid_bad_arg_is_wrong(void)
+{
+    char cmd[] = "CWID MAYBE";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+}
+
 /* ---- TUNE: the ATU tuning carrier (VARA syntax) ----
  * This command keys the transmitter with no protocol underneath it, so the
  * parser boundary is safety-relevant: a level must reach the modem verbatim,
@@ -2324,6 +2384,12 @@ int main(void)
     RUN_TEST(test_cmd_listen_off_mid_frame_still_releases);
     RUN_TEST(test_cmd_public_on);
     RUN_TEST(test_cmd_compression);
+    RUN_TEST(test_cmd_cleantxbuffer);
+    RUN_TEST(test_cmd_cleantxbuffer_submit_fails);
+    RUN_TEST(test_tnc_send_cleantxbuffer);
+    RUN_TEST(test_cmd_winlink_session);
+    RUN_TEST(test_cmd_cwid_on_off);
+    RUN_TEST(test_cmd_cwid_bad_arg_is_wrong);
     RUN_TEST(test_cmd_tune_on);
     RUN_TEST(test_cmd_tune_on_fractional_level);
     RUN_TEST(test_cmd_tune_off);

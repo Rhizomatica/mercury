@@ -840,6 +840,47 @@ static void execute_control_command(char *buffer)
         return;
     }
 
+    /* VARA's CLEANTXBUFFER: BPQ32 sends it before DISCONNECT at a session
+     * time limit.  Answered WRONG, the DISCONNECT after it drained the whole
+     * backlog first. */
+    if (!strcmp(buffer, "CLEANTXBUFFER"))
+    {
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_CLEAN_TX_BUFFER;
+        /* VARA's reply, not OK: the ARQ thread answers once the clear is
+         * done (tnc_send_cleantxbuffer). */
+        if (arq_submit_tcp_cmd(&cmd) != 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"CLEANTXBUFFER FAILED\r", 21);
+        return;
+    }
+
+    /* "WINLINK SESSION": Pat sends it (or P2P SESSION) before each CONNECT.
+     * No-op like P2P: Mercury runs both the same way. */
+    if (!strcmp(buffer, "WINLINK SESSION"))
+    {
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        return;
+    }
+
+    /* CWID ON|OFF: Pat sends CWID ON after PUBLIC ON at every VARA HF
+     * start, without waiting for the answer.  Mercury keys no CW ID; each
+     * frame carries the callsigns.  Accepted so the host's init does not
+     * fail, and ON says so in the log. */
+    if (!strncmp(buffer, "CWID", 4) && (buffer[4] == '\0' || buffer[4] == ' '))
+    {
+        char arg[16] = {0};
+        if (sscanf(buffer + 4, " %15s", arg) != 1 ||
+            (strcasecmp(arg, "ON") && strcasecmp(arg, "OFF")))
+        {
+            reply_wrong(received);
+            return;
+        }
+        if (!strcasecmp(arg, "ON"))
+            HLOGI("tcp-ctl", "CWID ON: Mercury sends no CW ID (callsigns are in every frame)");
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        return;
+    }
+
     if (!strncmp(buffer, "IGNOREKISSDCD", strlen("IGNOREKISSDCD")))
     {
         /* VARA compatibility no-op. */
@@ -2232,6 +2273,13 @@ void tnc_send_buffer(uint32_t bytes)
     }
 }
 
+void tnc_send_cleantxbuffer(bool dropped_any)
+{
+    if (tnc_queue_line_critical(dropped_any ? "CLEANTXBUFFER OK\r"
+                                            : "CLEANTXBUFFER BUFFEREMPTY\r") < 0)
+        HLOGW("tcp-ctl", "Error queuing CLEANTXBUFFER reply");
+}
+
 /* TNC notification callbacks registered into the ARQ layer.  Decouples ARQ
  * from this file: ARQ calls arq_tnc_send_*(), which dispatch here. */
 static const arq_tnc_callbacks_t g_arq_tnc_cbs = {
@@ -2243,6 +2291,7 @@ static const arq_tnc_callbacks_t g_arq_tnc_cbs = {
     .send_buffer        = tnc_send_buffer,
     .send_registered    = tnc_send_registered,
     .send_bitrate       = tnc_send_bitrate_progress,
+    .send_cleantxbuffer = tnc_send_cleantxbuffer,
 };
 
 void tnc_send_sn(float snr)

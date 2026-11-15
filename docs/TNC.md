@@ -199,6 +199,65 @@ P2P\r
 
 ---
 
+### WINLINK SESSION
+
+No-op for VARA client compatibility.  Pat sends it (or `P2P SESSION`)
+before each `CONNECT`; Mercury runs both kinds of session the same way.
+
+```
+WINLINK SESSION\r
+```
+
+**Response:** `OK\r` (always).
+
+VARA gives it a meaning: connect retries on a 4.0 s cycle, for RMS gateways
+that dwell 4 s on a frequency (`P2P SESSION`: 4.6 s).  Mercury does not act
+on it yet.
+
+---
+
+### CLEANTXBUFFER
+
+Drop the host's bytes not yet sent, and keep the session.
+
+```
+CLEANTXBUFFER\r
+```
+
+**Response:** VARA's lines, not `OK`, with a space as a VARA-compatible
+modem tested against VARA HF 4.9.0 sends them (VARA's command reference
+writes them without one):
+
+- `CLEANTXBUFFER OK\r` when unsent bytes were dropped
+- `CLEANTXBUFFER BUFFEREMPTY\r` when there were none
+- `CLEANTXBUFFER FAILED\r` when the command could not be queued
+
+The reply comes once the clear is done.  Kept are the frames already on the
+air and waiting for an ACK, and what the carousel already took into its open
+block (up to about 2 kB); `ABORT` drops those too.  Bytes the host wrote
+that Mercury has not yet read from the data socket are out of reach and
+are still sent.  BPQ32 sends `CLEANTXBUFFER` right before `DISCONNECT` when
+a session reaches its time limit, so the disconnect does not wait for the
+backlog to be sent.
+
+---
+
+### CWID
+
+Accepted for VARA client compatibility.  Mercury sends no CW ID: the
+callsigns are carried in every frame.
+
+```
+CWID ON\r
+CWID OFF\r
+```
+
+**Response:** `OK\r` for `ON` or `OFF`, `WRONG\r` otherwise.  `CWID ON` logs
+an info line that no CW ID is sent.  Pat sends `CWID ON` at every VARA HF
+start.
+
+---
+
 ### CONNECT
 
 Initiate an ARQ connection to a remote station.
