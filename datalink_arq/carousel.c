@@ -3513,6 +3513,40 @@ void car_seed_snr(car_t *c, float mine, float peers)
     }
 }
 
+/* The seed's ceiling, in frames: the hint is a handful of frames of
+ * evidence, the size of the estimator's own memory (LV_DECAY 0.8 per
+ * measured round is ~5 frames deep), never a verdict it cannot outvote. */
+#define CAR_RUNG_HINT_CAP 8.0
+
+void car_rung_export(const car_t *c, car_rung_hint_t *h)
+{
+    for (int lv = 0; lv < CAR_NLEVELS; lv++) {
+        h->sent[lv] = c->rung[lv].sent;
+        h->lost[lv] = c->rung[lv].lost;
+    }
+}
+
+void car_rung_seed(car_t *c, const car_rung_hint_t *h, double weight)
+{
+    for (int lv = 0; lv < CAR_NLEVELS; lv++) {
+        double sent = h->sent[lv] * weight, lost = h->lost[lv] * weight;
+        if (sent < 1.0) continue;                 /* too little to matter */
+        if (lost * 2.0 >= sent) continue;         /* it struggled: not history */
+        if (sent > CAR_RUNG_HINT_CAP) {
+            lost *= CAR_RUNG_HINT_CAP / sent;
+            sent = CAR_RUNG_HINT_CAP;
+        }
+        if (lost > sent) lost = sent * 0.99;      /* decay can tilt it past 1 */
+        /* Only the statistics are the hint's.  dead_run, the probe clocks
+         * and the backoff stay at their fresh-session zeros: a rung the
+         * channel has since closed must earn its way back out from under
+         * level_dead() exactly as an unseeded one would. */
+        c->rung[lv].sent = sent;
+        c->rung[lv].lost = lost;
+        c->rung[lv].p_ok = 1.0 - lost / sent;
+    }
+}
+
 bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
                   float snr_db, uint32_t age_ms)
 {

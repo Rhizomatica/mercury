@@ -13,6 +13,7 @@
 #include "unity.h"
 #include "carousel_sim.h"
 #include "carousel.h"
+#include "rung_hint.h"
 #include "modem_mfsk.h"
 #include "freedv_api.h"
 
@@ -30,6 +31,7 @@ void tearDown(void)
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
     unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
     unsetenv("CAR_CTL_SNR_OFFSET"); unsetenv("CAR_NOISE");
+    unsetenv("MERCURY_RUNG_HINTS");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -903,6 +905,101 @@ static void test_carousel_noise_does_not_hold_the_caller(void)
     unsetenv("CAR_NOISE");
 }
 
+/* ---- rung memory across sessions (docs/EFFICIENCY-FOLLOWUPS.md, A) ------- */
+
+static void rung_hint_test_path(char *buf, int tag)
+{
+    snprintf(buf, 64, "/tmp/rung_hint_test_%d", tag);
+    rung_hint_set_path(0);                 /* forget any earlier path */
+}
+
+/* The seed is history, not a verdict: half weight, capped at 8 frames, and
+ * only the statistics carry over -- the dead-run verdict, the probe clocks
+ * and the backoff stay at their fresh-session zeros. */
+static void test_rung_hint_seed_weights_and_caps(void)
+{
+    car_t *c = calloc(1, sizeof(*c));
+    car_io_t io = {0};
+    car_rung_hint_t h = {0};
+    h.sent[6] = 40.0; h.lost[6] = 2.0;     /* far past the cap */
+    h.sent[2] = 3.0;  h.lost[2] = 3.0;     /* nothing delivered: tilt clamp */
+    car_init(c, &io, 6, 6);
+    car_rung_seed(c, &h, 0.5);
+    TEST_ASSERT_EQUAL_FLOAT(8.0f, (float)c->rung[6].sent);      /* 40*0.5, held to 8 */
+    TEST_ASSERT_EQUAL_FLOAT(0.4f, (float)c->rung[6].lost);      /* scaled with it */
+    TEST_ASSERT_EQUAL_FLOAT(0.95f, (float)c->rung[6].p_ok);
+    TEST_ASSERT_EQUAL_FLOAT(1.5f, (float)c->rung[2].sent);
+    TEST_ASSERT_EQUAL_INT(0, c->rung[6].dead_run);
+    TEST_ASSERT_EQUAL_INT(0, c->rung[6].rounds);
+    car_rung_hint_t out;
+    car_rung_export(c, &out);
+    TEST_ASSERT_EQUAL_FLOAT(8.0f, (float)out.sent[6]);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, (float)out.sent[3]);          /* nothing measured there */
+    free(c);
+}
+
+static void test_rung_hint_file_roundtrip(void)
+{
+    char path[64];
+    rung_hint_test_path(path, 1);
+    rung_hint_set_path(path);
+    remove(path);
+    car_rung_hint_t h = {0}, got = {0};
+    h.sent[1] = 4.0; h.lost[1] = 0.5;
+    h.sent[6] = 2.0; h.lost[6] = 2.0;
+    rung_hint_store("N0CALL", &h);
+    TEST_ASSERT_TRUE(rung_hint_load("N0CALL", &got));
+    TEST_ASSERT_EQUAL_FLOAT(4.0f, (float)got.sent[1]);
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, (float)got.lost[1]);
+    TEST_ASSERT_FALSE(rung_hint_load("VE4KLM", &got));
+    /* a second peer, and the first updated in place */
+    h.sent[1] = 6.0;
+    rung_hint_store("K7EK", &h);
+    rung_hint_store("N0CALL", &h);
+    TEST_ASSERT_TRUE(rung_hint_load("K7EK", &got));
+    TEST_ASSERT_EQUAL_FLOAT(2.0f, (float)got.sent[6]);
+    TEST_ASSERT_TRUE(rung_hint_load("N0CALL", &got));
+    TEST_ASSERT_EQUAL_FLOAT(6.0f, (float)got.sent[1]);
+    /* junk lines are skipped, not fatal; nothing else is lost */
+    FILE *f = fopen(path, "a");
+    TEST_ASSERT_NOT_NULL(f);
+    fputs("# a comment\nN0CALL 1 2 3 4 5\n", f);
+    fclose(f);
+    TEST_ASSERT_TRUE(rung_hint_load("N0CALL", &got));
+    TEST_ASSERT_EQUAL_FLOAT(6.0f, (float)got.sent[1]);
+    TEST_ASSERT_TRUE(rung_hint_load("K7EK", &got));
+    remove(path);
+    rung_hint_set_path(0);
+}
+
+/* A hint from a finished run starts the next one where the last one
+ * settled: on a fading channel a cold session spends early rounds learning
+ * that DATAC17 does not hold; a warm one starts where the last one ended.
+ * Same seed and channel. */
+static void test_rung_hint_starts_where_the_last_session_topped(void)
+{
+    char path[64];
+    rung_hint_test_path(path, 2);
+    setenv("MERCURY_RUNG_HINTS", path, 1);
+    rung_hint_set_path(path);
+
+    remove(path);
+    car_sim_result_t r1, r2;
+    carousel_sim_run(1, "fade:8:0.5", false, LIMIT_MS, &r1);
+    TEST_ASSERT_TRUE(r1.intact);
+    TEST_ASSERT_NOT_EQUAL(0, r1.done_ms);
+    carousel_sim_run(1, "fade:8:0.5", false, LIMIT_MS, &r2);
+    TEST_ASSERT_TRUE(r2.intact);
+    TEST_ASSERT_NOT_EQUAL(0, r2.done_ms);
+    char what[96];
+    snprintf(what, sizeof(what), "cold %d frames in %llu ms, warm %d in %llu ms",
+             r1.frames, (unsigned long long)r1.done_ms, r2.frames, (unsigned long long)r2.done_ms);
+    TEST_ASSERT_LESS_THAN_INT_MESSAGE(r1.done_ms, r2.done_ms, what);
+    remove(path);
+    unsetenv("MERCURY_RUNG_HINTS");
+    rung_hint_set_path(0);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -921,6 +1018,9 @@ int main(void)
     RUN_TEST(test_carousel_bw500_floor);
     RUN_TEST(test_carousel_mfsk_tx_only);
     RUN_TEST(test_carousel_max_keydown);
+    RUN_TEST(test_rung_hint_seed_weights_and_caps);
+    RUN_TEST(test_rung_hint_file_roundtrip);
+    RUN_TEST(test_rung_hint_starts_where_the_last_session_topped);
     RUN_TEST(test_carousel_request_response_completes);
     RUN_TEST(test_carousel_app_wait_is_said);
     RUN_TEST(test_carousel_drop_below_control_mode);

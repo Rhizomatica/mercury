@@ -18,6 +18,7 @@
 #include "sim_core.h"
 
 #include "arq_fsm.h"
+#include "rung_hint.h"
 #include "carousel.h"
 #include "carousel.h"
 #include "arq.h"
@@ -26,10 +27,19 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 extern int arq_test_session_bw_hz;   /* arq_test_stubs.c: the negotiated BW */
 
-void setUp(void)    { }
+void setUp(void)
+{
+    /* The FSM's rung memory reads and writes a state file (arq_fsm.c), and
+     * these tests share callsigns: a hint left by one test would seed the
+     * next.  A private file, fresh every test. */
+    setenv("MERCURY_RUNG_HINTS", "/tmp/mercury_test_rung_hints", 1);
+    rung_hint_set_path("/tmp/mercury_test_rung_hints");
+    remove("/tmp/mercury_test_rung_hints");
+}
 void tearDown(void) { arq_test_session_bw_hz = ARQ_BANDWIDTH_FULL_HZ; }
 
 static sim_t *make_sim(uint64_t seed, double per)
