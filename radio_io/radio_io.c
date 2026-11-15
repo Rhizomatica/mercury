@@ -297,7 +297,7 @@ static int hamlib_open(const ptt_config_t *config)
                                                config->hamlib_conf);
     radio_io_warn_port_mismatch(config->hamlib_model, config->device);
 
-    errno = 0;                      /* see hamlib_set */
+    errno = 0;                      /* see hamlib_ptt */
     int ret = rig_open(g_radio);
     /* A port without modem-control lines -- a pty from socat or ser2net, a
      * com0com pair, some Bluetooth serial links -- refuses the ioctl, and
@@ -356,31 +356,132 @@ static int hamlib_open(const ptt_config_t *config)
  * byte -- ~60 ms more key-up for an Icom CI-V echo + ack (seen as 23 -> 134
  * ms get_level in hermes-radio-daemon).  So errno is cleared before every
  * Hamlib call that talks to the radio: open, keying, frequency poll, close. */
+static int hamlib_ptt(bool on)
+{
+    errno = 0;
+    return rig_set_ptt(g_radio, RIG_VFO_CURR, on ? RIG_PTT_ON : RIG_PTT_OFF);
+}
+
+/* A network rig's session does not survive its server: when rigctld (or
+ * FLRig, a FlexRadio...) restarts, Hamlib's socket is dead and every later
+ * call fails with -RIG_EIO ("Broken pipe"), so the station never keys again,
+ * and a PTT OFF that fails leaves a rig keyed that Mercury can no longer
+ * release.  Reopen the session from the same config and retry the one call.
+ * Serial rigs are left alone: their open can take seconds and a USB fd handed
+ * over by the UI cannot be opened twice.  Key-ups (and the idle retry below)
+ * make at most one attempt every HAMLIB_REOPEN_INTERVAL_MS, since an
+ * unreachable server costs a connect timeout on the keying path.  An unkey is
+ * not paced: a late unkey costs a carrier left on air, and a refused connect
+ * to a local server is immediate.  Caller holds g_radio_mutex. */
+#define HAMLIB_REOPEN_INTERVAL_MS 3000U
+static uint64_t g_hamlib_reopen_ms = 0;
+
+/* Set when a PTT OFF could not be delivered, cleared when any PTT change
+ * reaches the rig.  While it is set, radio_io_service() (main loop) and the
+ * UI's frequency poll retry the OFF every FREQUENCY_POLL_INTERVAL_MS, so a rig
+ * keyed when its server went away is released once the server is back, not
+ * at the next transmission. */
+static bool g_hamlib_off_pending = false;
+static uint64_t g_hamlib_off_retry_ms = 0;  /* last failed OFF or retry */
+
+static bool hamlib_reopen(bool paced)
+{
+    if (radio_io_port_kind(g_config.hamlib_model) != RADIO_PORT_KIND_NETWORK)
+        return false;
+    uint64_t now = hermes_uptime_ms();
+    if (paced && g_hamlib_reopen_ms != 0 &&
+        now - g_hamlib_reopen_ms < HAMLIB_REOPEN_INTERVAL_MS)
+        return false;
+    g_hamlib_reopen_ms = now;
+
+    HLOGW(RADIO_LOG_TAG, "Hamlib session to %s lost; reopening",
+          g_config.device[0] ? g_config.device : "default");
+    if (g_radio)
+    {
+        errno = 0;                  /* see hamlib_ptt */
+        rig_close(g_radio);
+        rig_cleanup(g_radio);
+        g_radio = NULL;
+    }
+    if (hamlib_open(&g_config) != 0)
+    {
+        HLOGW(RADIO_LOG_TAG, "Hamlib reopen failed; next attempt at the next "
+              "PTT change, or within %u ms while a PTT OFF is pending",
+              FREQUENCY_POLL_INTERVAL_MS);
+        return false;
+    }
+    HLOGI(RADIO_LOG_TAG, "Hamlib session reopened");
+    return true;
+}
+
+/* Send one PTT change, reopening a dead network session once.  `paced`
+ * holds the reopen to HAMLIB_REOPEN_INTERVAL_MS. */
+static int hamlib_send(bool on, bool paced)
+{
+    /* NULL here only after a failed reopen: keep trying. */
+    bool reopened = !g_radio && hamlib_reopen(paced);
+    int ret = -1;
+    if (!g_radio)
+    {
+        HLOGW(RADIO_LOG_TAG, "PTT %s not sent: no Hamlib session (reopen pending)",
+              on ? "ON" : "OFF");
+    }
+    else
+    {
+        ret = hamlib_ptt(on);
+        if (ret == -RIG_EIO && !reopened && hamlib_reopen(paced))
+            ret = hamlib_ptt(on);
+        if (ret != RIG_OK)
+        {
+            char err[512];
+            HLOGW(RADIO_LOG_TAG, "PTT %s failed (Hamlib model %d): %s",
+                  on ? "ON" : "OFF", g_config.hamlib_model,
+                  rig_err_text(rigerror(ret), err, sizeof err));
+        }
+    }
+    if (ret == RIG_OK)
+    {
+        g_hamlib_off_pending = false;   /* the rig's PTT is known again */
+        HLOGD(RADIO_LOG_TAG, "PTT %s via Hamlib (model %d)",
+              on ? "ON" : "OFF", g_config.hamlib_model);
+        return 0;
+    }
+    if (!on)
+    {
+        g_hamlib_off_pending = true;
+        g_hamlib_off_retry_ms = hermes_uptime_ms();
+    }
+    return -1;
+}
+
 static int hamlib_set(bool on)
 {
-    if (!g_radio)
-        return -1;
-    errno = 0;
-    int ret = rig_set_ptt(g_radio, RIG_VFO_CURR,
-                          on ? RIG_PTT_ON : RIG_PTT_OFF);
-    if (ret != RIG_OK)
-    {
-        char err[512];
-        HLOGW(RADIO_LOG_TAG, "PTT %s failed (Hamlib model %d): %s",
-              on ? "ON" : "OFF", g_config.hamlib_model,
-              rig_err_text(rigerror(ret), err, sizeof err));
-        return -1;
-    }
-    HLOGD(RADIO_LOG_TAG, "PTT %s via Hamlib (model %d)",
-          on ? "ON" : "OFF", g_config.hamlib_model);
-    return 0;
+    return hamlib_send(on, on);         /* only key-ups are paced */
+}
+
+/* Retry an undelivered PTT OFF, paced like a key-up.  Never while keyed: a
+ * transmission's own OFF supersedes it.  Only hamlib_send sets the flag and
+ * hamlib_close clears it, so it is never set under another backend.  Caller
+ * holds g_radio_mutex. */
+static void hamlib_retry_pending_off(uint64_t now)
+{
+    if (!g_hamlib_off_pending || g_ptt_active)
+        return;
+    if (now - g_hamlib_off_retry_ms < FREQUENCY_POLL_INTERVAL_MS)
+        return;
+    g_hamlib_off_retry_ms = now;
+    if (hamlib_send(false, true) == 0)
+        HLOGI(RADIO_LOG_TAG, "Pending PTT OFF delivered: the rig is released");
 }
 
 static void hamlib_close(void)
 {
+    g_hamlib_reopen_ms = 0;         /* a new backend starts with no history */
+    g_hamlib_off_pending = false;
+    g_hamlib_off_retry_ms = 0;
     if (!g_radio)
         return;
-    errno = 0;                      /* see hamlib_set */
+    errno = 0;                      /* see hamlib_ptt */
     (void)rig_set_ptt(g_radio, RIG_VFO_CURR, RIG_PTT_OFF);
     errno = 0;                      /* ...which Hamlib's own reads may set */
     rig_close(g_radio);
@@ -772,6 +873,19 @@ void radio_io_report_frequency(uint64_t frequency_hz)
     atomic_store_explicit(&g_frequency_valid, frequency_hz != 0, memory_order_release);
 }
 
+/* Idle housekeeping, called every few hundred ms by the main loop: retries a
+ * PTT OFF that could not be delivered (hamlib_retry_pending_off).  trylock, so
+ * it never waits behind keying. */
+void radio_io_service(void)
+{
+#ifdef HAVE_HAMLIB
+    if (pthread_mutex_trylock(&g_radio_mutex) != 0)
+        return;
+    hamlib_retry_pending_off(hermes_uptime_ms());
+    pthread_mutex_unlock(&g_radio_mutex);
+#endif
+}
+
 bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz,
                             uint64_t *age_ms)
 {
@@ -795,13 +909,16 @@ bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz,
                     now - g_frequency_attempt_ms >= FREQUENCY_POLL_INTERVAL_MS;
     bool post_ptt_quiet =
         now - g_last_ptt_off_ms < FREQUENCY_POST_PTT_QUIET_MS;
+    /* A lost PTT OFF comes first: it releases the rig, and its reopen is
+     * also what brings back the session the read below needs. */
+    hamlib_retry_pending_off(now);
     if (allow_poll && poll_due && !g_ptt_active && !post_ptt_quiet &&
         g_backend == &HAMLIB_BACKEND && g_radio)
     {
         freq_t freq = 0;
         uint64_t started_ms = now;
         g_frequency_attempt_ms = now;
-        errno = 0;                  /* see hamlib_set */
+        errno = 0;                  /* see hamlib_ptt */
         int ret = rig_get_freq(g_radio, RIG_VFO_CURR, &freq);
         if (ret != RIG_OK)
         {
