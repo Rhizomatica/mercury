@@ -305,7 +305,7 @@ HOST_API_OBJS_W64 = host/api_host.w64.o
 
 MERCURY_LINK_INPUTS = \
 	main.o common/cfg_utils.o $(HOST_INI_OBJS) \
-	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
+	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arq_early_pending.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_arq/carousel.o datalink_arq/rs_erasure.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o \
@@ -439,7 +439,7 @@ MODEM_TOP_OBJS = modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem
 
 MERCURY_CORE_OBJS = \
 	common/cfg_utils.o $(HOST_INI_OBJS) \
-	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
+	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arq_early_pending.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_arq/carousel.o datalink_arq/rs_erasure.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o \

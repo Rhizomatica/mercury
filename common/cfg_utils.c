@@ -67,6 +67,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
     cfg->tnc_keepalive_s = 60;
     cfg->tnc_buffer_report_ms = 1000;
+    cfg->tnc_early_pending = false;
     cfg->tx_gain_db            = 0.0f;
     cfg->tx_delay_ms           = 10;
     cfg->retry_stagger_ms            = ARQ_RETRY_STAGGER_MS_DEFAULT;
@@ -431,6 +432,9 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (i >= 100 && i <= 10000)
         cfg->tnc_buffer_report_ms = i;
 
+    cfg->tnc_early_pending = (bool) iniparser_getboolean(ini, CFG_KEY_TNC_EARLY_PENDING,
+                                                         cfg->tnc_early_pending ? 1 : 0);
+
     i = iniparser_getint(ini, CFG_KEY_ARQ_RETRY_STAGGER_MS, cfg->retry_stagger_ms);
     if (i >= 0 && i <= ARQ_RETRY_STAGGER_MS_MAX) cfg->retry_stagger_ms = i;
 
@@ -629,6 +633,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "\n[tnc]\n");
     fprintf(f, "keepalive_s = %d\n", cfg->tnc_keepalive_s);
     fprintf(f, "buffer_report_ms = %d\n", cfg->tnc_buffer_report_ms);
+    fprintf(f, "early_pending = %s\n", cfg->tnc_early_pending ? "true" : "false");
 
     fprintf(f, "\n[store]\n");
     fprintf(f, "enabled = %s\n", cfg->store_enabled ? "true" : "false");

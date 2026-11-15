@@ -418,6 +418,13 @@ void arq_set_tx_mfsk_only(bool on);
  * after about 20 s keyed (#445). */
 void arq_set_max_keydown_s(int s);
 
+/* Early PENDING: PENDING as soon as a CALL decoder locks on a frame while
+ * listening, CANCELPENDING if no CALL for us comes of it, as VARA and ARDOP
+ * do, so a scanning host stops on the channel before the CALL ends
+ * (arq_early_pending.h).  Off by default. */
+void arq_set_early_pending(bool on);
+bool arq_get_early_pending(void);
+
 /**
  * @brief Trigger outgoing call attempt using current ARQ addresses.
  */

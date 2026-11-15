@@ -73,6 +73,7 @@
 #define CFG_KEY_TX_DELAY_MS         "audio:tx_delay_ms"
 #define CFG_KEY_TNC_KEEPALIVE_S     "tnc:keepalive_s"
 #define CFG_KEY_TNC_BUFFER_REPORT_MS "tnc:buffer_report_ms"
+#define CFG_KEY_TNC_EARLY_PENDING   "tnc:early_pending"
 #define CFG_KEY_ARQ_RETRY_STAGGER_MS          "arq:retry_stagger_ms"
 #define CFG_KEY_ARQ_SILENCE_FALLBACK_S        "arq:silence_fallback_s"
 #define CFG_KEY_ARQ_CALL_MAX_S                "arq:call_max_s"
@@ -157,6 +158,9 @@ typedef struct {
     int      tnc_buffer_report_ms;  /* BUFFER report interval on the TNC
                                     * control port. Default 1000, clamped
                                     * 100..10000.                          */
+    bool     tnc_early_pending;     /* PENDING when a CALL starts arriving,
+                                    * CANCELPENDING if none for us comes of
+                                    * it. Default false.                   */
     bool     busy_detect;           /* Channel-busy detector on/off. Default
                                     * false (opt-in). Emits VARA "BUSY ON/OFF". */
     int      busy_threshold_db;     /* Passband peak dB above noise floor to

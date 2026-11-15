@@ -259,6 +259,9 @@ void modem_set_busy_detect_enabled(bool enabled)
     mock_busy_detect_set_calls++;
 }
 bool modem_get_busy_detect_enabled(void) { return mock_busy_detect; }
+static bool mock_early_pending = false;
+void arq_set_early_pending(bool on) { mock_early_pending = on; }
+bool arq_get_early_pending(void) { return mock_early_pending; }
 
 static bool mock_busy_reseed    = false;
 static int  mock_busy_reseed_set_calls = 0;
@@ -443,6 +446,7 @@ void setUp(void)
 
     /* Busy detector switches (both off by default) */
     mock_busy_detect           = false;
+    mock_early_pending         = false;
     mock_busy_detect_set_calls = 0;
     mock_busy_reseed           = false;
     mock_busy_reseed_set_calls = 0;
@@ -787,6 +791,28 @@ void test_cmd_busydetect_on_off_and_query(void)
     TEST_ASSERT_EQUAL_STRING_LEN("BUSYDETECT OFF\r", (char *)last_tcp_write_buf, 15);
     TEST_ASSERT_EQUAL_INT(2, mock_busy_detect_set_calls);   /* the queries set nothing */
     TEST_ASSERT_EQUAL_INT(0, mock_busy_reseed_set_calls);
+}
+
+/* EARLYPENDING ON|OFF: the early PENDING switch, in the same table */
+void test_cmd_earlypending_on_off_and_query(void)
+{
+    char on[] = "EARLYPENDING ON";
+    execute_control_command(on);
+    assert_ok_response();
+    TEST_ASSERT_TRUE(mock_early_pending);
+
+    tcp_write_call_count = 0;
+    char query[] = "EARLYPENDING";
+    execute_control_command(query);
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("EARLYPENDING ON\r", (char *)last_tcp_write_buf, 16);
+
+    tcp_write_call_count = 0;
+    char off[] = "EARLYPENDING off";
+    execute_control_command(off);
+    assert_ok_response();
+    TEST_ASSERT_FALSE(mock_early_pending);
+    TEST_ASSERT_EQUAL_INT(0, mock_busy_detect_set_calls);
 }
 
 void test_cmd_busyreseed_on_off_and_query(void)
@@ -2340,6 +2366,7 @@ int main(void)
     RUN_TEST(test_cmd_beaconmode_sets_reports_and_refuses);
     RUN_TEST(test_cmd_busydetect_on_off_and_query);
     RUN_TEST(test_cmd_busyreseed_on_off_and_query);
+    RUN_TEST(test_cmd_earlypending_on_off_and_query);
     RUN_TEST(test_cmd_busy_switches_reject_bad_input);
     RUN_TEST(test_cmd_monitor_on);
     RUN_TEST(test_cmd_monitor_off);

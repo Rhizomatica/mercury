@@ -629,6 +629,38 @@ it.  With it off, one floor serves every channel.  Each way has a cost; see
 
 ---
 
+### EARLYPENDING
+
+Choose whether `PENDING` goes out as a CALL starts arriving rather than once
+it has decoded.  It starts as `early_pending` in the `[tnc]` section of
+`mercury.ini` sets it (off by default; experimental); the command does not
+save the change.
+
+```
+EARLYPENDING ON\r
+EARLYPENDING OFF\r
+EARLYPENDING\r
+```
+
+**Response:** `OK\r` on success, `WRONG\r` for an unrecognised argument.  The
+bare query answers `EARLYPENDING ON\r` or `EARLYPENDING OFF\r`.
+
+With it on, while Mercury listens with no session up, it sends `PENDING\r`
+once the DATAC16 control decoder or an MFSK call listener has held a lock on
+a frame for 0.5 s, before the frame has decoded or its callsign is known --
+what VARA and ARDOP do (G8BPQ: "PENDING is sent as soon as the modem has
+enough of a packet to know it is a connect request").  A scanning host that
+stops on `PENDING` then stays on the channel for the rest of the CALL; see
+[Scanning hosts](#scanning-hosts-bpq32) for what a 10 s dwell loses
+without it.  If the frame turns out to be a CALL for us, the usual `PENDING`
+follows and the connect proceeds.  Otherwise -- noise, a corrupt frame,
+another station's traffic, a CALL for someone else -- Mercury sends
+`CANCELPENDING\r` 2 s after the lock ends, or after 30 s if the lock never
+ends.  After 3 such cancellations in 2 minutes, further locks send nothing
+until the oldest ages out, so a busy channel cannot keep a scanner parked.
+
+---
+
 ### TUNE
 
 Key the transmitter and hold a steady **1000 Hz tone**, so an antenna tuner
@@ -727,6 +759,9 @@ Mercury returns to the idle/listening state: its `ACCEPT`s ran out, the host
 sent `DISCONNECT` or `LISTEN OFF`, or the caller sent a `DISCONNECT` for that
 call (it gave up calling before our `ACCEPT` reached it).  A scanning host
 then resumes its scan at once rather than holding the channel.
+
+With [`EARLYPENDING ON`](#earlypending), also sent when an early `PENDING`
+came to nothing: the frame was not a CALL for us.
 
 Mercury also sends `CANCELPENDING\r` when an outgoing `CQFRAME` transmission
 finishes, which matches the lifecycle expected by VARA clients such as varim.
