@@ -541,7 +541,7 @@ With `-C <path>` that file is used. Otherwise Mercury takes the first of these t
 2. `$XDG_CONFIG_HOME/mercury/mercury.ini`, or `~/.config/mercury/mercury.ini` when `XDG_CONFIG_HOME` is not set
 3. `/etc/mercury/mercury.ini`
 
-A configuration that cannot be read in full (it does not parse, or a setting has an invalid value) stops Mercury with the reason before the modem starts: running on part of a configuration could open the wrong sound device or key the wrong radio. `-h`, `-V`, `-l`, `-z` and `-K` still work. With no configuration file (none found, or the `-C` file does not exist), Mercury runs on its built-in defaults and the command line, and says so, naming the sound system and devices it opens.
+A configuration that cannot be read in full (it does not parse, or a setting has an invalid value) stops Mercury with the reason before the modem starts: running on part of a configuration could open the wrong sound device or key the wrong radio. `-h`, `-V`, `-l`, `-z` and `-K` still work. With no configuration file (none found, or the `-C` file does not exist), Mercury runs on its built-in defaults and the command line, and says so, naming the sound system and devices it opens. The GUI (`mercury-ui`) names the file it read, or the one it will save to, under Help → Version.
 
 See the included [mercury.ini.example](mercury.ini.example) for all available settings and their default values (the Debian package installs it as `/usr/share/doc/mercury/mercury.ini.example`). Copy it to one of the places above and edit it for your radio, for example:
 

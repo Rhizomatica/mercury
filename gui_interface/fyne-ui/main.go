@@ -1862,9 +1862,18 @@ func main() {
 		// Which mercury.ini the engine read. Launched from a desktop menu the
 		// working directory is the home folder, so a file kept elsewhere is
 		// silently not read: say so on screen, not only on stdout.
+		//
+		// The dialog shows once per save path, not at every start: no file is
+		// the normal state of a fresh install, and the log and Help -> Version
+		// keep saying it.  Not on macOS: started from Finder the working
+		// folder is /, where the file can never be created and the advice
+		// does not apply (the phones keep their own file).
 		if path, loaded := mercuryConfigStatus(); path != "" {
 			appendLog(configStatusText(path, loaded) + "\n")
-			if !loaded && runtime.GOOS != "android" && runtime.GOOS != "ios" {
+			prefs := myApp.Preferences()
+			if !loaded && prefs.String(configNoticePref) != path &&
+				runtime.GOOS != "android" && runtime.GOOS != "ios" && runtime.GOOS != "darwin" {
+				prefs.SetString(configNoticePref, path)
 				runOnUI(func() {
 					dialog.ShowInformation("No configuration file",
 						configStatusText(path, loaded)+"\n\n"+configSearchHint(),
@@ -2235,6 +2244,10 @@ func getBaseDir() string {
 }
 
 // configStatusText says which configuration file the engine runs on.
+// configNoticePref holds the save path the "No configuration file" dialog was
+// last shown for.
+const configNoticePref = "configNoticeShownFor"
+
 func configStatusText(path string, loaded bool) string {
 	if loaded {
 		return "Configuration file: " + path + "\n" +
