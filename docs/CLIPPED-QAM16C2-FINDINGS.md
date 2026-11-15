@@ -159,12 +159,80 @@ re-litigated here.)
    earlier, and the same transmitter burden as the rung below.
 2. **TX-side only.** The receiver is untouched; a clipped station
    interoperates with a stock one. No wire format, frame size, mode table or
-   ladder change is required — which is why this document is findings-only
-   and the one-line `ofdm_mode.c` change is deliberately *not* in this
-   branch: mode-config changes ride the OTA bench, like everything else that
-   transmits.
+   ladder change is required.  The `ofdm_mode.c` change waited for the
+   bench ("On the air" below) and is made.
 3. Do not clip harder than drive ≈ 2.0-2.5. (2.5, 1.0) trades fading
    robustness for PAPR and loses; 3.0 is unusable on this mode.
+
+## On the air (2026-11-15): done, and the clip is in
+
+The bench the caveats below ask for: two sBitx stations (radiod, RTP audio)
+into dummy loads on 7050 kHz LSB, trunk 274bd5c9 built twice on each, once as
+it was and once with `clip_gain1` 2.0 / `clip_gain2` 1.0 on QAM16C2.  One
+station sends test frames for 60 s (`mercury -t -m 10`), the other counts
+what decodes (`mercury -r -m 10`, the same stock receiver for both); stock
+and clipped alternate, nothing else changes, the radios' settings are not
+touched.
+
+| Direction | Sent as | Keydowns | Decoded | Receiver's S/N on the frames |
+|---|---|---|---|---|
+| caldono to pueblonuevo | DATAC17 (reference) | 9 | 7 | 9.7 dB |
+| | QAM16C2 stock | 16 + 16 | 0 + 0 | |
+| | QAM16C2 clipped | 16 + 16 | 14 + 14 | 7.3, 7.4 dB |
+| pueblonuevo to caldono | DATAC17 (reference) | 9 | 8 | 10.9 dB |
+| | QAM16C2 stock | 16 + 16 | 0 + 0 | |
+| | QAM16C2 clipped | 16 + 16 | 15 + 15 | 8.3, 8.5 dB |
+
+The last keydown of each run is cut by the timer, so 15 of 16 is every whole
+frame.  At a radio setting where DATAC17 reads 10 dB the stock mode is not
+there at all, and the clipped mode delivers like DATAC17 at more than twice
+the rate.  That is what the tables above predict: at this setting the stock
+mode's own S/N is about 5.5 dB, under its 7.7 dB knee.
+
+The same on the simulated channel, with `utils/rung_sweep` (every burst at
+one peak, the axis the S/N of a steady carrier at that peak; 60 to 100
+bursts a point):
+
+| | Under the carrier | White noise, delivers from | CCIR Poor: bit/s at 16 / 18 / 20 / 22 dB |
+|---|---|---|---|
+| DATAC17 | 4.0 dB | 8 dB | 1362 / 1362 / 1362 / 1362 |
+| QAM16C2 stock | 8.5 dB | 17 dB | 29 / 588 / 1559 / 2382 |
+| QAM16C2 clipped | 3.6 dB | 14 dB | 1470 / 2147 / 2500 / 2617 |
+
+And a whole session in the two-daemon harness (30 kB, white noise, nominal
+12 dB): 277 s stock, 140 s clipped.  The stock session is slower there than
+at 10 dB (240 s): the ladder tries QAM16C2 from a reading of 11.5 dB, the
+unclipped frames are 4.5 dB under that reading, and every try is lost.
+
+**So the clip is now in `ofdm_mode.c`.**  The ladder's QAM16C2 threshold
+(`ARQ_SNR_MIN_QAM16C2_DB`, 13 dB) stays: it is compared with readings taken
+on the rung below, and the clipped mode goes out at that rung's level, where
+the unclipped one went out 4.5 dB under it.  The threshold was right for a
+mode the transmitter could not send; now the mode matches it.
+
+**The signal off the transmitter.**  An Airspy HF+ at the workstation
+recorded pueblonuevo's keydowns (7050 kHz USB, 45 s a mode, 192 kS/s; the
+signal 25 dB over the receiver's idle noise, the receiver's own floor 24 dB
+under the signal):
+
+| | Occupied bandwidth (99 %) | Peak over average at the antenna, 99.99 % of samples |
+|---|---|---|
+| DATAC17 | 2150 Hz | 5.7 dB |
+| QAM16C2 stock | 2170 Hz | 10.6 dB |
+| QAM16C2 clipped | 2160 Hz | 7.1 dB |
+
+The clipped mode is as wide as the others and, at this receiver's floor, the
+three leave the same nothing in the next channel on either side (at most
+1.5 dB between them, under the floor).  So the clipping does not splatter
+into the neighbouring channels to the extent this receiver can see, and the
+peaks that reach the antenna are the 6.7 dB of the simulation (7.1 dB
+measured), not the 11.4 dB of the stock mode.  A spectrum analyser with a
+lower floor would say more about the farther channels.  Caldono's captures
+were 10 dB weaker (its power setting is lower) and sit too near the floor to
+use.
+
+Not measured: a whole session on the air (the bench reads 10 to 11 dB at its
+present power, just under where the ladder tries the top rung).
 
 ## Caveats
 

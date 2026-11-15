@@ -84,10 +84,17 @@ same way.  DATAC17 is a Mercury custom mode: QPSK on the same rate-0.6
 `H_16200_9720` codeword QAM16C2 uses, shortened to np=61 so its 1180-byte
 frame stays distinct from QAM16C2's 1213 bytes (frame sizes are kept
 pairwise distinct across the mode table).  QAM16C2 is ported from the Rhizomatica codec2 fork
-(dr-qam16-cport); it runs unclipped (PAPR ≈ 10 dB), so on peak-limited
-transmitters its effective +15 dB operating point is harder to reach than the
-clipped QPSK modes' figures suggest — on the bench this shows up directly as
-~5 dB less average signal power at the same ch gain setting.
+(dr-qam16-cport).  It is clipped like the other data modes (drive 2.0, no
+make-up gain: peak-to-average ratio 6.7 dB).  Unclipped, as it ran until
+1.9.24, it peaked 11.4 dB over its average, so a peak-limited transmitter
+sent it 4.7 dB weaker than DATAC17 at the same setting and its +15 dB
+operating point was out of reach where the QPSK modes' figures said it
+was not.  The clip costs the decoder about 1 dB and gives the transmitter
+almost 5: on the air, at a setting where DATAC17 read 10 dB, the unclipped
+mode decoded 0 frames of 64 and the clipped one 58
+([CLIPPED-QAM16C2-FINDINGS.md](CLIPPED-QAM16C2-FINDINGS.md)).  The figures
+below were measured on the unclipped mode, each mode at its own average
+power.
 
 Measured MPP delivery (1 Hz Doppler, 100 single-frame bursts), same bench as
 the DATAC15/16 tables (DATAC1 control row reproduces upstream within ~1 dB):
