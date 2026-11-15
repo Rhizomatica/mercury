@@ -3703,6 +3703,16 @@ void *rx_thread(void *g_modem)
             rx_inflight_note(RX_INFLIGHT_LISTEN, atomic_load(&w_listen.mode), &m_listen, now);
             rx_inflight_note(RX_INFLIGHT_LISTEN_ALT, atomic_load(&w_listen_alt.mode),
                              &m_listen_alt, now);
+            if (arq_policy_ready)
+            {
+                /* The control plane's lock and the 1 kHz MFSK listener's; not the
+                 * 500 Hz listener's (RX_INFLIGHT_LISTEN_ALT).  Its carrier sense
+                 * held a false lock for a whole 27 s frame twice in 9 minutes on
+                 * the real 40 m band (7050 kHz), where the other two held none. */
+                bool arriving = atomic_load(&g_rx_inflight_since_ms[RX_INFLIGHT_CTRL]) != 0 ||
+                                atomic_load(&g_rx_inflight_since_ms[RX_INFLIGHT_LISTEN]) != 0;
+                arq_note_call_in_flight(arriving);   /* a scanning host is held (#527) */
+            }
         }
         {
             /* The monitor decoders are also not a link-quality source: their

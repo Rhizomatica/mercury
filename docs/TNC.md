@@ -774,6 +774,18 @@ with `CANCELPENDING`. A repeated CALL is not enough on a weak path: on
 2026-11-12 K7EK decoded 2 of a caller's 13 CALLs, and BPQ32 hopped 66 s after
 the one `PENDING` while the caller went on calling for 2 minutes.
 
+Mercury sends it as soon as a decoder has locked onto a frame while LISTENING,
+about a second into a CALL, not when the CALL has decoded: a scanning host
+that stays 4 s on a frequency (RMS Trimode, with 0.5 s deaf while it changes)
+almost never holds the whole 3.74 s of a control-mode CALL (13.5 s on the MFSK
+floor), and `PENDING` is the only thing that keeps it there (#527).  It is
+repeated every 20 s while the lock lasts, and ends with `CANCELPENDING` two
+seconds after the lock is gone if no CALL for this station followed: a frame
+for another station, or noise, holds the host for its length and that grace.
+A lock that outlasts any frame (45 s) is noise and is released.  The 500 Hz
+MFSK listener is left out of this: on the 40 m band its carrier sense held a
+false lock for a whole 27 s frame twice in 9 minutes.
+
 Mercury also sends `PENDING\r` when an outgoing `CQFRAME` actually begins
 transmitting so VARA clients can treat CQ send as an in-progress operation.
 
