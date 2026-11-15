@@ -315,8 +315,13 @@ static void cb_notify_connected(const char *remote_call, const char *local_call,
  * under g_sess_lock. */
 static uint64_t g_pending_ms;
 
+static void abort_hold_release(uint64_t now);
+
 static void cb_notify_pending(const char *remote_call, const char *local_call)
 {
+    /* An ABORT hold still on is an earlier session's: its CANCELPENDING goes
+     * first, or it would cancel this PENDING (abort_hold_release). */
+    abort_hold_release(time_now_ms());
     /* An incoming call makes us the callee, whatever an earlier session left
      * behind.  cb_notify_connected takes a set src_addr to mean "we called",
      * so addresses left over from an outgoing session that ended without
@@ -386,7 +391,14 @@ static void cb_notify_disconnected(bool to_no_client)
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
     if (told)
+    {
         HLOGI(LOG_COMP, "Disconnected (the host was told at its ABORT)");
+        /* The ABORT hold's CANCELPENDING goes here, as the session ends, not
+         * after the pass: fsm_disconnecting's RX_CALL ends the session and
+         * answers the CALL in one dispatch, and that CALL's PENDING must
+         * come after it (abort_hold). */
+        abort_hold_release(time_now_ms());
+    }
     else
     {
         arq_tnc_send_disconnected();
@@ -930,6 +942,26 @@ static uint64_t g_abort_hold_ms;   /* the hold's first PENDING; 0: none (g_sess_
 static uint64_t g_abort_hold_last; /* its last PENDING */
 static bool     g_abort_hold_done; /* this teardown has had its hold */
 
+/* CANCELPENDING for a hold in progress.  From abort_hold once the hold is no
+ * longer owed (after the event loop's pass), and earlier where a new call
+ * may follow in the same pass: cb_notify_disconnected, as the ABORTed
+ * session ends, and cb_notify_pending, before a new call's PENDING.  A
+ * CANCELPENDING after that PENDING would cancel it and release a scanner in
+ * the middle of the answer.  The FSM answers a CALL in the pass that ended
+ * the teardown: fsm_disconnecting's RX_CALL ends the session and dispatches
+ * the CALL in one go, and enter_idle_after_call enters LISTENING at once, so
+ * a CALL later in the same batch is taken too.  All on the event loop, under
+ * g_sess_lock. */
+static void abort_hold_release(uint64_t now)
+{
+    if (!g_abort_hold_ms)
+        return;
+    arq_tnc_send_cancelpending();
+    HLOGI(LOG_COMP, "ABORT: the scanner released (%llu s held)",
+          (unsigned long long)((now - g_abort_hold_ms) / 1000));
+    g_abort_hold_ms = 0;
+}
+
 static void abort_hold(uint64_t now)
 {
     pthread_mutex_lock(&g_conn_lock);
@@ -938,16 +970,15 @@ static void abort_hold(uint64_t now)
     bool owed = told && g_sess.conn_state == ARQ_CONN_DISCONNECTING &&
                 !(g_sess.teardown == ARQ_TD_SENT && !g_sess.tx_active);
     if (owed && g_abort_hold_ms && now - g_abort_hold_ms >= ARQ_ABORT_SCAN_HOLD_MS)
+    {
+        /* Not reached while the FSM's ABORT bounds hold (~30 s). */
+        HLOGW(LOG_COMP, "ABORT: the hold reached its %d s backstop with the teardown still on",
+              ARQ_ABORT_SCAN_HOLD_MS / 1000);
         owed = false;
+    }
     if (!owed)
     {
-        if (g_abort_hold_ms)
-        {
-            arq_tnc_send_cancelpending();
-            HLOGI(LOG_COMP, "ABORT: the scanner released (%llu s held)",
-                  (unsigned long long)((now - g_abort_hold_ms) / 1000));
-            g_abort_hold_ms = 0;
-        }
+        abort_hold_release(now);
         if (!told || g_sess.conn_state != ARQ_CONN_DISCONNECTING)
             g_abort_hold_done = false;   /* a new teardown may hold again */
         return;
