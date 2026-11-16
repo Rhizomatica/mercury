@@ -164,6 +164,43 @@ void tnc_set_intervals(int keepalive_s, int buffer_report_ms)
                               memory_order_relaxed);
 }
 
+/* Winlink Express, in a P2P session, sends DISCONNECT 5 minutes after it
+ * last wrote to the data port ("P2P session inactivity timeout"), however
+ * much of that write the modem is still sending; BUFFER, PTT and SN lines do
+ * not reset its timer.  A message that takes longer than that to send ends
+ * the session and stays in the sender's Outbox, with VARA HF as with Mercury
+ * (#392; bench, Winlink Express 1.8.6.0: the DISCONNECT at 5:00 sharp, 12.6
+ * KB still queued).  Answered with OK and nothing else, Winlink carries on
+ * ("Completed send", the next message).
+ *
+ * Opt-in ([tnc] absorb_idle_disconnect_s, 0 = off): a DISCONNECT that comes
+ * while the host's bytes are still to deliver, and the host has written
+ * nothing to the data port for at least that long, is answered OK and not
+ * acted on.  Once a session: a second DISCONNECT ends it, as does ABORT.  A
+ * host's real end of session comes seconds after its last write, or with
+ * nothing left to deliver, and goes through. */
+static _Atomic uint64_t tnc_absorb_idle_disconnect_ms = 0;
+/* When the host last wrote to the data port (monotonic_ms). */
+static _Atomic uint64_t tnc_last_data_rx_ms = 0;
+/* This session has already had its one DISCONNECT absorbed. */
+static _Atomic bool tnc_disconnect_absorbed = false;
+
+void tnc_set_absorb_idle_disconnect_s(int seconds)
+{
+    if (seconds == 0 ||
+        (seconds >= TNC_ABSORB_IDLE_DISCONNECT_S_MIN && seconds <= TNC_ABSORB_IDLE_DISCONNECT_S_MAX))
+        atomic_store(&tnc_absorb_idle_disconnect_ms, (uint64_t)seconds * 1000ULL);
+}
+
+bool tnc_absorb_disconnect_due(uint64_t idle_ms, bool connected, int buffered,
+                               uint64_t now_ms, uint64_t last_data_rx_ms,
+                               bool already_absorbed)
+{
+    if (idle_ms == 0 || !connected || buffered <= 0 || already_absorbed)
+        return false;
+    return now_ms >= last_data_rx_ms && now_ms - last_data_rx_ms >= idle_ms;
+}
+
 static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
 {
     size_t total_sent = 0;
@@ -811,6 +848,24 @@ static void execute_control_command(char *buffer)
 
     if (!strncmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
     {
+        uint64_t idle_ms = atomic_load(&tnc_absorb_idle_disconnect_ms);
+        if (idle_ms)
+        {
+            uint64_t now = monotonic_ms();
+            uint64_t last = atomic_load(&tnc_last_data_rx_ms);
+            int buffered = arq_buffered_bytes_snapshot();
+            if (tnc_absorb_disconnect_due(idle_ms, arq_is_link_connected(), buffered,
+                                          now, last, atomic_load(&tnc_disconnect_absorbed)))
+            {
+                atomic_store(&tnc_disconnect_absorbed, true);
+                HLOGW("tcp-ctl",
+                      "DISCONNECT absorbed: %d bytes still to deliver, no host data for %llu s "
+                      "(absorb_idle_disconnect_s); a second DISCONNECT ends the session",
+                      buffered, (unsigned long long)((now - last) / 1000));
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+                return;
+            }
+        }
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_DISCONNECT;
         if (arq_submit_tcp_cmd(&cmd) == 0)
@@ -1338,6 +1393,7 @@ void *arq_reactor_thread(void *port)
                 if (n > 0)
                 {
                     HLOGD("tcp-data", "recv %zd bytes from data client", n);
+                    atomic_store(&tnc_last_data_rx_ms, monotonic_ms());
                     int queued = arq_submit_tcp_payload(rx_buf, (size_t)n);
                     if (queued < 0)
                         HLOGW("tcp-data", "Failed to queue ARQ data frame(s)");
@@ -2161,6 +2217,7 @@ void tnc_send_connected()
     const char *source_call = src[0] ? src : my_call;
     const char *dest_call   = dst[0] ? dst : my_call;
     int bw = arq_reported_bandwidth_hz();   /* separate locked call, AFTER the getter returns */
+    atomic_store(&tnc_disconnect_absorbed, false);   /* a new session's one */
     snprintf(buffer, sizeof(buffer), "CONNECTED %s %s %d\r",
              source_call, dest_call, bw);
     if (tnc_queue_line_critical(buffer) < 0)
@@ -2195,6 +2252,7 @@ void tnc_send_disconnected()
 {
     char buffer[128];
     snprintf(buffer, sizeof(buffer), "DISCONNECTED\r");
+    atomic_store(&tnc_disconnect_absorbed, false);
     if (tnc_queue_line_critical(buffer) < 0)
     {
         HLOGW("tcp-ctl", "Error queuing disconnected message");

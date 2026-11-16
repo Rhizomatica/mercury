@@ -277,6 +277,19 @@ While that delivery is under way:
   its DISCONNECT goes out, and the new call is placed after it.  A
   `DISCONNECT` before that call is placed cancels the call.
 
+**Winlink Express P2P (opt-in).** Winlink Express sends `DISCONNECT` in a
+P2P session 5 minutes after it last wrote to the data port ("P2P session
+inactivity timeout"), even while the modem is still sending that data.
+`BUFFER`, `PTT` and `SN` lines do not reset its timer, so a message that
+takes longer than 5 minutes to send is lost: the session ends and the
+message stays in the Outbox.  VARA HF behaves the same way (#392).  With
+`[tnc] absorb_idle_disconnect_s = 240`, the first `DISCONNECT` of a session
+is answered `OK` and otherwise ignored when it comes while data is still to
+deliver and nothing has been written to the data port for that long.
+Winlink then carries on.  A second `DISCONNECT` or an `ABORT` ends the
+session as usual.  The default is 0 (off), which keeps VARA's behaviour.
+Accepted values are 0 or 30–3600 s.
+
 ---
 
 ### ABORT

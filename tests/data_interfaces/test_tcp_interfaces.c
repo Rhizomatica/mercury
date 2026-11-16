@@ -1132,6 +1132,37 @@ void test_tnc_buffer_report_repeats_unchanged_backlog(void)
     TEST_ASSERT_FALSE(tnc_buffer_report_due(0, 0, true, 90000, 900));          /* empty */
 }
 
+/* Winlink Express's P2P inactivity DISCONNECT, 5 min after its last write
+ * with the modem still sending it (#392): absorbed only when switched on, in
+ * a session, with bytes to deliver, the host idle that long, and not already
+ * absorbed this session. */
+void test_tnc_absorb_disconnect_due(void)
+{
+    const uint64_t idle = 240000, last = 1000;
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(idle, true, 12627, last + 300000, last, false));
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(idle, true, 1, last + 240000, last, false));   /* 240 s */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, 1, last + 239999, last, false));  /* host just wrote */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(0, true, 12627, last + 300000, last, false)); /* off */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, false, 12627, last + 300000, last, false)); /* no session */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, 0, last + 300000, last, false));  /* all delivered */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, 12627, last + 600000, last, true)); /* second one */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, 12627, last - 1, last, false));   /* clock behind */
+}
+
+/* Switched on but nothing to deliver: the DISCONNECT goes to the ARQ. */
+void test_cmd_disconnect_not_absorbed_when_nothing_queued(void)
+{
+    tnc_set_absorb_idle_disconnect_s(240);
+    memset(&mock_snapshot, 0, sizeof(mock_snapshot));
+    memset(&captured_cmd, 0, sizeof(captured_cmd));
+    char cmd[] = "DISCONNECT";
+    execute_control_command(cmd);
+    tnc_set_absorb_idle_disconnect_s(0);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_DISCONNECT, captured_cmd.type);
+}
+
 void test_tnc_send_sn(void)
 {
     tnc_send_sn(5.5f);
@@ -2421,5 +2452,7 @@ int main(void)
     RUN_TEST(test_host_tnc_command_busy_while_a_tcp_client_is_attached);
     RUN_TEST(test_host_tnc_command_runs_a_control_line);
     RUN_TEST(test_host_tnc_release_is_a_client_leaving_once);
+    RUN_TEST(test_tnc_absorb_disconnect_due);
+    RUN_TEST(test_cmd_disconnect_not_absorbed_when_nothing_queued);
     return UNITY_END();
 }
