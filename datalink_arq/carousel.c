@@ -106,6 +106,18 @@ void car_set_nav_ms(uint32_t ms) { g_nav_ms = ms; }
  * older peer leaves zero: it is never asked to do anything new. */
 static bool g_short_rung = true;
 void car_set_short_rung(bool on) { g_short_rung = on; }
+/* #529: blind floor rounds allowed while a fall-back onto the floor is
+ * unconfirmed.  The default is 1, per the field logs (VE4KLM-K7EK
+ * 2026-11-08) and the replay in tests/sim/car_explore.c's five29fb: after M
+ * falls back to the floor and S confirmed the rung it stayed on, six
+ * silent rounds go out before the ask that would tell M where S listens.
+ * floor_silent is cumulative -- it resets only on an answered round -- so
+ * the cap covers every silent floor round since the last answer, not only
+ * those after the fall-back; the field-log walk-through read it both ways
+ * (#529).  0 asks after the first silent round; the sim A/B knob is
+ * CAR_FB_BLIND. */
+static unsigned g_fb_blind = 1;
+void car_set_fallback_blind(unsigned n) { g_fb_blind = n; }
 enum { BL_NONE, BL_SMALL, BL_MEDIUM, BL_LARGE };
 #define BL_SMALL_BYTES  90    /* one DATAC3 frame's pieces, with the check and a margin */
 #define BL_MEDIUM_BYTES 460   /* ...one DATAC1 frame's */
@@ -2683,8 +2695,13 @@ static void m_decide_send(car_t *c, uint64_t now)
     if (!has_data(c)) { m_decide_idle(c, now); return; }
     if (!answered) {
         /* At the floor silence means "keep going"; above it, or after too
-         * many, ask the receiver where it stands. */
-        if (c->m_kind == KD_ROUND && c->last_lv == 0 && c->io.pattern && ++c->floor_silent <= FLOOR_SILENT_MAX) {
+         * many, ask the receiver where it stands.  After a fall-back onto
+         * the floor (fell_back) the blind rounds are the slow part: S
+         * confirmed the rung and stayed on it, so each silent round is one
+         * more before the ask that would say where S listens (#529) -- the
+         * cap there is g_fb_blind, not FLOOR_SILENT_MAX. */
+        if (c->m_kind == KD_ROUND && c->last_lv == 0 && c->io.pattern &&
+            ++c->floor_silent <= (c->fell_back ? (int)g_fb_blind : FLOOR_SILENT_MAX)) {
             car_trace(c, "tx: no answer -- continuing (%d)", c->floor_silent);
             m_plan(c, KD_ROUND, 0, 0);
             return;

@@ -701,6 +701,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
     car_set_nav_ms(nav_air);
     car_set_short_rung(!(getenv("CAR_SHORT") && !strcmp(getenv("CAR_SHORT"), "0")));   /* A/B */
+    car_set_fallback_blind(getenv("CAR_FB_BLIND") ? (unsigned)atoi(getenv("CAR_FB_BLIND")) : 1);   /* A/B */
     car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
     car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
     snr_biased = getenv("CAR_SNR_BIAS") != NULL;

@@ -312,10 +312,47 @@ static void oct27_recv_fallback(void)
 #endif
 }
 
+/* #529: an unconfirmed fall-back onto the floor, the callee stayed on the
+ * rung it confirmed: the replay is cliff:-5 bidir with frames 0, 7, 11 lost
+ * (the explorer's replay 1 0 7 11).  With the blind-round cap at the old 6
+ * the caller sits silent on the floor; at 1 it asks after one round and the
+ * session finishes earlier.  Assert the behaviour -- intact both ways, the
+ * capped run earlier -- not the milliseconds, so a later scoring change
+ * does not break this for the wrong reason. */
+static void five29fb_floor_blind(void)
+{
+#if CAR_SIM_BYTES == 600
+    static const int idx[] = { 0, 7, 11 };   /* kept by carousel_sim_force_losses */
+    car_sim_result_t six, one;
+    char what[160];
+    carousel_sim_force_losses(idx, 3);
+    setenv("CAR_FB_BLIND", "6", 1);
+    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &six);
+    runs++;
+    setenv("CAR_FB_BLIND", "1", 1);
+    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &one);
+    runs++;
+    unsetenv("CAR_FB_BLIND");
+    carousel_sim_force_losses(NULL, -1);
+    snprintf(what, sizeof(what),
+             "six: intact=%d done=%llu, one: intact=%d done=%llu (want both intact, one earlier)",
+             six.intact, (unsigned long long)six.done_ms,
+             one.intact, (unsigned long long)one.done_ms);
+    if (!six.intact || !six.done_ms || !one.intact || !one.done_ms || one.done_ms >= six.done_ms) {
+        failures++;
+        printf("FAIL five29fb: %s\n", what);
+        printf("  If the frame order changed, pick a new set with CAR_EXPLORE_CHAN=cliff:-5\n"
+               "  CAR_TRACE=1 test_car_explore replay 1 <i> <j> <k>: want \"back to\" then one\n"
+               "  silent floor round before the ask.\n");
+    }
+#endif
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 1) {
         oct27_recv_fallback();
+        five29fb_floor_blind();
         explore_losses(-1, 3);
         explore_sensing(3);
         explore_spurious(1);
@@ -352,6 +389,11 @@ int main(int argc, char **argv)
     }
     if (!strcmp(argv[1], "oct27")) {
         oct27_recv_fallback();
+        printf("%s\n", failures ? "FAILED" : "ok");
+        return failures != 0;
+    }
+    if (!strcmp(argv[1], "five29fb")) {
+        five29fb_floor_blind();
         printf("%s\n", failures ? "FAILED" : "ok");
         return failures != 0;
     }
