@@ -45,6 +45,15 @@ type rigLab struct {
 // broadcast frames carry frameLen bytes.
 func newRigLab(t *testing.T, mode, frameLen int) *rigLab {
 	t.Helper()
+	return newRigLabVia(t, mode, frameLen, func(rigPort int) string {
+		return fmt.Sprintf("127.0.0.1:%d", rigPort)
+	})
+}
+
+// newRigLabVia is newRigLab with Mercury pointed at the address rigAddr
+// returns for rigctld's port, e.g. a proxy in between.
+func newRigLabVia(t *testing.T, mode, frameLen int, rigAddr func(rigPort int) string) *rigLab {
+	t.Helper()
 	rigctld, err := exec.LookPath("rigctld")
 	if err != nil {
 		t.Skip("rigctld not installed (Debian: libhamlib-utils)")
@@ -70,7 +79,7 @@ func newRigLab(t *testing.T, mode, frameLen int) *rigLab {
 		"-x", "null",
 		"-p", fmt.Sprint(port), "-b", fmt.Sprint(port+100),
 		"-m", fmt.Sprint(mode), "-v",
-		"-R", "2", "-A", fmt.Sprintf("127.0.0.1:%d", l.rigPort),
+		"-R", "2", "-A", rigAddr(l.rigPort),
 		"-L", l.logPath,
 		"-C", filepath.Join(dir, "missing-mercury.ini"))
 	cmd.Dir = repoRoot
@@ -94,7 +103,9 @@ func newRigLab(t *testing.T, mode, frameLen int) *rigLab {
 			}
 		}
 	}()
-	l.bcast, err = net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port+100), 5*time.Second)
+	// The broadcast listener can come up a moment after the control port:
+	// wait for it the same way rather than dial once.
+	l.bcast, err = waitForTCP(ctx, "127.0.0.1", port+100, controlPortTimeout, l.proc)
 	if err != nil {
 		l.fail("broadcast port: %v", err)
 	}

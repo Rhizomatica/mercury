@@ -83,6 +83,73 @@ static inline int radio_port_path_is_serial(const char *path)
     return 0;
 }
 
+/* Split a network rig's device string into host and port, for the shapes
+ * Hamlib's network_open() takes: "host", "host:port", "[v6]", "[v6]:port",
+ * and a bare IPv6 address (whose port, if any, is left to Hamlib).  port is
+ * "" when the string names none.  Returns 0, touching neither buffer's
+ * meaning, for anything else -- empty, ":port" alone, a serial path, a bad
+ * port, a host too long for host_len -- so the caller can leave the string
+ * to Hamlib unchanged. */
+static inline int radio_port_split_host(const char *dev, char *host, size_t host_len,
+                                        char *port, size_t port_len)
+{
+    if (!dev || !dev[0] || !host || !port || host_len == 0 || port_len < 6)
+        return 0;
+    if (radio_port_path_is_serial(dev) || strchr(dev, '/'))
+        return 0;
+
+    const char *h = dev, *p = NULL;
+    size_t hn;
+
+    if (dev[0] == '[')
+    {
+        const char *close = strchr(dev, ']');
+        if (!close || close == dev + 1)
+            return 0;
+        h = dev + 1;
+        hn = (size_t)(close - h);
+        if (close[1] == ':')
+            p = close + 2;
+        else if (close[1] != '\0')
+            return 0;
+    }
+    else
+    {
+        const char *colon = strchr(dev, ':');
+        if (colon && strchr(colon + 1, ':'))
+            hn = strlen(dev);               /* bare IPv6: no port taken */
+        else if (colon)
+        {
+            hn = (size_t)(colon - dev);
+            p = colon + 1;
+        }
+        else
+            hn = strlen(dev);
+        if (hn == 0)
+            return 0;                       /* ":4532" */
+    }
+
+    size_t pn = 0;
+    if (p)
+    {
+        pn = strlen(p);
+        if (pn == 0 || pn > 5)
+            return 0;
+        for (size_t i = 0; i < pn; i++)
+            if (p[i] < '0' || p[i] > '9')
+                return 0;
+    }
+    if (hn >= host_len)
+        return 0;
+
+    memcpy(host, h, hn);
+    host[hn] = '\0';
+    if (p)
+        memcpy(port, p, pn);
+    port[pn] = '\0';
+    return 1;
+}
+
 /* Judge a configured device string against the rig's port kind.  An empty
  * device is always OK: Hamlib has its own defaults and the user may well be
  * relying on them. */
