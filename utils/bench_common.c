@@ -300,5 +300,10 @@ int bench_mode_from_name(const char *s) {
   if (!strcmp(s, "DATAC0") || !strcmp(s, "datac0")) return FREEDV_MODE_DATAC0;
   if (!strcmp(s, "DATAC17") || !strcmp(s, "datac17")) return FREEDV_MODE_DATAC17;
   if (!strcmp(s, "QAM16C2") || !strcmp(s, "qam16c2")) return FREEDV_MODE_QAM16C2;
+  if (!strcmp(s, "DATAC17W") || !strcmp(s, "datac17w")) return FREEDV_MODE_DATAC17W;
+  if (!strcmp(s, "QAM16C2W") || !strcmp(s, "qam16c2w")) return FREEDV_MODE_QAM16C2W;
+  if (!strcmp(s, "DATAN1") || !strcmp(s, "datan1")) return FREEDV_MODE_DATAN1;
+  if (!strcmp(s, "QAM16N1") || !strcmp(s, "qam16n1")) return FREEDV_MODE_QAM16N1;
+  if (!strcmp(s, "QAM16N2") || !strcmp(s, "qam16n2")) return FREEDV_MODE_QAM16N2;
   return -1;
 }

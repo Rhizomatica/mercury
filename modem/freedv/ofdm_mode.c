@@ -432,6 +432,56 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->rx_bpf_en = true;
     config->tx_bpf_proto = filtP200S400;
     config->tx_bpf_proto_n = sizeof(filtP200S400) / sizeof(float);
+  } else if (strcmp(mode, "datac17w") == 0 || strcmp(mode, "qam16c2w") == 0) {
+    /* BW2750's top rungs: DATAC17 and QAM16C2 on 44 carriers, 125 to 2812.5
+       Hz, for radios whose transmit passband is wider than 300-2700 Hz (an
+       FT-710's 50-3050).  2089 and 3897 bit/s, 20 % over their BW2300
+       versions, for 1 dB on white noise and CCIR Moderate and 2 on CCIR Poor
+       (utils/rung_sweep x17:44,26 and xq:44,13, 40 bursts a point). */
+    bool qam = strcmp(mode, "qam16c2w") == 0;
+    ofdm_init_mode(qam ? "qam16c2" : "datac17", config);
+    strcpy(config->mode, mode);
+    config->nc = 44;
+    config->np = qam ? 13 : 26;
+    config->nuwbits = qam ? 168 : 160;                 /* 1169 / 1170 bytes */
+    config->bad_uw_errors = config->nuwbits / 4;
+    uint8_t uw[] = {1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1,
+                    0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0};
+    memset(config->tx_uw, 0, MAX_UW_BITS);
+    memcpy(config->tx_uw, uw, sizeof(uw));
+    memcpy(&config->tx_uw[config->nuwbits - sizeof(uw)], uw, sizeof(uw));
+    config->tx_bpf_proto = filtP1400S1600;
+    config->tx_bpf_proto_n = sizeof(filtP1400S1600) / sizeof(float);
+  } else if (strcmp(mode, "datan1") == 0 || strcmp(mode, "qam16n1") == 0 ||
+             strcmp(mode, "qam16n2") == 0) {
+    /* BW500's rungs above DATAC3: DATAC3's 9 carriers (562 Hz), a 4 ms guard
+       and a pilot every 8 symbols, on 3072-bit repeat-accumulate codes
+       (utils/ldpc_ira_peg.py).  QPSK at 2/3 (467 bit/s), 16-QAM at 1/2 and
+       2/3 (639, 868), against DATAC3's 296; white noise from 2, 6 and 8 dB.
+       In 500 Hz a fade takes the whole band: CCIR Moderate needs 10, 14 and
+       21 dB (utils/rung_sweep x:9,24 and xq:9,12, 40 bursts a point). */
+    bool qam = strcmp(mode, "datan1") != 0;
+    ofdm_init_mode(qam ? "qam16c2" : "datac1", config);
+    strcpy(config->mode, mode);
+    config->nc = 9;
+    config->np = qam ? 12 : 24;
+    config->ns = 8;
+    config->tcp = 0.004;
+    config->edge_pilots = 0;
+    config->codename = strcmp(mode, "qam16n1") == 0 ? "H_IRA_3072_1536" : "H_IRA_3072_2048";
+    /* 243-byte payloads for datan1, 179 qam16n1, 242 qam16n2 (its word 8
+       bits longer): every frame size distinct, as Mercury tells modes apart
+       by it. */
+    config->nuwbits = strcmp(mode, "qam16n2") == 0 ? 48 : 40;
+    config->bad_uw_errors = config->nuwbits == 48 ? 8 : 6;
+    uint8_t uw[] = {1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1,
+                    0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0};
+    memset(config->tx_uw, 0, MAX_UW_BITS);
+    memcpy(config->tx_uw, uw, sizeof(uw));
+    config->tx_bpf_proto = filtP400S600;
+    config->tx_bpf_proto_n = sizeof(filtP400S600) / sizeof(float);
+    config->amp_scale = 300E3;
+    config->clip_gain1 = 2.2;
   } else {
     assert(0);
   }

@@ -327,6 +327,15 @@ void arq_protocol_session_calls(bool we_called, const char *remote_call,
                                              * of frames at 10.2, and the
                                              * crossover vs DATAC17 ~9.6
                                              * (utils/rung_sweep)            */
+/* The 2.0 bandwidth ladders' rungs (car_set_bandwidth), each on its burst S/N
+ * where 90 % deliver on white noise (utils/rung_sweep) plus the margin the
+ * BW2300 rungs above keep: BW2750's 44-carrier rungs 1 dB over their BW2300
+ * versions; BW500's 9-carrier ones between DATAC3 and DATAC1. */
+#define ARQ_SNR_MIN_DATAC17W_DB       8.0f
+#define ARQ_SNR_MIN_QAM16C2W_DB      14.0f
+#define ARQ_SNR_MIN_DATAN1_DB         1.5f
+#define ARQ_SNR_MIN_QAM16N1_DB        7.0f
+#define ARQ_SNR_MIN_QAM16N2_DB        9.0f
 
 /* Absolute cap on how long an APP_DISCONNECT may stay deferred while the FSM
  * tries to drain the last app bytes.  Once the application has asked to

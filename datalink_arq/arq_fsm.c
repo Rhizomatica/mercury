@@ -454,7 +454,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
          * the ACCEPT names. */
         car_set_seed(sess, car_seed(sess, false));
         sess->peer_tx_mode = sess->car_rx_level == 0 ? sess->floor_mode
-                                                     : car_level_mode(sess->car_rx_level);
+                                                     : car_bw_level_mode(arq_reported_bandwidth_hz(), sess->car_rx_level);
     }
     else
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
@@ -968,7 +968,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     sess->nav_busy_until_ms = 0;
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
     car_set_max_level(sess->car, session_max_level());
-    car_set_floor_mode(sess->car, sess->floor_mode);
+    car_set_bandwidth(sess->car, arq_reported_bandwidth_hz());
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf,
                       ARQ_TX_MFSK_ONLY ? CAR_DEAF_MFSK_TX : sess->car_peer_ctl_deaf);
     car_seed_snr(sess->car, sess->car_my_snr, is_caller ? sess->car_call_snr : 0.0f);

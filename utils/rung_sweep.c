@@ -135,8 +135,14 @@ static struct freedv *open_candidate(const char *spec) {
   } else if (half <= 900.0) {
     custom.tx_bpf_proto = filtP900S1100;
     custom.tx_bpf_proto_n = 100;
-  } else {
+  } else if (half <= 1100.0) {
     custom.tx_bpf_proto = filtP1100S1300;
+    custom.tx_bpf_proto_n = 100;
+  } else if (half <= 1125.0) {
+    custom.tx_bpf_proto = filtP1150S1350;
+    custom.tx_bpf_proto_n = 100;
+  } else {
+    custom.tx_bpf_proto = filtP1400S1600;
     custom.tx_bpf_proto_n = 100;
   }
 

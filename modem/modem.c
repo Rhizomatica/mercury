@@ -614,6 +614,11 @@ static bool is_supported_split_mode(int mode)
            mode == FREEDV_MODE_DATAC16 ||
            mode == FREEDV_MODE_DATAC17 ||
            mode == FREEDV_MODE_QAM16C2 ||
+           mode == FREEDV_MODE_DATAC17W ||
+           mode == FREEDV_MODE_QAM16C2W ||
+           mode == FREEDV_MODE_DATAN1 ||
+           mode == FREEDV_MODE_QAM16N1 ||
+           mode == FREEDV_MODE_QAM16N2 ||
            mode == MERCURY_MODE_MFSK ||
            mode == MERCURY_MODE_MFSK_N32;
 }
@@ -626,6 +631,11 @@ static bool is_payload_split_mode(int mode)
            mode == FREEDV_MODE_DATAC15 ||
            mode == FREEDV_MODE_DATAC17 ||
            mode == FREEDV_MODE_QAM16C2 ||
+           mode == FREEDV_MODE_DATAC17W ||
+           mode == FREEDV_MODE_QAM16C2W ||
+           mode == FREEDV_MODE_DATAN1 ||
+           mode == FREEDV_MODE_QAM16N1 ||
+           mode == FREEDV_MODE_QAM16N2 ||
            mode == MERCURY_MODE_MFSK ||
            mode == MERCURY_MODE_MFSK_N32;
 }
@@ -678,6 +688,9 @@ static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
         FREEDV_MODE_DATAC4,  FREEDV_MODE_DATAC3,  FREEDV_MODE_DATAC1,
         FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2, MERCURY_MODE_MFSK,
         MERCURY_MODE_MFSK_N32,
+        /* the BW2750 and BW500 rungs (car_session_level_mode) */
+        FREEDV_MODE_DATAC17W, FREEDV_MODE_QAM16C2W, FREEDV_MODE_DATAN1,
+        FREEDV_MODE_QAM16N1, FREEDV_MODE_QAM16N2,
     };
     clear_mode_pool_locked();
     for (size_t i = 0; i < sizeof(pool_modes) / sizeof(pool_modes[0]); i++)
@@ -755,6 +768,16 @@ static uint32_t bitrate_level_from_payload_mode(int mode)
         return 17;
     case FREEDV_MODE_QAM16C2:
         return 25;
+    case FREEDV_MODE_DATAC17W:
+        return 26;
+    case FREEDV_MODE_QAM16C2W:
+        return 27;
+    case FREEDV_MODE_DATAN1:
+        return 28;
+    case FREEDV_MODE_QAM16N1:
+        return 29;
+    case FREEDV_MODE_QAM16N2:
+        return 30;
     case MERCURY_MODE_MFSK:
         return 100;
     case MERCURY_MODE_MFSK_N32:

@@ -18,6 +18,10 @@
 #include "H_1024_2048_4f.h"
 #include "H_128_256_5.h"
 #include "H_16200_9720.h"
+#include "H_IRA_3072_2304.h"
+#include "H_IRA_3072_2048.h"
+#include "H_IRA_3072_1536.h"
+#include "H_IRA_2048_1024.h"
 #include "H_16200_6480.h"
 #include "H_16200_7200.h"
 #include "H_16200_10800.h"
@@ -99,6 +103,30 @@ struct LDPC ldpc_codes[] = {
      H_16200_9720_NUMBERPARITYBITS, H_16200_9720_NUMBERROWSHCOLS,
      H_16200_9720_MAX_ROW_WEIGHT, H_16200_9720_MAX_COL_WEIGHT,
      (uint16_t *)H_16200_9720_H_rows, (uint16_t *)H_16200_9720_H_cols},
+
+    /* repeat-accumulate, progressive edge growth (utils/ldpc_ira_peg.py) */
+    {"H_IRA_3072_2304", H_IRA_3072_2304_MAX_ITER, 0, 1, 1, H_IRA_3072_2304_CODELENGTH,
+     H_IRA_3072_2304_NUMBERPARITYBITS, H_IRA_3072_2304_NUMBERROWSHCOLS,
+     H_IRA_3072_2304_MAX_ROW_WEIGHT, H_IRA_3072_2304_MAX_COL_WEIGHT,
+     (uint16_t *)H_IRA_3072_2304_H_rows, (uint16_t *)H_IRA_3072_2304_H_cols},
+
+    /* repeat-accumulate, progressive edge growth (utils/ldpc_ira_peg.py) */
+    {"H_IRA_3072_2048", H_IRA_3072_2048_MAX_ITER, 0, 1, 1, H_IRA_3072_2048_CODELENGTH,
+     H_IRA_3072_2048_NUMBERPARITYBITS, H_IRA_3072_2048_NUMBERROWSHCOLS,
+     H_IRA_3072_2048_MAX_ROW_WEIGHT, H_IRA_3072_2048_MAX_COL_WEIGHT,
+     (uint16_t *)H_IRA_3072_2048_H_rows, (uint16_t *)H_IRA_3072_2048_H_cols},
+
+    /* repeat-accumulate, progressive edge growth (utils/ldpc_ira_peg.py) */
+    {"H_IRA_3072_1536", H_IRA_3072_1536_MAX_ITER, 0, 1, 1, H_IRA_3072_1536_CODELENGTH,
+     H_IRA_3072_1536_NUMBERPARITYBITS, H_IRA_3072_1536_NUMBERROWSHCOLS,
+     H_IRA_3072_1536_MAX_ROW_WEIGHT, H_IRA_3072_1536_MAX_COL_WEIGHT,
+     (uint16_t *)H_IRA_3072_1536_H_rows, (uint16_t *)H_IRA_3072_1536_H_cols},
+
+    /* repeat-accumulate, progressive edge growth (utils/ldpc_ira_peg.py) */
+    {"H_IRA_2048_1024", H_IRA_2048_1024_MAX_ITER, 0, 1, 1, H_IRA_2048_1024_CODELENGTH,
+     H_IRA_2048_1024_NUMBERPARITYBITS, H_IRA_2048_1024_NUMBERROWSHCOLS,
+     H_IRA_2048_1024_MAX_ROW_WEIGHT, H_IRA_2048_1024_MAX_COL_WEIGHT,
+     (uint16_t *)H_IRA_2048_1024_H_rows, (uint16_t *)H_IRA_2048_1024_H_cols},
 
     /* DVB-S2 short frame, rate 2/5 (utils/ldpc_dvbs2_gen.py) */
     {"H_16200_6480", H_16200_6480_MAX_ITER, 0, 1, 1, H_16200_6480_CODELENGTH,

@@ -202,6 +202,11 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   if (f->mode == FREEDV_MODE_DATAC16) strcpy(mode, "datac16");
   if (f->mode == FREEDV_MODE_DATAC17) strcpy(mode, "datac17");
   if (f->mode == FREEDV_MODE_QAM16C2) strcpy(mode, "qam16c2");
+  if (f->mode == FREEDV_MODE_DATAC17W) strcpy(mode, "datac17w");
+  if (f->mode == FREEDV_MODE_QAM16C2W) strcpy(mode, "qam16c2w");
+  if (f->mode == FREEDV_MODE_DATAN1) strcpy(mode, "datan1");
+  if (f->mode == FREEDV_MODE_QAM16N1) strcpy(mode, "qam16n1");
+  if (f->mode == FREEDV_MODE_QAM16N2) strcpy(mode, "qam16n2");
   if (f->mode == FREEDV_MODE_DATA_CUSTOM) {
     assert(adv != NULL);
     assert(adv->config != NULL);
@@ -490,6 +495,16 @@ static const snr_knot_t SNR_MAP_DATAC17[] = {{3.00f, 4.00f},   {4.01f, 6.00f},  
  * (1.9.24 and before) reads high through it. */
 static const snr_knot_t SNR_MAP_QAM16C2[] = {{9.78f, 10.00f},  {10.32f, 12.00f}, {10.83f, 14.00f}, {11.34f, 16.00f},
                                              {11.70f, 18.00f}, {11.99f, 20.00f}, {12.20f, 22.00f}, {12.32f, 24.00f}};
+/* The 2.0 bandwidth ladders' rungs: BW2750's 44-carrier DATAC17W and
+ * QAM16C2W, BW500's 9-carrier DATAN1, QAM16N1 and QAM16N2.  Raw estimate
+ * against the truth, 30 frames a point on white noise, SNR3k from the modem
+ * frames' power.  The narrow 16-QAM ones flatten from ~16 dB (7.4 raw at
+ * 20 true): their maps are steep there, as QAM16C2's is past 20. */
+static const snr_knot_t SNR_MAP_DATAC17W[] = {{3.91f, 5.00f}, {4.96f, 7.00f}, {6.17f, 9.00f}, {7.41f, 11.00f}, {8.57f, 13.00f}, {9.65f, 15.00f}, {10.41f, 17.00f}, {11.01f, 19.00f}, {11.42f, 21.00f}, {11.71f, 23.00f}};
+static const snr_knot_t SNR_MAP_QAM16C2W[] = {{10.94f, 12.00f}, {11.32f, 14.00f}, {11.68f, 16.00f}, {11.99f, 18.00f}, {12.22f, 20.00f}, {12.42f, 22.00f}, {12.54f, 24.00f}};
+static const snr_knot_t SNR_MAP_DATAN1[] = {{-2.69f, -2.00f}, {-1.38f, 0.00f}, {0.17f, 2.00f}, {1.73f, 4.00f}, {3.27f, 6.00f}, {4.57f, 8.00f}, {5.67f, 10.00f}, {6.65f, 12.00f}, {7.23f, 14.00f}, {7.69f, 16.00f}, {7.89f, 18.00f}, {8.28f, 20.00f}, {8.41f, 22.00f}};
+static const snr_knot_t SNR_MAP_QAM16N1[] = {{4.50f, 4.00f}, {5.02f, 6.00f}, {5.50f, 8.00f}, {6.07f, 10.00f}, {6.47f, 12.00f}, {6.84f, 14.00f}, {7.02f, 16.00f}, {7.26f, 18.00f}, {7.36f, 20.00f}, {7.40f, 22.00f}, {7.51f, 24.00f}};
+static const snr_knot_t SNR_MAP_QAM16N2[] = {{5.08f, 6.00f}, {5.60f, 8.00f}, {6.09f, 10.00f}, {6.54f, 12.00f}, {6.82f, 14.00f}, {7.08f, 16.00f}, {7.35f, 18.00f}, {7.41f, 20.00f}, {7.46f, 22.00f}};
 #define SNR_MAP_MAX_SLOPE 4.0f
 #define SNR_MAP_MAX_DB    25.0f
 
@@ -516,6 +531,11 @@ static float freedv_snr_calib(int mode, float snr_raw) {
     case FREEDV_MODE_DATAC1:  return SNR_MAP(SNR_MAP_DATAC1,  1.220f * snr_raw - 0.42f);
     case FREEDV_MODE_DATAC17: return SNR_MAP(SNR_MAP_DATAC17, snr_raw);
     case FREEDV_MODE_QAM16C2: return SNR_MAP(SNR_MAP_QAM16C2, snr_raw);
+    case FREEDV_MODE_DATAC17W: return SNR_MAP(SNR_MAP_DATAC17W, snr_raw);
+    case FREEDV_MODE_QAM16C2W: return SNR_MAP(SNR_MAP_QAM16C2W, snr_raw);
+    case FREEDV_MODE_DATAN1: return SNR_MAP(SNR_MAP_DATAN1, snr_raw);
+    case FREEDV_MODE_QAM16N1: return SNR_MAP(SNR_MAP_QAM16N1, snr_raw);
+    case FREEDV_MODE_QAM16N2: return SNR_MAP(SNR_MAP_QAM16N2, snr_raw);
     case FREEDV_MODE_DATAC15: return SNR_MAP(SNR_MAP_DATAC15, snr_raw);
     default:                  return snr_raw;
   }
