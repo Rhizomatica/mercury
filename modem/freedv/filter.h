@@ -45,7 +45,7 @@ extern float filtP650S900[100];
 extern float filtP900S1100[100];
 extern float filtP1100S1300[100];
 extern float filtP1150S1350[100];
-extern float filtP1400S1600[100];
+extern float filtP1400S1600[240];
 extern float filtP200S400[100];
 extern float quiskFilt120t480[480];
 

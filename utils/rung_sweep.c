@@ -143,7 +143,7 @@ static struct freedv *open_candidate(const char *spec) {
     custom.tx_bpf_proto_n = 100;
   } else {
     custom.tx_bpf_proto = filtP1400S1600;
-    custom.tx_bpf_proto_n = 100;
+    custom.tx_bpf_proto_n = 240;
   }
 
   struct freedv_advanced adv;
