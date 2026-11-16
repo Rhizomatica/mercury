@@ -1008,6 +1008,15 @@ static void close_data_client(int *data_client_fd)
     cli_data_sockfd = -1;
     net_set_status(DATA_TCP_PORT, NET_LISTENING);
     HLOGI("tcp-data", "Data client disconnected");
+
+    /* Bytes it wrote with no call up would be the first payload of the next
+     * session, with whatever station that is, after their writer has gone
+     * (#572: a readiness probe's one newline broke a B2F session that came
+     * later).  The TX side of the rule arq_discard_stale_rx keeps for RX.
+     * Its BUFFER line, if anything went: the control client still there is
+     * owed the drop to 0, as at a recv. */
+    if (arq_discard_stale_tx() > 0)
+        tnc_send_buffer((uint32_t)arq_buffered_bytes_snapshot());
 }
 
 static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notify_arq)

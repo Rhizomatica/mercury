@@ -1002,6 +1002,20 @@ bytes received from the remote station are delivered on the data port.
 No framing is needed — Mercury handles segmentation internally.  The data
 port only carries payload when a session is CONNECTED.
 
+Bytes written while no session is up are held in the TX queue (`BUFFER`
+counts them) and go out as the first payload of the next session.  A host
+may write as soon as it sends `CONNECT`; those bytes are kept for that call.
+Bytes are dropped when:
+
+- the data client disconnects while the station is idle or listening (no
+  call being placed or answered), with a warning in the log: their writer is
+  gone, and they would otherwise reach whatever station connects next;
+- the host sends `ABORT`;
+- a session ends (bytes it did not carry are not kept for the next one).
+
+A host that keeps its data connection open and must start a session with an
+empty queue should check `BUFFER` and send `ABORT` if it is not 0.
+
 ---
 
 ## Broadcast Port

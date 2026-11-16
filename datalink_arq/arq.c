@@ -1493,6 +1493,47 @@ void arq_discard_stale_rx(void)
     pthread_mutex_unlock(&g_sess_lock);
 }
 
+size_t arq_discard_stale_tx(void)
+{
+    if (!g_initialized)
+        return 0;
+
+    /* Bytes the client wrote just before it closed may still be on the
+     * payload bus; let them land first, or they reach g_app_tx_buf after the
+     * clear and go out on the next session anyway. */
+    wait_payload_written();
+
+    /* Only with no call at all: idle or listening.  While calling or
+     * accepting, the bytes belong to the session being set up (a host may
+     * write as soon as it sends CONNECT, and may reopen its data socket);
+     * with a session up, the session ends and flushes them itself.
+     * g_sess_lock across the check and the clear, as arq_discard_stale_rx:
+     * a CONNECT or an incoming CALL cannot slip in between.  g_app_tx_mtx
+     * inside it, the order the FSM's dispatch takes them in (cb_tx_read). */
+    size_t dropped = 0;
+    pthread_mutex_lock(&g_sess_lock);
+    if (g_sess.conn_state == ARQ_CONN_DISCONNECTED ||
+        g_sess.conn_state == ARQ_CONN_LISTENING)
+    {
+        pthread_mutex_lock(&g_app_tx_mtx);
+        dropped = size_buffer(g_app_tx_buf);
+        if (dropped > 0)
+            clear_buffer(g_app_tx_buf);
+        pthread_mutex_unlock(&g_app_tx_mtx);
+    }
+    pthread_mutex_unlock(&g_sess_lock);
+
+    if (dropped > 0)
+    {
+        /* A partial chat line from those bytes must not be glued onto the
+         * next session's first message. */
+        msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
+        HLOGW(LOG_COMP, "Data client left with no session up: discarded %zu "
+              "queued byte(s) that no session would carry", dropped);
+    }
+    return dropped;
+}
+
 int arq_queue_data(const uint8_t *data, size_t len)
 {
     if (!data || len == 0) return -1;
