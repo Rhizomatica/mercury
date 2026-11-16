@@ -124,7 +124,9 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
        DATAC17 at the same setting.  Drive 2.0 and no make-up gain bring the
        peak-to-average ratio to 6.7 dB for about 1 dB of decoder loss
        (docs/CLIPPED-QAM16C2-FINDINGS.md); harder drives lose under fading.
-       Transmit side only: a receiver decodes either. */
+       A receiver decodes either, but its SNR reading is mapped by
+       SNR_MAP_QAM16C2 (freedv_700.c), fitted on frames clipped at this
+       drive: a change of clip_gain1 or clip_gain2 needs the map refitted. */
     config->clip_en = true;
     config->clip_gain1 = 2.0;
     config->clip_gain2 = 1.0;

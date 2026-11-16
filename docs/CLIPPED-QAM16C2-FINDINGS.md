@@ -25,8 +25,10 @@ crosses DATAC17's goodput ~3 dB earlier than stock, at roughly half the
 radio peak it needs today. The damage side is real but smaller: the clipped
 constellation needs ~1 dB more achieved SNR in AWGN, more under fading, and
 drive 3.0 destroys the mode (its entire PAPR gain cancels). The optimum is
-drive ~2, gain2 1.0 — and the change is TX-side only, so a clipped station
-interoperates with a stock one without any wire change.
+drive ~2, gain2 1.0. A clipped station decodes on a stock receiver and the
+other way round, with no wire change; what does change on the receive side
+is the SNR the receiver reports, mapped by `SNR_MAP_QAM16C2` fitted on
+clipped frames (see "The SNR the receiver reports").
 
 ## Method
 
@@ -173,10 +175,17 @@ now reads high: 15 dB at 10 true, the 25 dB cap from 14.  Both ends of a
    setting** for QAM16C2 on peak-limited radios: PAPR 11.4 → 6.7 dB, AWGN
    knee −4.5 dB of radio setting, fading goodput crossover vs DATAC17 ~3 dB
    earlier, and the same transmitter burden as the rung below.
-2. **TX-side only.** The receiver is untouched; a clipped station
-   interoperates with a stock one. No wire format, frame size, mode table or
-   ladder change is required.  The `ofdm_mode.c` change waited for the
-   bench ("On the air" below) and is made.
+2. **No wire change, one receiver change.** A clipped station decodes on a
+   stock receiver and the other way round; no wire format, frame size, mode
+   table or ladder threshold changes.  The receiver's SNR map for QAM16C2 is
+   refitted on clipped frames (without it the reading capped at ~12.7 dB
+   and kept the rung marginal at any SNR).  A mixed pair reads optimistic:
+   an unclipped 1.9.24 sender reads up to ~11 dB high through the new map
+   (23 dB at 12 true; the 25 dB cap from about 14), partly offset at the low
+   end by the clipped sender needing ~4.5 dB less carrier.  The 2.0 release
+   notes must say so, so that such a link's logs are not a surprise.  The
+   `ofdm_mode.c` change waited for the bench ("On the air" below) and is
+   made.
 3. Do not clip harder than drive ≈ 2.0-2.5. (2.5, 1.0) trades fading
    robustness for PAPR and loses; 3.0 is unusable on this mode.
 

@@ -17,17 +17,19 @@
  * QPSK, 16 ms symbols and a 6 ms guard as DATAC1 and DATAC3; <np> modem
  * frames per packet.  The packet holds np * 4 * carriers * 2 bits: the unique
  * word, the code's parity bits, and as many of its data bits as are left (a
- * shortened code).  Its transmit filter follows the carrier count.  Above 25
- * carriers a candidate keeps DATAC1's drive into the clipper (amp_scale,
- * clip_gain1 and 2), so it is clipped harder or softer than a shipped mode of
- * its width would be.
+ * shortened code).  Its transmit filter follows the carrier count.  A
+ * candidate keeps its base mode's drive into the clipper (amp_scale,
+ * clip_gain1 and 2), except that one of 12 carriers or fewer gets the
+ * narrow modes' (amp_scale 300E3, clip_gain1 2.2) on any base; so it is
+ * clipped harder or softer than a shipped mode of its width would be.
  *
  * Per point: bursts delivered with their CRC, bursts acquired, the average
  * S/N the bursts had (the usual SNR3k), the S/N the modem reported for them
  * (what the rung ladder reads: a knob that distorts the frames, as the clip
  * does, shows here as a reading that falls away from the burst's S/N), and
  * the goodput: payload bits over the burst's airtime, times the share
- * delivered.
+ * delivered.  A candidate's reading is the raw estimate: the per-mode maps
+ * (freedv_700.c) key on the mode, and the custom slot has none.
  *
  * Channels: awgn, or a chanutil preset (ccir-poor is MODES.md's MPP).
  *
@@ -188,7 +190,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  struct freedv *tx = open_mode(modename), *rx = open_mode(modename);
+  struct freedv *tx = open_mode(modename), *rx = tx ? open_mode(modename) : NULL;   /* one error line */
   if (!tx || !rx) {
     fprintf(stderr, "cannot open mode '%s'\n", modename);
     return 1;
@@ -235,7 +237,8 @@ int main(int argc, char **argv) {
   printf("%s: %d B payload, burst %.2f s, %.0f bit/s, %.1f dB under the carrier, channel %s, %d trials\n",
          modename, nbytes - 2, secs, rate, under,
          chan == CHAN_AWGN ? "awgn" : chanutil_preset_name(chan), trials);
-  printf("  carrier S/N   burst S/N   modem reads   delivered   acquired   goodput\n");
+  printf("  carrier S/N   burst S/N   %s   delivered   acquired   goodput\n",
+         modename[0] == 'x' ? "  raw est. " : "modem reads");
 
   for (double s = lo; s <= hi + 0.001; s += step) {
     bench_rng_seed(&rngA, seed + 1);
