@@ -23,8 +23,9 @@ struct sim_channel {
     double   return_cliff_db; /* with per-mode PER: direction 1 also below this
                                * SNR, as a cliff (sim_channel_set_return_snr) */
     double   snr_dir_db[2];
-    int      ret_mode;        /* direction 1 also loses this share of this */
-    double   ret_per;         /* mode's frames (sim_channel_set_return_mode_per) */
+    int      ret_mode;        /* direction ret_dir (1 unless set) also loses */
+    double   ret_per;         /* this share of this mode's frames */
+    int      ret_dir;         /* (sim_channel_set_return_mode_per, _dir_mode_per) */
     sim_mode_per_t mode_per[SIM_MODE_PER_MAX]; /* empirical per-mode erasure */
     int      mode_per_count;
     bool     fading;          /* time-varying SNR (see sim_channel_set_fading) */
@@ -77,6 +78,7 @@ sim_channel_t *sim_channel_create(const sim_channel_cfg_t *cfg)
     ch->guard_ms = cfg->guard_ms;
     ch->return_cliff_db = NAN;
     ch->ret_mode = -1;
+    ch->ret_dir  = 1;
     return ch;
 }
 
@@ -125,15 +127,21 @@ void sim_channel_set_return_snr(sim_channel_t *ch, double snr_db)
  * per-mode PER. */
 void sim_channel_set_return_mode_per(sim_channel_t *ch, int freedv_mode, double per)
 {
+    sim_channel_set_dir_mode_per(ch, 1, freedv_mode, per);
+}
+
+void sim_channel_set_dir_mode_per(sim_channel_t *ch, int dir, int freedv_mode, double per)
+{
     if (!ch) return;
+    ch->ret_dir = dir & 1;
     ch->ret_mode = freedv_mode;
     ch->ret_per = per;
 }
 
-/* At least the return path's share for its mode (sim_channel_set_return_mode_per). */
+/* At least that direction's share for its mode (sim_channel_set_dir_mode_per). */
 static double return_per(const sim_channel_t *ch, int dir, int freedv_mode, double per)
 {
-    return (dir & 1) && freedv_mode == ch->ret_mode && per < ch->ret_per ? ch->ret_per : per;
+    return (dir & 1) == ch->ret_dir && freedv_mode == ch->ret_mode && per < ch->ret_per ? ch->ret_per : per;
 }
 
 static bool below_return(const sim_channel_t *ch, int dir, int freedv_mode)

@@ -23,9 +23,9 @@ struct sim_endpoint {
     uint8_t rx[SIM_RX_CAP]; size_t rx_len;            /* delivered app bytes */
 
     /* Frames emitted by send_tx_frame, drained by the core.  One per keydown,
-     * or two when the first opened a shared keydown (an ACK that hands us the
-     * turn, carrying our first data burst). */
-    sim_outframe_t outbox[2];
+     * or a burst of them in one keydown (burst_remaining > 0 on all but the
+     * last: a DISCONNECT that is never retried goes twice). */
+    sim_outframe_t outbox[4];
     int            outbox_n;
 
     /* The carousel data plane's keydown (one at a time: it keys again only
@@ -95,7 +95,8 @@ bool sim_endpoint_take_outframe(sim_endpoint_t *ep, sim_outframe_t *out)
 {
     if (ep->outbox_n == 0) return false;
     *out = ep->outbox[0];
-    ep->outbox[0] = ep->outbox[1];
+    for (int i = 1; i < ep->outbox_n; i++)
+        ep->outbox[i - 1] = ep->outbox[i];
     ep->outbox_n--;
     return true;
 }
@@ -150,11 +151,13 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
                               const uint8_t *frame, int burst_remaining)
 {
     sim_endpoint_t *ep = s_active;
-    /* One plain frame per keydown (CALL/ACCEPT/DISCONNECT).  The core drains
-     * the outbox before the next dispatch that can emit a frame, so a second
-     * one means the burst machinery has changed. */
-    assert(ep->outbox_n == 0 &&
-           "send_tx_frame fired with outbox full: multi-frame burst detected");
+    /* One plain frame per keydown (CALL/ACCEPT/DISCONNECT), or the frames of
+     * one burst.  The core drains the outbox before the next dispatch that
+     * can emit a frame, so a frame behind one that ended its burst means the
+     * burst machinery has changed. */
+    assert((ep->outbox_n == 0 || ep->outbox[ep->outbox_n - 1].burst_remaining > 0) &&
+           ep->outbox_n < (int)(sizeof(ep->outbox) / sizeof(ep->outbox[0])) &&
+           "send_tx_frame fired with outbox full: a second keydown before the core drained the first");
     sim_outframe_t *of = &ep->outbox[ep->outbox_n];
     assert(frame_size <= sizeof(of->buf));
     memcpy(of->buf, frame, frame_size);

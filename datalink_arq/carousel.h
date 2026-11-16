@@ -339,6 +339,10 @@ void car_seed_snr(car_t *c, float mine, float peers);
 /* The peer hears us below the control mode, as it last reported: our control
  * frames go on MFSK.  The session's own control frames follow the same rule. */
 bool car_peer_ctl_deaf(const car_t *c);
+/* The peer hears my control mode, but below -3 dB as it last reported
+ * (moved by my readings since): a frame there gets through only part of the
+ * time.  False with no report. */
+bool car_peer_hears_ctl_marginal(const car_t *c);
 void car_start_sender(car_t *c, uint64_t now);
 void car_start_receiver(car_t *c, uint64_t now);
 

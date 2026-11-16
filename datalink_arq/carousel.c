@@ -3283,6 +3283,18 @@ static void note_peer_ctl_deaf(car_t *c, bool deaf)
 
 bool car_peer_ctl_deaf(const car_t *c) { return c && ctl_on_floor(c); }
 
+/* The peer hears my control mode, but not by much: how it last said it hears
+ * me, moved by my own readings since where I have them (peer_hears_me_db),
+ * is below CTL_LOSS_OFF_DB (-3 dB), the band where on air DATAC16 got
+ * through only part of the time (ctl_deaf_on_asks).  False with no report. */
+bool car_peer_hears_ctl_marginal(const car_t *c)
+{
+    if (!c || !c->peer_snr_ms || isnan(c->peer_snr_db)) return false;
+    float db = peer_hears_me_db(c);
+    if (isnan(db)) db = c->peer_snr_db;
+    return db < CTL_LOSS_OFF_DB;
+}
+
 void car_seed_ctl_deaf(car_t *c, uint8_t mine, uint8_t peers)
 {
     c->ctl_deaf = mine;
