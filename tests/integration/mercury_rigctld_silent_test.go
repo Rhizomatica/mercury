@@ -27,6 +27,9 @@ type silentLink struct {
 	mu     sync.Mutex
 	frozen map[net.Conn]bool // client side of each link -> silent
 	conns  []net.Conn
+	paused bool       // stop accepting (the queue fills, new SYNs go unanswered)
+	resume *sync.Cond // signalled when paused is cleared
+	held   []net.Conn // accepted just as the pause began: held, not forwarded
 }
 
 func newSilentLink(t *testing.T, target string) *silentLink {
@@ -35,7 +38,14 @@ func newSilentLink(t *testing.T, target string) *silentLink {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return newSilentLinkOn(t, ln, target)
+}
+
+// newSilentLinkOn is newSilentLink on a listener the caller made.
+func newSilentLinkOn(t *testing.T, ln net.Listener, target string) *silentLink {
+	t.Helper()
 	s := &silentLink{ln: ln, target: target, frozen: map[net.Conn]bool{}}
+	s.resume = sync.NewCond(&s.mu)
 	t.Cleanup(s.close)
 	go s.accept()
 	return s
@@ -49,6 +59,18 @@ func (s *silentLink) accept() {
 		if err != nil {
 			return
 		}
+		s.mu.Lock()
+		if s.paused {
+			// Already waiting in Accept when the pause began.  Hold this one
+			// and call Accept no more until resumed, so the queue fills.
+			s.held = append(s.held, c)
+			for s.paused {
+				s.resume.Wait()
+			}
+			s.mu.Unlock()
+			continue
+		}
+		s.mu.Unlock()
 		u, err := net.Dial("tcp", s.target)
 		if err != nil {
 			c.Close()
@@ -102,7 +124,12 @@ func (s *silentLink) close() {
 	s.ln.Close()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.paused = false
+	s.resume.Broadcast()
 	for _, c := range s.conns {
+		c.Close()
+	}
+	for _, c := range s.held {
 		c.Close()
 	}
 }
