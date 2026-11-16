@@ -1145,7 +1145,15 @@ try_shm_connect2:
     arq_modem_set_floor_mode_fn(mfsk_pattern_set_geometry);
     
     int modem_sample_rate = g_modem->codec.be->sample_rate(g_modem->codec.ctx);
-    HLOGI("modem", "Initialized persistent mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2/MFSK/MFSK500), frames per burst: %d", frames_per_burst);
+    {
+        /* Each mode by name (the Go harness looks for them), from the pool. */
+        char names[256] = "";
+        for (int i = 0; i < modem_mode_pool_n; i++)
+            snprintf(names + strlen(names), sizeof(names) - strlen(names), "%s%s",
+                     i ? "/" : "", mode_name_from_enum(modem_mode_pool[i].mode));
+        HLOGI("modem", "Initialized persistent mode pool (%d modes: %s), frames per burst: %d",
+              modem_mode_pool_n, names, frames_per_burst);
+    }
     HLOGI("modem", "Active FreeDV mode at startup: %d (%s), verbosity: %d", mode, mode_name_from_enum(mode), freedv_verbosity);
     HLOGI("modem", "Modem expects sample rate: %d Hz", modem_sample_rate);
     HLOGI("modem", "Modem payload bytes per frame: %zu", payload_bytes_per_modem_frame);
