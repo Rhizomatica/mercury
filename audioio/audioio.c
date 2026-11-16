@@ -2645,6 +2645,15 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
                                   const char *log_tag, bool pulse_lock_held,
                                   const char *saved_name)
 {
+    /* PulseAudio has no device called "default": the name reaches the server
+     * as the stream's target, and a stream that names its target is not
+     * routed by the server's memory of where the user moved it (pavucontrol,
+     * stream-restore), so a choice made there was undone at every start
+     * (IW2DHW, #550).  No name lets PulseAudio choose: its default device,
+     * or the one the user picked for Mercury. */
+    if (audio_subsys == AUDIO_SUBSYSTEM_PULSE && strcmp(buf, "default") == 0)
+        buf[0] = '\0';
+
     /* An empty device means "the default".  Most backends take that as NULL and
      * choose sensibly, but OSS cannot: ffaudio falls back to /dev/dsp for BOTH
      * directions, and on OSSv4 /dev/dsp is one node -- commonly playback-only.
