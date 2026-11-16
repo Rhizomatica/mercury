@@ -84,8 +84,15 @@ func TestBrowserOnControlPortIsTurnedAway(t *testing.T) {
 		fail("browser could not connect: %v", err)
 	}
 	defer web.Close()
-	req := "GET / HTTP/1.1\r\nHost: 127.0.0.1:" + fmt.Sprint(basePort) +
-		"\r\nUser-Agent: Mozilla/5.0\r\nAccept: text/html\r\nConnection: keep-alive\r\n\r\n"
+	// Firefox's request as K7EK's log has it, 368 bytes: longer than the
+	// control port's 128-byte read, so most of it is still unread when the
+	// browser is turned away; closed like that, the socket answers with a
+	// RST and the browser may never see the reply (#583 review).
+	req := "GET / HTTP/1.1\r\nHost: 127.0.0.1:" + fmt.Sprint(basePort) + "\r\n" +
+		"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:159.0) Gecko/20100101 Firefox/159.0\r\n" +
+		"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n" +
+		"Accept-Language: en-US,en;q=0.9\r\nAccept-Encoding: gzip, deflate\r\nDNT: 1\r\nSec-GPC: 1\r\n" +
+		"Connection: keep-alive\r\nUpgrade-Insecure-Requests: 1\r\nPriority: u=0, i\r\n\r\n"
 	if _, err := web.Write([]byte(req)); err != nil {
 		fail("browser write: %v", err)
 	}

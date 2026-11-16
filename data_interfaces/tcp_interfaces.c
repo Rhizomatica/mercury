@@ -1055,6 +1055,15 @@ static void refuse_web_client(int *ctl_client_fd)
     char who[80];
     peer_name(*ctl_client_fd, who, sizeof(who));
     (void)send(*ctl_client_fd, reply, sizeof(reply) - 1, 0);   /* best effort */
+    /* Closed with request bytes still unread (headers in a later segment),
+     * the socket would answer with a RST, and the browser could show
+     * "connection reset" instead of the reply (#583 review).  So: our side
+     * done (FIN after the reply), and what has arrived read and dropped
+     * before the close.  Non-blocking: only what is already here. */
+    (void)SOCK_SHUTDOWN_WR(*ctl_client_fd);
+    char sink[512];
+    for (int i = 0; i < 64 && recv(*ctl_client_fd, sink, sizeof(sink), 0) > 0; i++)
+        ;
     HLOGW("tcp-ctl", "control connection from %s is a web browser: closed. This port is for "
           "host programs (BPQ32, Pat...); the web interface is on the UI port", who);
     close_ctl_socket(ctl_client_fd);
