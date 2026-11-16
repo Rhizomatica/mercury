@@ -227,6 +227,54 @@ and the no-overlap are timing, which the model does not have: the sim tests
 `test_car_callee_abort_disconnect_before_the_hop` check both, as the peer
 sees it (told, and no time with both keyed).
 
+The ABORT hold (#560).  The DISCONNECTED at the ABORT is what BPQ32's port
+takes as the session's end: its scan restarts 15 s later, and at BW500 the
+peer's frame on the air can outlast that (2026-11-13, K7EK's ABORT at
+15:17:40.8, BPQ32's hop at 15:17:57 while KG9NI sent a 26 s frame; the
+DISCONNECT was never keyed, and KG9NI waited out its 240 s watchdog).
+BPQ32 refuses a hop while its port reports a connect pending (`PENDING`
+sets that, `DISCONNECTED` and `CANCELPENDING` clear it).  So after the
+ABORT's DISCONNECTED, arq.c (`abort_hold`) says `PENDING`, again every 20 s,
+and `CANCELPENDING` once the hold is no longer owed.  Owed is derived, no
+state of its own: the host was told at its ABORT (`g_host_told`), the
+session is DISCONNECTING, and its DISCONNECT is not out (not `ARQ_TD_SENT`
+with the keydown over).  The FSM's ABORT bounds end it: a callee's
+out-of-turn DISCONNECT that never finds a clear channel is dropped about
+30 s after the ABORT (`abort_key_by`, then `ARQ_ABORT_HOLD_MAX`), and the
+`CANCELPENDING` then comes with no DISCONNECT sent.  60 s
+(`ARQ_ABORT_SCAN_HOLD_MS`) is a backstop, logged as a warning if it fires.
+
+Where the `CANCELPENDING` goes matters.  The hold is checked after each
+pass of the event loop, but `fsm_disconnecting`'s `RX_CALL` ends the
+session and answers a CALL in one dispatch (the peer calling again, its
+side of the session gone: `notify_session_ended`, then the CALL in
+LISTENING, whose `PENDING` goes at once).  A `CANCELPENDING` after the pass
+would follow that `PENDING`, and release a scanner in the middle of the
+answer.  The `RX_CALL` path is not the only one: `enter_idle_after_call` enters
+LISTENING at once (the `APP_LISTEN` that `cb_notify_disconnected` queues
+comes on top), so a CALL later in the same batch of events is taken in
+the pass that ended the teardown too.  So the `CANCELPENDING` goes in
+`cb_notify_disconnected`, as the ABORTed session ends, and, whatever the
+path, in `cb_notify_pending` before a new call's `PENDING` if a hold is
+still on.  After the pass only for a hold that ends with the session still
+on (its DISCONNECT out, the caller waiting for the answer).  Whatever opens
+a session next, the `CANCELPENDING` is first.
+
+In the model: `held` (the session whose hold is on), set at the ABORT
+(`HoldAtAbort`) if `HoldOwed`, and cleared in the very step in which it
+stops being owed (`HoldAir`).  `HoldInTeardown`: a hold is on only after
+its session's ABORT notice and while it is owed, so none outlives its
+teardown.  `HoldOwnSession`: no hold is still on once its end is in a
+later session.  `Mut_holdlate.cfg` clears it a step later instead, before
+any other event (#560 as opened, the `CANCELPENDING` after the pass); with
+loss it violates `HoldOwnSession` in 7 steps: the caller's first CALL
+reaches the callee, its ACCEPT is lost, the caller calls again; the callee's
+host ABORTs the first session, and the callee takes the new CALL from its
+caller mid-teardown, its `PENDING` out with the first hold's
+`CANCELPENDING` still to come.  Lossless it is not reached (no error,
+2 169 294 states): the caller leaves a session behind the callee's back
+only on a loss.
+
 As first written, a caller whose DISCONNECT was out ended at once on the
 ABORT.  The model has it as `Mut_abortnow.cfg`: the caller calls again, and
 its CALL reaches the callee while that one still owes its reply
@@ -250,11 +298,20 @@ Results:
   lossless, with the host's race and its notice.  No error, 1 966 726
   distinct states (1 865 558 before `SAbortKey`, 259 749 before the host's
   notice).
+  With the ABORT hold (`held`), `HoldInTeardown` and `HoldOwnSession`
+  added: no error, the same 1 966 726 states (`held` is a function of the
+  others).
 - `SessionTeardown_abort_lossy.cfg`: the same with any frame lost.  Not
   exhausted: no error through 36.7 M distinct states at depth 48
   (7 workers, 1 h 50 min), with 1.3 M still queued when the run was stopped.
   With `SAbortKey` on a clear channel: no error through 7.21 M distinct
   states at depth 28 (4 workers, 25 min), 1.0 M still queued.
+- `Mut_holdlate.cfg`: with loss, the ABORT hold's `CANCELPENDING` a step
+  after its session ends (#560 as opened).  It violates `HoldOwnSession`
+  (7 steps, above).  The code's rule on the same lossy config, checking
+  only the hold's invariants: no error through 18.1 M distinct
+  states at depth 28, 3.3 M still queued (7 workers, stopped after
+  15 min); the mutant fails at depth 7.
 - `Mut_abortnow.cfg`: lossless, the caller's ABORT with its DISCONNECT out
   ends it at once.  It violates `Clean`: its next CALL is dropped by a
   callee still replying.
