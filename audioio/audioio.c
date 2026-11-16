@@ -2645,12 +2645,6 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
                                   const char *log_tag, bool pulse_lock_held,
                                   const char *saved_name)
 {
-    /* An empty device means "the default".  Most backends take that as NULL and
-     * choose sensibly, but OSS cannot: ffaudio falls back to /dev/dsp for BOTH
-     * directions, and on OSSv4 /dev/dsp is one node -- commonly playback-only.
-     * Capture then opens a playback device and spins on EACCES/EBUSY.  So for
-     * OSS resolve an empty device to the first one enumerated for THIS
-     * direction. */
     /* PulseAudio has no device called "default": the name reaches the server
      * as the stream's target, and a stream that names its target is not
      * routed by the server's memory of where the user moved it (pavucontrol,
@@ -2660,6 +2654,12 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
     if (audio_subsys == AUDIO_SUBSYSTEM_PULSE && strcmp(buf, "default") == 0)
         buf[0] = '\0';
 
+    /* An empty device means "the default".  Most backends take that as NULL and
+     * choose sensibly, but OSS cannot: ffaudio falls back to /dev/dsp for BOTH
+     * directions, and on OSSv4 /dev/dsp is one node -- commonly playback-only.
+     * Capture then opens a playback device and spins on EACCES/EBUSY.  So for
+     * OSS resolve an empty device to the first one enumerated for THIS
+     * direction. */
     bool want_default = (buf[0] == '\0');
     if (want_default && audio_subsys != AUDIO_SUBSYSTEM_OSS)
         return;
