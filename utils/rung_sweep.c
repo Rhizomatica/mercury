@@ -17,11 +17,17 @@
  * QPSK, 16 ms symbols and a 6 ms guard as DATAC1 and DATAC3; <np> modem
  * frames per packet.  The packet holds np * 4 * carriers * 2 bits: the unique
  * word, the code's parity bits, and as many of its data bits as are left (a
- * shortened code).  Its transmit filter follows the carrier count.
+ * shortened code).  Its transmit filter follows the carrier count.  Above 25
+ * carriers a candidate keeps DATAC1's drive into the clipper (amp_scale,
+ * clip_gain1 and 2), so it is clipped harder or softer than a shipped mode of
+ * its width would be.
  *
  * Per point: bursts delivered with their CRC, bursts acquired, the average
- * S/N the bursts had (the usual SNR3k), and the goodput: payload bits over
- * the burst's airtime, times the share delivered.
+ * S/N the bursts had (the usual SNR3k), the S/N the modem reported for them
+ * (what the rung ladder reads: a knob that distorts the frames, as the clip
+ * does, shows here as a reading that falls away from the burst's S/N), and
+ * the goodput: payload bits over the burst's airtime, times the share
+ * delivered.
  *
  * Channels: awgn, or a chanutil preset (ccir-poor is MODES.md's MPP).
  *
@@ -39,6 +45,7 @@
 #include "codec2_ofdm.h"
 #include "filter.h"
 #include "freedv_api.h"
+#include "ldpc_codes.h"
 #include "ofdm_internal.h"
 
 #define FS 8000.0
@@ -52,25 +59,54 @@ static double seq_noise(void *ctx) { return bench_seq_next((bench_seq *)ctx); }
 
 static struct OFDM_CONFIG custom;
 
-/* x:<nc>,<np>,<code>[,<nuw>] into codec2's custom slot. */
+/* x[17|q]:<nc>,<np>,<code>[,<nuw>[,<ns>[,<guard ms>]]] into codec2's custom
+ * slot: on DATAC1's settings (x:), DATAC17's (x17:) or QAM16C2's (xq:, 16-QAM,
+ * clipped, its estimator).  ns is the symbols from one pilot to the next
+ * (5 in every shipped mode); the guard is the cyclic prefix (6 ms, QAM16C2's
+ * 4).  Omitted or 0: the base mode's. */
 static struct freedv *open_candidate(const char *spec) {
   static char code[64];
-  int nc = 0, np = 0, nuw = 0;
-  if (sscanf(spec, "x:%d,%d,%63[^,],%d", &nc, &np, code, &nuw) < 3 || nc < 1 || np < 1)
+  int nc = 0, np = 0, nuw = 0, ns = 0;
+  float guard = 0.0f;
+  char *base = "datac1";
+  const char *args = spec + 2;
+  if (!strncmp(spec, "x17:", 4)) base = "datac17", args = spec + 4;
+  else if (!strncmp(spec, "xq:", 3)) base = "qam16c2", args = spec + 3;
+  if (sscanf(args, "%d,%d,%63[^,],%d,%d,%f", &nc, &np, code, &nuw, &ns, &guard) < 3 || nc < 1 || np < 1)
     return NULL;
 
-  ofdm_init_mode("datac1", &custom);
+  ofdm_init_mode(base, &custom);
   strcpy(custom.mode, "custom");
   custom.nc = nc;
   custom.np = np;
   custom.codename = code;
+  if (ns > 1) custom.ns = ns;
+  if (guard > 0.0f) custom.tcp = guard / 1000.0f;
 
-  /* The unique word takes what the code leaves; 16 bits as DATAC1 unless
-   * told otherwise.  The 24-bit word goes at both ends when there is room. */
-  if (nuw <= 0) nuw = 16;
+  /* What the library would assert on, as a usage error instead: an unknown
+   * code, a packet too short for the code's parity and a CRC, or data bits
+   * that are not whole bytes. */
+  int ci = -1;   /* ldpc_codes_find asserts on a name it does not know */
+  for (int i = 0; i < ldpc_codes_num(); i++)
+    if (!strcmp(ldpc_codes[i].name, code)) ci = i;
+  if (ci < 0) {
+    fprintf(stderr, "unknown LDPC code '%s'\n", code);
+    return NULL;
+  }
+
+  /* The unique word takes what the code leaves; the base mode's length (16
+   * bits on DATAC1) unless told otherwise.  The 24-bit word goes at both
+   * ends when there is room. */
+  if (nuw <= 0) nuw = custom.nuwbits;
   if (nuw > MAX_UW_BITS || (nuw % custom.bps) != 0) return NULL;
   custom.nuwbits = nuw;
   custom.bad_uw_errors = nuw < 24 ? 6 : nuw / 4;
+  int data = np * (custom.ns - 1) * nc * custom.bps - nuw - custom.txtbits - ldpc_codes[ci].NumberParityBits;
+  int room = ldpc_codes[ci].CodeLength - ldpc_codes[ci].NumberParityBits;
+  if (data <= 16 || data > room || data % 8) {
+    fprintf(stderr, "%s: %d data bits in the packet (need 17 to %d, whole bytes)\n", spec, data, room);
+    return NULL;
+  }
   static const uint8_t uw[] = {1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1,
                                0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0};
   memset(custom.tx_uw, 0, MAX_UW_BITS);
@@ -107,7 +143,7 @@ static struct freedv *open_candidate(const char *spec) {
 }
 
 static struct freedv *open_mode(const char *name) {
-  if (!strncmp(name, "x:", 2)) return open_candidate(name);
+  if (name[0] == 'x' && strchr(name, ':')) return open_candidate(name);
   int m = bench_mode_from_name(name);
   return m < 0 ? NULL : freedv_open(m);
 }
@@ -133,7 +169,7 @@ static int make_burst(struct freedv *tx, short *burst, unsigned char *payload,
 int main(int argc, char **argv) {
   if (argc < 6) {
     fprintf(stderr,
-            "usage: %s <mode | x:carriers,np,code[,uwbits]> <trials> <lo> <hi> <step> [channel] [seed]\n"
+            "usage: %s <mode | x[17|q]:carriers,np,code[,uwbits[,ns[,guard ms]]]> <trials> <lo> <hi> <step> [channel] [seed]\n"
             "  the axis is the S/N in 3 kHz of a steady carrier at the transmitter's peak\n"
             "  channel: awgn (default) or a chanutil preset (ccir-poor = MPP)\n",
             argv[0]);
@@ -199,7 +235,7 @@ int main(int argc, char **argv) {
   printf("%s: %d B payload, burst %.2f s, %.0f bit/s, %.1f dB under the carrier, channel %s, %d trials\n",
          modename, nbytes - 2, secs, rate, under,
          chan == CHAN_AWGN ? "awgn" : chanutil_preset_name(chan), trials);
-  printf("  carrier S/N   burst S/N   delivered   acquired   goodput\n");
+  printf("  carrier S/N   burst S/N   modem reads   delivered   acquired   goodput\n");
 
   for (double s = lo; s <= hi + 0.001; s += step) {
     bench_rng_seed(&rngA, seed + 1);
@@ -207,8 +243,9 @@ int main(int argc, char **argv) {
     chanutil_t *ch = NULL;
     if (chan != CHAN_AWGN && !(ch = chanutil_open(chan, (float)(a_tone - s), 1234u))) return 1;
 
-    int delivered = 0, acquired = 0;
+    int delivered = 0, acquired = 0, nest = 0;
     double achieved = 0.0;
+    float est = 0.0f;
     bench_seq tailseq = {0};
     for (int t = 0; t < trials; t++) {
       double p, sigma;
@@ -230,14 +267,16 @@ int main(int argc, char **argv) {
       }
       bench_seq_init(&tailseq, &rngB, nburst + 8192);
       int saw, got;
-      bench_run_burst(rx, noisy, n, nburst, sigma, out, seq_noise, &tailseq, &saw, &got, NULL, NULL);
+      bench_run_burst(rx, noisy, n, nburst, sigma, out, seq_noise, &tailseq, &saw, &got, &est, &nest);
       bench_seq_free(&tailseq);
       acquired += saw ? 1 : 0;
       delivered += got ? 1 : 0;
     }
     if (ch) chanutil_close(ch);
-    printf("  %+7.1f     %+7.1f      %3d/%-3d     %3d/%-3d   %6.0f\n", s, achieved / trials, delivered,
-           trials, acquired, trials, rate * delivered / trials);
+    char reads[16] = "    -";
+    if (nest) snprintf(reads, sizeof(reads), "%+7.1f", est / nest);
+    printf("  %+7.1f     %+7.1f      %7s      %3d/%-3d     %3d/%-3d   %6.0f\n", s, achieved / trials, reads,
+           delivered, trials, acquired, trials, rate * delivered / trials);
     fflush(stdout);
   }
 

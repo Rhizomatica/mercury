@@ -101,9 +101,10 @@ void bench_run_burst_ex(struct freedv *rx, const short *samples, int n,
                         bench_noise_fn noise, void *noise_ctx, int *saw_sync,
                         int *got_frame, float *snr_est_sum, int *snr_est_n,
                         bench_sync_info *info);
-/* snr_est_sum/snr_est_n: optional (NULL to skip).  When the decoder reaches
- * full sync, the modem's SNR estimate is read once and accumulated -- what
- * the rung ladder reads, so the tools check it for knob-induced bias. */
+/* snr_est_sum/snr_est_n: optional (NULL to skip).  When a frame decodes
+ * whole, the modem's SNR estimate is read once a burst and accumulated --
+ * what Mercury reports with the frame and the rung ladder reads, so the tools
+ * check it for knob-induced bias. */
 
 /* Pure-noise control: feeds exactly n + tail samples of noise from `seq`
  * (clamped) and counts full RX_SYNC -- any sync here is a false alarm.  The
