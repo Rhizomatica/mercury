@@ -171,3 +171,87 @@ func (b *bufferWatch) waitFor(t *testing.T, want int, timeout time.Duration) (st
 	}
 	return b.last, false
 }
+
+// An idle write larger than the TX queue (64 KiB): the payload bridge
+// blocks on the full queue with nothing draining it, and a single clear at
+// the close woke it to write the rest after the clear, still bound for the
+// next session (review of #580).  Every byte must be gone, and stay gone.
+func TestIdleDataClientOversizeWriteDroppedOnClose(t *testing.T) {
+	repoRoot := mustRepoRoot(t)
+	bin := locateOrBuildMercury(t, repoRoot)
+
+	basePort := freePortPair(t)
+	broadcastPort := freePort(t)
+	for broadcastPort == basePort || broadcastPort == basePort+1 {
+		broadcastPort = freePort(t)
+	}
+	stdout, stderr := tempLogFiles(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bin, "-x", "null",
+		"-p", fmt.Sprint(basePort), "-b", fmt.Sprint(broadcastPort),
+		"-C", filepath.Join(t.TempDir(), "missing-mercury.ini"))
+	cmd.Dir = repoRoot
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := startChild(cmd); err != nil {
+		t.Fatalf("start mercury: %v", err)
+	}
+	proc := waitForProcess(cmd)
+	defer func() {
+		if err := stopProcess(t, cmd, proc, stdout.Name(), stderr.Name()); err != nil && !t.Failed() {
+			t.Log(err)
+		}
+	}()
+	fail := func(format string, args ...any) {
+		t.Helper()
+		printLogs(t, stdout.Name(), stderr.Name())
+		t.Fatalf(format, args...)
+	}
+
+	ctl, err := waitForTCP(ctx, "127.0.0.1", basePort, controlPortTimeout, proc)
+	if err != nil {
+		fail("control port: %v", err)
+	}
+	defer ctl.Close()
+	bw := &bufferWatch{conn: ctl, rw: bufio.NewReadWriter(bufio.NewReader(ctl), bufio.NewWriter(ctl))}
+	if got := bw.send(t, "MYCALL TESTA", "OK", commandTimeout); got == "" {
+		fail("MYCALL not answered OK")
+	}
+	if got := bw.send(t, "LISTEN ON", "OK", commandTimeout); got == "" {
+		fail("LISTEN ON not answered OK")
+	}
+
+	data, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", basePort+1), 2*time.Second)
+	if err != nil {
+		fail("data port: %v", err)
+	}
+	// Three times the queue, in the bridge's 4 KiB messages.  Mercury may
+	// stop reading once the queue is full, so the write runs in the
+	// background and the close cuts it short.
+	big := make([]byte, 192*1024)
+	for i := range big {
+		big[i] = byte('a' + i%26)
+	}
+	go func() { _, _ = data.Write(big) }()
+	if got, ok := bw.waitFor(t, 64*1024, 5*time.Second); !ok {
+		data.Close()
+		fail("BUFFER while writing %d bytes = %q, want the full queue (BUFFER 65536)", len(big), got)
+	}
+	time.Sleep(300 * time.Millisecond) // let the bridge block on the full queue
+
+	data.Close()
+	if got, ok := bw.waitFor(t, 0, 3*time.Second); !ok {
+		fail("BUFFER after the data client closed = %q, want BUFFER 0", got)
+	}
+	// And it stays empty: nothing the bridge held lands after the clear.
+	time.Sleep(1500 * time.Millisecond)
+	if got := bw.send(t, "BUFFER", "BUFFER", 500*time.Millisecond); got != "" && got != "BUFFER 0" {
+		fail("BUFFER 1.5 s after the close = %q, want BUFFER 0 (bytes landed after the clear)", got)
+	}
+	if bw.last != "BUFFER 0" {
+		fail("last BUFFER line 1.5 s after the close = %q, want BUFFER 0", bw.last)
+	}
+	t.Log("full queue plus a blocked bridge: every byte dropped when the data client closed")
+}
