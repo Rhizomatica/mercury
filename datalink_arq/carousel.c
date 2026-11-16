@@ -2438,7 +2438,17 @@ static void m_try(car_t *c, uint64_t now)
             car_trace(c, "tx: data came -- the ack goes with my round");
             m_enter(c, PH_RECV, now);
             c->offered = true;
-            m_plan(c, KD_BOTH, lv, poll_size(c, lv, now));
+            /* ...and the poll in it sized for the peer's answer, as every
+             * other poll is: a UUCP reply of 10 to 15 bytes was asked on the
+             * rung choose_level climbs to, DATAC1 or DATAC17 (7.4 s), and went
+             * behind a control frame, not inline (on air 2026-11-16: 8 to
+             * 12 s a reply, 4 s the other way).  Sim, UUCP's own messages, 30
+             * seeds: cliff:10 140 -> 114 s, fade:10 209 -> 155 s; nvis a tie
+             * over 90 (+0.6 %). */
+            int n = poll_size(c, lv, now);
+            int sl = short_rung(c, lv, s_peer_expect(c), &n);
+            if (sl != lv) car_trace(c, "rx: a small backlog -- lv=%d n=%d, not lv=%d", sl, n, lv);
+            m_plan(c, KD_BOTH, sl, n);
         }
     }
     if (c->plan == KD_DONE && now < c->plan_not_before) {     /* waiting for my application */
