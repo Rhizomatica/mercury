@@ -1968,7 +1968,7 @@ void *send_thread(void *client_socket_ptr)
     }
 
     /* Size for the widest frame, not the listen mode's: each record says its
-     * own size, and MAX_PAYLOAD is 1213 bytes, so this costs nothing. */
+     * own size, and MAX_PAYLOAD is 1184 bytes, so this costs nothing. */
     frame_buffer = (uint8_t *)malloc(MAX_PAYLOAD);
     kiss_buffer = (uint8_t *)malloc((MAX_PAYLOAD * 2) + 3);
 

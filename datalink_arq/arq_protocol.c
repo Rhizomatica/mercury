@@ -65,8 +65,8 @@ const arq_mode_timing_t arq_mode_table[] = {
     {  FREEDV_MODE_DATAC4,    5.80f,     14.0f,          54   },
     {  FREEDV_MODE_DATAC3,    3.82f,     12.0f,          126  },
     {  FREEDV_MODE_DATAC1,    4.81f,     13.0f,          510  },
-    {  FREEDV_MODE_DATAC17,   7.40f,     15.0f,          1180 },
-    {  FREEDV_MODE_QAM16C2,   3.70f,     12.0f,          1213 },
+    {  FREEDV_MODE_DATAC17,   5.90f,     15.0f,          1184 },
+    {  FREEDV_MODE_QAM16C2,   3.30f,     12.0f,          1183 },
     /* The MFSK fringe rung: non-coherent 32-MFSK, a ~13.5 s burst of 98
      * payload bytes, below DATAC15 (50 % FER at -11.2 dB AWGN against
      * DATAC15's -10.3, docs/MFSK-PORT.md).  Its row also sets the

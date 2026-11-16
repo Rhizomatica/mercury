@@ -32,8 +32,8 @@
  * rather than discover hours in. */
 #define BCAST_FILE_MAX_BYTES (1440u * 1024u)
 
-/* Longest frame any supported mode carries (QAM16C2 = 1213). */
-#define BCAST_FILE_MAX_FRAME 1213
+/* Longest frame any supported mode carries (DATAC17 = 1184). */
+#define BCAST_FILE_MAX_FRAME 1184
 
 /* ---- The bundle ------------------------------------------------------------
  *

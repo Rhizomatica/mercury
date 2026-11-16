@@ -103,13 +103,20 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->tx_bpf_proto_n = sizeof(filtP1100S1300) / sizeof(float);
   } else if (strcmp(mode, "qam16c2") == 0) {
     /* QAM16 high-SNR data mode, ported from upstream dr-qam16-cport
-       (Rhizomatica/codec2).  ~3100 bps payload in ~2.1 kHz, target
-       90/100 MPP at +15 dB SNR. */
-    config->ns = 5;
-    config->np = 31;
+       (Rhizomatica/codec2), on the 2.0 geometry DATAC17 shares: 36 carriers
+       (2250 Hz, the 2300 Hz channel), a 4 ms guard and a pilot every 8
+       symbols.  Against 33 carriers and a pilot every 5: 3286 bit/s, not
+       2941, from the same 14 dB on white noise and 21 dB on CCIR Moderate
+       (utils/rung_sweep, 30 bursts a point).  1185-byte frames. */
+    config->ns = 8;
+    config->np = 16;
     config->tcp = 0.004;
     config->ts = 0.016;
-    config->nc = 33;
+    config->nc = 36;
+    /* No edge pilots: with them the 36 carriers would be 38, 312.5 to 2625
+       Hz, and under CCIR fading they made no difference that 40 bursts a
+       point could tell (34 carriers with them against 36 without). */
+    config->edge_pilots = 0;
     config->bps = 4;
     config->txtbits = 0;
     config->nuwbits = 42 * 4;
@@ -140,20 +147,23 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     memcpy(&config->tx_uw[config->nuwbits - sizeof(uw)], uw, sizeof(uw));
     config->EsNodB = 10;
     config->codename = "H_16200_9720";
-    config->tx_bpf_proto = filtP1100S1300;
-    config->tx_bpf_proto_n = sizeof(filtP1100S1300) / sizeof(float);
+    config->tx_bpf_proto = filtP1150S1350;
+    config->tx_bpf_proto_n = sizeof(filtP1150S1350) / sizeof(float);
   } else if (strcmp(mode, "datac17") == 0) {
     /* Mercury custom mode: intermediate-SNR fast payload mode.  Same
        big rate-0.6 H_16200_9720 codeword as qam16c2 but QPSK with TX
-       clipping — about 2x DATAC1 ARQ goodput at roughly +9 dB.  np=61
-       shortens the codeword (1180 payload bytes, not 1213) so the
-       frame size stays distinct from qam16c2 for the ARQ
+       clipping.  The 2.0 geometry: 36 carriers (2250 Hz), a 4 ms guard
+       (6 before) and a pilot every 8 symbols (every 5 before), each lever
+       measured alone and together on white noise and CCIR Moderate and
+       Poor (utils/rung_sweep): 1740 bit/s, not 1362, at the same 8 dB on
+       white noise and 12 to 13 dB faded.  A 160-bit unique word makes its
+       frame 1186 bytes, distinct from qam16c2's 1185 for the ARQ
        mode-inference-by-size path. */
-    config->ns = 5;
-    config->np = 61;
-    config->tcp = 0.006;
+    config->ns = 8;
+    config->np = 32;
+    config->tcp = 0.004;
     config->ts = 0.016;
-    config->nc = 33;
+    config->nc = 36;
     config->edge_pilots = 0;
     config->txtbits = 0;
     config->state_machine = "data";
@@ -161,9 +171,9 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->timing_mx_thresh = 0.10;
     config->codename = "H_16200_9720";
     config->amp_est_mode = 1;
-    config->nuwbits = 168;
+    config->nuwbits = 160;
     assert(config->nuwbits <= MAX_UW_BITS);
-    config->bad_uw_errors = 60;
+    config->bad_uw_errors = 57;
     uint8_t uw17[] = {1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1,
                       0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0};
     memset(config->tx_uw, 0, config->nuwbits);
@@ -173,10 +183,12 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->amp_scale = 145E3;
     config->clip_gain1 = 2.7;
     config->clip_gain2 = 0.8;
-    /* Its 33 carriers span 500-2500 Hz: filtP900S1100 (-6 dB at 505 and
-       2495) took 6.5 dB off the outermost pair. */
-    config->tx_bpf_proto = filtP1100S1300;
-    config->tx_bpf_proto_n = sizeof(filtP1100S1300) / sizeof(float);
+    /* Its 36 carriers span 375-2562.5 Hz: filtP1150S1350 holds the outer
+       pair within 0.1 dB, where filtP1100S1300 took 1 dB off the lowest
+       (and filtP900S1100 6.5 dB off the outer pair of the 33 carriers
+       before). */
+    config->tx_bpf_proto = filtP1150S1350;
+    config->tx_bpf_proto_n = sizeof(filtP1150S1350) / sizeof(float);
   } else if (strcmp(mode, "qam16") == 0) {
     /* not in use yet */
     config->ns = 5;

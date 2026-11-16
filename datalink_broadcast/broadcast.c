@@ -46,7 +46,7 @@
 extern _Atomic bool mercury_stop;
 extern arq_info arq_conn; // ARQ connection info
 
-static const uint32_t hermes_broadcast_frame_size[] = { 510, 126, 14, 54, 14, 3, 30, 30, 14, 1180, 1213 };
+static const uint32_t hermes_broadcast_frame_size[] = { 510, 126, 14, 54, 14, 3, 30, 30, 14, 1184, 1183 };
 static const int freedv_to_hermes_mode_map[] = {
     FREEDV_MODE_DATAC1,
     FREEDV_MODE_DATAC3,

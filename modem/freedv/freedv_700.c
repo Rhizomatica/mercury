@@ -472,18 +472,24 @@ static const snr_knot_t SNR_MAP_DATAC16[] = {{10.72f, 10.72f}, {13.94f, 14.80f},
 static const snr_knot_t SNR_MAP_DATAC4[]  = {{12.00f, 12.00f}, {15.05f, 16.20f}, {17.07f, 20.20f}};
 static const snr_knot_t SNR_MAP_DATAC3[]  = {{9.75f, 9.75f}, {12.64f, 13.87f}, {14.58f, 17.87f}, {15.49f, 21.87f}};
 static const snr_knot_t SNR_MAP_DATAC1[]  = {{9.64f, 9.64f}, {14.33f, 13.43f}, {18.54f, 17.43f}, {22.04f, 21.43f}};
-static const snr_knot_t SNR_MAP_DATAC17[] = {{11.60f, 11.60f}, {13.23f, 13.52f}, {14.41f, 15.52f}, {15.32f, 17.52f}, {16.40f, 21.52f}};
+/* DATAC17 on the 2.0 geometry (36 carriers, 4 ms guard, a pilot every 8
+ * symbols): the raw estimate against the truth, 40 frames a point on white
+ * noise, SNR3k from the modem frames' power.  It flattens past 20 dB
+ * (11.87 raw at 26 true); per frame it varies ~0.1 dB. */
+static const snr_knot_t SNR_MAP_DATAC17[] = {{3.00f, 4.00f},   {4.01f, 6.00f},   {5.27f, 8.00f},   {6.56f, 10.00f},
+                                             {7.84f, 12.00f},  {9.01f, 14.00f},  {9.92f, 16.00f},  {10.64f, 18.00f},
+                                             {11.17f, 20.00f}, {11.50f, 22.00f}, {11.76f, 24.00f}};
 /* QAM16C2: the decision-directed estimate (raw) against the truth, on the
- * clipped frames it sends (ofdm_mode.c, drive 2.0).  The clip's in-band
- * distortion counts as noise, so the raw estimate flattens: 11.76 at 20 dB
- * true, 12.27 at 28 (it reads at most ~12.7 through the unclipped frames'
- * map, which never reached the rung's 13 dB on any channel).  Per frame it
+ * clipped frames it sends (ofdm_mode.c, drive 2.0) and the 2.0 geometry.
+ * The clip's in-band distortion counts as noise, so the raw estimate
+ * flattens: 11.99 at 20 dB true, 12.48 at 28 (through the unclipped frames'
+ * map it never reached the rung's 13 dB on any channel).  Per frame it
  * varies ~0.1 dB, about +-0.7 dB mapped at 20 dB and +-1.2 at 24; past the
- * last knot SNR_MAP_MAX_SLOPE holds it.  Fitted with 60 frames a point on
+ * last knot SNR_MAP_MAX_SLOPE holds it.  Fitted with 40 frames a point on
  * white noise, SNR3k from the modem frames' power.  An unclipped sender
- * (1.9.24 and before) reads high through it: ~14 dB true reads past 25. */
-static const snr_knot_t SNR_MAP_QAM16C2[] = {{9.48f, 10.00f}, {10.06f, 12.00f}, {10.61f, 14.00f}, {11.08f, 16.00f},
-                                             {11.46f, 18.00f}, {11.76f, 20.00f}, {11.97f, 22.00f}, {12.12f, 24.00f}};
+ * (1.9.24 and before) reads high through it. */
+static const snr_knot_t SNR_MAP_QAM16C2[] = {{9.78f, 10.00f},  {10.32f, 12.00f}, {10.83f, 14.00f}, {11.34f, 16.00f},
+                                             {11.70f, 18.00f}, {11.99f, 20.00f}, {12.20f, 22.00f}, {12.32f, 24.00f}};
 #define SNR_MAP_MAX_SLOPE 4.0f
 #define SNR_MAP_MAX_DB    25.0f
 
@@ -508,7 +514,7 @@ static float freedv_snr_calib(int mode, float snr_raw) {
     case FREEDV_MODE_DATAC4:  return SNR_MAP(SNR_MAP_DATAC4,  1.071f * snr_raw + 0.33f);
     case FREEDV_MODE_DATAC3:  return SNR_MAP(SNR_MAP_DATAC3,  1.154f * snr_raw + 0.37f);
     case FREEDV_MODE_DATAC1:  return SNR_MAP(SNR_MAP_DATAC1,  1.220f * snr_raw - 0.42f);
-    case FREEDV_MODE_DATAC17: return SNR_MAP(SNR_MAP_DATAC17, 1.604f * snr_raw - 0.66f);
+    case FREEDV_MODE_DATAC17: return SNR_MAP(SNR_MAP_DATAC17, snr_raw);
     case FREEDV_MODE_QAM16C2: return SNR_MAP(SNR_MAP_QAM16C2, snr_raw);
     case FREEDV_MODE_DATAC15: return SNR_MAP(SNR_MAP_DATAC15, snr_raw);
     default:                  return snr_raw;

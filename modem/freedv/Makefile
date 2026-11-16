@@ -11,7 +11,7 @@ OBJS_COMMON = freedv_api.o ofdm.o freedv_fsk.o cohpsk.o fsk.o kiss_fft.o freedv_
               nlp.o codebooknewamp1.o codebooknewamp1_energy.o codebooknewamp2.o codebooknewamp2_energy.o \
               postfilter.o interp.o codebook.o codebookd.o codebookge.o codebookjmv.o ofdm_mode.o \
               HRA_112_112.o HRA_56_56.o HRAb_396_504.o H_256_768_22.o H_256_512_4.o HRAa_1536_512.o \
-              H_128_256_5.o H_2064_516_sparse.o H_4096_8192_3d.o H_16200_9720.o H_1024_2048_4f.o \
+              H_128_256_5.o H_2064_516_sparse.o H_4096_8192_3d.o H_16200_9720.o H_16200_6480.o H_16200_7200.o H_16200_10800.o H_16200_11880.o H_16200_12600.o H_1024_2048_4f.o \
               H_212_158.o phi0.o gp_interleaver.o modem_stats.o
 
 all: freedv_data_tx freedv_data_rx freedv_data_raw_tx freedv_data_raw_rx
@@ -206,6 +206,16 @@ H_4096_8192_3d.o: H_4096_8192_3d.c
 
 H_16200_9720.o: H_16200_9720.c
 	$(CC) $(CFLAGS) -c H_16200_9720.c
+H_16200_6480.o: H_16200_6480.c
+	$(CC) $(CFLAGS) -c H_16200_6480.c
+H_16200_7200.o: H_16200_7200.c
+	$(CC) $(CFLAGS) -c H_16200_7200.c
+H_16200_10800.o: H_16200_10800.c
+	$(CC) $(CFLAGS) -c H_16200_10800.c
+H_16200_11880.o: H_16200_11880.c
+	$(CC) $(CFLAGS) -c H_16200_11880.c
+H_16200_12600.o: H_16200_12600.c
+	$(CC) $(CFLAGS) -c H_16200_12600.c
 
 H_1024_2048_4f.o: H_1024_2048_4f.c
 	$(CC) $(CFLAGS) -c H_1024_2048_4f.c
