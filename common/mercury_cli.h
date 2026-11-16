@@ -25,6 +25,7 @@ typedef enum {
 typedef struct {
     mercury_config cfg;          /* defaults + config file + CLI overrides   */
     char           cfg_path[1024];
+    bool           cfg_loaded;    /* cfg_path was read; false: built-in defaults */
     int            startup_mode;  /* FreeDV payload mode (-m/-s)              */
     int            test_mode;     /* 0 normal, 1 TX test, 2 RX test           */
     int            cpu_nr;        /* -c CPU pin, -1 = none                    */

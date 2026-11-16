@@ -40,6 +40,37 @@ void mercury_print_version(void)
     fflush(stdout);
 }
 
+/* The config file the engine uses, as a full path, and whether it was read.
+ * A relative path names a file in the working directory, which for a UI
+ * started from a desktop menu is not where the user looks. */
+static char g_config_path[1024];
+static bool g_config_loaded;
+
+static void config_path_absolute(const char *path, char *out, size_t n)
+{
+    out[0] = '\0';
+    if (!path || !path[0])
+        return;
+#ifdef _WIN32
+    if (_fullpath(out, path, n) != NULL)
+        return;
+#else
+    if (path[0] == '/')
+    {
+        snprintf(out, n, "%s", path);
+        return;
+    }
+    char cwd[768];
+    if (getcwd(cwd, sizeof(cwd)) != NULL)
+    {
+        const char *rel = (path[0] == '.' && path[1] == '/') ? path + 2 : path;
+        snprintf(out, n, "%s/%s", cwd, rel);
+        return;
+    }
+#endif
+    snprintf(out, n, "%s", path);
+}
+
 /* ------------------------------------------------------------------ */
 /*  mercury_init(argc, argv, default_config, log_path)                 */
 /*                                                                     */
@@ -100,9 +131,34 @@ int mercury_init(int argc, char **argv, const char *default_config, const char *
      * daemon-only) and always enables the UI websocket. */
     cli.cfg.ui_enabled = true;
 
+    config_path_absolute(cli.cfg_path, g_config_path, sizeof(g_config_path));
+    g_config_loaded = cli.cfg_loaded;
+
     const char *log = cli.log_file_path ? cli.log_file_path : log_path;
-    return mercury_engine_init(&cli.cfg, cli.cfg_path, log, cli.log_file_jsonl,
-                               cli.startup_mode, cli.test_mode);
+    rc = mercury_engine_init(&cli.cfg, cli.cfg_path, log, cli.log_file_jsonl,
+                             cli.startup_mode, cli.test_mode);
+    if (rc == 0)
+    {
+        /* The "Loaded configuration" line went to stdout before the log was
+         * open, and a UI started from a desktop menu has no terminal. */
+        if (g_config_loaded)
+            HLOGI("engine", "Configuration loaded from %s", g_config_path);
+        else
+            HLOGW("engine", "No configuration file found: running on built-in "
+                  "defaults; settings changed in the UI are saved to %s",
+                  g_config_path);
+    }
+    return rc;
+}
+
+const char *mercury_config_path(void)
+{
+    return g_config_path[0] ? g_config_path : NULL;
+}
+
+int mercury_config_loaded(void)
+{
+    return g_config_loaded ? 1 : 0;
 }
 
 const char *mercury_log_status(void)

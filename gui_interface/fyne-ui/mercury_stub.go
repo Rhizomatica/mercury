@@ -16,4 +16,8 @@ func mercuryStart(defaultConfig, logPath string, args []string) error {
 
 func mercuryLogStatus() string { return "" }
 
+// A remote UI has no local engine and no local config: an empty path with
+// loaded == true makes the caller show nothing (no "not found" dialog).
+func mercuryConfigStatus() (string, bool) { return "", true }
+
 func mercuryStop() {}

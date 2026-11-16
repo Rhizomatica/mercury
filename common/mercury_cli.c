@@ -168,12 +168,12 @@ int mercury_cli_parse(int argc, char **argv,
      * wrong radio.  No file runs on built-in defaults, loudly -- also for -C,
      * since HERMES units pass -C /etc/mercury/mercury.ini and stations
      * without that file have always run that way. */
-    bool cfg_loaded = false, cfg_error = false;
+    bool cfg_error = false;
     if (access(out->cfg_path, R_OK) == 0)
     {
         if (cfg_read(&out->cfg, out->cfg_path)) {
             printf("Loaded configuration from %s\n", out->cfg_path);
-            cfg_loaded = true;
+            out->cfg_loaded = true;
         } else {
             cfg_error = true;   /* reported once the action is known */
         }
@@ -519,7 +519,7 @@ int mercury_cli_parse(int argc, char **argv,
 
     /* Without a configuration the audio devices are the first thing to go
      * wrong, so say which ones will be opened. */
-    if (!cfg_loaded && out->action == MERCURY_CLI_RUN)
+    if (!out->cfg_loaded && out->action == MERCURY_CLI_RUN)
         fprintf(stderr, "  audio: %s, input '%s', output '%s'\n",
                 cfg_sound_system_name(out->cfg.sound_system),
                 out->cfg.input_device[0] ? out->cfg.input_device : "default",

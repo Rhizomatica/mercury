@@ -95,6 +95,16 @@ func mercuryLogStatus() string {
 	return ""
 }
 
+// mercuryConfigStatus reports the configuration file the engine was started
+// with, as a full path, and whether it was found and read. Settings changed in
+// the UI are saved to that path either way. Path is "" before mercuryStart.
+func mercuryConfigStatus() (path string, loaded bool) {
+	if p := C.mercury_config_path(); p != nil {
+		path = C.GoString(p)
+	}
+	return path, C.mercury_config_loaded() != 0
+}
+
 func mercuryStop() {
 	C.mercury_request_shutdown()
 	C.mercury_shutdown()
