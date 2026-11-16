@@ -1091,7 +1091,8 @@ static void log_connect_frame_hex(const char *kind, const uint8_t *data, size_t 
     HLOGTR(LOG_COMP, "%s frame bytes: %s", kind, buf);
 }
 
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode)
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode,
+                                       uint32_t age_ms)
 {
     if (!data || frame_size < 2) return false;
 
@@ -1206,6 +1207,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     ev.rx_snr     = rx_snr;
     ev.mode       = mode;          /* the carrier: an answer goes back on it */
     ev.tx_mfsk    = tx_mfsk;       /* the peer can only transmit MFSK */
+    ev.rx_age_ms  = age_ms;        /* a CALL decoded too late is not answered */
     if (is_accept)
     {
         /* The callee's callsign is not on the air, only its CRC: the FSM

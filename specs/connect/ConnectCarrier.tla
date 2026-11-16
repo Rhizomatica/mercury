@@ -89,6 +89,10 @@ CONSTANTS LF, LM, TG, DF, DM, DW, SA, IvFast, IvFloor, R, H,
                   \*   "fastiv":    a repeat on fast waits IvFast, though E may
                   \*                answer it on the floor (the code before
                   \*                call_interval_s)
+                  \*   "lateanswer": E also answers a CALL decoded later than
+                  \*                D(carrier) after its end, up to IvFast later
+                  \*                (a decoder behind: the code before
+                  \*                call_too_late)
 
 VARIABLES t,
           cSt,      \* "calling", "connected", "gaveup"
@@ -112,6 +116,10 @@ EM == MfskTx \in {"E", "CE"}
 
 Len(car) == IF car = "fast" THEN LF ELSE LM
 Dec(car) == IF car = "fast" THEN DF ELSE DM
+\* The latest a CALL decodes and is answered: D(car), the decode bound
+\* (call_too_late: a CALL decoded later is not answered).  The mutant
+\* answers one decoded up to IvFast past it.
+DecMax(car) == Dec(car) + (IF Mutant = "lateanswer" THEN IvFast ELSE 0)
 
 \* arq_call_carrier: CALLs 1 .. F fast, then the floor and fast in turn.
 CallCar(i) == IF CM THEN "floor"
@@ -171,7 +179,7 @@ CGiveUp == /\ cSt = "calling" /\ cNext = t /\ k = R
 CEnd == /\ cTx.call > 0 /\ cTx.e = t /\ cSt = "calling" /\ cNext = -1
         /\ cNext' = t + Wait(cTx.call)
         /\ LET car == CallCar(cTx.call) IN
-           \E ok \in Choice(Path("fwd", car)), d \in 0 .. Dec(car) :
+           \E ok \in Choice(Path("fwd", car)), d \in 0 .. DecMax(car) :
              IF ok /\ ~Meet(cTx, eTx) /\ eDec = -1
              THEN eDec' = t + d /\ eDecCar' = car
              ELSE UNCHANGED <<eDec, eDecCar>>
