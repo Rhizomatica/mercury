@@ -158,12 +158,12 @@ typedef struct {
     int      tnc_buffer_report_ms;  /* BUFFER report interval on the TNC
                                     * control port. Default 1000, clamped
                                     * 100..10000.                          */
-    int      tnc_absorb_idle_disconnect_s; /* Answer OK to, and ignore, the
-                                    * first DISCONNECT of a session that comes
-                                    * with data still to deliver and no host
-                                    * data for this long (Winlink Express P2P
-                                    * inactivity timeout, #392).  Default 0
-                                    * (off); else 30..3600, 240 suggested. */
+    int      tnc_absorb_idle_disconnect_s; /* Answer OK to, and ignore, a
+                                    * DISCONNECT that comes in a session with
+                                    * no host data for this long, unless one
+                                    * came in the last 60 s (Winlink Express
+                                    * P2P inactivity timeout, #392).  Default
+                                    * 0 (off); else 30..3600, 240 suggested. */
     bool     busy_detect;           /* Channel-busy detector on/off. Default
                                     * false (opt-in). Emits VARA "BUSY ON/OFF". */
     int      busy_threshold_db;     /* Passband peak dB above noise floor to

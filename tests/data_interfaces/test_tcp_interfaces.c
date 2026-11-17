@@ -1132,25 +1132,31 @@ void test_tnc_buffer_report_repeats_unchanged_backlog(void)
     TEST_ASSERT_FALSE(tnc_buffer_report_due(0, 0, true, 90000, 900));          /* empty */
 }
 
-/* Winlink Express's P2P inactivity DISCONNECT, 5 min after its last write
- * with the modem still sending it (#392): absorbed only when switched on, in
- * a session, with bytes to deliver, the host idle that long, and not already
- * absorbed this session. */
+/* Winlink Express's P2P inactivity DISCONNECT, 300 s after each write of
+ * the host's, with the modem still sending it or the answer not yet back
+ * (#392, PR #581): absorbed when switched on, in a session, with the host
+ * idle that long, as often as it comes, unless another DISCONNECT came in
+ * the last 60 s. */
 void test_tnc_absorb_disconnect_due(void)
 {
     const uint64_t idle = 240000, last = 1000;
-    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(idle, true, 12627, last + 300000, last, false));
-    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(idle, true, 1, last + 240000, last, false));   /* 240 s */
-    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, 1, last + 239999, last, false));  /* host just wrote */
-    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(0, true, 12627, last + 300000, last, false)); /* off */
-    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, false, 12627, last + 300000, last, false)); /* no session */
-    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, 0, last + 300000, last, false));  /* all delivered */
-    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, 12627, last + 600000, last, true)); /* second one */
-    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, 12627, last - 1, last, false));   /* clock behind */
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(idle, true, last + 300000, last, 0));
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(idle, true, last + 240000, last, 0));     /* 240 s */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, last + 239999, last, 0));    /* host just wrote */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, last + 4100, last, 0));      /* a real end */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(0, true, last + 300000, last, 0));       /* off */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, false, last + 300000, last, 0));   /* no session */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, last - 1, last, 0));         /* clock behind */
+    /* the timer's next, 300 s after the one absorbed: absorbed too */
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(idle, true, last + 600000, last, last + 300000));
+    /* said again within 60 s: meant, goes through */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, last + 308000, last, last + 300000));
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(idle, true, last + 359999, last, last + 300000));
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(idle, true, last + 360000, last, last + 300000));
 }
 
-/* Switched on but nothing to deliver: the DISCONNECT goes to the ARQ. */
-void test_cmd_disconnect_not_absorbed_when_nothing_queued(void)
+/* Switched on but no session up: the DISCONNECT goes to the ARQ. */
+void test_cmd_disconnect_not_absorbed_without_session(void)
 {
     tnc_set_absorb_idle_disconnect_s(240);
     memset(&mock_snapshot, 0, sizeof(mock_snapshot));
@@ -2453,6 +2459,6 @@ int main(void)
     RUN_TEST(test_host_tnc_command_runs_a_control_line);
     RUN_TEST(test_host_tnc_release_is_a_client_leaving_once);
     RUN_TEST(test_tnc_absorb_disconnect_due);
-    RUN_TEST(test_cmd_disconnect_not_absorbed_when_nothing_queued);
+    RUN_TEST(test_cmd_disconnect_not_absorbed_without_session);
     return UNITY_END();
 }

@@ -282,13 +282,19 @@ P2P session 5 minutes after it last wrote to the data port ("P2P session
 inactivity timeout"), even while the modem is still sending that data.
 `BUFFER`, `PTT` and `SN` lines do not reset its timer, so a message that
 takes longer than 5 minutes to send is lost: the session ends and the
-message stays in the Outbox.  VARA HF behaves the same way (#392).  With
-`[tnc] absorb_idle_disconnect_s = 240`, the first `DISCONNECT` of a session
-is answered `OK` and otherwise ignored when it comes while data is still to
-deliver and nothing has been written to the data port for that long.
-Winlink then carries on.  A second `DISCONNECT` or an `ABORT` ends the
-session as usual.  The default is 0 (off), which keeps VARA's behaviour.
-Accepted values are 0 or 30–3600 s.
+message stays in the Outbox.  VARA HF behaves the same way (#392).  The
+timer restarts with each write, so every long message brings its own
+`DISCONNECT`, and one that takes over 10 minutes brings one every 300 s.
+
+With `[tnc] absorb_idle_disconnect_s = 240`, a `DISCONNECT` in a session is
+answered `OK` and otherwise ignored when nothing has been written to the
+data port for that long (or since the session came up), as often as it
+comes.  Winlink then carries on.  A real end of session comes seconds
+after the host's last write and goes through.  A `DISCONNECT` within 60 s
+of the previous one always goes through, so a host or operator that means
+it is heard on the second; `ABORT` ends the session at once as usual.  The
+default is 0 (off), which keeps VARA's behaviour.  Accepted values are 0
+or 30–3600 s.
 
 ---
 

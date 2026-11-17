@@ -46,17 +46,17 @@ void *server_worker_thread_ctl(void *port);
 /* Configure TNC control-port pacing (from [tnc] INI keys; clamped). */
 void tnc_set_intervals(int keepalive_s, int buffer_report_ms);
 
-/* [tnc] absorb_idle_disconnect_s: 0 (off), or MIN..MAX s.  A host DISCONNECT
- * with bytes still to deliver and no data-port write for that long is
- * answered OK and not acted on, once a session (#392: Winlink Express's P2P
- * inactivity timeout, 5 min after its last write; 240 suits it). */
+/* [tnc] absorb_idle_disconnect_s: 0 (off), or MIN..MAX s.  In a session, a
+ * host DISCONNECT with no data-port write for that long is answered OK and
+ * not acted on, unless another DISCONNECT came within the last 60 s (#392:
+ * Winlink Express's P2P inactivity timeout, 300 s after each write; 240
+ * suits it). */
 #define TNC_ABSORB_IDLE_DISCONNECT_S_MIN 30
 #define TNC_ABSORB_IDLE_DISCONNECT_S_MAX 3600
 void tnc_set_absorb_idle_disconnect_s(int seconds);
 /* Is this DISCONNECT one to absorb?  idle_ms 0 is off. */
-bool tnc_absorb_disconnect_due(uint64_t idle_ms, bool connected, int buffered,
-                               uint64_t now_ms, uint64_t last_data_rx_ms,
-                               bool already_absorbed);
+bool tnc_absorb_disconnect_due(uint64_t idle_ms, bool connected, uint64_t now_ms,
+                               uint64_t last_data_rx_ms, uint64_t last_disconnect_ms);
 
 // ARQ control + data port reactor (started by interfaces_init)
 void *arq_reactor_thread(void *port);

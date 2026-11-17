@@ -173,17 +173,29 @@ void tnc_set_intervals(int keepalive_s, int buffer_report_ms)
  * KB still queued).  Answered with OK and nothing else, Winlink carries on
  * ("Completed send", the next message).
  *
- * Opt-in ([tnc] absorb_idle_disconnect_s, 0 = off): a DISCONNECT that comes
- * while the host's bytes are still to deliver, and the host has written
- * nothing to the data port for at least that long, is answered OK and not
- * acted on.  Once a session: a second DISCONNECT ends it, as does ABORT.  A
- * host's real end of session comes seconds after its last write, or with
- * nothing left to deliver, and goes through. */
+ * Winlink restarts the timer with every write, so each long message brings
+ * its own DISCONNECT, and one taking over 10 minutes brings one every 300 s
+ * (bench, PR #581: absorbing only the first ended sessions at message 2 of
+ * 10, and a 100 KB message at its second).  Nor is "bytes still queued" the
+ * test: three came with BUFFER 0, everything sent and the receiver's answer
+ * not yet back.  Idle time alone tells them apart: in 112 DISCONNECTs every
+ * timer one came 300 s or more after the host's last write, every real end
+ * within 4.1 s of it (B2F ends right after a host's FF or FQ).
+ *
+ * Opt-in ([tnc] absorb_idle_disconnect_s, 0 = off): in a session, a
+ * DISCONNECT that comes when the host has written nothing to the data port
+ * for at least that long is answered OK and not acted on, as often as it
+ * comes.  One within TNC_DISCONNECT_REPEAT_MS of the previous DISCONNECT
+ * goes through, so a host (or operator) that means it is heard on the second
+ * one; Winlink's own end sends a second within seconds, its timer ones are
+ * 300 s apart.  ABORT always goes through. */
+#define TNC_DISCONNECT_REPEAT_MS 60000
 static _Atomic uint64_t tnc_absorb_idle_disconnect_ms = 0;
-/* When the host last wrote to the data port (monotonic_ms). */
+/* When the host last wrote to the data port, or the session came up
+ * (monotonic_ms). */
 static _Atomic uint64_t tnc_last_data_rx_ms = 0;
-/* This session has already had its one DISCONNECT absorbed. */
-static _Atomic bool tnc_disconnect_absorbed = false;
+/* When the host last sent DISCONNECT in this session, 0 for none. */
+static _Atomic uint64_t tnc_last_disconnect_ms = 0;
 
 void tnc_set_absorb_idle_disconnect_s(int seconds)
 {
@@ -192,12 +204,13 @@ void tnc_set_absorb_idle_disconnect_s(int seconds)
         atomic_store(&tnc_absorb_idle_disconnect_ms, (uint64_t)seconds * 1000ULL);
 }
 
-bool tnc_absorb_disconnect_due(uint64_t idle_ms, bool connected, int buffered,
-                               uint64_t now_ms, uint64_t last_data_rx_ms,
-                               bool already_absorbed)
+bool tnc_absorb_disconnect_due(uint64_t idle_ms, bool connected, uint64_t now_ms,
+                               uint64_t last_data_rx_ms, uint64_t last_disconnect_ms)
 {
-    if (idle_ms == 0 || !connected || buffered <= 0 || already_absorbed)
+    if (idle_ms == 0 || !connected)
         return false;
+    if (last_disconnect_ms && now_ms - last_disconnect_ms < TNC_DISCONNECT_REPEAT_MS)
+        return false;                     /* said again: meant */
     return now_ms >= last_data_rx_ms && now_ms - last_data_rx_ms >= idle_ms;
 }
 
@@ -853,15 +866,14 @@ static void execute_control_command(char *buffer)
         {
             uint64_t now = monotonic_ms();
             uint64_t last = atomic_load(&tnc_last_data_rx_ms);
-            int buffered = arq_buffered_bytes_snapshot();
-            if (tnc_absorb_disconnect_due(idle_ms, arq_is_link_connected(), buffered,
-                                          now, last, atomic_load(&tnc_disconnect_absorbed)))
+            uint64_t prev = atomic_exchange(&tnc_last_disconnect_ms, now);
+            if (tnc_absorb_disconnect_due(idle_ms, arq_is_link_connected(), now, last, prev))
             {
-                atomic_store(&tnc_disconnect_absorbed, true);
                 HLOGW("tcp-ctl",
-                      "DISCONNECT absorbed: %d bytes still to deliver, no host data for %llu s "
-                      "(absorb_idle_disconnect_s); a second DISCONNECT ends the session",
-                      buffered, (unsigned long long)((now - last) / 1000));
+                      "DISCONNECT absorbed: no host data for %llu s, %d bytes still to deliver "
+                      "(absorb_idle_disconnect_s); another DISCONNECT within %d s ends the session",
+                      (unsigned long long)((now - last) / 1000), arq_buffered_bytes_snapshot(),
+                      TNC_DISCONNECT_REPEAT_MS / 1000);
                 tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
                 return;
             }
@@ -2217,7 +2229,9 @@ void tnc_send_connected()
     const char *source_call = src[0] ? src : my_call;
     const char *dest_call   = dst[0] ? dst : my_call;
     int bw = arq_reported_bandwidth_hz();   /* separate locked call, AFTER the getter returns */
-    atomic_store(&tnc_disconnect_absorbed, false);   /* a new session's one */
+    /* a new session: its idle time counts from now, no DISCONNECT yet */
+    atomic_store(&tnc_last_data_rx_ms, monotonic_ms());
+    atomic_store(&tnc_last_disconnect_ms, 0);
     snprintf(buffer, sizeof(buffer), "CONNECTED %s %s %d\r",
              source_call, dest_call, bw);
     if (tnc_queue_line_critical(buffer) < 0)
@@ -2252,7 +2266,7 @@ void tnc_send_disconnected()
 {
     char buffer[128];
     snprintf(buffer, sizeof(buffer), "DISCONNECTED\r");
-    atomic_store(&tnc_disconnect_absorbed, false);
+    atomic_store(&tnc_last_disconnect_ms, 0);
     if (tnc_queue_line_critical(buffer) < 0)
     {
         HLOGW("tcp-ctl", "Error queuing disconnected message");
