@@ -1493,6 +1493,75 @@ void arq_discard_stale_rx(void)
     pthread_mutex_unlock(&g_sess_lock);
 }
 
+size_t arq_discard_stale_tx(void)
+{
+    if (!g_initialized)
+        return 0;
+
+    /* Only with no call at all: idle or listening.  While calling or
+     * accepting, the bytes belong to the session being set up (a host may
+     * write as soon as it sends CONNECT, and may reopen its data socket);
+     * with a session up, the session ends and flushes them itself.
+     * g_sess_lock across the check and the clear, as arq_discard_stale_rx:
+     * a CONNECT or an incoming CALL taken by the ARQ thread cannot slip in
+     * between.  g_app_tx_mtx inside it, the order the FSM's dispatch takes
+     * them in (cb_tx_read).
+     *
+     * Not covered: a CONNECT still on the command bus.  It reaches the ARQ
+     * thread asynchronously, so for a few ms after the host sends it the
+     * state is still DISCONNECTED, and a host that writes its first bytes
+     * and closes its data socket inside that window loses them.  No known
+     * host reopens its data socket right after CONNECT.
+     *
+     * Bytes the client wrote just before it closed may still be on the
+     * payload bus, and must land before the last clear or they go out on the
+     * next session anyway.  The bridge may also be blocked on a full queue
+     * (an idle write beyond APP_TX_BUF_SIZE: nothing drains it with no
+     * session); one clear would wake it to write the rest after the clear.
+     * So clear until everything sent before now has landed: each clear makes
+     * room for the next messages.  The TCP thread calls this, so no new
+     * payload joins the bus meanwhile.  Bounded as wait_payload_written. */
+    unsigned target = atomic_load(&g_payload_sent);
+    size_t dropped = 0;
+    for (int i = 0; i < 1000; i++)
+    {
+        /* Read before the clear: if everything had landed, this clear is
+         * the last one needed. */
+        bool landed = (int)(atomic_load(&g_payload_written) - target) >= 0;
+        bool idle;
+
+        pthread_mutex_lock(&g_sess_lock);
+        idle = (g_sess.conn_state == ARQ_CONN_DISCONNECTED ||
+                g_sess.conn_state == ARQ_CONN_LISTENING);
+        if (idle)
+        {
+            pthread_mutex_lock(&g_app_tx_mtx);
+            size_t n = size_buffer(g_app_tx_buf);
+            if (n > 0)
+            {
+                clear_buffer(g_app_tx_buf);
+                dropped += n;
+            }
+            pthread_mutex_unlock(&g_app_tx_mtx);
+        }
+        pthread_mutex_unlock(&g_sess_lock);
+
+        if (landed || !idle)
+            break;
+        hermes_usleep(1000);
+    }
+
+    if (dropped > 0)
+    {
+        /* A partial chat line from those bytes must not be glued onto the
+         * next session's first message. */
+        msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
+        HLOGW(LOG_COMP, "Data client left with no session up: discarded %zu "
+              "queued byte(s) that no session would carry", dropped);
+    }
+    return dropped;
+}
+
 int arq_queue_data(const uint8_t *data, size_t len)
 {
     if (!data || len == 0) return -1;

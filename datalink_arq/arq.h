@@ -239,6 +239,17 @@ bool arq_channel_heard(void);
 void arq_discard_stale_rx(void);
 
 /**
+ * @brief Drop bytes a data client queued while no call was up (#572).
+ *
+ * The TX counterpart of arq_discard_stale_rx, for when the data client goes:
+ * bytes it wrote while idle or listening would otherwise be the first payload
+ * of the next session, with whatever station that is.  Waits for payload
+ * still on the bus to land first.  Does nothing while calling, accepting or
+ * with a session up.  Returns the number of bytes dropped.
+ */
+size_t arq_discard_stale_tx(void);
+
+/**
  * @brief Get the configured ARQ bandwidth token to report to VARA clients.
  * @return 500, 2300, or 2750 when configured; otherwise 2300.
  */

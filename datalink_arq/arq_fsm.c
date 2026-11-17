@@ -1784,7 +1784,7 @@ static bool disconnect_must_wait(arq_session_t *sess)
     HLOGD(LOG_COMP, "DISCONNECT deferred (%s) %u/%u",
           sess->tx_active ? "still keyed" :
           peer_is_transmitting(sess) ? "peer transmitting" : "reply window",
-          (unsigned)sess->defer_count, (unsigned)ARQ_CHANNEL_DEFER_MAX);
+          (unsigned)sess->defer_count, cap);
     sess->deadline_ms = next;
     return true;
 }

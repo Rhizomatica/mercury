@@ -95,6 +95,7 @@ int arq_reported_bandwidth_hz(void)
 bool arq_is_link_connected(void) { return false; }
 static atomic_int discard_stale_rx_calls;
 void arq_discard_stale_rx(void) { discard_stale_rx_calls++; }
+size_t arq_discard_stale_tx(void) { return 0; }
 
 void arq_set_trx(int trx) { arq_conn.TRX = trx; }
 int  arq_get_trx(void)    { return arq_conn.TRX; }

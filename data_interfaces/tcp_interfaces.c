@@ -1075,6 +1075,74 @@ static void close_data_client(int *data_client_fd)
     cli_data_sockfd = -1;
     net_set_status(DATA_TCP_PORT, NET_LISTENING);
     HLOGI("tcp-data", "Data client disconnected");
+
+    /* Bytes it wrote with no call up would be the first payload of the next
+     * session, with whatever station that is, after their writer has gone
+     * (#572: a readiness probe's one newline broke a B2F session that came
+     * later).  The TX side of the rule arq_discard_stale_rx keeps for RX.
+     * Its BUFFER line, if anything went: the control client still there is
+     * owed the drop to 0, as at a recv. */
+    if (arq_discard_stale_tx() > 0)
+        tnc_send_buffer((uint32_t)arq_buffered_bytes_snapshot());
+}
+
+static void close_ctl_socket(int *ctl_client_fd)
+{
+    SOCK_CLOSE(*ctl_client_fd);
+    *ctl_client_fd = -1;
+    cli_ctl_sockfd = -1;
+    net_set_status(CTL_TCP_PORT, NET_LISTENING);
+    atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
+}
+
+/* A web browser on the control port.
+ *
+ * On air (K7EK, 2026-11-14 03:59) Firefox opened the control port twice
+ * ("GET / HTTP/1.1" and its headers, each line answered WRONG) while no host
+ * was connected to it.  It held the port for 30 s and more each time, and its
+ * leaving took BPQ32's data connection with it.  A request line never looks
+ * like a TNC command: a method, a path, then " HTTP/".  So a client whose
+ * first line says " HTTP/" is told, in HTTP so the browser shows it, that this
+ * port is for host programs, and only its own connection is closed: it ran no
+ * command, so the ARQ is not told, and the data client stays. */
+static bool is_http_request(const uint8_t *data, ssize_t len)
+{
+    static const char tag[] = " HTTP/";
+    const size_t tl = sizeof(tag) - 1;
+    for (ssize_t i = 0; i + (ssize_t)tl <= len; i++) {
+        if (data[i] == '\r' || data[i] == '\n')
+            return false;
+        if (memcmp(data + i, tag, tl) == 0)
+            return true;
+    }
+    return false;
+}
+
+static void refuse_web_client(int *ctl_client_fd)
+{
+    static const char reply[] =
+        "HTTP/1.0 400 Bad Request\r\n"
+        "Content-Type: text/plain\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "This is Mercury's TNC control port, for host programs such as BPQ32 or Pat.\r\n"
+        "It is not a web page. Mercury's web interface, when it is enabled, is on its\r\n"
+        "UI port (10000 by default).\r\n";
+    char who[80];
+    peer_name(*ctl_client_fd, who, sizeof(who));
+    (void)send(*ctl_client_fd, reply, sizeof(reply) - 1, 0);   /* best effort */
+    /* Closed with request bytes still unread (headers in a later segment),
+     * the socket would answer with a RST, and the browser could show
+     * "connection reset" instead of the reply (#583 review).  So: our side
+     * done (FIN after the reply), and what has arrived read and dropped
+     * before the close.  Non-blocking: only what is already here. */
+    (void)SOCK_SHUTDOWN_WR(*ctl_client_fd);
+    char sink[512];
+    for (int i = 0; i < 64 && recv(*ctl_client_fd, sink, sizeof(sink), 0) > 0; i++)
+        ;
+    HLOGW("tcp-ctl", "control connection from %s is a web browser: closed. This port is for "
+          "host programs (BPQ32, Pat...); the web interface is on the UI port", who);
+    close_ctl_socket(ctl_client_fd);
 }
 
 static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notify_arq)
@@ -1082,11 +1150,7 @@ static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notif
     if (!ctl_client_fd || *ctl_client_fd < 0)
         return;
 
-    SOCK_CLOSE(*ctl_client_fd);
-    *ctl_client_fd = -1;
-    cli_ctl_sockfd = -1;
-    net_set_status(CTL_TCP_PORT, NET_LISTENING);
-    atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
+    close_ctl_socket(ctl_client_fd);
     /* The monitor runs nine extra decoders; a host that crashed or exited
      * must not leave them spinning until the modem restarts.  Clear it on the
      * same disconnect that tears down the rest of the host's state. */
@@ -1254,6 +1318,7 @@ void *arq_reactor_thread(void *port)
     refusals_t data_refused = { .comp = "tcp-data", .port = "data" };
     char ctl_line[TCP_BLOCK_SIZE + 1] = {0};
     int ctl_len = 0;
+    bool ctl_first_read = false;   /* the client's first bytes: a web browser? */
     int last_buffer_report = -1;
     uint64_t next_keepalive_ms = 0;
     uint64_t next_buffer_report_ms = 0;
@@ -1350,6 +1415,7 @@ void *arq_reactor_thread(void *port)
                     last_buffer_report = -1;
                     atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
                     ctl_len = 0;
+                    ctl_first_read = true;
                     HLOGI("tcp-ctl", "Control client connected");
                 }
             }
@@ -1436,7 +1502,12 @@ void *arq_reactor_thread(void *port)
                 if (n > 0)
                 {
                     HLOGD("tcp-ctl", "recv %zd bytes from control client", n);
-                    process_control_bytes(ctl_line, &ctl_len, rx_buf, n);
+                    bool first = ctl_first_read;
+                    ctl_first_read = false;
+                    if (first && is_http_request(rx_buf, n))
+                        refuse_web_client(&ctl_client);
+                    else
+                        process_control_bytes(ctl_line, &ctl_len, rx_buf, n);
                 }
                 else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
                 {

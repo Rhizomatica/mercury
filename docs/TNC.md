@@ -35,6 +35,18 @@ it: 30 s idle, then 3 probes 10 s apart on Linux (about a minute), or 10
 probes 1 s apart on Windows (about 40 s).  After that the next connection
 gets in.
 
+**A web browser on the control port.** The control port is not a web page.
+A browser pointed at it (`http://<host>:8300`) gets a short HTTP 400 reply
+saying so, and only its own connection is closed: a host's data connection
+stays, and the host gets the control port at once.  Mercury logs
+
+    control connection from 192.168.1.20:52344 is a web browser: closed. ...
+
+Mercury's web interface, when it is enabled (`-G`), is on the UI port, 10000
+by default (`-U`).  Before this, the browser kept the control port while it
+stayed connected (K7EK, 2026-11-14), each line of its request answered
+`WRONG`, and its leaving closed the host's data connection.
+
 A host program that hangs without closing its connection keeps the port for
 good.  This happens on the same machine: the program is stuck, but its OS still
 answers the keepalive probes for it, so keepalive never gives up.  A new
@@ -1020,6 +1032,20 @@ bytes received from the remote station are delivered on the data port.
 
 No framing is needed — Mercury handles segmentation internally.  The data
 port only carries payload when a session is CONNECTED.
+
+Bytes written while no session is up are held in the TX queue (`BUFFER`
+counts them) and go out as the first payload of the next session.  A host
+may write as soon as it sends `CONNECT`; those bytes are kept for that call.
+Bytes are dropped when:
+
+- the data client disconnects while the station is idle or listening (no
+  call being placed or answered), with a warning in the log: their writer is
+  gone, and they would otherwise reach whatever station connects next;
+- the host sends `ABORT`;
+- a session ends (bytes it did not carry are not kept for the next one).
+
+A host that keeps its data connection open and must start a session with an
+empty queue should check `BUFFER` and send `ABORT` if it is not 0.
 
 ---
 
