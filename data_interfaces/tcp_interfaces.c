@@ -2125,6 +2125,17 @@ void *tcp_server_thread(void *port_ptr)
             SOCK_CLOSE(client_socket);
             continue;
         }
+
+        /* Known and left alone (#588): a second client waits in the listen
+         * backlog while one holds this port, and any KISS frame it sends
+         * then is read and transmitted once it is accepted, however late.
+         * That holds even when it has given up: on Linux a client that
+         * aborts with a reset (SO_LINGER 0) still has its buffered frame
+         * returned by recv() before ECONNRESET.  A plain close() or a crash
+         * ends with FIN, not a reset, so only that deliberate abort hits
+         * this, and no KISS client is known to do it.  If late frames from
+         * queued clients ever matter, refuse a second client here as the
+         * control and data ports do. */
 #if defined(SO_NOSIGPIPE)
         setsockopt(client_socket, SOL_SOCKET, SO_NOSIGPIPE, (const char *)&opt, sizeof(opt));
 #endif
