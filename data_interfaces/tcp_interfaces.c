@@ -2125,6 +2125,24 @@ void *tcp_server_thread(void *port_ptr)
             SOCK_CLOSE(client_socket);
             continue;
         }
+
+        /* A client can reset its connection while it waits in the listen
+         * backlog. On Linux recv() can return buffered KISS data before
+         * reporting that reset. Check the socket before starting the reader
+         * so it cannot queue a frame from a client that has already aborted.
+         * A peer's orderly write shutdown can leave valid bytes to read. */
+        struct pollfd accepted = { .fd = client_socket, .events = POLLIN };
+        int status;
+        do {
+            status = poll(&accepted, 1, 0);
+        } while (status < 0 && sock_errno() == SOCK_EINTR && !mercury_stop);
+        if (status < 0 || (accepted.revents & (POLLERR | POLLNVAL)))
+        {
+            HLOGI("tcp-bcast", "Discarding failed broadcast connection before reading");
+            SOCK_CLOSE(client_socket);
+            continue;
+        }
+
 #if defined(SO_NOSIGPIPE)
         setsockopt(client_socket, SOL_SOCKET, SO_NOSIGPIPE, (const char *)&opt, sizeof(opt));
 #endif
