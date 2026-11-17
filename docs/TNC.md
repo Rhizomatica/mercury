@@ -306,7 +306,10 @@ pieces the peer has not yet confirmed.  `ABORT` does not wait.  It discards
 the unsent TX data, the unconfirmed pieces and received data not yet read,
 then sends one DISCONNECT frame straight away (after any frame already on
 the air, and clear of the peer's reply window), so the peer is told rather
-than left to time out.  It is not retried: the caller is free once the
+than left to time out.  To a peer that last reported hearing the control
+mode below -3 dB, that DISCONNECT goes twice, back to back in one keydown
+(3.7 s more on the air): on 15 Nov 2026 a single one was lost twice at -3 to
+-9 dB, and the peer waited out its 240 s watchdog.  It is not retried: the caller is free once the
 peer answers or one retry interval passes, and the callee once its
 DISCONNECT is out.  The callee's waits for its own next slot only so
 long: if none comes in time to be on the air and done within 15 s of the
