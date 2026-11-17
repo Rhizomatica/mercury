@@ -1507,9 +1507,25 @@ bool arq_link_connected_now(bool *connected)
     return true;
 }
 
-int arq_tx_backlog_bytes(void)
+int arq_buffer_bytes_nowait(void)
 {
-    return g_initialized ? cb_tx_backlog() : 0;   /* g_app_tx_mtx only */
+    if (!g_initialized)
+        return 0;
+    return arq_get_tx_backlog_bytes() + arq_fsm_tx_inflight_published();
+}
+
+/* g_sess_lock for the TCP reactor: never waits on it for long, since the
+ * event loop holds it while it waits on the reactor (above).  Up to ~1 s of
+ * tries; false if it stayed busy. */
+static bool sess_lock_for_reactor(void)
+{
+    for (int i = 0; i < 1000; i++)
+    {
+        if (pthread_mutex_trylock(&g_sess_lock) == 0)
+            return true;
+        hermes_usleep(1000);
+    }
+    return false;
 }
 
 void arq_discard_stale_rx(void)
@@ -1518,7 +1534,8 @@ void arq_discard_stale_rx(void)
      * into the buffer -- runs under g_sess_lock.  Holding it across the check
      * and the clear means a session cannot start in between and have its
      * first bytes wiped. */
-    pthread_mutex_lock(&g_sess_lock);
+    if (!sess_lock_for_reactor())
+        return;          /* the event loop is busy delivering: a session is up */
     if (g_sess.conn_state != ARQ_CONN_CONNECTED)
         clear_buffer(data_rx_buffer_arq);
     pthread_mutex_unlock(&g_sess_lock);
@@ -1561,7 +1578,8 @@ size_t arq_discard_stale_tx(void)
         bool landed = (int)(atomic_load(&g_payload_written) - target) >= 0;
         bool idle;
 
-        pthread_mutex_lock(&g_sess_lock);
+        if (!sess_lock_for_reactor())
+            break;       /* busy for a second: a session is at work, not idle */
         idle = (g_sess.conn_state == ARQ_CONN_DISCONNECTED ||
                 g_sess.conn_state == ARQ_CONN_LISTENING);
         if (idle)

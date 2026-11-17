@@ -13,6 +13,7 @@
 #include "arq.h"
 
 #include <limits.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
@@ -140,6 +141,17 @@ static bool abort_teardown(arq_session_t *sess, uint64_t now);
 /* The station enters a connection state, at teardown step td (ARQ_TD_NONE
  * but for a reply owed to the peer's DISCONNECT): no step outlives its
  * state. */
+/* tx_inflight_bytes, published for the TCP reactor's BUFFER figure, which
+ * must not take the session lock (arq_buffer_bytes_nowait).  Written only
+ * here, with the field.  One per process: the runtime has one session. */
+static _Atomic int g_tx_inflight_pub = 0;
+static void set_tx_inflight(arq_session_t *sess, int n)
+{
+    sess->tx_inflight_bytes = n;
+    atomic_store(&g_tx_inflight_pub, n);
+}
+int arq_fsm_tx_inflight_published(void) { return atomic_load(&g_tx_inflight_pub); }
+
 static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_teardown_t td,
                           uint64_t deadline_ms, arq_event_id_t deadline_event)
 {
@@ -187,7 +199,7 @@ static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_t
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
     {
         sess->peer_tx_mode      = sess->initial_payload_mode;
-        sess->tx_inflight_bytes = 0;
+        set_tx_inflight(sess, 0);
     }
 }
 
@@ -781,7 +793,7 @@ static void car_io_tx_confirmed(void *ctx, size_t len)
 {
     arq_session_t *sess = ctx;
     (void)len;
-    sess->tx_inflight_bytes = (int)car_tx_inflight(sess->car);
+    set_tx_inflight(sess, (int)car_tx_inflight(sess->car));
     if (g_cbs.send_buffer_status)
         g_cbs.send_buffer_status(session_tx_backlog(sess) + sess->tx_inflight_bytes);
 }
@@ -2427,7 +2439,7 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     }
     if (sess->car_active && sess->conn_state == ARQ_CONN_CONNECTED)
     {
-        sess->tx_inflight_bytes = (int)car_tx_inflight(sess->car);
+        set_tx_inflight(sess, (int)car_tx_inflight(sess->car));
         uint64_t d = car_next_deadline(sess->car);
         if (car_lost_at(sess) < d)
             d = car_lost_at(sess);

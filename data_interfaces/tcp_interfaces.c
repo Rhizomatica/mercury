@@ -301,12 +301,13 @@ static int open_listener_socket(int port, int port_type, const char *tag)
     return fd;
 }
 
-/* BUFFER's figure.  Not arq_get_runtime_snapshot(): it takes the session
- * lock, which the event loop holds while it waits for this thread to drain
- * received bytes (arq_call_in_progress). */
+/* BUFFER's figure: the queue plus the carousel's unconfirmed bytes, as the
+ * FSM's own reports count it.  Not arq_get_runtime_snapshot(): it takes the
+ * session lock, which the event loop holds while it waits for this thread
+ * to drain received bytes (arq_call_in_progress). */
 static int arq_buffered_bytes_snapshot(void)
 {
-    int buffered = arq_tx_backlog_bytes();
+    int buffered = arq_buffer_bytes_nowait();
     return buffered < 0 ? 0 : buffered;
 }
 
@@ -1014,21 +1015,20 @@ static void refuse_client(refusals_t *r, int fd, int holder, uint64_t now_ms)
 static uint8_t held_payload[TCP_BLOCK_SIZE];
 static size_t  held_payload_len = 0;
 
-/* Queue the held piece, trying for up to wait_ms; true when none is held. */
-static bool flush_held_payload(int wait_ms)
+/* Queue the held piece if the bus takes it now; true when none is held.
+ *
+ * A piece held when a call ends goes on the next pass that sees no call up
+ * (dropped, as before); if the host places its next CONNECT before such a
+ * pass, the piece joins the next session -- as do the messages already on
+ * the bus in that case, an old window this does not widen. */
+static bool flush_held_payload(void)
 {
-    for (int waited = 0; held_payload_len > 0; waited++)
-    {
-        if (arq_submit_tcp_payload(held_payload, held_payload_len) == 0)
-        {
-            held_payload_len = 0;
-            tnc_send_buffer((uint32_t)arq_buffered_bytes_snapshot());
-            break;
-        }
-        if (waited >= wait_ms)
-            return false;
-        hermes_usleep(1000);
-    }
+    if (held_payload_len == 0)
+        return true;
+    if (arq_submit_tcp_payload(held_payload, held_payload_len) != 0)
+        return false;
+    held_payload_len = 0;
+    tnc_send_buffer((uint32_t)arq_buffered_bytes_snapshot());
     return true;
 }
 
@@ -1339,12 +1339,12 @@ void *arq_reactor_thread(void *port)
         /* A piece held for the bus first; while one is, the data socket is
          * not read (the host waits on TCP) and the loop comes back sooner.
          * Held only in a call: if the call has ended, it goes as before. */
-        if (held_payload_len && !arq_call_in_progress() && !flush_held_payload(0))
+        if (held_payload_len && !arq_call_in_progress() && !flush_held_payload())
         {
             HLOGW("tcp-data", "Failed to queue ARQ data frame(s) (%zu bytes held, no call up)", held_payload_len);
             held_payload_len = 0;
         }
-        (void)flush_held_payload(0);
+        (void)flush_held_payload();
         if (data_client >= 0)
         {
             pfds[nfds].fd = data_client;

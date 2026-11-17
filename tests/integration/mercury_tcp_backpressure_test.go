@@ -94,8 +94,17 @@ func TestDataPortWriteBeyondTheQueueIsHeldNotDropped(t *testing.T) {
 	if n := strings.Count(string(logText), "Failed to queue ARQ data"); n > 0 {
 		fail("%d piece(s) of the host's write were dropped (%d of %d bytes written)", n, written, len(payload))
 	}
-	// What Mercury has queued is all it has taken; the rest waits in the
-	// sockets.
-	got := bw.send(t, "BUFFER", "BUFFER", commandTimeout)
-	t.Logf("host wrote %d bytes before the deadline; Mercury reports %q", written, got)
+	// What Mercury has queued is all it has taken, and it keeps it: BUFFER
+	// reaches the 64 kB queue, the rest waits in the sockets.  The latest
+	// BUFFER line counts (bw.last): older ones on the control socket go by.
+	const queueFull = 60 * 1024
+	n := -1
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline) && n < queueFull; {
+		bw.send(t, "BUFFER", "", time.Second)
+		_, _ = fmt.Sscanf(bw.last, "BUFFER %d", &n)
+	}
+	t.Logf("host wrote %d bytes before the deadline; Mercury reports %q", written, bw.last)
+	if n < queueFull {
+		fail("BUFFER %d: the queue should hold about 64 kB of the write", n)
+	}
 }
