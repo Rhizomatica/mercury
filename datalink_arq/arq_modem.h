@@ -90,6 +90,10 @@ void arq_modem_crc_seed(uint16_t seed);
 /* The session's MFSK floor (arq_floor_mode), for the modem's patterns. */
 void arq_modem_set_floor_mode_fn(void (*fn)(int mode));
 void arq_modem_floor_mode(int mode);
+/* Cut the keydown on the air short (ABORT): the modem drops the rest of its
+ * audio and unkeys.  A keydown that starts later is not affected. */
+void arq_modem_set_cut_tx_fn(void (*fn)(void));
+void arq_modem_cut_tx(void);
 
 /**
  * @brief Notify ARQ that PTT has gone ON.

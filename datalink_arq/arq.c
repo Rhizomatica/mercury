@@ -755,6 +755,14 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
             pthread_mutex_unlock(&g_conn_lock);
         }
         arq_tnc_send_disconnected();
+        /* ...and what we are transmitting stops with it.  A carousel round
+         * at the floor is a 27 s keydown, and it used to play out to the end:
+         * on air, VE4KLM 15 Nov (JNOS "mbox reset"), PTT stayed on 20 s past
+         * the ABORT and its DISCONNECTED, carrying data the session had just
+         * dropped.  The modem unkeys within its tail time, the FSM sees the
+         * keydown end as it would any other, and the one DISCONNECT goes out
+         * after it.  A CALL being sent is cut too: the call is over. */
+        arq_modem_cut_tx();
         ev.id = ARQ_EV_APP_DISCONNECT;
         ev.abort = true;
         break;

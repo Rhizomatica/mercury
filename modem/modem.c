@@ -221,6 +221,8 @@ float modem_get_tx_peak_dbfs(void)
  * effect within ~one chunk instead of after the whole ring drains. */
 #define MODEM_TUNE_RING_HIGH_BYTES (4800 * (int)sizeof(int32_t))   /* 600 ms */
 
+static void modem_cut_tx(void);   /* ABORT stops the keydown (key_and_play) */
+
 static _Atomic bool     g_tune_active      = false;
 static _Atomic bool     g_tune_stop        = false;
 static _Atomic int      g_tune_dbfs_milli  = -15000;  /* dBFS * 1000 */
@@ -1116,6 +1118,8 @@ try_shm_connect2:
     arq_modem_set_crc_seed_fn(modem_apply_crc_seed);
     /* A session's patterns go at its floor's geometry. */
     arq_modem_set_floor_mode_fn(mfsk_pattern_set_geometry);
+    /* ABORT stops the keydown on the air. */
+    arq_modem_set_cut_tx_fn(modem_cut_tx);
     
     int modem_sample_rate = g_modem->codec.be->sample_rate(g_modem->codec.ctx);
     HLOGI("modem", "Initialized persistent mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2/MFSK/MFSK500), frames per burst: %d", frames_per_burst);
@@ -1385,6 +1389,28 @@ static void append_burst_audio(const modem_codec_t *codec, const uint8_t *bytes_
 
 /* Key the transmitter, play `total_samples` of pre-built audio, unkey.  ARQ's
  * TX_STARTED reports the modem's current mode, so set that first. */
+/* ABORT cuts the keydown on the air (arq_modem_cut_tx).  Only a keydown that
+ * is playing can be cut: one keyed after the cut -- the ABORT's own DISCONNECT
+ * -- plays out whole, so key_and_play clears the request as it keys. */
+static _Atomic bool g_tx_playing = false;
+static _Atomic bool g_tx_cut     = false;
+
+static void modem_cut_tx(void)
+{
+    if (atomic_load(&g_tx_playing))
+        atomic_store(&g_tx_cut, true);
+}
+
+/* The cut, if one was asked for: the audio not yet played is dropped, so the
+ * radio carries the playback device's own buffer at most before PTT drops. */
+static bool tx_cut_now(void)
+{
+    if (!atomic_exchange(&g_tx_cut, false))
+        return false;
+    clear_buffer(playback_buffer);
+    return true;
+}
+
 static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t total_samples,
                          float peak_fs)
 {
@@ -1409,6 +1435,8 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
 
     /* === STEP 2: Key transmitter and send pre-generated audio === */
 
+    atomic_store(&g_tx_cut, false);
+    atomic_store(&g_tx_playing, true);
     ptt_on();
     arq_modem_ptt_on(g_modem->mode, g_modem->payload_bytes_per_modem_frame + 2);
 
@@ -1434,6 +1462,11 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
                (size_buffer(playback_buffer) > 0 ||
                 time_now_ms() < t0_ms + burst_ms + tail_ms))
         {
+            if (tx_cut_now())
+            {
+                HLOGI("modem-tx", "keydown cut short (ABORT)");
+                break;
+            }
             uint64_t now = time_now_ms();
             if (now >= next_spec_ms)
             {
@@ -1479,6 +1512,13 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
          * on a HERMES SHM station the radio daemon holds it there. */
         while (waited_us < playback_duration_us && !mercury_stop)
         {
+            if (tx_cut_now())
+            {
+                HLOGI("modem-tx", "keydown cut short (ABORT) %llu of %llu ms in",
+                      (unsigned long long)(waited_us / 1000ULL),
+                      (unsigned long long)(playback_duration_us / 1000ULL));
+                break;
+            }
             size_t pos = (size_t)((waited_us * FREEDV_FS_8000) / 1000000ULL);
             publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);
 
@@ -1496,6 +1536,8 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
     }
 
     ptt_off();
+    atomic_store(&g_tx_playing, false);
+    atomic_store(&g_tx_cut, false);
     arq_modem_ptt_off();
 }
 
