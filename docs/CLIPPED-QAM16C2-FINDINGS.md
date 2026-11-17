@@ -25,8 +25,10 @@ crosses DATAC17's goodput ~3 dB earlier than stock, at roughly half the
 radio peak it needs today. The damage side is real but smaller: the clipped
 constellation needs ~1 dB more achieved SNR in AWGN, more under fading, and
 drive 3.0 destroys the mode (its entire PAPR gain cancels). The optimum is
-drive ~2, gain2 1.0 — and the change is TX-side only, so a clipped station
-interoperates with a stock one without any wire change.
+drive ~2, gain2 1.0. A clipped station decodes on a stock receiver and the
+other way round, with no wire change; what does change on the receive side
+is the SNR the receiver reports, mapped by `SNR_MAP_QAM16C2` fitted on
+clipped frames (see "The SNR the receiver reports").
 
 ## Method
 
@@ -142,14 +144,30 @@ The stock mode only overtakes DATAC17 around +10.7; the clipped mode from
 radio terms.** In AWGN the effect is larger: the clipped mode wins from +5
 where the stock mode needs +9-10.
 
-## SNR estimate stability
+## The SNR the receiver reports
 
-The modem SNR estimate on synced trials reads −4.5 ± 0.1 across stock and
-every clipped variant on both channels — clipping does not further bias the
-estimator the ladder reads. (Its absolute offset, ~10 dB low against true
-SNR3k at these points, is the pre-calibration state documented in
-OTA-PHASE-A-SNR-CALIB.md and handled by the ladder's per-mode constants; not
-re-litigated here.)
+The first version of this note read the estimate at the first sync, before
+any frame had decoded, and saw −4.5 dB on every variant: QAM16C2's
+decision-directed estimator has nothing to work on at that point, so the
+number said nothing about the clip.  Read at the decode, as Mercury reports
+it with the frame (Pedro's harness on the PR, and now `rung_sweep`'s
+"modem reads" column), the clip does bias it.  Its in-band distortion counts
+as noise, so through the map fitted on unclipped frames the reading
+flattened and never reached the rung's own 13 dB (white noise, 40 to 60
+frames a point, SNR3k from the modem frames' power):
+
+| True SNR3k | 10 | 12 | 14 | 16 | 18 | 20 | 24 | 28 |
+|---|---|---|---|---|---|---|---|---|
+| Unclipped frames, old map | 11.0 | 12.4 | 14.0 | 15.9 | 17.8 | 19.9 | 24.0 | 25 (cap) |
+| Clipped frames, old map | 8.7 | 9.7 | 10.5 | 11.2 | 11.7 | 12.0 | 12.5 | 12.7 |
+| Clipped frames, new map | 10.1 | 12.0 | 14.1 | 16.2 | 18.1 | 20.3 | 23.7 | 24.6 |
+
+`SNR_MAP_QAM16C2` (`modem/freedv/freedv_700.c`) is now fitted on the
+clipped frames.  The raw estimate varies ~0.1 dB a frame, so the map holds
+it to ±0.3 dB from 10 to 16 dB and ±0.7 to 1.1 dB at 20 to 22, where it is
+steep (0.12 dB raw per dB true).  An unclipped sender (1.9.24 and before)
+now reads high: 15 dB at 10 true, the 25 dB cap from 14.  Both ends of a
+2.0 session clip.
 
 ## Verdict
 
@@ -157,14 +175,95 @@ re-litigated here.)
    setting** for QAM16C2 on peak-limited radios: PAPR 11.4 → 6.7 dB, AWGN
    knee −4.5 dB of radio setting, fading goodput crossover vs DATAC17 ~3 dB
    earlier, and the same transmitter burden as the rung below.
-2. **TX-side only.** The receiver is untouched; a clipped station
-   interoperates with a stock one. No wire format, frame size, mode table or
-   ladder change is required — which is why this document is findings-only
-   and the one-line `ofdm_mode.c` change is deliberately *not* in this
-   branch: mode-config changes ride the OTA bench, like everything else that
-   transmits.
+2. **No wire change, one receiver change.** A clipped station decodes on a
+   stock receiver and the other way round; no wire format, frame size, mode
+   table or ladder threshold changes.  The receiver's SNR map for QAM16C2 is
+   refitted on clipped frames (without it the reading capped at ~12.7 dB
+   and kept the rung marginal at any SNR).  A mixed pair reads optimistic:
+   an unclipped 1.9.24 sender reads up to ~11 dB high through the new map
+   (23 dB at 12 true; the 25 dB cap from about 14), partly offset at the low
+   end by the clipped sender needing ~4.5 dB less carrier.  The 2.0 release
+   notes must say so, so that such a link's logs are not a surprise.  The
+   `ofdm_mode.c` change waited for the bench ("On the air" below) and is
+   made.
 3. Do not clip harder than drive ≈ 2.0-2.5. (2.5, 1.0) trades fading
    robustness for PAPR and loses; 3.0 is unusable on this mode.
+
+## On the air (2026-11-15): done, and the clip is in
+
+The bench the caveats below ask for: two sBitx stations (radiod, RTP audio)
+into dummy loads on 7050 kHz LSB, trunk 274bd5c9 built twice on each, once as
+it was and once with `clip_gain1` 2.0 / `clip_gain2` 1.0 on QAM16C2.  One
+station sends test frames for 60 s (`mercury -t -m 10`), the other counts
+what decodes (`mercury -r -m 10`, the same stock receiver for both); stock
+and clipped alternate, nothing else changes, the radios' settings are not
+touched.
+
+| Direction | Sent as | Keydowns | Decoded | Receiver's S/N on the frames |
+|---|---|---|---|---|
+| caldono to pueblonuevo | DATAC17 (reference) | 9 | 7 | 9.7 dB |
+| | QAM16C2 stock | 16 + 16 | 0 + 0 | |
+| | QAM16C2 clipped | 16 + 16 | 14 + 14 | 7.3, 7.4 dB |
+| pueblonuevo to caldono | DATAC17 (reference) | 9 | 8 | 10.9 dB |
+| | QAM16C2 stock | 16 + 16 | 0 + 0 | |
+| | QAM16C2 clipped | 16 + 16 | 15 + 15 | 8.3, 8.5 dB |
+
+The last keydown of each run is cut by the timer, so 15 of 16 is every whole
+frame.  The clipped frames' 7.3 to 8.5 dB are the old map's reading of them
+(see "The SNR the receiver reports"): through the map fitted on clipped
+frames they are about 9.4 and 9.9 dB, the same as DATAC17's 9.7 and 10.9,
+as two modes 3.6 and 4.0 dB under the same carrier should be.  At a radio setting where DATAC17 reads 10 dB the stock mode is not
+there at all, and the clipped mode delivers like DATAC17 at more than twice
+the rate.  That is what the tables above predict: at this setting the stock
+mode's own S/N is about 5.5 dB, under its 7.7 dB knee.
+
+The same on the simulated channel, with `utils/rung_sweep` (every burst at
+one peak, the axis the S/N of a steady carrier at that peak; 60 to 100
+bursts a point):
+
+| | Under the carrier | White noise, delivers from | CCIR Poor: bit/s at 16 / 18 / 20 / 22 dB |
+|---|---|---|---|
+| DATAC17 | 4.0 dB | 8 dB | 1362 / 1362 / 1362 / 1362 |
+| QAM16C2 stock | 8.5 dB | 17 dB | 29 / 588 / 1559 / 2382 |
+| QAM16C2 clipped | 3.6 dB | 14 dB | 1470 / 2147 / 2500 / 2617 |
+
+And a whole session in the two-daemon harness (30 kB, white noise, nominal
+12 dB): 277 s stock, 140 s clipped.  The stock session is slower there than
+at 10 dB (240 s): the ladder tries QAM16C2 from a reading of 11.5 dB, the
+unclipped frames are 4.5 dB under that reading, and every try is lost.
+
+**So the clip is now in `ofdm_mode.c`.**  The ladder's QAM16C2 threshold
+(`ARQ_SNR_MIN_QAM16C2_DB`, 13 dB) stays: it is compared with readings taken
+on the rung below, and the clipped mode goes out at that rung's level, where
+the unclipped one went out 4.5 dB under it.  It also needs the mode's own
+readings on the same scale, which the old map did not give: capped at
+12.7 dB they kept the rung marginal (`level_marginal`, 13 + 3 dB) at any
+channel SNR, gated below ~13.5 dB true and dead after two losses.  With the
+map fitted on clipped frames a reading means what it says from 10 to 23 dB.
+
+**The signal off the transmitter.**  An Airspy HF+ at the workstation
+recorded pueblonuevo's keydowns (7050 kHz USB, 45 s a mode, 192 kS/s; the
+signal 25 dB over the receiver's idle noise, the receiver's own floor 24 dB
+under the signal):
+
+| | Occupied bandwidth (99 %) | Peak over average at the antenna, 99.99 % of samples |
+|---|---|---|
+| DATAC17 | 2150 Hz | 5.7 dB |
+| QAM16C2 stock | 2170 Hz | 10.6 dB |
+| QAM16C2 clipped | 2160 Hz | 7.1 dB |
+
+The clipped mode is as wide as the others and, at this receiver's floor, the
+three leave the same nothing in the next channel on either side (at most
+1.5 dB between them, under the floor).  So the clipping does not splatter
+into the neighbouring channels to the extent this receiver can see, and the
+peaks that reach the antenna are the 6.7 dB of the simulation (7.1 dB
+measured), not the 11.4 dB of the stock mode.  A spectrum analyser with a
+lower floor would say more about the farther channels.  Caldono's captures
+were 10 dB weaker (its power setting is lower) and sit too near the floor to
+use.
+
+Not measured: a whole session on the air (the bench reads 10 to 11 dB at its
+present power, just under where the ladder tries the top rung).
 
 ## Caveats
 

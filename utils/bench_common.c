@@ -123,13 +123,6 @@ void bench_run_burst_ex(struct freedv *rx, const short *samples, int n, int tail
     int st = freedv_get_rx_status(rx);
     if (st & FREEDV_RX_SYNC) {
       *saw_sync = 1;
-      if (snr_est_sum && snr_est_n) {
-        int sync_i = 0;
-        float se = 0.0f;
-        freedv_get_modem_stats(rx, &sync_i, &se);
-        *snr_est_sum += se;
-        (*snr_est_n)++;
-      }
       /* The first sync is the acquisition decision: its metric and its
        * frequency estimate are the ones the sweep is about. */
       if (info && !info->seen) {
@@ -141,7 +134,20 @@ void bench_run_burst_ex(struct freedv *rx, const short *samples, int n, int tail
         freedv_get_modem_stats(rx, &sync_i, &info->snr_est);
       }
     }
-    if (nb > 0 && !(st & FREEDV_RX_BIT_ERRORS)) *got_frame = 1;
+    if (nb > 0 && !(st & FREEDV_RX_BIT_ERRORS)) {
+      /* The estimate the modem reports with the decoded frame, once a
+       * burst: what the rung ladder reads.  Read at the sync it was the
+       * estimate before any frame, which QAM16C2's decision-directed
+       * estimator has not formed yet (-4.5 dB at every S/N). */
+      if (snr_est_sum && snr_est_n && !*got_frame) {
+        int sync_i = 0;
+        float se = 0.0f;
+        freedv_get_modem_stats(rx, &sync_i, &se);
+        *snr_est_sum += se;
+        (*snr_est_n)++;
+      }
+      *got_frame = 1;
+    }
   }
 }
 
