@@ -48,6 +48,7 @@
 #include "cfg_utils.h"
 #include "resampler.h"
 #include "cap_recover.h"
+#include "play_recover.h"
 #include "pcm24.h"
 #include "hl2.h"
 
@@ -1308,6 +1309,71 @@ static void *rtp_transport_thread(void *unused)
 #endif /* !_WIN32 */
 
 
+/* Close the playback device and open it again as it was negotiated (got):
+ * the resampler and the sample layout were built for that rate, format and
+ * channel count, and a device that comes back with others would transmit
+ * off-frequency or garbage.  Retries with a backoff until it opens or a
+ * shutdown is asked for; NULL then.  Each attempt is one reopen to pr. */
+static ffaudio_buf *play_reopen(ffaudio_interface *audio, ffaudio_buf *b,
+                                ffaudio_conf *cfg, ffuint flags,
+                                const ffaudio_conf *got, play_recover_t *pr)
+{
+    audio->free(b);
+    b = NULL;
+    unsigned attempt = 0;
+    unsigned delay_ms = 200;
+    while (!mercury_stop && !audio_shutdown_)
+    {
+        cfg->format = got->format;
+        cfg->sample_rate = got->sample_rate;
+        cfg->channels = got->channels;
+        cfg->buffer_length_msec = got->buffer_length_msec;
+
+        b = audio->alloc();
+        bool opened = b != NULL && audio->open(b, cfg, flags) == 0;
+        bool same = opened && cfg->format == got->format &&
+                    cfg->sample_rate == got->sample_rate &&
+                    cfg->channels == got->channels;
+        attempt++;
+        if (play_recover_on_reopen(pr))
+        {
+            HLOGE("audio-play", "the playback device takes no audio: %u reopens in a row "
+                  "brought nothing (unplugged, or its USB codec reset?) -- still trying it",
+                  PLAY_DRY_REOPENS_DEAD);
+            audio_health_set(false, AUDIO_HEALTH_FAILED,
+                             "the playback device takes no audio (still trying it)");
+        }
+        if (same)
+        {
+            if (attempt > 1)
+                HLOGI("audio-play", "playback reopened after %u attempts", attempt);
+            return b;
+        }
+        if (attempt == 1 || (attempt % 16) == 0)
+        {
+            if (opened)
+                HLOGE("audio-play", "playback reopen (attempt %u) negotiated %u Hz / %dch / "
+                      "format %d, not the %u Hz / %dch / format %d in use",
+                      attempt, cfg->sample_rate, cfg->channels, cfg->format,
+                      got->sample_rate, got->channels, got->format);
+            else
+                HLOGE("audio-play", "playback reopen failed (attempt %u): %s",
+                      attempt, b ? audio->error(b) : "alloc()");
+        }
+        if (b != NULL)
+        {
+            audio->free(b);
+            b = NULL;
+        }
+        /* Short steps, so a shutdown during the backoff is still prompt. */
+        for (unsigned slept = 0; slept < delay_ms && !mercury_stop && !audio_shutdown_;
+             slept += 100)
+            ffthread_sleep(100);
+        delay_ms = (delay_ms < 2500) ? delay_ms * 2 : 5000;
+    }
+    return NULL;
+}
+
 void *radio_playback_thread(void *device_ptr)
 {
     ffaudio_interface *audio = NULL;
@@ -1384,11 +1450,19 @@ void *radio_playback_thread(void *device_ptr)
     }
 
     conf.flags = FFAUDIO_PLAYBACK;
+#if defined(AUDIOIO_ALSA_PULSE)
+    /* Non-blocking on PulseAudio: a blocking ffpulse_write() waits on the
+     * mainloop until the stream has room, for ever if it never does (a stream
+     * PipeWire stopped servicing), and the stall watchdog below could never
+     * run.  Non-blocking returns 0 instead, and the loop paces itself. */
+    if (audio == (ffaudio_interface *) &ffpulse)
+        conf.flags |= FFAUDIO_O_NONBLOCK;
+#endif
     ffaudio_init_conf aconf = {};
     aconf.app_name = "mercury_playback";
 
     int r;
-    ffaudio_buf *b;
+    ffaudio_buf *b = NULL;
     ffaudio_conf *cfg;
 
     ffuint frame_size;
@@ -1605,6 +1679,12 @@ void *radio_playback_thread(void *device_ptr)
         resamp_up_reset(&up_rs);
     }
 
+    /* What the device negotiated: a reopen must get the same (play_reopen). */
+    const ffaudio_conf play_got = *cfg;
+    play_recover_t play_rec = {0};
+    uint32_t play_write_errors = 0;
+    uint32_t play_reopens = 0;
+
     /* Reached only after the device, rate, format and channel checks above:
      * the playback path is fully validated and about to stream. */
     audio_health_set(false, AUDIO_HEALTH_RUNNING, NULL);
@@ -1695,7 +1775,7 @@ void *radio_playback_thread(void *device_ptr)
 
         while (n >= frame_size)
         {
-            if (audio_shutdown_) break;  // exit fast on restart
+            if (audio_shutdown_ || mercury_stop) break;  // exit fast on restart
 
             r = audio->write(b, ((uint8_t *)buffer_output_stereo) + total_written, n);
 
@@ -1703,13 +1783,60 @@ void *radio_playback_thread(void *device_ptr)
                 HLOGW("audio-play", "detected underrun");
                 continue;
             }
+            if (r > 0)
+            {
+                int rec = play_recover_on_write(&play_rec);
+                if (rec & PLAY_REC_BACK)
+                    HLOGI("audio-play", "playback taking audio again after reopen #%u",
+                          play_reopens);
+                if (rec & PLAY_REC_ALIVE)
+                    audio_health_set(false, AUDIO_HEALTH_RUNNING, NULL);
+                play_write_errors = 0;
+                total_written += r;
+                n -= r;
+                continue;
+            }
+
+            /* Nothing taken: an error, or no room yet on a non-blocking
+             * stream.  The modem keys PTT for the burst's airtime whatever
+             * happens here, so a device that stays like this keys the radio
+             * over silence for every burst until it is reopened (#591).  A
+             * failed write used to drop its period and the next one failed
+             * the same way, for the rest of the session. */
             if (r < 0)
             {
-                HLOGE("audio-play", "ffaudio.write: %s", audio->error(b));
-                break;
+                play_write_errors++;
+                if (play_write_errors == 1 || (play_write_errors % 256) == 0)
+                    HLOGE("audio-play", "ffaudio.write: %s (error %u)",
+                          audio->error(b), play_write_errors);
             }
-            total_written += r;
-            n -= r;
+            uint64_t now = audioio_monotonic_ms();
+            if (play_recover_on_stuck(&play_rec, now))
+            {
+                ++play_reopens;
+                if (play_reopens <= 3 || (play_reopens % 16) == 0)
+                    HLOGW("audio-play", "playback took no audio for %llu ms, reopening "
+                          "device (reopen #%u)",
+                          (unsigned long long)(now - play_rec.stuck_ms), play_reopens);
+                b = play_reopen(audio, b, cfg, conf.flags, &play_got, &play_rec);
+                if (b == NULL)   /* shutdown asked for mid-reopen */
+                    goto cleanup_play;
+                /* What queued up meanwhile is late: played now it would run
+                 * past the PTT the modem keyed for it, and push every later
+                 * burst out of its key-up.  The burst it was part of is lost
+                 * either way. */
+                size_t late = size_buffer(playback_buffer);
+                while (late > 0)
+                {
+                    size_t k = late < period_scratch_bytes ? late : period_scratch_bytes;
+                    read_buffer(playback_buffer, (uint8_t *) input_buffer, k);
+                    late -= k;
+                }
+                if (rat_up) resamp_rat_reset(rat_up); else resamp_up_reset(&up_rs);
+                play_write_errors = 0;
+                break;   /* this period's audio goes with the rest */
+            }
+            ffthread_sleep(r < 0 ? 20 : 2);
         }
         // printf("n = %lld total written = %u\n", n, total_written);
     }
@@ -1736,7 +1863,8 @@ cleanup_play:
     resamp_rat_free(rat_up);
     rat_up = NULL;
 
-    audio->free(b);
+    if (b != NULL)   /* NULL after a shutdown during a reopen */
+        audio->free(b);
 
     // Only uninit if this thread was the one that initialized the PA context
     if (did_init_play)

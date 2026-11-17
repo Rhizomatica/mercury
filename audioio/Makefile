@@ -104,11 +104,14 @@ hl2.o: hl2.c hl2.h hl2_wire.h hl2_dsp.h
 cap_recover.o: cap_recover.c cap_recover.h audio_dev_limits.h
 	$(CC) $(CFLAGS) -std=gnu11 -c cap_recover.c -o cap_recover.o
 
+play_recover.o: play_recover.c play_recover.h
+	$(CC) $(CFLAGS) -std=gnu11 -c play_recover.c -o play_recover.o
+
 hl2_dsp.o: hl2_dsp.c hl2_dsp.h
 	$(CC) $(CFLAGS) -std=gnu11 -c hl2_dsp.c -o hl2_dsp.o
 
-audioio.a: audioio.o resampler.o cap_recover.o hl2.o hl2_dsp.o $(OBJS)
-	$(AR) rc audioio.a audioio.o resampler.o cap_recover.o hl2.o hl2_dsp.o $(OBJS)
+audioio.a: audioio.o resampler.o cap_recover.o play_recover.o hl2.o hl2_dsp.o $(OBJS)
+	$(AR) rc audioio.a audioio.o resampler.o cap_recover.o play_recover.o hl2.o hl2_dsp.o $(OBJS)
 
 .PHONY: clean
 clean:
