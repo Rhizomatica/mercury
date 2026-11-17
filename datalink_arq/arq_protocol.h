@@ -321,10 +321,12 @@ void arq_protocol_session_calls(bool we_called, const char *remote_call,
 #define ARQ_SNR_MIN_DATAC17_DB        7.0f  /* bench (docs/MODES.md): goodput
                                              * crossover vs DATAC1 ~ +6 dB MPP;
                                              * 89/100 delivery at +8          */
-#define ARQ_SNR_MIN_QAM16C2_DB       13.0f  /* bench: goodput crossover vs
-                                             * DATAC17 ~ +11 dB MPP, 84/100 at
-                                             * +13.7; upstream's published
-                                             * operating point is +15        */
+#define ARQ_SNR_MIN_QAM16C2_DB       11.5f  /* on the refit (clipped) map's
+                                             * scale, which reads ~2 dB below
+                                             * the old one: 13 there; 90 %
+                                             * of frames at 10.2, and the
+                                             * crossover vs DATAC17 ~9.6
+                                             * (utils/rung_sweep)            */
 
 /* Absolute cap on how long an APP_DISCONNECT may stay deferred while the FSM
  * tries to drain the last app bytes.  Once the application has asked to
