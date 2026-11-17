@@ -998,6 +998,35 @@ static void refuse_client(refusals_t *r, int fd, int holder, uint64_t now_ms)
     }
 }
 
+/* A piece of the data client's stream the ARQ's payload bus had no room for
+ * (arq_submit_tcp_payload: EAGAIN) during a call.  It is held, and the data
+ * socket is not read again until it is queued: the kernel's receive window
+ * then fills and the host's writes wait (TCP flow control).  Dropped instead, as before, a
+ * 30 kB write lost 33 to 104 of its 128-byte pieces whenever the bus was
+ * full, the host was never told, and the session waited for them for ever
+ * (Go harness, CCIR Poor at 20-24 dB, 4 of 18 sessions).  Only the reactor
+ * thread touches it. */
+static uint8_t held_payload[TCP_BLOCK_SIZE];
+static size_t  held_payload_len = 0;
+
+/* Queue the held piece, trying for up to wait_ms; true when none is held. */
+static bool flush_held_payload(int wait_ms)
+{
+    for (int waited = 0; held_payload_len > 0; waited++)
+    {
+        if (arq_submit_tcp_payload(held_payload, held_payload_len) == 0)
+        {
+            held_payload_len = 0;
+            tnc_send_buffer((uint32_t)arq_buffered_bytes_snapshot());
+            break;
+        }
+        if (waited >= wait_ms)
+            return false;
+        hermes_usleep(1000);
+    }
+    return true;
+}
+
 static void close_data_client(int *data_client_fd)
 {
     if (!data_client_fd || *data_client_fd < 0)
@@ -1008,6 +1037,9 @@ static void close_data_client(int *data_client_fd)
     cli_data_sockfd = -1;
     net_set_status(DATA_TCP_PORT, NET_LISTENING);
     HLOGI("tcp-data", "Data client disconnected");
+
+    /* A piece held for the bus (only ever in a call) stays held and goes
+     * when the session makes room: the client has left, its bytes have not. */
 
     /* Bytes it wrote with no call up would be the first payload of the next
      * session, with whatever station that is, after their writer has gone
@@ -1299,15 +1331,24 @@ void *arq_reactor_thread(void *port)
             nfds++;
         }
 
+        /* A piece held for the bus first; while one is, the data socket is
+         * not read (the host waits on TCP) and the loop comes back sooner.
+         * Held only in a call: if the call has ended, it goes as before. */
+        if (held_payload_len && !arq_call_in_progress() && !flush_held_payload(0))
+        {
+            HLOGW("tcp-data", "Failed to queue ARQ data frame(s) (%zu bytes held, no call up)", held_payload_len);
+            held_payload_len = 0;
+        }
+        (void)flush_held_payload(0);
         if (data_client >= 0)
         {
             pfds[nfds].fd = data_client;
-            pfds[nfds].events = POLLIN | POLLERR | POLLHUP;
+            pfds[nfds].events = held_payload_len ? (POLLERR | POLLHUP) : (POLLIN | POLLERR | POLLHUP);
             nfds++;
         }
 
         {
-            int poll_rc = poll(pfds, (nfds_t)nfds, 100);
+            int poll_rc = poll(pfds, (nfds_t)nfds, held_payload_len ? 10 : 100);
             if (poll_rc < 0)
                 HLOGW("tcp-poll", "poll() error: %d", sock_errno());
         }
@@ -1398,6 +1439,7 @@ void *arq_reactor_thread(void *port)
             {
                 close_data_client(&data_client);
             }
+
             else if (events & POLLIN)
             {
                 ssize_t n = recv(data_client, (char *)rx_buf, sizeof(rx_buf), 0);
@@ -1405,10 +1447,20 @@ void *arq_reactor_thread(void *port)
                 {
                     HLOGD("tcp-data", "recv %zd bytes from data client", n);
                     int queued = arq_submit_tcp_payload(rx_buf, (size_t)n);
-                    if (queued < 0)
-                        HLOGW("tcp-data", "Failed to queue ARQ data frame(s)");
-                    else
+                    if (queued == 0)
                         tnc_send_buffer((uint32_t)arq_buffered_bytes_snapshot());
+                    else if (errno == EAGAIN && (size_t)n <= sizeof(held_payload) && arq_call_in_progress())
+                    {
+                        /* the bus is full in a call: held, and no more read
+                         * until it is queued (held_payload).  With no call
+                         * up nothing would send it, and the client must be
+                         * read to its end to see it go: dropped, as the
+                         * bytes it leaves behind are (#572). */
+                        memcpy(held_payload, rx_buf, (size_t)n);
+                        held_payload_len = (size_t)n;
+                    }
+                    else
+                        HLOGW("tcp-data", "Failed to queue ARQ data frame(s) (%zd bytes, errno %d)", n, errno);
                 }
                 else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
                 {

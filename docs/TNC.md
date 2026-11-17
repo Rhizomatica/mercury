@@ -1028,6 +1028,13 @@ Bytes are dropped when:
 A host that keeps its data connection open and must start a session with an
 empty queue should check `BUFFER` and send `ABORT` if it is not 0.
 
+While a call is being placed, answered or carried, nothing a host writes is
+dropped for lack of room: when the TX queue (64 kB) and the bus in front of
+it are full, Mercury stops reading the data port until the session has made
+room, and TCP holds the host's writes.  A host may write a whole file at
+once.  (With no call up, bytes beyond the queue are not kept: nothing would
+send them, and they would be dropped with the rest when the host leaves.)
+
 ---
 
 ## Broadcast Port

@@ -220,6 +220,12 @@ void arq_post_pattern_ack(bool is_break);
  * @return true when connected; otherwise false.
  */
 bool arq_is_link_connected(void);
+
+/**
+ * @brief A call is being set up, is up, or is ending: neither idle nor only
+ *        listening (the states in which arq_discard_stale_tx drops bytes).
+ */
+bool arq_call_in_progress(void);
 /** A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED,
  *  DISCONNECTING): what stops a broadcast carousel. */
 bool arq_session_active(void);

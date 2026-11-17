@@ -1481,6 +1481,15 @@ bool arq_is_link_connected(void)
     return connected;
 }
 
+bool arq_call_in_progress(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    bool call = g_initialized && g_sess.conn_state != ARQ_CONN_DISCONNECTED &&
+                g_sess.conn_state != ARQ_CONN_LISTENING;
+    pthread_mutex_unlock(&g_sess_lock);
+    return call;
+}
+
 void arq_discard_stale_rx(void)
 {
     /* Every FSM dispatch -- so every CONNECTED transition and every delivery
