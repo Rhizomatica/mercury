@@ -35,6 +35,18 @@ it: 30 s idle, then 3 probes 10 s apart on Linux (about a minute), or 10
 probes 1 s apart on Windows (about 40 s).  After that the next connection
 gets in.
 
+**A web browser on the control port.** The control port is not a web page.
+A browser pointed at it (`http://<host>:8300`) gets a short HTTP 400 reply
+saying so, and only its own connection is closed: a host's data connection
+stays, and the host gets the control port at once.  Mercury logs
+
+    control connection from 192.168.1.20:52344 is a web browser: closed. ...
+
+Mercury's web interface, when it is enabled (`-G`), is on the UI port, 10000
+by default (`-U`).  Before this, the browser kept the control port while it
+stayed connected (K7EK, 2026-11-14), each line of its request answered
+`WRONG`, and its leaving closed the host's data connection.
+
 A host program that hangs without closing its connection keeps the port for
 good.  This happens on the same machine: the program is stuck, but its OS still
 answers the keepalive probes for it, so keepalive never gives up.  A new
@@ -424,7 +436,10 @@ pieces the peer has not yet confirmed.  `ABORT` does not wait.  It discards
 the unsent TX data, the unconfirmed pieces and received data not yet read,
 then sends one DISCONNECT frame straight away (after any frame already on
 the air, and clear of the peer's reply window), so the peer is told rather
-than left to time out.  It is not retried: the caller is free once the
+than left to time out.  To a peer that last reported hearing the control
+mode below -3 dB, that DISCONNECT goes twice, back to back in one keydown
+(3.7 s more on the air): on 15 Nov 2026 a single one was lost twice at -3 to
+-9 dB, and the peer waited out its 240 s watchdog.  It is not retried: the caller is free once the
 peer answers or one retry interval passes, and the callee once its
 DISCONNECT is out.  The callee's waits for its own next slot only so
 long: if none comes in time to be on the air and done within 15 s of the
@@ -438,6 +453,23 @@ already on the air at the `ABORT` still runs to its end first.
 `DISCONNECTED\r` is sent on the control port at once, and it is the
 session's only one: the end of the teardown that follows sends no second
 `DISCONNECTED\r`.
+
+After that `DISCONNECTED\r`, while the one DISCONNECT is still to go out,
+Mercury sends `PENDING\r` (again every 20 s, as when answering a call: see
+`PENDING`), then `CANCELPENDING\r` once the DISCONNECT is out or the
+teardown has ended. As the callee, the teardown ends about 30 s after the
+`ABORT` at the latest: a DISCONNECT that never finds a clear channel is then
+dropped, and the `CANCELPENDING\r` comes without it. A 60 s limit on the hold is only a
+backstop.  The reason
+is a scanning BPQ32: it restarts its scan 15 s after it sends `ABORT`, and
+the hop's `LISTEN OFF` takes the radio.  At BW500 the peer's frame on the
+air can be 26 s.  On 2026-11-13 the hop came 16.6 s after K7EK's `ABORT`,
+while KG9NI was still sending; the DISCONNECT was never sent, and KG9NI
+waited out its 240 s watchdog.  BPQ32 refuses a hop while a connect is
+pending (`PENDING` sets it; `DISCONNECTED` or `CANCELPENDING` clears it), so
+the `PENDING` after the `DISCONNECTED` keeps the radio on the channel until
+the DISCONNECT is out.  Mercury holds a scanner the same way while a CQ is on
+the air.
 
 An `ABORT` during a teardown already under way (after a `DISCONNECT`) cuts
 it short the same way: no more retries.  With its DISCONNECT already out,
@@ -850,6 +882,11 @@ the one `PENDING` while the caller went on calling for 2 minutes.
 Mercury also sends `PENDING\r` when an outgoing `CQFRAME` actually begins
 transmitting so VARA clients can treat CQ send as an in-progress operation.
 
+And after an `ABORT`, following its `DISCONNECTED\r`, until the one
+DISCONNECT frame is out or the teardown ends (see `ABORT`): a scanning host
+does not take the radio before the peer has been told. This is a second hold,
+apart from the answering hold above; both repeat `PENDING\r` every 20 s.
+
 ### CANCELPENDING
 
 Sent when a previously pending incoming connect request does not complete and
@@ -1109,6 +1146,20 @@ bytes received from the remote station are delivered on the data port.
 
 No framing is needed — Mercury handles segmentation internally.  The data
 port only carries payload when a session is CONNECTED.
+
+Bytes written while no session is up are held in the TX queue (`BUFFER`
+counts them) and go out as the first payload of the next session.  A host
+may write as soon as it sends `CONNECT`; those bytes are kept for that call.
+Bytes are dropped when:
+
+- the data client disconnects while the station is idle or listening (no
+  call being placed or answered), with a warning in the log: their writer is
+  gone, and they would otherwise reach whatever station connects next;
+- the host sends `ABORT`;
+- a session ends (bytes it did not carry are not kept for the next one).
+
+A host that keeps its data connection open and must start a session with an
+empty queue should check `BUFFER` and send `ABORT` if it is not 0.
 
 ---
 

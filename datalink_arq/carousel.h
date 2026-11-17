@@ -310,6 +310,10 @@ int  car_max_level_for_bw(int bw_hz);
 /* The session's floor, rung 0 (arq_floor_mode of its bandwidth): the 1 kHz
  * MFSK unless set.  Both ends set the same, after car_init. */
 void car_set_floor_mode(car_t *c, int mode);
+/* The latest a frame on this mode decodes after its end, on time: D in
+ * docs/CAROUSEL-TURNS.md R4 (1 s OFDM, 4.5 s MFSK).  A frame decoded later
+ * is used, but not answered: the slot its end opened has passed. */
+uint32_t car_decode_bound_ms(int mode);
 /* car_t.ctl_deaf: deaf by the SNR reading, or HARD -- deaf though the reading
  * says the control mode works (the connect got through on MFSK only).  A
  * reading on an MFSK frame does not clear HARD: MFSK copes with what may be
@@ -335,6 +339,10 @@ void car_seed_snr(car_t *c, float mine, float peers);
 /* The peer hears us below the control mode, as it last reported: our control
  * frames go on MFSK.  The session's own control frames follow the same rule. */
 bool car_peer_ctl_deaf(const car_t *c);
+/* The peer hears my control mode, but below -3 dB as it last reported
+ * (moved by my readings since): a frame there gets through only part of the
+ * time.  False with no report. */
+bool car_peer_hears_ctl_marginal(const car_t *c);
 void car_start_sender(car_t *c, uint64_t now);
 void car_start_receiver(car_t *c, uint64_t now);
 

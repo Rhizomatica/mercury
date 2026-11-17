@@ -38,6 +38,10 @@ waterfall_enabled = true
 ; device across replug and reboot and is distinct between two units of the
 ; same model.  Do NOT store the enumeration index shown by other tools: it is
 ; not an identity, and once the device is replugged it addresses nothing.
+;
+; With pulse, empty or "default" lets PulseAudio choose: its default device,
+; or the one you moved Mercury to in pavucontrol, which it remembers.  A device
+; id here always wins over pavucontrol.
 input_device =
 
 ; Audio playback (output) device id (e.g. "plughw:0,0")

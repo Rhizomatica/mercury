@@ -239,6 +239,17 @@ bool arq_channel_heard(void);
 void arq_discard_stale_rx(void);
 
 /**
+ * @brief Drop bytes a data client queued while no call was up (#572).
+ *
+ * The TX counterpart of arq_discard_stale_rx, for when the data client goes:
+ * bytes it wrote while idle or listening would otherwise be the first payload
+ * of the next session, with whatever station that is.  Waits for payload
+ * still on the bus to land first.  Does nothing while calling, accepting or
+ * with a session up.  Returns the number of bytes dropped.
+ */
+size_t arq_discard_stale_tx(void);
+
+/**
  * @brief Get the configured ARQ bandwidth token to report to VARA clients.
  * @return 500, 2300, or 2750 when configured; otherwise 2300.
  */
@@ -290,9 +301,12 @@ void arq_set_active_modem_mode(int mode, size_t frame_size);
  * @param frame_size Frame length in bytes.
  * @param rx_snr SNR the frame was decoded at (dB); sets the start rung.
  * @param mode The carrier it came on (DATAC16 or MFSK); the answer goes on it.
+ * @param age_ms How long ago the frame ended when it decoded (the modem's
+ *        backlog): a CALL decoded too late is not answered (arq_fsm.c).
  * @return true if frame was handled by ARQ connect path.
  */
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode);
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode,
+                                       uint32_t age_ms);
 /* A frame that passed the session's seeded CRC (carousel data plane).
  * from_control: the control decoder produced it; otherwise mode is the
  * payload decoder's. */

@@ -41,6 +41,7 @@ jobs:
             libpulse-dev \
             libasound2-dev \
             libhamlib-dev \
+            libhamlib-utils \
             libssl-dev \
             openssl \
             pkg-config \

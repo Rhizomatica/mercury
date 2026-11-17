@@ -1722,6 +1722,7 @@ static uint32_t r_cap_ms(const car_t *c)
     return m;
 }
 static uint32_t d_of_mode(int mode) { return mercury_mode_is_mfsk(mode) ? D_MFSK_MS : D_OFDM_MS; }
+uint32_t car_decode_bound_ms(int mode) { return d_of_mode(mode); }
 /* The slot period of an anchor S learned up to d late, whose rounds are at
  * most r: the round, then room for M to hear it end (however late it began)
  * and answer with control, guarded.  A continuation slot opens only after
@@ -3281,6 +3282,18 @@ static void note_peer_ctl_deaf(car_t *c, bool deaf)
 }
 
 bool car_peer_ctl_deaf(const car_t *c) { return c && ctl_on_floor(c); }
+
+/* The peer hears my control mode, but not by much: how it last said it hears
+ * me, moved by my own readings since where I have them (peer_hears_me_db),
+ * is below CTL_LOSS_OFF_DB (-3 dB), the band where on air DATAC16 got
+ * through only part of the time (ctl_deaf_on_asks).  False with no report. */
+bool car_peer_hears_ctl_marginal(const car_t *c)
+{
+    if (!c || !c->peer_snr_ms || isnan(c->peer_snr_db)) return false;
+    float db = peer_hears_me_db(c);
+    if (isnan(db)) db = c->peer_snr_db;
+    return db < CTL_LOSS_OFF_DB;
+}
 
 void car_seed_ctl_deaf(car_t *c, uint8_t mine, uint8_t peers)
 {
