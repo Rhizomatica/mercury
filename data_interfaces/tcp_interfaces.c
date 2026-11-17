@@ -1111,11 +1111,9 @@ static void execute_control_command(char *buffer)
     /* DRIVELEVEL <-dB>: the drive level, without keying.  VARA answers OK
      * whatever follows, and takes a number in [-30, 0] rounded to a whole dB
      * (XARA: tune_and_drivelevel_follow_vara); anything else leaves the level
-     * as it was.  In Mercury the level is the tuning carrier's: TUNE ? reports
-     * it and a carrier already on follows it.  Data frames keep the ini's
-     * gain, and the log says so each time: a host lowering its drive to
-     * protect an amplifier must be able to see that data power did not
-     * change. */
+     * as it was.  The tuning carrier takes it as its dBFS level (TUNE ?
+     * reports it); data frames take it as attenuation below the operator's
+     * TX gain, so a host can lower data power but never raise it. */
     const char *drive_args = command_args(buffer, "DRIVELEVEL");
     if (drive_args)
     {
@@ -1128,8 +1126,9 @@ static void execute_control_command(char *buffer)
         if (vb_val_number(drive_args, &db) && db >= -30.0 && db <= 0.0)
         {
             modem_tune_set_level_dbfs((float)rint(db));
-            HLOGW("tcp-ctl", "DRIVELEVEL %.0f: sets the TUNE carrier only; data "
-                  "frames keep the drive level from the ini", rint(db));
+            modem_set_drive_db((float)rint(db));
+            HLOGI("tcp-ctl", "DRIVELEVEL %.0f: TUNE carrier at %.0f dBFS, data "
+                  "frames %.0f dB below the TX gain", rint(db), rint(db), -rint(db));
         }
         else
             HLOGW("tcp-ctl", "DRIVELEVEL '%s' ignored: want a number from -30 to 0",

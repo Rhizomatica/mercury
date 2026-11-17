@@ -201,6 +201,8 @@ int modem_tune_set_level_dbfs(float dbfs)
     mock_tune_level_dbfs = dbfs;
     return 0;
 }
+static float mock_drive_db = 1.0f;      /* 1.0: never set */
+int modem_set_drive_db(float db) { mock_drive_db = db; return 0; }
 
 /* ---- modem listen-mode stubs ---- */
 
@@ -936,6 +938,8 @@ void test_cmd_drivelevel(void)
     execute_control_command(b);
     assert_ok_response();
     TEST_ASSERT_EQUAL_FLOAT(-10.0f, mock_tune_level_dbfs);
+    /* Data frames follow too, as attenuation below the TX gain. */
+    TEST_ASSERT_EQUAL_FLOAT(-10.0f, mock_drive_db);
 
     TEST_ASSERT_EQUAL(2, mock_tune_set_level_calls);
     TEST_ASSERT_EQUAL(0, mock_tune_start_calls);

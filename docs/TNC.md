@@ -319,10 +319,12 @@ other character (`-5dB` is -5).  A number from `-30` to `0` sets the level,
 rounded to a whole dB (`-9.5` gives `-10`); anything else is logged and
 leaves the level as it was.
 
-**Only the [tuning carrier](#tune) follows it.**  `TUNE ?` reports the level
-and a carrier already on changes to it, but **data frames keep the drive
-level the ini sets**: lowering `DRIVELEVEL` does not lower data power.
-Mercury logs a warning saying so each time.
+The [tuning carrier](#tune) takes the level as its dBFS: `TUNE ?` reports it
+and a carrier already on changes to it.  Data frames take it as attenuation
+on top of the TX gain set in the GUI or `audio:tx_gain_db`: `DRIVELEVEL -6`
+sends data 6 dB below that gain, and `DRIVELEVEL 0` sends it at that gain, so
+a host can lower data power but never raise it past what the operator set.
+It is not saved: each start begins at 0 dB.
 
 ---
 
