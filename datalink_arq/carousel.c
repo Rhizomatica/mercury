@@ -2444,10 +2444,13 @@ static void m_try(car_t *c, uint64_t now)
              * behind a control frame, not inline (on air 2026-11-16: 8 to
              * 12 s a reply, 4 s the other way).  Sim, UUCP's own messages, 30
              * seeds: cliff:10 140 -> 114 s, fade:10 209 -> 155 s; nvis a tie
-             * over 90 (+0.6 %). */
+             * over 90 (+0.6 %).  m_peer_expect, as m_start_recv and
+             * offer_both size theirs: with the peer's direction done,
+             * s_peer_expect is its backlog alone, and says 0 for a peer whose
+             * last frame said BL_NONE, which left the poll on lv. */
             int n = poll_size(c, lv, now);
-            int sl = short_rung(c, lv, s_peer_expect(c), &n);
-            if (sl != lv) car_trace(c, "rx: a small backlog -- lv=%d n=%d, not lv=%d", sl, n, lv);
+            int sl = short_rung(c, lv, m_peer_expect(c), &n);
+            if (sl != lv) car_trace(c, "tx: the poll sized for the answer -- lv=%d n=%d, not lv=%d", sl, n, lv);
             m_plan(c, KD_BOTH, sl, n);
         }
     }
