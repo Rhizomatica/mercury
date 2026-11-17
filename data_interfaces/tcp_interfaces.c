@@ -301,17 +301,22 @@ static int open_listener_socket(int port, int port_type, const char *tag)
     return fd;
 }
 
+/* BUFFER's figure.  Not arq_get_runtime_snapshot(): it takes the session
+ * lock, which the event loop holds while it waits for this thread to drain
+ * received bytes (arq_call_in_progress). */
 static int arq_buffered_bytes_snapshot(void)
 {
-    arq_runtime_snapshot_t snapshot;
-    int buffered = 0;
+    int buffered = arq_tx_backlog_bytes();
+    return buffered < 0 ? 0 : buffered;
+}
 
-    if (arq_get_runtime_snapshot(&snapshot))
-        buffered = snapshot.tx_backlog_bytes;
-
-    if (buffered < 0)
-        buffered = 0;
-    return buffered;
+/* Whether the link is connected, as last known when the session lock is
+ * busy (arq_link_connected_now). */
+static bool link_connected_cached(void)
+{
+    static bool connected = false;
+    (void)arq_link_connected_now(&connected);
+    return connected;
 }
 
 /* "NAME 20", and also "NAME=20" / "NAME = 20": BPQ32 passes a port's init
@@ -451,7 +456,7 @@ static void execute_control_command(char *buffer)
          * decoders are flushed when listening ends with no session after. */
         const char *inflight_mode = NULL;
         uint64_t inflight_ms = 0;
-        if (cmd.type == ARQ_CMD_LISTEN_OFF && !arq_is_link_connected() &&
+        if (cmd.type == ARQ_CMD_LISTEN_OFF && !link_connected_cached() &&
             modem_rx_frame_in_flight(&inflight_mode, &inflight_ms))
             HLOGI("tcp-ctl", "LISTEN OFF %.1f s into a %s frame not yet decoded: "
                   "LISTEN OFF drops it (or it was noise)",
@@ -1520,7 +1525,7 @@ void *arq_reactor_thread(void *port)
                 {
                     int buffered = arq_buffered_bytes_snapshot();
                     uint64_t said = atomic_load_explicit(&tnc_last_buffer_ms, memory_order_relaxed);
-                    if (tnc_buffer_report_due(buffered, last_buffer_report, arq_is_link_connected(),
+                    if (tnc_buffer_report_due(buffered, last_buffer_report, link_connected_cached(),
                                               now_ms, said))
                     {
                         /* the same count again: past tnc_send_buffer's

@@ -226,6 +226,17 @@ bool arq_is_link_connected(void);
  *        listening (the states in which arq_discard_stale_tx drops bytes).
  */
 bool arq_call_in_progress(void);
+
+/**
+ * @brief For the TCP reactor, which must not wait on the session lock:
+ *        whether the link is connected, if the lock is free (true), else
+ *        false and *connected untouched.
+ */
+bool arq_link_connected_now(bool *connected);
+
+/** @brief The application bytes queued for transmission (BUFFER), without
+ *         the session lock. */
+int arq_tx_backlog_bytes(void);
 /** A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED,
  *  DISCONNECTING): what stops a broadcast carousel. */
 bool arq_session_active(void);

@@ -32,7 +32,7 @@
 #define INT_BUFFER_SIZE 4096
 
 #define DATA_TX_BUFFER_SIZE 8192
-#define DATA_RX_BUFFER_SIZE 8192
+#define DATA_RX_BUFFER_SIZE (64 * 1024)   /* received bytes for the host: room for a carousel delivery burst (a window of blocks) */
 
 // audio buffers shared memory interface
 // 1536000 * 8

@@ -1481,13 +1481,35 @@ bool arq_is_link_connected(void)
     return connected;
 }
 
+/* For the TCP reactor, which must never wait on g_sess_lock: the event loop
+ * holds it while it delivers received bytes, and a delivery larger than the
+ * free room in data_rx_buffer_arq waits there for the reactor to drain it.
+ * A reactor waiting on the lock then drained nothing, and both stopped for
+ * good (Go harness, CCIR Poor 20 dB, a 30 kB transfer: the receiver's
+ * delivery of 6 blocks at once, its periodic BUFFER report due).  So these
+ * take the lock only if it is free. */
 bool arq_call_in_progress(void)
 {
-    pthread_mutex_lock(&g_sess_lock);
+    if (pthread_mutex_trylock(&g_sess_lock) != 0)
+        return true;             /* the event loop is at work: say a call, the safe answer */
     bool call = g_initialized && g_sess.conn_state != ARQ_CONN_DISCONNECTED &&
                 g_sess.conn_state != ARQ_CONN_LISTENING;
     pthread_mutex_unlock(&g_sess_lock);
     return call;
+}
+
+bool arq_link_connected_now(bool *connected)
+{
+    if (!connected || pthread_mutex_trylock(&g_sess_lock) != 0)
+        return false;
+    *connected = (g_sess.conn_state == ARQ_CONN_CONNECTED);
+    pthread_mutex_unlock(&g_sess_lock);
+    return true;
+}
+
+int arq_tx_backlog_bytes(void)
+{
+    return g_initialized ? cb_tx_backlog() : 0;   /* g_app_tx_mtx only */
 }
 
 void arq_discard_stale_rx(void)
