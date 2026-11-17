@@ -459,4 +459,8 @@ bool arq_conn_state_has_peer(arq_conn_state_t s);
  */
 const char *arq_event_name(arq_event_id_t ev);
 
+/* tx_inflight_bytes as last set, readable without the session lock (BUFFER
+ * from the TCP reactor). */
+int arq_fsm_tx_inflight_published(void);
+
 #endif /* ARQ_FSM_H_ */
