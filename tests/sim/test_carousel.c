@@ -309,8 +309,9 @@ static void test_carousel_dark_rounds_drop_the_rung(void)
  * air 14 s after each pair of unheard polls (on air, NW8L-KA8RYU, MPD -5 dB:
  * 97 s, and vARIM gave up on the /OK 25 s before it came).  The frames: A's
  * message (0), B's poll (1), A's poll (2), B's message, first round (3), A's
- * poll on DATAC4 (4), B's DATAC4 round (5), then A's floor polls for 2
- * frames (6, 7, 8), the three lost. */
+ * poll on the 2 kHz MFSK rung (4), B's round there (5), then A's floor polls
+ * (6, 7, 8), the three lost.  (Through 2.0's first ladder that rung was
+ * DATAC4, and the run 11 frames.) */
 static void test_carousel_unheard_polls_free_their_slots(void)
 {
     static const int lost[] = { 5, 6, 7, 8 };
@@ -319,7 +320,7 @@ static void test_carousel_unheard_polls_free_their_slots(void)
     carousel_sim_force_losses(NULL, 0);
     carousel_sim_run(1, "cliff:-7", false, LIMIT_MS, &r);
     TEST_ASSERT_TRUE(r.intact);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(11, r.frames, "the frame order changed: pick the lost frames again (CAR_TRACE=1)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(8, r.frames, "the frame order changed: pick the lost frames again (CAR_TRACE=1)");
     carousel_sim_force_losses(lost, 4);
     carousel_sim_run(1, "cliff:-7", false, LIMIT_MS, &r);
     carousel_sim_force_losses(NULL, -1);

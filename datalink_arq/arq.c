@@ -888,7 +888,8 @@ static void call_progress(uint64_t now)
                  ? (uint32_t)(tm->payload_bytes * 8 / tm->frame_duration_s + 0.5f) : 0;
     /* The modem's speed levels (modem.c, bitrate_level_from_payload_mode),
      * and 16 for the control mode, which it never reports. */
-    uint32_t level = mode == MERCURY_MODE_MFSK ? 100 : mode == MERCURY_MODE_MFSK_N32 ? 103 : 16;
+    uint32_t level = mode == MERCURY_MODE_MFSK ? 100 : mode == MERCURY_MODE_MFSK_N32 ? 103 :
+                     mode == MERCURY_MODE_MFSK_W2 ? 104 : 16;
     arq_tnc_send_bitrate(level, bps);
 }
 

@@ -626,7 +626,8 @@ static bool is_supported_split_mode(int mode)
            mode == FREEDV_MODE_QAM16N1 ||
            mode == FREEDV_MODE_QAM16N2 ||
            mode == MERCURY_MODE_MFSK ||
-           mode == MERCURY_MODE_MFSK_N32;
+           mode == MERCURY_MODE_MFSK_N32 ||
+           mode == MERCURY_MODE_MFSK_W2;
 }
 
 static bool is_payload_split_mode(int mode)
@@ -643,7 +644,8 @@ static bool is_payload_split_mode(int mode)
            mode == FREEDV_MODE_QAM16N1 ||
            mode == FREEDV_MODE_QAM16N2 ||
            mode == MERCURY_MODE_MFSK ||
-           mode == MERCURY_MODE_MFSK_N32;
+           mode == MERCURY_MODE_MFSK_N32 ||
+           mode == MERCURY_MODE_MFSK_W2;
 }
 
 bool modem_listen_mode_switchable(int mode) { return is_payload_split_mode(mode); }
@@ -697,6 +699,7 @@ static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
         /* the BW2750 and BW500 rungs (car_session_level_mode) */
         FREEDV_MODE_DATAC17W, FREEDV_MODE_QAM16C2W, FREEDV_MODE_DATAN1,
         FREEDV_MODE_QAM16N1, FREEDV_MODE_QAM16N2,
+        MERCURY_MODE_MFSK_W2,          /* BW2300/BW2750 rung 1 */
     };
     clear_mode_pool_locked();
     for (size_t i = 0; i < sizeof(pool_modes) / sizeof(pool_modes[0]); i++)
@@ -788,6 +791,8 @@ static uint32_t bitrate_level_from_payload_mode(int mode)
         return 100;
     case MERCURY_MODE_MFSK_N32:
         return 103;
+    case MERCURY_MODE_MFSK_W2:
+        return 104;
     default:
         return 15;
     }
