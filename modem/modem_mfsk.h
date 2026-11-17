@@ -28,6 +28,9 @@
  *        BW500 session (arq_floor_mode) */
 #define MERCURY_MODE_MFSK_N16 102
 #define MERCURY_MODE_MFSK_N32 103
+/* A 2 kHz geometry, measurement only: 32 tones at 62.5 Hz (5 bits a 20 ms
+ * symbol), 531..2469 Hz -- the floor's burst in half its airtime. */
+#define MERCURY_MODE_MFSK_W2 104
 
 /* Any of the MFSK backend's modes. */
 static inline int mercury_mode_is_mfsk(int mode)
