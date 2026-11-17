@@ -76,6 +76,20 @@ func TestMercuryARQCalleeAbortHoldsTheScan(t *testing.T) {
 	TestMercuryARQTransfer(t)
 }
 
+// The caller ABORTs while one of its floor rounds is on the air: the radio
+// unkeys within the tail, not at the round's end, and the ABORT's one
+// DISCONNECT still reaches the callee (#592).  On air (VE4KLM, 2026-11-15
+// 17:07:34, JNOS "mbox reset") a 27 s round played on 20 s past the ABORT.
+// A->B at about -9 dB (SNR3k = -No - 14.82) keeps the caller's data on the
+// MFSK floor; B->A is clean, so B's patterns and polls reach A.
+func TestMercuryARQAbortCutsTheFloorRound(t *testing.T) {
+	t.Setenv("MERCURY_TEST_ABORT_MIDROUND", "1")
+	t.Setenv("MERCURY_CH_NO_FWD", "-5.82")
+	t.Setenv("MERCURY_CH_NO_REV", "-24.82")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "1024")
+	TestMercuryARQTransfer(t)
+}
+
 func TestMercuryARQTransfer(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
@@ -456,6 +470,106 @@ func TestMercuryARQTransfer(t *testing.T) {
 	}
 	if _, err := dataA.Write(payload); err != nil {
 		failWithLogs("write payload: %v", err)
+	}
+
+	// MERCURY_TEST_ABORT_MIDROUND=1: A ABORTs 3 s into a floor keydown of
+	// its own (an MFSK BITRATE, then PTT ON, and still keyed 3 s on), which
+	// must unkey within the tail plus a margin -- not play on to its end --
+	// and B must still hear the ABORT's DISCONNECT.  Nothing is delivered.
+	if os.Getenv("MERCURY_TEST_ABORT_MIDROUND") != "" {
+		const into = 3 * time.Second
+		const unkeyBy = 2500 * time.Millisecond // TAIL_TIME_US is 100 ms
+		searchEnd := time.Now().Add(8 * time.Minute)
+		var partial string
+		// readA: one control line, or "" at the deadline (a partial line is
+		// kept for the next call).
+		readA := func(by time.Time) (string, bool) {
+			_ = connA.SetReadDeadline(by)
+			s, err := rwA.ReadString('\r')
+			partial += s
+			if err != nil {
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					return "", true
+				}
+				failWithLogs("A's control port: %v", err)
+			}
+			line := strings.TrimSpace(partial)
+			partial = ""
+			return line, false
+		}
+		floor, keyedAt := false, time.Time{}
+		for {
+			if time.Now().After(searchEnd) {
+				failWithLogs("A keyed no floor round 3 s long in 8 min")
+			}
+			by := searchEnd
+			if !keyedAt.IsZero() {
+				by = keyedAt.Add(into)
+			}
+			line, timedOut := readA(by)
+			if timedOut {
+				if !keyedAt.IsZero() {
+					break // still keyed 3 s into a floor keydown
+				}
+				continue
+			}
+			switch {
+			case strings.HasPrefix(line, "BITRATE (100)") || strings.HasPrefix(line, "BITRATE (103)"):
+				floor = true
+			case strings.HasPrefix(line, "BITRATE"):
+				floor = false
+			case line == "PTT ON" && floor:
+				keyedAt = time.Now()
+			case line == "PTT OFF":
+				keyedAt = time.Time{}
+			case strings.HasPrefix(line, "DISCONNECTED"):
+				failWithLogs("A disconnected before a floor round: %q", line)
+			}
+		}
+		t.Logf("A keyed a floor round %.1f s ago: ABORT", time.Since(keyedAt).Seconds())
+		_ = connA.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if _, err := rwA.WriteString("ABORT\r"); err != nil {
+			t.Fatalf("write ABORT: %v", err)
+		}
+		if err := rwA.Flush(); err != nil {
+			t.Fatalf("flush ABORT: %v", err)
+		}
+		tAbort := time.Now()
+		var after []string
+		for {
+			line, timedOut := readA(tAbort.Add(30 * time.Second))
+			if timedOut {
+				failWithLogs("A never unkeyed after its ABORT: %q", after)
+			}
+			after = append(after, line)
+			if line == "PTT OFF" {
+				break
+			}
+		}
+		unkeyed := time.Since(tAbort)
+		t.Logf("A unkeyed %.2f s after its ABORT (%.1f s into the round): %q",
+			unkeyed.Seconds(), time.Since(keyedAt).Seconds()-unkeyed.Seconds(), after)
+		if unkeyed > unkeyBy {
+			failWithLogs("A unkeyed %.2f s after its ABORT, want within %.1f s", unkeyed.Seconds(), unkeyBy.Seconds())
+		}
+		if b, _ := os.ReadFile(timingLogs["A"]); !strings.Contains(string(b), "keydown cut short (ABORT)") {
+			failWithLogs("A's log never said its keydown was cut")
+		}
+		deadline := time.Now().Add(4 * time.Minute)
+		_ = connB.SetReadDeadline(deadline)
+		heard := false
+		for time.Now().Before(deadline) && !heard {
+			line, err := rwB.ReadString('\r')
+			if err != nil {
+				break
+			}
+			heard = strings.HasPrefix(strings.TrimSpace(line), "DISCONNECTED")
+		}
+		if !heard {
+			failWithLogs("B never heard A's DISCONNECT after the cut round")
+		}
+		t.Logf("B heard A's DISCONNECT %.1f s after the ABORT", time.Since(tAbort).Seconds())
+		return
 	}
 
 	rx := make([]byte, 0, len(payload))

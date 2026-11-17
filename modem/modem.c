@@ -1389,23 +1389,47 @@ static void append_burst_audio(const modem_codec_t *codec, const uint8_t *bytes_
 
 /* Key the transmitter, play `total_samples` of pre-built audio, unkey.  ARQ's
  * TX_STARTED reports the modem's current mode, so set that first. */
-/* ABORT cuts the keydown on the air (arq_modem_cut_tx).  Only a keydown that
- * is playing can be cut: one keyed after the cut -- the ABORT's own DISCONNECT
- * -- plays out whole, so key_and_play clears the request as it keys. */
-static _Atomic bool g_tx_playing = false;
-static _Atomic bool g_tx_cut     = false;
+/* ABORT cuts what the TX worker took before it (arq_modem_cut_tx).  Each cut
+ * moves g_tx_cut_gen on; the worker notes the count as it takes each action
+ * off the queue (g_tx_taken_gen, its thread only), and what it took before a
+ * cut is cut -- on the air, or not keyed at all if the cut came while it was
+ * still being built (#592 review: a keydown taken, not yet keyed, played its
+ * whole 27 s).  The ABORT's own DISCONNECT is queued after the cut, so it is
+ * taken at the new count and plays out whole. */
+static _Atomic unsigned g_tx_cut_gen = 0;
+static unsigned         g_tx_taken_gen = 0;
+/* Only the TX worker's transmissions are cut: another caller of key_and_play
+ * (run_tests_tx, -t) never takes an action, and its count would be stale. */
+static pthread_t        g_tx_worker;
+static _Atomic bool     g_tx_worker_known = false;
 
 static void modem_cut_tx(void)
 {
-    if (atomic_load(&g_tx_playing))
-        atomic_store(&g_tx_cut, true);
+    atomic_fetch_add(&g_tx_cut_gen, 1);
+}
+
+/* The TX worker, as it takes an action (or none) off the queue. */
+static void tx_note_taken(void)
+{
+    if (!atomic_load(&g_tx_worker_known))
+    {
+        g_tx_worker = pthread_self();
+        atomic_store(&g_tx_worker_known, true);
+    }
+    g_tx_taken_gen = atomic_load(&g_tx_cut_gen);
+}
+
+static bool tx_cut_asked(void)
+{
+    return atomic_load(&g_tx_worker_known) && pthread_equal(pthread_self(), g_tx_worker) &&
+           atomic_load(&g_tx_cut_gen) != g_tx_taken_gen;
 }
 
 /* The cut, if one was asked for: the audio not yet played is dropped, so the
  * radio carries the playback device's own buffer at most before PTT drops. */
 static bool tx_cut_now(void)
 {
-    if (!atomic_exchange(&g_tx_cut, false))
+    if (!tx_cut_asked())
         return false;
     clear_buffer(playback_buffer);
     return true;
@@ -1435,8 +1459,13 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
 
     /* === STEP 2: Key transmitter and send pre-generated audio === */
 
-    atomic_store(&g_tx_cut, false);
-    atomic_store(&g_tx_playing, true);
+    if (tx_cut_asked())
+    {
+        /* Cut before it keyed: the carousel still waits for its end. */
+        HLOGI("modem-tx", "keydown dropped before keying (ABORT)");
+        arq_modem_ptt_off();
+        return;
+    }
     ptt_on();
     arq_modem_ptt_on(g_modem->mode, g_modem->payload_bytes_per_modem_frame + 2);
 
@@ -1536,8 +1565,6 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
     }
 
     ptt_off();
-    atomic_store(&g_tx_playing, false);
-    atomic_store(&g_tx_cut, false);
     arq_modem_ptt_off();
 }
 
@@ -2893,6 +2920,9 @@ void *tx_thread(void *g_modem)
             waited_for_action = true;
             have_action = arq_wait_dequeue_action(&action, ARQ_ACTION_WAIT_MS);
         }
+        /* After the wait, not before it: a DISCONNECT queued behind an ABORT
+         * that came during the wait is taken at the ABORT's count. */
+        tx_note_taken();
 
         if (have_action && action.type == ARQ_ACTION_TX_PATTERN)
         {
