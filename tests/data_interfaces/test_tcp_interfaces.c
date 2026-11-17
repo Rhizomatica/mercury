@@ -1136,7 +1136,7 @@ void test_tnc_buffer_report_repeats_unchanged_backlog(void)
 /* Winlink Express's P2P inactivity DISCONNECT, 300 s after each write of
  * the host's, with the modem still sending it or the answer not yet back
  * (#392, PR #581): absorbed when switched on, in a session, with the host
- * idle that long or its bytes still unread, as often as it comes, unless
+ * idle that long or its data held back, as often as it comes, unless
  * another DISCONNECT came in the last 60 s or one has gone through. */
 void test_tnc_absorb_disconnect_due(void)
 {
@@ -1167,15 +1167,15 @@ void test_tnc_absorb_disconnect_due(void)
     (void)AT(last + 600000); s.disconnect_passed = true;
     TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));
 
-    /* the host's bytes still unread (a full ARQ queue holding the socket,
-     * #590): its timer runs from its write, ours from our read -- absorbed
-     * however recent our last read */
-    (void)AT(last + 4100); s.host_data_unread = true;
+    /* a piece of the host's data held back from a full ARQ queue (#590):
+     * its timer runs from its write, ours from our read -- absorbed however
+     * recent our last read */
+    (void)AT(last + 4100); s.host_data_held = true;
     TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(&s));
     /* ...but said again within 60 s still goes through */
-    (void)AT(last + 4100); s.host_data_unread = true; s.last_disconnect_ms = last + 1000;
+    (void)AT(last + 4100); s.host_data_held = true; s.last_disconnect_ms = last + 1000;
     TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));
-    (void)AT(last + 4100); s.host_data_unread = true; s.session_up = false;
+    (void)AT(last + 4100); s.host_data_held = true; s.session_up = false;
     TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));
 #undef AT
 }

@@ -185,11 +185,15 @@ void tnc_set_intervals(int keepalive_s, int buffer_report_ms)
  * Opt-in ([tnc] absorb_idle_disconnect_s, 0 = off): in a session, a
  * DISCONNECT that comes when the host has written nothing to the data port
  * for at least that long is answered OK and not acted on, as often as it
- * comes.  So is one that comes with host bytes still unread on the data
- * socket: Winlink's write returned when the kernel took them, so its timer
- * runs from then, while our idle time runs from when we read them, which a
- * full ARQ queue can hold back by minutes (#590's backpressure); and a real
- * B2F end never comes with host data unsent, it follows the peer's answer.
+ * comes.  So is one that comes while a piece of the host's data is held
+ * back from a full ARQ queue (#590's backpressure): the data socket is not
+ * read meanwhile, so Winlink's write returned long before we read it, and
+ * its timer runs from then while our idle time runs from our read.  A real
+ * B2F end never comes with host data held, it follows the peer's answer.
+ * Not bytes merely unread on the socket (FIONREAD): the reactor reads 128
+ * bytes a pass, so a host's last write (B2F's FQ) with its DISCONNECT right
+ * after is still partly unread when that DISCONNECT, a real end, is run
+ * (rafael2k, #581 review).
  *
  * One within TNC_DISCONNECT_REPEAT_MS of the previous DISCONNECT goes
  * through, so a host (or operator) that means it is heard on the second
@@ -212,18 +216,17 @@ static _Atomic uint64_t tnc_last_disconnect_ms = 0;
 static _Atomic bool tnc_session_up = false;
 /* A DISCONNECT of this session's has gone to the ARQ. */
 static _Atomic bool tnc_disconnect_passed = false;
-/* The data client's bytes not yet read, as the reactor last saw them before
- * running a control line; false for a line from tnc_host_command. */
-static _Atomic bool tnc_host_data_unread = false;
+/* A piece of the host's data held back from the ARQ queue, as the reactor
+ * last saw before running a control line; false for a line from
+ * tnc_host_command. */
+static _Atomic bool tnc_host_data_held = false;
 
-/* Bytes the data client has written that are still in the kernel's socket
- * buffer.  (#590: a piece held for the ARQ queue counts too.) */
-static bool data_client_unread(int fd)
+/* Is a piece of the host's data held back from a full ARQ queue?  None is
+ * yet: until #590 the reactor reads the data socket at once.  With #590:
+ * held_payload_len > 0.  Reactor thread only. */
+static bool host_data_held(void)
 {
-    unsigned int count = 0;     /* int on POSIX, u_long (32 bits) on Windows */
-    if (fd < 0)
-        return false;
-    return SOCK_IOCTL(fd, FIONREAD, &count) == 0 && count > 0;
+    return false;
 }
 
 void tnc_set_absorb_idle_disconnect_s(int seconds)
@@ -239,7 +242,7 @@ bool tnc_absorb_disconnect_due(const tnc_absorb_state_t *s)
         return false;
     if (s->last_disconnect_ms && s->now_ms - s->last_disconnect_ms < TNC_DISCONNECT_REPEAT_MS)
         return false;                     /* said again: meant */
-    if (s->host_data_unread)
+    if (s->host_data_held)
         return true;                      /* the host's timer runs from its write */
     return s->now_ms >= s->last_data_rx_ms && s->now_ms - s->last_data_rx_ms >= s->idle_ms;
 }
@@ -898,7 +901,7 @@ static void execute_control_command(char *buffer)
                 .idle_ms            = idle_ms,
                 .session_up         = atomic_load(&tnc_session_up),
                 .disconnect_passed  = atomic_load(&tnc_disconnect_passed),
-                .host_data_unread   = atomic_load(&tnc_host_data_unread),
+                .host_data_held     = atomic_load(&tnc_host_data_held),
                 .now_ms             = monotonic_ms(),
                 .last_data_rx_ms    = atomic_load(&tnc_last_data_rx_ms),
             };
@@ -909,7 +912,7 @@ static void execute_control_command(char *buffer)
                       "DISCONNECT absorbed: no host data for %llu s%s, %d bytes still to deliver "
                       "(absorb_idle_disconnect_s); another DISCONNECT within %d s ends the session",
                       (unsigned long long)((s.now_ms - s.last_data_rx_ms) / 1000),
-                      s.host_data_unread ? " (more unread)" : "",
+                      s.host_data_held ? " (more held)" : "",
                       arq_buffered_bytes_snapshot(), TNC_DISCONNECT_REPEAT_MS / 1000);
                 tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
                 return;
@@ -1546,11 +1549,11 @@ void *arq_reactor_thread(void *port)
                         refuse_web_client(&ctl_client);
                     else
                     {
-                        /* for an absorbed DISCONNECT: the host's bytes this
-                         * thread has not read yet */
-                        atomic_store(&tnc_host_data_unread, data_client_unread(data_client));
+                        /* for an absorbed DISCONNECT: the host's data this
+                         * thread holds back */
+                        atomic_store(&tnc_host_data_held, host_data_held());
                         process_control_bytes(ctl_line, &ctl_len, rx_buf, n);
-                        atomic_store(&tnc_host_data_unread, false);
+                        atomic_store(&tnc_host_data_held, false);
                     }
                 }
                 else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))

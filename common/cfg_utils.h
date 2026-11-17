@@ -161,7 +161,7 @@ typedef struct {
     int      tnc_absorb_idle_disconnect_s; /* Answer OK to, and ignore, a
                                     * DISCONNECT that comes in a session with
                                     * no host data for this long (or with it
-                                    * still unread), unless one came in the
+                                    * held back by a full TX queue), unless one came in the
                                     * last 60 s or one went through (Winlink Express
                                     * P2P inactivity timeout, #392).  Default
                                     * 0 (off); else 30..3600, 240 suggested. */
