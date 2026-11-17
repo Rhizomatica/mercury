@@ -301,12 +301,18 @@ timer restarts with each write, so every long message brings its own
 With `[tnc] absorb_idle_disconnect_s = 240`, a `DISCONNECT` in a session is
 answered `OK` and otherwise ignored when nothing has been written to the
 data port for that long (or since the session came up), as often as it
-comes.  Winlink then carries on.  A real end of session comes seconds
-after the host's last write and goes through.  A `DISCONNECT` within 60 s
-of the previous one always goes through, so a host or operator that means
-it is heard on the second; `ABORT` ends the session at once as usual.  The
-default is 0 (off), which keeps VARA's behaviour.  Accepted values are 0
-or 30–3600 s.
+comes.  The same goes for one that comes while bytes the host wrote are
+still unread on the data socket.  Winlink's timer starts when its write
+returns, but Mercury reads the socket only as the TX queue has room, so on
+a long message its idle time can start minutes later.  Winlink then
+carries on.  A real end of session comes seconds after the host's last
+write, never with host data unsent, and goes through.  A `DISCONNECT`
+within 60 s of the previous one always goes through, so a host or operator
+that means it is heard on the second.  Once one has gone through, none is
+absorbed for the rest of that session, so a `DISCONNECT` during its drain
+still ends the session at once.  `ABORT` ends the session at once as usual.
+The default is 0 (off), which keeps VARA's behaviour.  Accepted values are
+0 or 30–3600 s.
 
 ---
 
