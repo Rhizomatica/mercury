@@ -141,14 +141,40 @@ static bool abort_teardown(arq_session_t *sess, uint64_t now);
 /* The station enters a connection state, at teardown step td (ARQ_TD_NONE
  * but for a reply owed to the peer's DISCONNECT): no step outlives its
  * state. */
-/* tx_inflight_bytes, published for the TCP reactor's BUFFER figure, which
- * must not take the session lock (arq_buffer_bytes_nowait).  Written only
- * here, with the field.  One per process: the runtime has one session. */
-static _Atomic int g_tx_inflight_pub = 0;
-static void set_tx_inflight(arq_session_t *sess, int n)
+/* What BUFFER counts of the carousel's open blocks: those no floor BREAK has
+ * said are in (car_tx_inflight_unstopped) -- but never 0 while any is
+ * unconfirmed, for BUFFER 0 means "all data has been acknowledged by the
+ * peer" (docs/TNC.md), and only a poll says that.  A BREAK never retires a
+ * block (spec risk R5): this is the figure the host is shown, nothing more.
+ * On air, VE4KLM -> K7EK 15 Nov 2026: the first block of a 753-byte message
+ * was in by 18:03:07, the polls after it were lost, and BUFFER read 753
+ * until the host's ABORT at 18:05:21. */
+int arq_buffer_inflight_shown(int inflight, int unstopped)
 {
-    sess->tx_inflight_bytes = n;
-    atomic_store(&g_tx_inflight_pub, n);
+    if (inflight <= 0)
+        return 0;
+    if (unstopped < 0 || unstopped > inflight)
+        unstopped = inflight;
+    return unstopped > 0 ? unstopped : 1;
+}
+
+static int car_inflight_shown(const car_t *car)
+{
+    return car ? arq_buffer_inflight_shown((int)car_tx_inflight(car), (int)car_tx_inflight_unstopped(car)) : 0;
+}
+
+/* tx_inflight_bytes, exact: the drain, the unconfirmed-bytes warnings and the
+ * modem's "ARQ traffic queued" read it.  Published with it, for the TCP
+ * reactor's BUFFER figure, which must not take the session lock
+ * (arq_buffer_bytes_nowait): the same blocks as BUFFER shows them
+ * (car_inflight_shown), so the reactor's periodic BUFFER and the FSM's own
+ * report agree.  Written only here.  One per process: the runtime has one
+ * session.  NULL: none in flight. */
+static _Atomic int g_tx_inflight_pub = 0;
+static void set_tx_inflight(arq_session_t *sess, const car_t *car)
+{
+    sess->tx_inflight_bytes = car ? (int)car_tx_inflight(car) : 0;
+    atomic_store(&g_tx_inflight_pub, car_inflight_shown(car));
 }
 int arq_fsm_tx_inflight_published(void) { return atomic_load(&g_tx_inflight_pub); }
 
@@ -199,7 +225,7 @@ static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_t
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
     {
         sess->peer_tx_mode      = sess->initial_payload_mode;
-        set_tx_inflight(sess, 0);
+        set_tx_inflight(sess, NULL);
     }
 }
 
@@ -830,15 +856,16 @@ static void car_io_deliver(void *ctx, const uint8_t *buf, size_t len)
 }
 
 /* BUFFER is what the peer has not confirmed: the application's queue plus
- * the carousel's open blocks (tx_inflight_bytes, which the runtime adds to
- * the backlog in its own periodic BUFFER report). */
+ * the carousel's open blocks as BUFFER shows them (car_inflight_shown, which
+ * the runtime adds to the backlog the same way in its own periodic BUFFER
+ * report). */
 static void car_io_tx_confirmed(void *ctx, size_t len)
 {
     arq_session_t *sess = ctx;
     (void)len;
-    set_tx_inflight(sess, (int)car_tx_inflight(sess->car));
+    set_tx_inflight(sess, sess->car);
     if (g_cbs.send_buffer_status)
-        g_cbs.send_buffer_status(session_tx_backlog(sess) + sess->tx_inflight_bytes);
+        g_cbs.send_buffer_status(session_tx_backlog(sess) + car_inflight_shown(sess->car));
 }
 
 /* The callee's session nonce: unique, not secret -- a session's frames must
@@ -2499,7 +2526,7 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     }
     if (sess->car_active && sess->conn_state == ARQ_CONN_CONNECTED)
     {
-        set_tx_inflight(sess, (int)car_tx_inflight(sess->car));
+        set_tx_inflight(sess, sess->car);
         uint64_t d = car_next_deadline(sess->car);
         if (car_lost_at(sess) < d)
             d = car_lost_at(sess);

@@ -219,6 +219,21 @@ size_t car_tx_inflight(const car_t *c)
     return n;
 }
 
+/* ...less the blocks a floor BREAK said are in (stopped).  An estimate, for
+ * the host's BUFFER only: at the floor a block is answered by patterns, and a
+ * poll that retires it may come minutes after its BREAK, or be lost -- on air,
+ * VE4KLM -> K7EK 15 Nov 2026, a 524-byte block was in at 18:03:07 and BUFFER
+ * still read 753 at 18:05:21.  Never a retirement: a pattern carries no
+ * session (spec risk R5), so the block stays open, and a poll that says
+ * otherwise un-stops it (apply_need) and puts it back in this count. */
+size_t car_tx_inflight_unstopped(const car_t *c)
+{
+    size_t n = 0;
+    for (int b = 0; b < c->nsb; b++)
+        if (!c->sb[b].stopped) n += (size_t)c->sb[b].app_len;
+    return n;
+}
+
 const char *car_failed(const car_t *c) { return c->failed; }
 /* Every block heard of has decoded and passed its check.  Data pieces reach
  * the application as they arrive, ahead of the check (spec: fail closed), so

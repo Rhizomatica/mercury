@@ -446,5 +446,7 @@ uint64_t car_answer_due_ms(const car_t *c, uint64_t keyed_by);
 bool     car_peer_ending(const car_t *c);
 /* Bytes taken from the application that the peer has not confirmed yet. */
 size_t car_tx_inflight(const car_t *c);
+/* ...of them, those no floor BREAK has said are in: what BUFFER shows. */
+size_t car_tx_inflight_unstopped(const car_t *c);
 
 #endif

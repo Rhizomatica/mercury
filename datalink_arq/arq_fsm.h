@@ -459,8 +459,13 @@ bool arq_conn_state_has_peer(arq_conn_state_t s);
  */
 const char *arq_event_name(arq_event_id_t ev);
 
-/* tx_inflight_bytes as last set, readable without the session lock (BUFFER
- * from the TCP reactor). */
+/* The carousel's open blocks as BUFFER shows them (arq_buffer_inflight_shown),
+ * as last set with tx_inflight_bytes, readable without the session lock
+ * (BUFFER from the TCP reactor). */
 int arq_fsm_tx_inflight_published(void);
+/* What BUFFER counts of `inflight` unconfirmed bytes in the carousel's open
+ * blocks, `unstopped` of them in blocks no floor BREAK has said are in: those,
+ * but at least 1 while any is unconfirmed (0 means all acknowledged). */
+int arq_buffer_inflight_shown(int inflight, int unstopped);
 
 #endif /* ARQ_FSM_H_ */
