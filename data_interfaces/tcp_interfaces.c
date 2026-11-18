@@ -1327,6 +1327,15 @@ void tnc_host_release(void)
     pthread_mutex_unlock(&host_tnc_lock);
 }
 
+/* Something takes the session's received bytes off data_rx_buffer_arq: a TCP
+ * data client (arq_reactor_thread), or else the host holding the TNC
+ * (tnc_host_arq_read).  With neither, cb_deliver_rx_data drops what does not
+ * fit rather than wait on a ring nobody drains. */
+bool tnc_rx_reader_attached(void)
+{
+    return net_get_status(DATA_TCP_PORT) == NET_CONNECTED || atomic_load(&host_holds_tnc);
+}
+
 /* The session's received bytes go to the data client when one is attached
  * (arq_reactor_thread); otherwise to the host, so the ring never fills and
  * holds up the ARQ thread (cb_deliver_rx_data waits on a full one). */

@@ -109,6 +109,9 @@ int    tnc_host_command(const char *line);
 void   tnc_host_release(void);
 bool   tnc_host_holds(void);
 size_t tnc_host_arq_read(uint8_t *buf, size_t len);
+/* Something reads the session's received bytes: a TCP data client, or the
+ * host holding the TNC. */
+bool   tnc_rx_reader_attached(void);
 /* Is a periodic BUFFER report due: the count changed, or -- in a session,
  * with bytes still to confirm -- no BUFFER line went for
  * TNC_BUFFER_REPEAT_MS (50 s)?  (#397) */

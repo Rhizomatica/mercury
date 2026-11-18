@@ -49,6 +49,10 @@ void arq_modem_cut_tx(void) { }
 int  arq_modem_preferred_rx_mode(const arq_session_t *sess) { (void)sess; return 0; }
 int  arq_modem_preferred_tx_mode(const arq_session_t *sess) { (void)sess; return 0; }
 
+/* tcp_interfaces.c: whether a data client or the host reads the ring. */
+static atomic_bool reader_attached;
+bool tnc_rx_reader_attached(void) { return atomic_load(&reader_attached); }
+
 /* ---- the #579 shape ---- */
 
 #define FRAME   2300                                  /* a full carousel frame's payload */
@@ -143,6 +147,10 @@ void setUp(void)
     g_app_tx_buf = circular_buf_init(g_app_tx_storage, APP_TX_BUF_SIZE);
     g_initialized = true;
     g_sess.conn_state = ARQ_CONN_CONNECTED;
+    g_rx_dropped = 0;
+    g_rx_abort_sent = false;
+    TEST_ASSERT_EQUAL_INT(0, arq_channel_bus_init(&g_bus));
+    atomic_store(&reader_attached, true);
     received = calloc(1, TOTAL);
 }
 
@@ -150,6 +158,13 @@ void tearDown(void)
 {
     free(received);
     g_initialized = false;
+    arq_cmd_msg_t left;                       /* a test's ABORT, not read: freed */
+    while (chan_size(g_bus.tcp_cmd) > 0 && arq_channel_bus_recv_cmd(&g_bus, &left) == 0)
+        ;
+    arq_channel_bus_close(&g_bus);
+    arq_channel_bus_dispose(&g_bus);
+    circular_buf_free(data_rx_buffer_arq);
+    circular_buf_free(g_app_tx_buf);
 }
 
 void test_reactor_drains_while_a_delivery_waits_under_the_session_lock(void)
@@ -197,9 +212,126 @@ void test_reactor_drains_while_a_delivery_waits_under_the_session_lock(void)
             TEST_FAIL_MESSAGE("received bytes differ from those delivered");
 }
 
+/* ---- no reader: drop, never wait ---- */
+
+/* The event loop's delivery, which must end by deadline_ms; a stuck one is
+ * reported and the binary stops (it holds the lock for good). */
+static void deliver_burst_by(uint64_t deadline_ms, const char *what, int line)
+{
+    atomic_store(&delivered_all, false);
+    pthread_t et;
+    pthread_create(&et, NULL, event_loop, NULL);
+    while (!atomic_load(&delivered_all) && mono_ms() < deadline_ms)
+        pause_ms(2);
+    if (!atomic_load(&delivered_all))
+    {
+        printf("%s:%d:%s:FAIL: the event loop waited on a full ring with nothing reading it\n",
+               __FILE__, line, what);
+        fflush(stdout);
+        _exit(1);
+    }
+    pthread_join(et, NULL);
+}
+
+/* The ring holds the burst's first bytes, intact; the rest was counted. */
+static void assert_ring_holds_the_start(void)
+{
+    size_t n = size_buffer(data_rx_buffer_arq);
+    TEST_ASSERT_EQUAL_size_t(DATA_RX_BUFFER_SIZE, n);
+    TEST_ASSERT_EQUAL_INT(0, read_buffer(data_rx_buffer_arq, received, n));
+    for (size_t i = 0; i < n; i++)
+        if (received[i] != pattern_byte(i))
+            TEST_FAIL_MESSAGE("the kept bytes differ from the first ones delivered");
+    TEST_ASSERT_EQUAL_size_t(TOTAL - DATA_RX_BUFFER_SIZE, g_rx_dropped);
+}
+
+void test_no_reader_keeps_what_fits_and_drops_the_rest(void)
+{
+    atomic_store(&reader_attached, false);
+    deliver_burst_by(mono_ms() + 2000, __func__, __LINE__);
+    assert_ring_holds_the_start();
+}
+
+void test_reader_leaving_frees_a_delivery_waiting_on_a_full_ring(void)
+{
+    atomic_store(&delivered_all, false);
+    pthread_t et;
+    pthread_create(&et, NULL, event_loop, NULL);
+    uint64_t until = mono_ms() + 5000;
+    while (size_buffer(data_rx_buffer_arq) < DATA_RX_BUFFER_SIZE && mono_ms() < until)
+        pause_ms(1);
+    pause_ms(50);
+    TEST_ASSERT_FALSE_MESSAGE(atomic_load(&delivered_all), "the delivery never had to wait");
+
+    atomic_store(&reader_attached, false);    /* the data client goes */
+    until = mono_ms() + 1000;
+    while (!atomic_load(&delivered_all) && mono_ms() < until)
+        pause_ms(2);
+    if (!atomic_load(&delivered_all))
+    {
+        printf("%s:%d:%s:FAIL: the event loop kept waiting after the reader left\n",
+               __FILE__, __LINE__, __func__);
+        fflush(stdout);
+        _exit(1);
+    }
+    pthread_join(et, NULL);
+    assert_ring_holds_the_start();
+}
+
+/* The commands the event loop queued for the command thread: types, in order. */
+static int queued_cmds(int *types, int max)
+{
+    int n = 0;
+    while (chan_size(g_bus.tcp_cmd) > 0 && n < max)
+    {
+        arq_cmd_msg_t cmd;
+        TEST_ASSERT_EQUAL_INT(0, arq_channel_bus_recv_cmd(&g_bus, &cmd));
+        types[n++] = cmd.type;
+    }
+    return n;
+}
+
+void test_a_drop_ends_the_session_with_one_abort(void)
+{
+    atomic_store(&reader_attached, false);
+    deliver_burst_by(mono_ms() + 2000, __func__, __LINE__);   /* several frames dropped */
+    int types[8];
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, queued_cmds(types, 8), "one ABORT per session, not one per frame dropped");
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_ABORT, types[0]);
+}
+
+void test_nothing_is_delivered_after_a_drop_even_to_a_returning_reader(void)
+{
+    atomic_store(&reader_attached, false);
+    deliver_burst_by(mono_ms() + 2000, __func__, __LINE__);
+    size_t dropped = g_rx_dropped;
+    TEST_ASSERT_GREATER_THAN(0, dropped);
+
+    clear_buffer(data_rx_buffer_arq);         /* a client reconnects and reads */
+    atomic_store(&reader_attached, true);
+    uint8_t frame[FRAME] = {0};
+    pthread_mutex_lock(&g_sess_lock);
+    cb_deliver_rx_data(frame, FRAME);
+    pthread_mutex_unlock(&g_sess_lock);
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0, size_buffer(data_rx_buffer_arq), "bytes after the hole were delivered");
+    TEST_ASSERT_EQUAL_size_t(dropped + FRAME, g_rx_dropped);
+
+    rx_dropped_summary("Session ended");      /* the next session delivers again */
+    pthread_mutex_lock(&g_sess_lock);
+    cb_deliver_rx_data(frame, FRAME);
+    pthread_mutex_unlock(&g_sess_lock);
+    TEST_ASSERT_EQUAL_size_t(FRAME, size_buffer(data_rx_buffer_arq));
+    int types[8];
+    TEST_ASSERT_EQUAL_INT(1, queued_cmds(types, 8));          /* the first session's ABORT only */
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_reactor_drains_while_a_delivery_waits_under_the_session_lock);
+    RUN_TEST(test_no_reader_keeps_what_fits_and_drops_the_rest);
+    RUN_TEST(test_reader_leaving_frees_a_delivery_waiting_on_a_full_ring);
+    RUN_TEST(test_a_drop_ends_the_session_with_one_abort);
+    RUN_TEST(test_nothing_is_delivered_after_a_drop_even_to_a_returning_reader);
     return UNITY_END();
 }
