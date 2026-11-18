@@ -2453,12 +2453,10 @@ static uint32_t m_early_ms(const car_t *c, int kind, int lv)
 {
     if (!g_early_slot || c->m_kd.k || c->m_kd.d != D_OFDM_MS) return 0;
     if (c->ctl_deaf || ctl_on_floor(c) || peer_ctl_on_floor(c)) return 0;
-#ifndef EARLY_WITH_REQS
     /* ...nor while my asks go unanswered: the link is going, and S's
      * answers with it -- unsensed, they are keyed over (sim, bw500 floor
      * test, step:5:-14: the sixth ask over S's poll at -14 dB). */
     if (c->reqs > 0) return 0;
-#endif
     switch (kind) {
     case KD_DONE:  break;                                  /* S: a status, if it has data */
     /* Not a poll: S answers it with its round alone, on lv, which a decoder
@@ -2474,6 +2472,15 @@ static uint32_t m_early_ms(const car_t *c, int kind, int lv)
     default:       return 0;                               /* patterns, KD_POLL, KD_BOTH */
     }
     return c->m_kd.d + LEAD_MAX_MS + EARLY_SENSE_MS;
+}
+
+/* The early time of a logged keydown with an eligible response slot
+ * (l->early), UINT64_MAX for none.  Derived, not stored: m_early_ms
+ * returned exactly d + LEAD_MAX_MS + EARLY_SENSE_MS at keydown, and the
+ * log keeps that d (Rafael's review, #495: widen or derive). */
+static uint64_t m_early_at(const car_t *c, const car_mlog_t *l)
+{
+    return l->early ? mslot_lo(c, l, 0) + l->d + LEAD_MAX_MS + EARLY_SENSE_MS : UINT64_MAX;
 }
 
 static void m_key_plan(car_t *c)
@@ -2559,7 +2566,7 @@ static void m_key_plan(car_t *c)
         break;
     }
     if (c->m_kind != KD_BOTH) c->offered = false;   /* it went as something else */
-    c->m_kd.early = m_early_ms(c, c->m_kind, c->plan_lv);
+    c->m_kd.early = m_early_ms(c, c->m_kind, c->plan_lv) != 0;
 }
 
 /* A request/response application answers a delivery within a second (on
@@ -2587,12 +2594,11 @@ static uint64_t m_early_close(car_t *c, uint64_t now)
     for (int j = 0; j < c->nmlog; j++) {
         car_mlog_t *l = &c->mlog[j];
         if (!l->early || (l->done & 1u)) continue;
-        uint64_t lo = mslot_lo(c, l, 0), t = lo + l->early;
+        uint64_t lo = mslot_lo(c, l, 0), t = m_early_at(c, l);
         if (now < t) { if (t < next) next = t; continue; }
         if (now >= mslot_hi(c, l, 0) + TURN_G_MS) continue;   /* over anyway */
-        if (peer_keyed(c, now) || c->last_carrier_ms >= lo) { l->early = 0; continue; }
+        if (peer_keyed(c, now) || c->last_carrier_ms >= lo) { l->early = false; continue; }
         l->done |= 1u;
-        c->early_closes++;
         car_trace(c, "tx: the peer's slot after keydown %d is empty -- taken as over (%llu ms early)",
                   l->mk, (unsigned long long)(mslot_hi(c, l, 0) + TURN_G_MS - now));
     }
@@ -3758,7 +3764,8 @@ void car_on_tx_done(car_t *c, uint64_t now)
      * or, empty, at its early time (#495 prototype: m_timer checks). */
     const car_mlog_t *l = &c->mlog[c->nmlog - 1];
     uint64_t over = mslot_hi(c, l, 0) + TURN_G_MS;
-    if (l->early && mslot_lo(c, l, 0) + l->early < over) over = mslot_lo(c, l, 0) + l->early;
+    uint64_t early = m_early_at(c, l);
+    if (early < over) over = early;
     arm(c, CAR_T_M, over);
     m_watch(c, now);                         /* ...and the air in it, for its continuations */
 }

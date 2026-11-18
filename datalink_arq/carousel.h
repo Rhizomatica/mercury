@@ -145,9 +145,10 @@ typedef struct {
     uint8_t  done;                  /* slots I heard S's keydown in, end to end */
     uint8_t  mk;                    /* its id */
     bool     pat;                   /* a pattern: S's answers name no id */
-    uint32_t early;                 /* car_set_early_slot: the response slot is
-                                     * taken as over this long after it opens
-                                     * if nothing of S's was sensed (0: never) */
+    bool     early;                 /* car_set_early_slot: the response slot may be
+                                     * taken as over early -- the time is the log's
+                                     * own d + LEAD_MAX_MS + EARLY_SENSE_MS after the
+                                     * slot opens (m_early_at); done bit 0 marks it taken */
 } car_mlog_t;
 
 typedef struct {
@@ -195,7 +196,6 @@ typedef struct {
     bool     offered;               /* M: my round offered S its turn as well (offer_both) */
     uint64_t kd_allowed;            /* M: the length my keydown was checked against FreeFor at */
     int      overruns;              /* M: keydowns longer than that (a bug: see keydown()) */
-    int      early_closes;          /* M: response slots taken as empty (car_set_early_slot) */
     int      piece;                 /* the session's piece size (0: CAR_PIECE) */
     uint32_t deliver_seq;           /* deliveries to my application so far */
     uint32_t seq_at_ask;            /* ...when I last asked or answered */
