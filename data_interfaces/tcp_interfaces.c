@@ -164,6 +164,99 @@ void tnc_set_intervals(int keepalive_s, int buffer_report_ms)
                               memory_order_relaxed);
 }
 
+/* Winlink Express, in a P2P session, sends DISCONNECT 5 minutes after it
+ * last wrote to the data port ("P2P session inactivity timeout"), however
+ * much of that write the modem is still sending; BUFFER, PTT and SN lines do
+ * not reset its timer.  A message that takes longer than that to send ends
+ * the session and stays in the sender's Outbox, with VARA HF as with Mercury
+ * (#392; bench, Winlink Express 1.8.6.0: the DISCONNECT at 5:00 sharp, 12.6
+ * KB still queued).  Answered with OK and nothing else, Winlink carries on
+ * ("Completed send", the next message).
+ *
+ * Winlink restarts the timer with every write, so each long message brings
+ * its own DISCONNECT, and one taking over 10 minutes brings one every 300 s
+ * (bench, PR #581: absorbing only the first ended sessions at message 2 of
+ * 10, and a 100 KB message at its second).  Nor is "bytes still queued" the
+ * test: three came with BUFFER 0, everything sent and the receiver's answer
+ * not yet back.  Idle time alone tells them apart: in 112 DISCONNECTs every
+ * timer one came 300 s or more after the host's last write, every real end
+ * within 4.1 s of it (B2F ends right after a host's FF or FQ).
+ *
+ * Opt-in ([tnc] absorb_idle_disconnect_s, 0 = off): in a session, a
+ * DISCONNECT that comes when the host has written nothing to the data port
+ * for at least that long is answered OK and not acted on, as often as it
+ * comes.  So is one that comes while a piece of the host's data is held
+ * back from a full ARQ queue (held_payload, #590): the data socket is not
+ * read meanwhile, so Winlink's write returned long before we read it, and
+ * its timer runs from then while our idle time runs from our read.  A real
+ * B2F end never comes with host data held, it follows the peer's answer.
+ * Not bytes merely unread on the socket (FIONREAD): the reactor reads 128
+ * bytes a pass, so a host's last write (B2F's FQ) with its DISCONNECT right
+ * after is still partly unread when that DISCONNECT, a real end, is run
+ * (rafael2k, #581 review).
+ *
+ * One within TNC_DISCONNECT_REPEAT_MS of the previous DISCONNECT goes
+ * through, so a host (or operator) that means it is heard on the second
+ * one; Winlink's own end sends a second within seconds, its timer ones are
+ * 300 s apart.  Once one has gone through, none is absorbed for the rest of
+ * the session: a DISCONNECT during that one's drain must still end it at
+ * once.  ABORT always goes through.
+ *
+ * "In a session" is the host's view, from CONNECTED to DISCONNECTED, kept
+ * here: the ARQ's own (arq_is_link_connected) takes the session lock, which
+ * the event loop holds while it waits for this thread (#590). */
+#define TNC_DISCONNECT_REPEAT_MS 60000
+static _Atomic uint64_t tnc_absorb_idle_disconnect_ms = 0;
+/* When the host last wrote to the data port, or the session came up
+ * (monotonic_ms). */
+static _Atomic uint64_t tnc_last_data_rx_ms = 0;
+/* When the host last sent DISCONNECT in this session, 0 for none. */
+static _Atomic uint64_t tnc_last_disconnect_ms = 0;
+/* CONNECTED told the host, DISCONNECTED not yet. */
+static _Atomic bool tnc_session_up = false;
+/* A DISCONNECT of this session's has gone to the ARQ. */
+static _Atomic bool tnc_disconnect_passed = false;
+/* A piece of the host's data held back from the ARQ queue, as the reactor
+ * last saw before running a control line; false for a line from
+ * tnc_host_command. */
+static _Atomic bool tnc_host_data_held = false;
+
+/* A piece of the data client's stream the ARQ's payload bus had no room for
+ * (arq_submit_tcp_payload: EAGAIN) during a call.  It is held, and the data
+ * socket is not read again until it is queued: the kernel's receive window
+ * then fills and the host's writes wait (TCP flow control).  Dropped instead, as before, a
+ * 30 kB write lost 33 to 104 of its 128-byte pieces whenever the bus was
+ * full, the host was never told, and the session waited for them for ever
+ * (Go harness, CCIR Poor at 20-24 dB, 4 of 18 sessions).  Only the reactor
+ * thread touches it. */
+static uint8_t held_payload[TCP_BLOCK_SIZE];
+static size_t  held_payload_len = 0;
+
+/* Is a piece of the host's data held back from a full ARQ queue (the data
+ * socket unread meanwhile)?  Reactor thread only. */
+static bool host_data_held(void)
+{
+    return held_payload_len > 0;
+}
+
+void tnc_set_absorb_idle_disconnect_s(int seconds)
+{
+    if (seconds == 0 ||
+        (seconds >= TNC_ABSORB_IDLE_DISCONNECT_S_MIN && seconds <= TNC_ABSORB_IDLE_DISCONNECT_S_MAX))
+        atomic_store(&tnc_absorb_idle_disconnect_ms, (uint64_t)seconds * 1000ULL);
+}
+
+bool tnc_absorb_disconnect_due(const tnc_absorb_state_t *s)
+{
+    if (s->idle_ms == 0 || !s->session_up || s->disconnect_passed)
+        return false;
+    if (s->last_disconnect_ms && s->now_ms - s->last_disconnect_ms < TNC_DISCONNECT_REPEAT_MS)
+        return false;                     /* said again: meant */
+    if (s->host_data_held)
+        return true;                      /* the host's timer runs from its write */
+    return s->now_ms >= s->last_data_rx_ms && s->now_ms - s->last_data_rx_ms >= s->idle_ms;
+}
+
 static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
 {
     size_t total_sent = 0;
@@ -301,17 +394,23 @@ static int open_listener_socket(int port, int port_type, const char *tag)
     return fd;
 }
 
+/* BUFFER's figure: the queue plus the carousel's unconfirmed bytes, as the
+ * FSM's own reports count it.  Not arq_get_runtime_snapshot(): it takes the
+ * session lock, which the event loop holds while it waits for this thread
+ * to drain received bytes (arq_call_in_progress). */
 static int arq_buffered_bytes_snapshot(void)
 {
-    arq_runtime_snapshot_t snapshot;
-    int buffered = 0;
+    int buffered = arq_buffer_bytes_nowait();
+    return buffered < 0 ? 0 : buffered;
+}
 
-    if (arq_get_runtime_snapshot(&snapshot))
-        buffered = snapshot.tx_backlog_bytes;
-
-    if (buffered < 0)
-        buffered = 0;
-    return buffered;
+/* Whether the link is connected, as last known when the session lock is
+ * busy (arq_link_connected_now). */
+static bool link_connected_cached(void)
+{
+    static bool connected = false;
+    (void)arq_link_connected_now(&connected);
+    return connected;
 }
 
 /* "NAME 20", and also "NAME=20" / "NAME = 20": BPQ32 passes a port's init
@@ -451,7 +550,7 @@ static void execute_control_command(char *buffer)
          * decoders are flushed when listening ends with no session after. */
         const char *inflight_mode = NULL;
         uint64_t inflight_ms = 0;
-        if (cmd.type == ARQ_CMD_LISTEN_OFF && !arq_is_link_connected() &&
+        if (cmd.type == ARQ_CMD_LISTEN_OFF && !link_connected_cached() &&
             modem_rx_frame_in_flight(&inflight_mode, &inflight_ms))
             HLOGI("tcp-ctl", "LISTEN OFF %.1f s into a %s frame not yet decoded: "
                   "LISTEN OFF drops it (or it was noise)",
@@ -811,6 +910,31 @@ static void execute_control_command(char *buffer)
 
     if (!strncmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
     {
+        uint64_t idle_ms = atomic_load(&tnc_absorb_idle_disconnect_ms);
+        if (idle_ms)
+        {
+            tnc_absorb_state_t s = {
+                .idle_ms            = idle_ms,
+                .session_up         = atomic_load(&tnc_session_up),
+                .disconnect_passed  = atomic_load(&tnc_disconnect_passed),
+                .host_data_held     = atomic_load(&tnc_host_data_held),
+                .now_ms             = monotonic_ms(),
+                .last_data_rx_ms    = atomic_load(&tnc_last_data_rx_ms),
+            };
+            s.last_disconnect_ms = atomic_exchange(&tnc_last_disconnect_ms, s.now_ms);
+            if (tnc_absorb_disconnect_due(&s))
+            {
+                HLOGW("tcp-ctl",
+                      "DISCONNECT absorbed: no host data for %llu s%s, %d bytes still to deliver "
+                      "(absorb_idle_disconnect_s); another DISCONNECT within %d s ends the session",
+                      (unsigned long long)((s.now_ms - s.last_data_rx_ms) / 1000),
+                      s.host_data_held ? " (more held)" : "",
+                      arq_buffered_bytes_snapshot(), TNC_DISCONNECT_REPEAT_MS / 1000);
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+                return;
+            }
+            atomic_store(&tnc_disconnect_passed, true);
+        }
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_DISCONNECT;
         if (arq_submit_tcp_cmd(&cmd) == 0)
@@ -998,6 +1122,25 @@ static void refuse_client(refusals_t *r, int fd, int holder, uint64_t now_ms)
     }
 }
 
+/* held_payload, held_payload_len: declared above host_data_held(). */
+
+/* Queue the held piece if the bus takes it now; true when none is held.
+ *
+ * A piece held when a call ends goes on the next pass that sees no call up
+ * (dropped, as before); if the host places its next CONNECT before such a
+ * pass, the piece joins the next session -- as do the messages already on
+ * the bus in that case, an old window this does not widen. */
+static bool flush_held_payload(void)
+{
+    if (held_payload_len == 0)
+        return true;
+    if (arq_submit_tcp_payload(held_payload, held_payload_len) != 0)
+        return false;
+    held_payload_len = 0;
+    tnc_send_buffer((uint32_t)arq_buffered_bytes_snapshot());
+    return true;
+}
+
 static void close_data_client(int *data_client_fd)
 {
     if (!data_client_fd || *data_client_fd < 0)
@@ -1008,6 +1151,9 @@ static void close_data_client(int *data_client_fd)
     cli_data_sockfd = -1;
     net_set_status(DATA_TCP_PORT, NET_LISTENING);
     HLOGI("tcp-data", "Data client disconnected");
+
+    /* A piece held for the bus (only ever in a call) stays held and goes
+     * when the session makes room: the client has left, its bytes have not. */
 
     /* Bytes it wrote with no call up would be the first payload of the next
      * session, with whatever station that is, after their writer has gone
@@ -1299,15 +1445,24 @@ void *arq_reactor_thread(void *port)
             nfds++;
         }
 
+        /* A piece held for the bus first; while one is, the data socket is
+         * not read (the host waits on TCP) and the loop comes back sooner.
+         * Held only in a call: if the call has ended, it goes as before. */
+        if (held_payload_len && !arq_call_in_progress() && !flush_held_payload())
+        {
+            HLOGW("tcp-data", "Failed to queue ARQ data frame(s) (%zu bytes held, no call up)", held_payload_len);
+            held_payload_len = 0;
+        }
+        (void)flush_held_payload();
         if (data_client >= 0)
         {
             pfds[nfds].fd = data_client;
-            pfds[nfds].events = POLLIN | POLLERR | POLLHUP;
+            pfds[nfds].events = held_payload_len ? (POLLERR | POLLHUP) : (POLLIN | POLLERR | POLLHUP);
             nfds++;
         }
 
         {
-            int poll_rc = poll(pfds, (nfds_t)nfds, 100);
+            int poll_rc = poll(pfds, (nfds_t)nfds, held_payload_len ? 10 : 100);
             if (poll_rc < 0)
                 HLOGW("tcp-poll", "poll() error: %d", sock_errno());
         }
@@ -1398,17 +1553,29 @@ void *arq_reactor_thread(void *port)
             {
                 close_data_client(&data_client);
             }
+
             else if (events & POLLIN)
             {
                 ssize_t n = recv(data_client, (char *)rx_buf, sizeof(rx_buf), 0);
                 if (n > 0)
                 {
                     HLOGD("tcp-data", "recv %zd bytes from data client", n);
+                    atomic_store(&tnc_last_data_rx_ms, monotonic_ms());
                     int queued = arq_submit_tcp_payload(rx_buf, (size_t)n);
-                    if (queued < 0)
-                        HLOGW("tcp-data", "Failed to queue ARQ data frame(s)");
-                    else
+                    if (queued == 0)
                         tnc_send_buffer((uint32_t)arq_buffered_bytes_snapshot());
+                    else if (errno == EAGAIN && (size_t)n <= sizeof(held_payload) && arq_call_in_progress())
+                    {
+                        /* the bus is full in a call: held, and no more read
+                         * until it is queued (held_payload).  With no call
+                         * up nothing would send it, and the client must be
+                         * read to its end to see it go: dropped, as the
+                         * bytes it leaves behind are (#572). */
+                        memcpy(held_payload, rx_buf, (size_t)n);
+                        held_payload_len = (size_t)n;
+                    }
+                    else
+                        HLOGW("tcp-data", "Failed to queue ARQ data frame(s) (%zd bytes, errno %d)", n, errno);
                 }
                 else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
                 {
@@ -1439,7 +1606,13 @@ void *arq_reactor_thread(void *port)
                     if (first && is_http_request(rx_buf, n))
                         refuse_web_client(&ctl_client);
                     else
+                    {
+                        /* for an absorbed DISCONNECT: the host's data this
+                         * thread holds back */
+                        atomic_store(&tnc_host_data_held, host_data_held());
                         process_control_bytes(ctl_line, &ctl_len, rx_buf, n);
+                        atomic_store(&tnc_host_data_held, false);
+                    }
                 }
                 else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
                 {
@@ -1468,7 +1641,7 @@ void *arq_reactor_thread(void *port)
                 {
                     int buffered = arq_buffered_bytes_snapshot();
                     uint64_t said = atomic_load_explicit(&tnc_last_buffer_ms, memory_order_relaxed);
-                    if (tnc_buffer_report_due(buffered, last_buffer_report, arq_is_link_connected(),
+                    if (tnc_buffer_report_due(buffered, last_buffer_report, link_connected_cached(),
                                               now_ms, said))
                     {
                         /* the same count again: past tnc_send_buffer's
@@ -1911,7 +2084,7 @@ void *send_thread(void *client_socket_ptr)
     }
 
     /* Size for the widest frame, not the listen mode's: each record says its
-     * own size, and MAX_PAYLOAD is 1213 bytes, so this costs nothing. */
+     * own size, and MAX_PAYLOAD is 1184 bytes, so this costs nothing. */
     frame_buffer = (uint8_t *)malloc(MAX_PAYLOAD);
     kiss_buffer = (uint8_t *)malloc((MAX_PAYLOAD * 2) + 3);
 
@@ -2125,6 +2298,17 @@ void *tcp_server_thread(void *port_ptr)
             SOCK_CLOSE(client_socket);
             continue;
         }
+
+        /* Known and left alone (#588): a second client waits in the listen
+         * backlog while one holds this port, and any KISS frame it sends
+         * then is read and transmitted once it is accepted, however late.
+         * That holds even when it has given up: on Linux a client that
+         * aborts with a reset (SO_LINGER 0) still has its buffered frame
+         * returned by recv() before ECONNRESET.  A plain close() or a crash
+         * ends with FIN, not a reset, so only that deliberate abort hits
+         * this, and no KISS client is known to do it.  If late frames from
+         * queued clients ever matter, refuse a second client here as the
+         * control and data ports do. */
 #if defined(SO_NOSIGPIPE)
         setsockopt(client_socket, SOL_SOCKET, SO_NOSIGPIPE, (const char *)&opt, sizeof(opt));
 #endif
@@ -2232,6 +2416,11 @@ void tnc_send_connected()
     const char *source_call = src[0] ? src : my_call;
     const char *dest_call   = dst[0] ? dst : my_call;
     int bw = arq_reported_bandwidth_hz();   /* separate locked call, AFTER the getter returns */
+    /* a new session: its idle time counts from now, no DISCONNECT yet */
+    atomic_store(&tnc_last_data_rx_ms, monotonic_ms());
+    atomic_store(&tnc_last_disconnect_ms, 0);
+    atomic_store(&tnc_disconnect_passed, false);
+    atomic_store(&tnc_session_up, true);
     snprintf(buffer, sizeof(buffer), "CONNECTED %s %s %d\r",
              source_call, dest_call, bw);
     if (tnc_queue_line_critical(buffer) < 0)
@@ -2266,6 +2455,9 @@ void tnc_send_disconnected()
 {
     char buffer[128];
     snprintf(buffer, sizeof(buffer), "DISCONNECTED\r");
+    atomic_store(&tnc_last_disconnect_ms, 0);
+    atomic_store(&tnc_disconnect_passed, false);
+    atomic_store(&tnc_session_up, false);
     if (tnc_queue_line_critical(buffer) < 0)
     {
         HLOGW("tcp-ctl", "Error queuing disconnected message");

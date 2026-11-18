@@ -26,7 +26,7 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
- OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode acq_tuning_sweep qam16_papr_sweep resync_gap_probe burst_train_probe
+ OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode acq_tuning_sweep qam16_papr_sweep rung_sweep resync_gap_probe burst_train_probe
 
 # CPU-cost instruments.  Linux/macOS only: they time with
 # clock_gettime(CLOCK_PROCESS_CPUTIME_ID), which mingw-w64 does not provide
@@ -103,6 +103,12 @@ shift_selftest: shift_selftest.c bench_common.c ../modem/freedv/libfreedvdata.a
 # acquisition and the modem SNR estimate per variant.  Companion to the
 # findings doc; see its header for the question.
 qam16_papr_sweep: qam16_papr_sweep.c bench_common.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# A shipped mode, or a candidate rung in codec2's custom slot (carriers, modem
+# frames per packet, LDPC code), as a peak-limited transmitter sends it:
+# delivery and goodput against the S/N of a steady carrier at the same peak.
+rung_sweep: rung_sweep.c bench_common.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Does the payload decoder hear a data burst that follows a control burst, and

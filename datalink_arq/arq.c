@@ -755,6 +755,14 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
             pthread_mutex_unlock(&g_conn_lock);
         }
         arq_tnc_send_disconnected();
+        /* ...and what we are transmitting stops with it.  A carousel round
+         * at the floor is a 27 s keydown, and it used to play out to the end:
+         * on air, VE4KLM 15 Nov (JNOS "mbox reset"), PTT stayed on 20 s past
+         * the ABORT and its DISCONNECTED, carrying data the session had just
+         * dropped.  The modem unkeys within its tail time, the FSM sees the
+         * keydown end as it would any other, and the one DISCONNECT goes out
+         * after it.  A CALL being sent is cut too: the call is over. */
+        arq_modem_cut_tx();
         ev.id = ARQ_EV_APP_DISCONNECT;
         ev.abort = true;
         break;
@@ -1481,13 +1489,61 @@ bool arq_is_link_connected(void)
     return connected;
 }
 
+/* For the TCP reactor, which must never wait on g_sess_lock: the event loop
+ * holds it while it delivers received bytes, and a delivery larger than the
+ * free room in data_rx_buffer_arq waits there for the reactor to drain it.
+ * A reactor waiting on the lock then drained nothing, and both stopped for
+ * good (Go harness, CCIR Poor 20 dB, a 30 kB transfer: the receiver's
+ * delivery of 6 blocks at once, its periodic BUFFER report due).  So these
+ * take the lock only if it is free. */
+bool arq_call_in_progress(void)
+{
+    if (pthread_mutex_trylock(&g_sess_lock) != 0)
+        return true;             /* the event loop is at work: say a call, the safe answer */
+    bool call = g_initialized && g_sess.conn_state != ARQ_CONN_DISCONNECTED &&
+                g_sess.conn_state != ARQ_CONN_LISTENING;
+    pthread_mutex_unlock(&g_sess_lock);
+    return call;
+}
+
+bool arq_link_connected_now(bool *connected)
+{
+    if (!connected || pthread_mutex_trylock(&g_sess_lock) != 0)
+        return false;
+    *connected = (g_sess.conn_state == ARQ_CONN_CONNECTED);
+    pthread_mutex_unlock(&g_sess_lock);
+    return true;
+}
+
+int arq_buffer_bytes_nowait(void)
+{
+    if (!g_initialized)
+        return 0;
+    return arq_get_tx_backlog_bytes() + arq_fsm_tx_inflight_published();
+}
+
+/* g_sess_lock for the TCP reactor: never waits on it for long, since the
+ * event loop holds it while it waits on the reactor (above).  Up to ~1 s of
+ * tries; false if it stayed busy. */
+static bool sess_lock_for_reactor(void)
+{
+    for (int i = 0; i < 1000; i++)
+    {
+        if (pthread_mutex_trylock(&g_sess_lock) == 0)
+            return true;
+        hermes_usleep(1000);
+    }
+    return false;
+}
+
 void arq_discard_stale_rx(void)
 {
     /* Every FSM dispatch -- so every CONNECTED transition and every delivery
      * into the buffer -- runs under g_sess_lock.  Holding it across the check
      * and the clear means a session cannot start in between and have its
      * first bytes wiped. */
-    pthread_mutex_lock(&g_sess_lock);
+    if (!sess_lock_for_reactor())
+        return;          /* the event loop is busy delivering: a session is up */
     if (g_sess.conn_state != ARQ_CONN_CONNECTED)
         clear_buffer(data_rx_buffer_arq);
     pthread_mutex_unlock(&g_sess_lock);
@@ -1530,7 +1586,8 @@ size_t arq_discard_stale_tx(void)
         bool landed = (int)(atomic_load(&g_payload_written) - target) >= 0;
         bool idle;
 
-        pthread_mutex_lock(&g_sess_lock);
+        if (!sess_lock_for_reactor())
+            break;       /* busy for a second: a session is at work, not idle */
         idle = (g_sess.conn_state == ARQ_CONN_DISCONNECTED ||
                 g_sess.conn_state == ARQ_CONN_LISTENING);
         if (idle)

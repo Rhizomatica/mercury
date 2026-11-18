@@ -220,6 +220,23 @@ void arq_post_pattern_ack(bool is_break);
  * @return true when connected; otherwise false.
  */
 bool arq_is_link_connected(void);
+
+/**
+ * @brief A call is being set up, is up, or is ending: neither idle nor only
+ *        listening (the states in which arq_discard_stale_tx drops bytes).
+ */
+bool arq_call_in_progress(void);
+
+/**
+ * @brief For the TCP reactor, which must not wait on the session lock:
+ *        whether the link is connected, if the lock is free (true), else
+ *        false and *connected untouched.
+ */
+bool arq_link_connected_now(bool *connected);
+
+/** @brief BUFFER: the application's queue plus the carousel's unconfirmed
+ *         bytes, without the session lock (the TCP reactor's figure). */
+int arq_buffer_bytes_nowait(void);
 /** A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED,
  *  DISCONNECTING): what stops a broadcast carousel. */
 bool arq_session_active(void);

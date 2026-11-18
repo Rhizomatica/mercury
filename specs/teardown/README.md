@@ -250,6 +250,23 @@ and the no-overlap are timing, which the model does not have: the sim tests
 `test_car_callee_abort_disconnect_before_the_hop` check both, as the peer
 sees it (told, and no time with both keyed).
 
+"The ABORT's one frame" is one message in the model, not always one frame
+on the air (#586).  A DISCONNECT that is never retried, ABORT's (`SAbortKey`,
+`MDisc` with no retries) and the one a quiet peer gets, goes as two copies
+back to back in one keydown when it goes on the control mode to a peer
+that last reported hearing that mode below -3 dB
+(`unretried_disconnect_copies`, `car_peer_hears_ctl_marginal`); to any
+other peer, and on the floor, it is one frame.  The model's single lossy
+message stands for both copies: the peer gets the DISCONNECT unless both
+are lost, a lower loss rate for the same message, which the lossy config
+already allows to go either way.  So the model is unchanged.  The timing
+counts both copies: `abort_key_by` and `abort_fallback` use the air time
+of all of them (`unretried_disconnect_air_ms`), so the out-of-turn keydown
+is still off the air a margin before the host's hop, and an out-of-turn
+DISCONNECT held for a clear channel past its key-by time goes as one copy.
+The sim tests above, and `test_car_ctl_loss_callee_abort_tells_the_caller`
+and `test_car_ctl_loss_caller_abort_tells_the_callee`, check that.
+
 The ABORT hold (#560).  The DISCONNECTED at the ABORT is what BPQ32's port
 takes as the session's end: its scan restarts 15 s later, and at BW500 the
 peer's frame on the air can outlast that (2026-11-13, K7EK's ABORT at

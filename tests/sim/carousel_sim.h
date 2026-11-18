@@ -56,6 +56,11 @@ typedef struct {
      * (#501); NAN when no frame of that kind was delivered. */
     double   ctl_snr_db, data_snr_db;
     int      ctl_frames, data_frames;
+    /* BUFFER's estimate (car_tx_inflight_unstopped): the most bytes either
+     * station counted as in beyond what its peer had delivered, and how many
+     * times a BREAK lowered it ahead of the poll that retires the block. */
+    size_t   buffer_overclaim;
+    int      buffer_break_drops;
 } car_sim_result_t;
 
 /* Exploration: from the next run on, no random loss -- the frames (and
