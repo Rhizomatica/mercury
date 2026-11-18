@@ -83,6 +83,9 @@ const arq_mode_timing_t arq_mode_table[] = {
     /* The BW500 floor: the same frame on 32 tones 15.6 Hz apart, twice the
      * symbol length, 26.2 s on the air (arq_floor_mode). */
     {  MERCURY_MODE_MFSK_N32, 27.00f,    32.0f,          98   },
+    /* The 2 kHz rung: the same frame on 62.5 Hz tones, half the symbol
+     * length, 6.56 s on the air. */
+    {  MERCURY_MODE_MFSK_W2,   6.95f,    12.0f,          98   },
 };
 
 const int arq_mode_table_count =

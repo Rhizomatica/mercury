@@ -1480,8 +1480,11 @@ void test_silent_peer_after_hangup_waits_the_callees_drain(void)
     atomic_store(&arq_disconnect_drain_timeout_s, 110);
     goto_connected();
     sess.car->end_req = CAR_END_WISH;
-    sess.car->tx_level = sess.car->poll_level = 1;      /* a rung whose budget is under 110 s */
-    uint64_t budget = car_drain_budget_ms(sess.car);
+    uint64_t budget = UINT64_MAX;                       /* a rung whose budget is under 110 s */
+    for (int lv = 1; lv < CAR_NLEVELS && budget >= 110000; lv++) {
+        sess.car->tx_level = sess.car->poll_level = lv;
+        budget = car_drain_budget_ms(sess.car);
+    }
     TEST_ASSERT_TRUE_MESSAGE(budget < 110000, "the rung's budget is under the drain timeout");
 
     mock_set_uptime_ms(sess.car_last_rx_ms + budget + 1000);
@@ -1489,13 +1492,25 @@ void test_silent_peer_after_hangup_waits_the_callees_drain(void)
     arq_fsm_dispatch(&sess, &ev);
     bool held = sess.conn_state == ARQ_CONN_CONNECTED;
 
-    mock_set_uptime_ms(sess.car_last_rx_ms + 110000);
+    /* The silence may have taken the poll a rung down, whose budget can be
+     * past the timeout: the wait is then that budget, at most the 120 s cap.
+     * Either way it is at least the configured 110 s. */
+    uint64_t end = car_drain_budget_ms(sess.car);
+    if (end < 110000) end = 110000;
+    if (end > 120000) end = 120000;
+    mock_set_uptime_ms(sess.car_last_rx_ms + 110000 - 1000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    bool held_to_timeout = sess.conn_state == ARQ_CONN_CONNECTED;
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + end);
     ev = make_event(ARQ_EV_TIMER_CAROUSEL);
     arq_fsm_dispatch(&sess, &ev);
     arq_conn_state_t after = sess.conn_state;
     atomic_store(&arq_disconnect_drain_timeout_s, saved);
 
     TEST_ASSERT_TRUE_MESSAGE(held, "past the budget, inside the callee's drain");
+    TEST_ASSERT_TRUE_MESSAGE(held_to_timeout, "inside the configured drain timeout");
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, after);
 }
 

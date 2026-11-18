@@ -39,17 +39,19 @@ that index.
 | 15 | DATAN1 | 243 | 562 | ARQ rung 4 (BW500) |
 | 16 | QAM16N1 | 179 | 562 | ARQ rung 5 (BW500) |
 | 17 | QAM16N2 | 242 | 562 | ARQ rung 6 (BW500) |
+| 18 | MFSK2K | 98 | 2000 | ARQ rung 1 (BW2300, BW2750) |
 
 An ARQ session runs each direction on rungs 0-6 of its bandwidth's ladder,
 starting on the rung the connect's SNR supports (`ARQ_SNR_MIN_*`, the
 thresholds below) and moving on measured delivery
-([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md)).  Rungs 1-4 are shared; each bandwidth
-has its own floor and top:
+([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md)).  Rungs 2-4 are shared; each bandwidth
+has its own floor and top, and BW2300/BW2750 their own rung 1:
 
 | Rung | BW500 | BW2300 | BW2750 |
 |---|---|---|---|
 | 0 | MFSK500 | MFSK | MFSK |
-| 1-3 | DATAC15, DATAC4, DATAC3 | same | same |
+| 1 | DATAC15 | MFSK2K | MFSK2K |
+| 2-3 | DATAC4, DATAC3 | same | same |
 | 4 | DATAN1 | DATAC1 | DATAC1 |
 | 5 | QAM16N1 | DATAC17 | DATAC17W |
 | 6 | QAM16N2 | QAM16C2 | QAM16C2W |
@@ -86,6 +88,7 @@ single-frame bursts, 100 trials, "delivered" = acquired AND decoded.
 | **QAM16N2** | 560 | 868 | 242 | (3072,2048) IRA | 2.25 | 90 % reads 5.9 dB (AWGN) ³ | BW500's rung 6 |
 | **MFSK** | 1000 | ~60 | 98 | LDPC rate 8/16, N=1600 | ~13.5 | 50 % FER at −11.2 dB AWGN (DATAC15 −10.3 on the same harness) ⁴ | Fringe data and control (the carousel's floor) |
 | **MFSK500** | 500 | ~31 | 98 | LDPC rate 8/16, N=1600 | ~26.2 | 90 % at −14.1 dB AWGN, −14.1 behind a 500 Hz filter, −10.4 moderate fading ⁵ | The floor of a BW500 session |
+| **MFSK2K** | 2000 | ~118 | 98 | LDPC rate 8/16, N=1600 | ~6.6 | 90 % at −8 dB AWGN, −5 CCIR Moderate and Poor ⁵ | Rung 1 of BW2300/BW2750: twice the floor's rate for ~2 dB more under fading |
 
 ⁴ [MFSK-PORT.md](MFSK-PORT.md), "The fringe floor was the sync accept
 threshold"; its sections have the fading figures and the rate ladder.

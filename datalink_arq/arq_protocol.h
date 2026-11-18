@@ -311,6 +311,10 @@ void arq_protocol_session_calls(bool we_called, const char *remote_call,
 /* Decode thresholds (dB) of the rungs, which set the carousel's start rung
  * (carousel.c, car_start_level) and MFSK's place below DATAC15. */
 #define ARQ_SNR_HYST_DB               5.0f
+/* The 2 kHz MFSK rung (BW2300/BW2750 rung 1): 90 % at -8 dB on white noise
+ * (MFSK reads the burst's SNR3k, constant-envelope: the carrier axis), plus
+ * the ~1.5 dB the OFDM rungs keep; -5 under CCIR Moderate/Poor. */
+#define ARQ_SNR_MIN_MFSK_W2_DB       -6.5f
 #define ARQ_SNR_MIN_DATAC15_DB       -7.0f  /* its cliff (sim, bench): below
                                              * it the carousel's MFSK rung wins */
 #define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* bench (docs/MODES.md):

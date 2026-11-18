@@ -45,6 +45,7 @@ const char *mode_name_from_enum(int mode)
     case FREEDV_MODE_FSK_LDPC: return "FSK_LDPC";
     case MERCURY_MODE_MFSK: return "MFSK";
     case MERCURY_MODE_MFSK_N32: return "MFSK500";
+    case MERCURY_MODE_MFSK_W2:  return "MFSK2K";
     default: return "UNKNOWN";
     }
 }
