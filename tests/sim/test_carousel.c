@@ -29,7 +29,7 @@ void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
     unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
-    unsetenv("CAR_CTL_SNR_OFFSET");
+    unsetenv("CAR_CTL_SNR_OFFSET"); unsetenv("CAR_NOISE");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -787,6 +787,32 @@ void test_carousel_bw500_control_loss_does_not_stall(void)
     }
 }
 
+/* QRM that keeps looking like a frame's start holds the caller's keydown for
+ * at most one keydown's length, then it keys: the peer keys only in its slots,
+ * which the caller keeps clear of anyway.  On air (N3JXB-VE4KLM, 2026-11-16)
+ * the hold had no end: 116 s, and the lost-peer watchdog ended the session.
+ * Here 300 s of it from 20 s on: without the cap these finished only after
+ * it (427 s one way, 495 s both), with it inside it (112 s, 260 s). */
+static void test_carousel_noise_does_not_hold_the_caller(void)
+{
+    static const struct { const char *chan; bool bidir; bool timed; } RUNS[] = {
+        { "clean", false, true }, { "clean", true, true },
+        { "fade:8:1.0", true, false }, { "cliff:3", true, false },
+    };
+    setenv("CAR_NOISE", "20000:300000", 1);
+    for (size_t k = 0; k < sizeof(RUNS) / sizeof(RUNS[0]); k++)
+        for (uint64_t seed = 1; seed <= 3; seed++) {
+            car_sim_result_t r;
+            char what[80];
+            check(seed, RUNS[k].chan, RUNS[k].bidir);
+            carousel_sim_run(seed, RUNS[k].chan, RUNS[k].bidir, LIMIT_MS, &r);
+            snprintf(what, sizeof(what), "seed %llu %s %s, done at %llu ms", (unsigned long long)seed,
+                     RUNS[k].chan, RUNS[k].bidir ? "bidir" : "oneway", (unsigned long long)r.done_ms);
+            if (RUNS[k].timed) TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(320000, r.done_ms, what);
+        }
+    unsetenv("CAR_NOISE");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -821,5 +847,6 @@ int main(void)
     RUN_TEST(test_carousel_drop_below_the_control_mode_stays_at_the_floor);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     RUN_TEST(test_carousel_bw500_control_loss_does_not_stall);
+    RUN_TEST(test_carousel_noise_does_not_hold_the_caller);
     return UNITY_END();
 }

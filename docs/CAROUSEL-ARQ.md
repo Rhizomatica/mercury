@@ -125,6 +125,14 @@ DATAC16 frames stop near −10 dB (`utils/pattern_probe`).  The detector
 (one FFT per 5 ms step, all lists scored by lookup) runs throughout a
 session, for about 1 % of an x86 core.  `MERCURY_NAV=0` turns headers off.
 
+Carrier sense holds the caller's planned keydown for at most one keydown's
+length with its guard (`CARRIER_HOLD_MAX_MS`, 30.7 s); then it keys.  The
+callee keys only in its slots, which the caller keeps clear of without
+carrier sense (`docs/CAROUSEL-TURNS.md`), so a channel still busy past that
+is noise or another station.  On air (N3JXB-VE4KLM, 2026-11-16) QRM that kept
+looking like a frame's start held the caller 116 s, and the lost-peer
+watchdog ended the session.
+
 ## Wire formats
 
 DATA, in a payload mode, filling the frame:
