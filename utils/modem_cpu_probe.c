@@ -61,8 +61,8 @@ int main(int argc, char **argv) {
 
   printf("modem_cpu_probe: %d frames per mode, decode at %+.1f dB SNR3k awgn, "
          "sync held across frames\n", frames, snr);
-  printf("CPU s per audio s (CPU%% of one core); tx = raw-data encode, "
-         "rx = rawdatarx in sync\n\n");
+  printf("CPU s per audio s (CPU%% of one core); tx = raw-data encode per burst "
+         "second, rx = rawdatarx in sync per audio second (gap included)\n\n");
   printf("%-8s %8s %9s %8s %8s %8s %10s\n",
          "mode", "bytes/fr", "air_s/fr", "tx_cpu/x", "rx_cpu/x", "tx+rx/x", "delivered");
 
@@ -98,6 +98,7 @@ int main(int argc, char **argv) {
       (void)n;
     }
     double tx_cpu = now_cpu_s() - t0;
+    double tx_audio = (double)frames * nburst / FS;   /* bursts only: no gap in encode work */
 
     /* ---- the decode channel: the last burst at +snr dB in 3 kHz ---- */
     double ps = 0.0;
@@ -109,24 +110,39 @@ int main(int argc, char **argv) {
     double rx_cpu = 0.0;
     double audio = 0.0;
     int delivered = 0;
+    short *stream = malloc(sizeof(short) * (size_t)(nburst + 4 + GAP_SAMPLES));
+    if (!stream) return 1;
     for (int f = 0; f < frames; f++) {
       bench_fill_payload(payload, nbytes, &rng);
       int n = bench_make_burst(tx, burst, payload);
+      /* The channel, built outside the timed region: generation is not
+       * decode, and inside the loop it priced the cheap modes' rx column
+       * with two gaussians and a clip per sample (Pedro's review, #552).
+       * The gap is noise alone -- the old loop added gauss*sigma to a
+       * gauss*sigma there, 3 dB hot. */
+      for (int j = 0; j < n; j++) {
+        double v = (double)burst[j] + bench_rng_gauss(&rng) * sigma;
+        if (v > 32767.0) v = 32767.0;
+        if (v < -32768.0) v = -32768.0;
+        stream[j] = (short)v;
+      }
+      for (int j = n; j < n + GAP_SAMPLES; j++) {
+        double v = bench_rng_gauss(&rng) * sigma;
+        if (v > 32767.0) v = 32767.0;
+        if (v < -32768.0) v = -32768.0;
+        stream[j] = (short)v;
+      }
       t0 = now_cpu_s();
-      /* the burst, then the gap, through the nin-chunked receiver */
+      /* the burst, then the gap, through the nin-chunked receiver.  The
+       * last chunk is zero-filled to nin: rawdatarx consumes nin samples
+       * whatever take is, and the tail otherwise holds the last chunk's
+       * stale samples. */
       int pos = 0;
       while (pos < n + GAP_SAMPLES) {
         int nin = freedv_nin(rx);
-        for (int j = 0; j < nin && pos + j < n + GAP_SAMPLES; j++) {
-          double s;
-          if (pos + j < n) s = (double)burst[pos + j];
-          else             s = bench_rng_gauss(&rng) * sigma;
-          double v = s + bench_rng_gauss(&rng) * sigma;
-          if (v > 32767.0) v = 32767.0;
-          if (v < -32768.0) v = -32768.0;
-          chunk[j] = (short)v;
-        }
         int take = nin < n + GAP_SAMPLES - pos ? nin : n + GAP_SAMPLES - pos;
+        memcpy(chunk, stream + pos, (size_t)take * sizeof chunk[0]);
+        if (take < nin) memset(&chunk[take], 0, (size_t)(nin - take) * sizeof chunk[0]);
         int nb = (int)freedv_rawdatarx(rx, out, chunk);
         pos += take;
         if (nb > 0) delivered++;
@@ -134,10 +150,11 @@ int main(int argc, char **argv) {
       rx_cpu += now_cpu_s() - t0;
       audio += (double)(n + GAP_SAMPLES) / FS;
     }
+    free(stream);
 
     printf("%-8s %8d %9.3f %8.3f %8.3f %8.3f %10d\n",
            MODES[i].name, nbytes, air_s,
-           tx_cpu / audio, rx_cpu / audio, (tx_cpu + rx_cpu) / audio, delivered);
+           tx_cpu / tx_audio, rx_cpu / audio, tx_cpu / tx_audio + rx_cpu / audio, delivered);
     fflush(stdout);
 
     free(burst); free(chunk); free(payload); free(out);
