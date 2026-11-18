@@ -772,6 +772,74 @@ void test_repeat_on_control_mode_is_answered_on_the_floor(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
 }
 
+/* Wider than 500 Hz, the caller adds the 500 Hz MFSK after its floor CALL:
+ * floor, deep, control mode in turn.  At 500 Hz its floor is that MFSK
+ * already, and the rotation is the floor and the control mode. */
+void test_wide_caller_also_calls_on_the_500_hz_mfsk(void)
+{
+    static const int wide[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK,
+                                MERCURY_MODE_MFSK_N32, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK,
+                                MERCURY_MODE_MFSK_N32, FREEDV_MODE_DATAC16 };
+    static const int narrow[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK_N32,
+                                  FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK_N32, FREEDV_MODE_DATAC16 };
+    sess.control_mode = FREEDV_MODE_DATAC16;
+    int bws[] = { ARQ_BANDWIDTH_FULL_HZ, ARQ_BANDWIDTH_TACTICAL_HZ };
+    for (size_t b = 0; b < 2; b++) {
+        arq_conn.bw = bws[b];
+        for (int i = 0; i < (int)(sizeof(wide) / sizeof(wide[0])); i++) {
+            sess.call_sends_done = i;
+            TEST_ASSERT_EQUAL_INT(wide[i], arq_call_carrier(&sess));
+        }
+    }
+    arq_conn.bw = ARQ_BANDWIDTH_NARROW_HZ;
+    for (int i = 0; i < (int)(sizeof(narrow) / sizeof(narrow[0])); i++) {
+        sess.call_sends_done = i;
+        TEST_ASSERT_EQUAL_INT(narrow[i], arq_call_carrier(&sess));
+    }
+    arq_conn.bw = 0;
+}
+
+/* A wider session connected on the 500 Hz MFSK keeps it as its floor, at
+ * both ends: the caller from the ACCEPT's carrier, the callee from its own.
+ * Connected on anything else, the floor is the bandwidth's. */
+void test_connect_on_the_500_hz_mfsk_is_the_deep_floor(void)
+{
+    for (int deep = 0; deep <= 1; deep++) {
+        arq_fsm_init(&sess);
+        snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "A0AAA");
+        arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+        arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_APP_CONNECT);
+        strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        sess.call_carrier = deep ? MERCURY_MODE_MFSK_N32 : MERCURY_MODE_MFSK;
+        ev = make_event(ARQ_EV_RX_ACCEPT);
+        ev.session_id = sess.session_id;
+        ev.rx_snr = -14.0f;
+        ev.bw_hz = ARQ_BANDWIDTH_FULL_HZ;
+        ev.mode = sess.call_carrier;
+        strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+        TEST_ASSERT_EQUAL_INT(deep ? MERCURY_MODE_MFSK_N32 : MERCURY_MODE_MFSK, sess.floor_mode);
+        TEST_ASSERT_EQUAL_INT(deep ? MERCURY_MODE_MFSK_N32 : MERCURY_MODE_MFSK,
+                              car_session_level_mode(sess.car, 0));
+        TEST_ASSERT_EQUAL_INT(car_bw_level_mode(ARQ_BANDWIDTH_FULL_HZ, 1),
+                              car_session_level_mode(sess.car, 1));
+    }
+    arq_fsm_init(&sess);
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, answer_mode(MERCURY_MODE_MFSK_N32));
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, sess.floor_mode);
+    /* the caller heard none of it and repeats on the control mode: the
+     * answer goes on the bandwidth's floor, where it listens after a repeat */
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, answer_mode(FREEDV_MODE_DATAC16));
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.floor_mode);
+    arq_conn.bw = 0;
+}
+
 /* The caller listens on the floor from its first repeat on, where the callee
  * may answer it; and its next CALL waits while a frame it caught is arriving,
  * then until that frame could have decoded (ARQ_CALL_DECODE_WAIT_MS): keyed at
@@ -2461,6 +2529,8 @@ int main(void)
     RUN_TEST(test_mfsk_only_connect_starts_deaf_on_the_floor);
     RUN_TEST(test_floor_accept_to_a_control_mode_call_is_not_deafness);
     RUN_TEST(test_repeat_on_control_mode_is_answered_on_the_floor);
+    RUN_TEST(test_wide_caller_also_calls_on_the_500_hz_mfsk);
+    RUN_TEST(test_connect_on_the_500_hz_mfsk_is_the_deep_floor);
     RUN_TEST(test_call_after_a_repeat_listens_on_the_floor_and_waits_for_a_frame);
     RUN_TEST(test_busy_detector_does_not_hold_a_call);
     RUN_TEST(test_listen_mode_does_not_leak_into_inbound_session);

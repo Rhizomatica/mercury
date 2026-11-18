@@ -33,7 +33,7 @@ that index.
 | 9 | DATAC17 | 1184 | 2250 | ARQ rung 5 (BW2300) |
 | 10 | QAM16C2 | 1183 | 2250 | ARQ rung 6 (BW2300) |
 | 11 | MFSK | 98 | 1000 | ARQ rung 0 (the floor); CALLs, control and tone patterns at the floor |
-| 12 | MFSK500 | 98 | 500 | ARQ rung 0 of a BW500 session; its CALLs, control and patterns at the floor |
+| 12 | MFSK500 | 98 | 500 | ARQ rung 0 of a BW500 session, and of a wider one connected on it (the deep floor); its CALLs, control and patterns at the floor |
 | 13 | DATAC17W | 1170 | 2750 | ARQ rung 5 (BW2750) |
 | 14 | QAM16C2W | 1169 | 2750 | ARQ rung 6 (BW2750) |
 | 15 | DATAN1 | 243 | 562 | ARQ rung 4 (BW500) |
@@ -49,7 +49,7 @@ has its own floor and top, and BW2300/BW2750 their own rung 1:
 
 | Rung | BW500 | BW2300 | BW2750 |
 |---|---|---|---|
-| 0 | MFSK500 | MFSK | MFSK |
+| 0 | MFSK500 | MFSK (MFSK500 on the deep floor) | MFSK (the same) |
 | 1 | DATAC15 | MFSK2K | MFSK2K |
 | 2-3 | DATAC4, DATAC3 | same | same |
 | 4 | DATAN1 | DATAC1 | DATAC1 |
@@ -58,7 +58,11 @@ has its own floor and top, and BW2300/BW2750 their own rung 1:
 
 BW2300's top rungs fit 375-2562 Hz, inside the 300-2700 Hz transmit passband
 of radios like the IC-7100; BW2750's span 94-2844 Hz for radios that pass
-3 kHz; BW500's 9-carrier rungs fit behind a 500 Hz filter.
+3 kHz; BW500's 9-carrier rungs fit behind a 500 Hz filter.  A BW2300 or
+BW2750 session that connected on a CALL on MFSK500 (the caller's fourth at
+the default `RETRIES`, after its 1 kHz CALLs went unanswered) runs on the
+deep floor: MFSK500 at rung 0, its bandwidth's modes above
+([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md), "The deep floor").
 
 ## Mode summary
 

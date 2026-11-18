@@ -218,5 +218,32 @@ Results:
   `Connects` failed on a tie with the caller giving up, in the old code too:
   the reason for 0.25 s.  The floor call interval is safe from 21 s up (the
   code's is 24 s).
+- `Deep`, a caller wider than 500 Hz (the deep floor): a third carrier,
+  `"deep"` (the 500 Hz MFSK, `LD` 108 = 27 s, call interval `IvDeep` 150 =
+  37.5 s, the floor's decode allowance), joins the rotation after the fast
+  CALLs: floor, deep, fast in turn.  The caller listens on one MFSK carrier
+  at a time, the one its last CALL's ACCEPT may come on (`cListen`, now a
+  carrier: the payload decoder is one); the callee answers a deep CALL on
+  deep, and a fast repeat on the floor unless its last ACCEPT went there.
+  Every config above has `Deep` FALSE (a 500 Hz caller, or the rotation
+  before) and gives the counts above: the model with `Deep` FALSE is the
+  one before.  With `Deep` TRUE:
+  - `ConnectCarrier_deep.cfg` (every path "any", `H` 700 so the rotation
+    reaches the deep CALL and its successor): no error, 290648 states;
+    `_deep_sense` (`Sense` "any"), `NoOverlap` holds, 580186; `_deep_f4`
+    (`F` = 4, `R` = 8, `H` 1100), 640565; `_deep_emfsk` (an MFSK-only
+    callee: `FloorOnly` allows either MFSK carrier), 275148.
+  - `_deep_early`: `Early` holds, 23222 (the deep CALL comes after the
+    second); `_deep_floor`: `Connects`, 244623 (connected on the floor CALL
+    before the deep one comes due).
+  - `ConnectCarrier_deeponly.cfg` (only the deep paths deliver, `Sense`
+    "any", `H` 600): `Connects` holds, 51801: the fringe only the 500 Hz
+    MFSK reaches.  The earliest horizon it holds from is between 560 and 580
+    (140-145 s): the deep CALL is the fourth, keyed at 77 s.  `_deeponly_f4`
+    (`H` 820, 205 s), 50583; `_deeponly_emfsk`, 51801.
+  - `Mut_deepfloor.cfg` (the caller keeps listening on the floor after a
+    deep CALL): violates `Connects`.  `Mut_deepiv.cfg` (a deep CALL waits
+    the floor's interval, `Sense` "any"): violates `NoOverlap`, the next CALL
+    keyed over the 27 s ACCEPT a decoder missed.
 
 Give each TLC run its own `-metadir`.

@@ -158,7 +158,8 @@ typedef struct
     uint8_t  session_id;               /* random byte chosen by caller         */
     int      call_sends_done;          /* CALLs sent this attempt (escalation) */
     int      call_carrier;             /* the carrier the last CALL went out on */
-    int      call_rx_mode;             /* the carrier we ACCEPT on (accept_carrier) */
+    int      call_rx_mode;             /* the connect's ACCEPT carrier: the one we key it
+                                        * on (accept_carrier), or calling, the one it came on */
     char     remote_call[CALLSIGN_MAX_SIZE];
     char     local_call[CALLSIGN_MAX_SIZE];  /* our dialed callsign/SSID for an
                                               * accepted incoming CALL (empty =>
@@ -431,7 +432,8 @@ arq_listen_end_t arq_fsm_dispatch_ends_listening(arq_session_t *sess, const arq_
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now);
 
 /** The carrier the next CALL goes out on: the control mode for the first
- *  ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately. */
+ *  ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately -- or,
+ *  wider than 500 Hz, the floor, the 500 Hz MFSK and the control mode. */
 int arq_call_carrier(const arq_session_t *sess);
 /** Whether a pattern can arrive now (the modem's detector runs only then). */
 bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now);

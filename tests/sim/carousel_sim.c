@@ -796,11 +796,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         car_seed_ctl_deaf(&s->car, peers ? CAR_DEAF_MFSK_TX : hears < ARQ_SNR_MIN_DATAC15_DB,
                           mine ? CAR_DEAF_MFSK_TX : heard < ARQ_SNR_MIN_DATAC15_DB);
         if (!getenv("CAR_NOHINT")) car_seed_snr(&s->car, (float)hears, (float)heard);   /* as arq_fsm.c's car_start */
-        /* CAR_BW=500 or 2750: that bandwidth's ladder (car_set_bandwidth) */
-        if (getenv("CAR_BW")) {
-            int bw = atoi(getenv("CAR_BW"));
+        /* CAR_BW=500 or 2750: that bandwidth's ladder (car_set_bandwidth);
+         * CAR_DEEP=1: a wider session connected on the 500 Hz MFSK, its floor */
+        if (getenv("CAR_BW") || getenv("CAR_DEEP")) {
+            int bw = getenv("CAR_BW") ? atoi(getenv("CAR_BW")) : 2300;
             car_set_max_level(&s->car, car_max_level_for_bw(bw));
-            car_set_bandwidth(&s->car, bw);
+            car_set_bandwidth(&s->car, bw, getenv("CAR_DEEP") ? MERCURY_MODE_MFSK_N32 : arq_floor_mode(bw));
         }
         s->rx_mode = -1;
     }

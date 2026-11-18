@@ -78,6 +78,22 @@ on a DATAC16 CALL 217 s in).  The callee answers on the CALL's floor, where
 the caller listens, and the session then runs at the lower bandwidth, on
 its floor.  A BW500 station still hears a 2300 caller's 1 kHz CALLs only
 through a filter wide enough for them; the narrow CALL passes any filter.
+**The deep floor.**  A caller wider than 500 Hz (BW2300, BW2750) also calls
+on the 500 Hz MFSK: after its fast CALLs its rotation is the floor, the
+500 Hz MFSK and the control mode in turn (`arq_call_carrier`), so at the
+default `RETRIES` its fourth CALL is the narrow one, about 77 s in, and it
+waits that carrier's call interval (37.5 s) for the answer.  Every listener
+decodes it, and the callee answers there.  A session connected on it keeps
+the 500 Hz MFSK as its floor at both ends (the caller from the ACCEPT's
+carrier, the callee from its own: `session_floor_mode`), under its
+bandwidth's other rungs: only rung 0 changes, so the wire, the rung modes
+and the piece sizes are those of its bandwidth (`car_set_bandwidth`).  This
+is the fringe the 1 kHz floor does not reach: in the Go harness (256 B) a
+BW2300 session never connected at −15 dB on white noise or −13 dB under
+CCIR Moderate, a BW500 one completed down to −17 and −14 dB.  The callee
+answers a later repeat on the control mode on its bandwidth's floor, as
+before (`accept_carrier`).  A station at 500 Hz has that floor already, and
+an MFSK-only station calls on its own floor only.
 A floor keydown holds one frame (`MAX_KEYDOWN_MS` 30 s).  The narrow floor's
 decoder searches at 2 kHz and reads the payload at 8 kHz, so it costs less
 than the 1 kHz one (0.34 % against 0.5-0.6 % of an x86 core; a listening

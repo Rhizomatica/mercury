@@ -199,9 +199,29 @@ static const int LADDER_2750[CAR_NLEVELS] = {
     MERCURY_MODE_MFSK_W2, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
     FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17W, FREEDV_MODE_QAM16C2W,
 };
+/* A wider session connected on the 500 Hz MFSK (arq_call_carrier: the
+ * fringe the 1 kHz floor did not reach) keeps it as its floor, under its
+ * bandwidth's other rungs: only level 0 differs, so the wire and the
+ * mode of every other level are the same. */
+static const int LADDER_DEEP[CAR_NLEVELS] = {
+    MERCURY_MODE_MFSK_N32,
+    MERCURY_MODE_MFSK_W2, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
+    FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
+};
+static const int LADDER_2750_DEEP[CAR_NLEVELS] = {
+    MERCURY_MODE_MFSK_N32,
+    MERCURY_MODE_MFSK_W2, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
+    FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17W, FREEDV_MODE_QAM16C2W,
+};
 static const int *ladder_for_bw(int bw_hz)
 {
     return bw_hz == ARQ_BANDWIDTH_NARROW_HZ ? LADDER_500 : bw_hz == ARQ_BANDWIDTH_TACTICAL_HZ ? LADDER_2750 : LADDER;
+}
+static const int *ladder_for(int bw_hz, int floor_mode)
+{
+    if (floor_mode != MERCURY_MODE_MFSK_N32 || bw_hz == ARQ_BANDWIDTH_NARROW_HZ)
+        return ladder_for_bw(bw_hz);
+    return bw_hz == ARQ_BANDWIDTH_TACTICAL_HZ ? LADDER_2750_DEEP : LADDER_DEEP;
 }
 static int lmode(const car_t *c, int lv)
 {
@@ -3330,9 +3350,9 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->io.max_keydown_ms = io->max_keydown_ms ? clamp_keydown_ms(io->max_keydown_ms) : g_max_keydown_ms;
 }
 
-void car_set_bandwidth(car_t *c, int bw_hz)
+void car_set_bandwidth(car_t *c, int bw_hz, int floor_mode)
 {
-    c->ladder = ladder_for_bw(bw_hz);
+    c->ladder = ladder_for(bw_hz, floor_mode);
 }
 
 /* The top rung of each session bandwidth.  Every ladder now has all seven

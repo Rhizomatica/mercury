@@ -313,9 +313,11 @@ void car_set_max_level(car_t *c, int lv);
 int  car_max_level_for_bw(int bw_hz);
 /* The session's ladder, its bandwidth's (Hz): BW500's floor is the 500 Hz
  * MFSK and its top rungs the 9-carrier modes, BW2750's top rungs the
- * 44-carrier ones; BW2300's unless set.  Both ends set the same, after
- * car_init. */
-void car_set_bandwidth(car_t *c, int bw_hz);
+ * 44-carrier ones; BW2300's unless set.  floor_mode the session's floor:
+ * MERCURY_MODE_MFSK_N32 on a wider bandwidth puts the 500 Hz MFSK at level 0
+ * (a session connected there, the deep floor).  Both ends set the same,
+ * after car_init. */
+void car_set_bandwidth(car_t *c, int bw_hz, int floor_mode);
 /* A level's mode on a bandwidth's ladder (car_level_mode: BW2300's). */
 int  car_bw_level_mode(int bw_hz, int level);
 /* The latest a frame on this mode decodes after its end, on time: D in
