@@ -125,13 +125,17 @@ DATAC16 frames stop near −10 dB (`utils/pattern_probe`).  The detector
 (one FFT per 5 ms step, all lists scored by lookup) runs throughout a
 session, for about 1 % of an x86 core.  `MERCURY_NAV=0` turns headers off.
 
-Carrier sense holds the caller's planned keydown for at most one keydown's
-length with its guard (`CARRIER_HOLD_MAX_MS`, 30.7 s); then it keys.  The
-callee keys only in its slots, which the caller keeps clear of without
-carrier sense (`docs/CAROUSEL-TURNS.md`), so a channel still busy past that
-is noise or another station.  On air (N3JXB-VE4KLM, 2026-11-16) QRM that kept
-looking like a frame's start held the caller 116 s, and the lost-peer
-watchdog ended the session.
+A *reservation* holds the caller's planned keydown for at most one
+keydown's length with its guard (`CARRIER_HOLD_MAX_MS`, 30.7 s); then it
+keys.  A reservation is a caught preamble (its frame's airtime, 26.2 s on
+MFSK500) or a NAV header (its keydown), and each false one renews it: on air
+(N3JXB-VE4KLM, 2026-11-16) QRM that kept looking like a frame's start held
+the caller 116 s, and the lost-peer watchdog ended the session.  The callee
+keys only in its slots, which the caller keeps clear of without carrier
+sense (`docs/CAROUSEL-TURNS.md`), so a reservation nothing live renews past
+that is not the peer.  A live sign -- a decoder in sync, the busy detector --
+holds the caller as long as it lasts: Mercury does not key over a signal it
+senses, only into a gap of one.
 
 ## Wire formats
 

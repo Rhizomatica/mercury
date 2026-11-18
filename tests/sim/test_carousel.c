@@ -792,24 +792,45 @@ void test_carousel_bw500_control_loss_does_not_stall(void)
  * which the caller keeps clear of anyway.  On air (N3JXB-VE4KLM, 2026-11-16)
  * the hold had no end: 116 s, and the lost-peer watchdog ended the session.
  * Here 300 s of it from 20 s on: without the cap these finished only after
- * it (427 s one way, 495 s both), with it inside it (112 s, 260 s). */
+ * it (427 s one way, 495 s both), with it inside it (112 s, 260 s).  Only a
+ * reservation is capped -- a caught preamble, a NAV header -- never a live
+ * sign: a decoder in sync, or the busy detector, holds the caller as long as
+ * it lasts, so it does not key over a station it senses (#607 review). */
 static void test_carousel_noise_does_not_hold_the_caller(void)
 {
     static const struct { const char *chan; bool bidir; bool timed; } RUNS[] = {
         { "clean", false, true }, { "clean", true, true },
         { "fade:8:1.0", true, false }, { "cliff:3", true, false },
     };
-    setenv("CAR_NOISE", "20000:300000", 1);
-    for (size_t k = 0; k < sizeof(RUNS) / sizeof(RUNS[0]); k++)
-        for (uint64_t seed = 1; seed <= 3; seed++) {
+    static const char *RESERVED[] = { "20000:300000:pre", "20000:300000:nav" };
+    for (size_t n = 0; n < 2; n++) {
+        setenv("CAR_NOISE", RESERVED[n], 1);
+        for (size_t k = 0; k < sizeof(RUNS) / sizeof(RUNS[0]); k++)
+            for (uint64_t seed = 1; seed <= 3; seed++) {
+                car_sim_result_t r;
+                char what[96];
+                check(seed, RUNS[k].chan, RUNS[k].bidir);
+                carousel_sim_run(seed, RUNS[k].chan, RUNS[k].bidir, LIMIT_MS, &r);
+                snprintf(what, sizeof(what), "%s seed %llu %s %s, done at %llu ms", RESERVED[n],
+                         (unsigned long long)seed, RUNS[k].chan, RUNS[k].bidir ? "bidir" : "oneway",
+                         (unsigned long long)r.done_ms);
+                if (RUNS[k].timed) TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(320000, r.done_ms, what);
+            }
+    }
+    /* A live sign is waited out, however long: done only after the noise. */
+    static const char *LIVE[] = { "20000:300000:sync", "20000:300000:busy" };
+    for (size_t n = 0; n < 2; n++) {
+        setenv("CAR_NOISE", LIVE[n], 1);
+        for (int bidir = 0; bidir < 2; bidir++) {
             car_sim_result_t r;
-            char what[80];
-            check(seed, RUNS[k].chan, RUNS[k].bidir);
-            carousel_sim_run(seed, RUNS[k].chan, RUNS[k].bidir, LIMIT_MS, &r);
-            snprintf(what, sizeof(what), "seed %llu %s %s, done at %llu ms", (unsigned long long)seed,
-                     RUNS[k].chan, RUNS[k].bidir ? "bidir" : "oneway", (unsigned long long)r.done_ms);
-            if (RUNS[k].timed) TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(320000, r.done_ms, what);
+            char what[96];
+            check(1, "clean", bidir);
+            carousel_sim_run(1, "clean", bidir, LIMIT_MS, &r);
+            snprintf(what, sizeof(what), "%s clean %s, done at %llu ms", LIVE[n],
+                     bidir ? "bidir" : "oneway", (unsigned long long)r.done_ms);
+            TEST_ASSERT_GREATER_OR_EQUAL_UINT64_MESSAGE(320000, r.done_ms, what);
         }
+    }
     unsetenv("CAR_NOISE");
 }
 
