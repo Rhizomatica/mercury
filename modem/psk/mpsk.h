@@ -57,6 +57,17 @@ int  mpsk_modulate(mpsk_t *m, uint8_t *frame, int16_t *out, double peak);
  * raw estimate from the markers (may be NULL). */
 int  mpsk_demod(mpsk_t *m, const int16_t *in, int n, uint8_t *frame, int *found, float *snr_db);
 
+/* The streaming receiver: feed audio as it comes; 1 when a frame decoded
+ * (frame[] filled), at most one per call.  mpsk_demod is a reset and one
+ * call over a buffer.  mpsk_rx_reset drops what is held. */
+void mpsk_rx_reset(mpsk_t *m);
+int  mpsk_rx(mpsk_t *m, const int16_t *in, int n, uint8_t *frame, int *found, float *snr_db);
+
+/* Carousel session CRC seed: the CRC16 is XORed with it; accept_plain also
+ * takes an unseeded CRC.  mpsk_rx_seeded: the last frame matched the seed. */
+void mpsk_set_crc_seed(mpsk_t *m, uint16_t seed, int accept_plain);
+int  mpsk_rx_seeded(const mpsk_t *m);
+
 int mpsk_debug_codeword(mpsk_t *m, uint8_t *frame, uint8_t *cwout);
 const float *mpsk_debug_llr(const mpsk_t *m);
 int mpsk_debug_lock(const mpsk_t *m, int off, double *chi);
