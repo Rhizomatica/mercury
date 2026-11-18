@@ -104,6 +104,18 @@ func TestMercuryARQExitSaysGoodbyeCallee(t *testing.T) {
 	TestMercuryARQTransfer(t)
 }
 
+// The caller exits over a link whose forward path is below DATAC16: its
+// DISCONNECT goes on the MFSK floor (13.5 s), after the callee's floor slots
+// (#609 review).  By hand: keyed 19.9 s after the SIGTERM, heard by B at
+// 35.8 s; the goodbye ends once it is off the air, the answer not awaited.
+func TestMercuryARQExitSaysGoodbyeCallerFloor(t *testing.T) {
+	t.Setenv("MERCURY_TEST_EXIT_BY", "A")
+	t.Setenv("MERCURY_CH_NO_FWD", "0")
+	t.Setenv("MERCURY_CH_NO_REV", "-24.82")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "64")
+	TestMercuryARQTransfer(t)
+}
+
 func TestMercuryARQTransfer(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)

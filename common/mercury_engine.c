@@ -430,9 +430,12 @@ const char *mercury_engine_shutdown_step(void) { return g_shutdown_step; }
 #define ENGINE_GOODBYE_MS     25000
 #define ENGINE_GOODBYE_CAP_MS 40000
 
+/* Not CALLING or ACCEPTING: no session to end yet.  A peer that answers our
+ * CALL just as we exit is left with a connect nobody keeps, until its own
+ * watchdog -- rare, and nothing on the air could prevent it once we are gone. */
 void mercury_engine_say_goodbye(void)
 {
-    if (!g_initialized || mercury_stop || !arq_link_has_peer())
+    if (!g_initialized || mercury_stop || arq_goodbye_progress() == 0)
         return;
     arq_cmd_msg_t cmd;
     memset(&cmd, 0, sizeof(cmd));
@@ -442,18 +445,24 @@ void mercury_engine_say_goodbye(void)
     HLOGI("engine", "Exiting with a session up: ending it on the air first (one DISCONNECT, up to %d s)",
           ENGINE_GOODBYE_MS / 1000);
     uint64_t t0 = time_now_ms();
+    bool keyed = false;                 /* our DISCONNECT seen on the air */
     for (;;)
     {
         if (mercury_stop) return;                   /* a forced exit: no more waiting */
-        if (!arq_link_has_peer())
+        int p = arq_goodbye_progress();
+        bool on_air = arq_get_trx() == 1;
+        uint64_t waited = time_now_ms() - t0;
+        if (p == 2 && on_air)
+            keyed = true;
+        /* Ended (the callee, or the caller answered), or our DISCONNECT is
+         * off the air: the caller need not wait out the peer's answer. */
+        if (p == 0 || (p == 2 && keyed && !on_air))
         {
-            HLOGI("engine", "Session ended on the air in %llu ms",
-                  (unsigned long long)(time_now_ms() - t0));
+            HLOGI("engine", "Session ended on the air in %llu ms%s", (unsigned long long)waited,
+                  p ? " (our DISCONNECT is out; its answer not awaited)" : "");
             return;
         }
-        uint64_t waited = time_now_ms() - t0;
-        if (waited >= ENGINE_GOODBYE_CAP_MS ||
-            (waited >= ENGINE_GOODBYE_MS && arq_get_trx() != 1))
+        if (waited >= ENGINE_GOODBYE_CAP_MS || (waited >= ENGINE_GOODBYE_MS && !on_air))
         {
             HLOGW("engine", "The session's DISCONNECT did not get out in %llu ms: exiting anyway",
                   (unsigned long long)waited);

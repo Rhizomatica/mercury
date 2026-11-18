@@ -34,6 +34,8 @@ int  mercury_precheck(int argc, char **argv, const char *default_config);
 int  mercury_init(int argc, char **argv, const char *default_config, const char *log_path);
 void mercury_shutdown(void);
 void mercury_request_shutdown(void);
+/* With a session up, end it on the air (up to 40 s); no-op otherwise. */
+void mercury_say_goodbye(void);
 
 /* One-line report of where the engine log is being written, or why the
  * requested file could not be opened ("writing log to <path>" /

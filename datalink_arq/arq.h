@@ -243,6 +243,10 @@ bool arq_session_active(void);
 /** The link to the peer exists: CONNECTED or DISCONNECTING.  What mutes the
  *  busy detector (modem.c): the energy then is the peer, not occupancy. */
 bool arq_link_has_peer(void);
+/** For an exit's goodbye (mercury_engine_say_goodbye): 0 no link to the peer;
+ *  1 a link, our DISCONNECT not keyed yet; 2 our DISCONNECT keyed (queued, on
+ *  the air, or out, the peer's answer awaited). */
+int arq_goodbye_progress(void);
 /** Whether another station is keyed, by the FSM's listen-before-talk test:
  *  what a station message waits on before it keys (modem_beacon_send). */
 bool arq_channel_heard(void);
