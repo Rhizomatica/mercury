@@ -1224,6 +1224,24 @@ static void refuse_web_client(int *ctl_client_fd)
     close_ctl_socket(ctl_client_fd);
 }
 
+/* Why poll() ended a host's connection, in the words recv() uses: on Linux a
+ * reset ends here (POLLERR, SO_ERROR = ECONNRESET), where Windows reports it
+ * through recv() (WSAECONNRESET), so both systems' logs read the same (#608
+ * review).  Read before the close: SO_ERROR is the socket's. */
+static void log_client_poll_end(const char *tag, const char *who, int fd, short events)
+{
+    int err = 0;
+    socklen_t len = sizeof(err);
+    if (events & POLLNVAL)
+        HLOGW(tag, "%s client socket invalid (POLLNVAL), closing", who);
+    else if (!(events & POLLERR))
+        HLOGI(tag, "%s client closed the connection", who);
+    else if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&err, &len) == 0 && err == SOCK_ECONNRESET)
+        HLOGI(tag, "%s client reset the connection", who);
+    else
+        HLOGW(tag, "%s client socket error (err=%d), closing", who, err);
+}
+
 static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notify_arq)
 {
     if (!ctl_client_fd || *ctl_client_fd < 0)
@@ -1551,6 +1569,7 @@ void *arq_reactor_thread(void *port)
             short events = pfds[(ctl_client >= 0) ? 3 : 2].revents;
             if (events & (POLLERR | POLLHUP | POLLNVAL))
             {
+                log_client_poll_end("tcp-data", "Data", data_client, events);
                 close_data_client(&data_client);
             }
 
@@ -1597,6 +1616,7 @@ void *arq_reactor_thread(void *port)
             short events = pfds[2].revents;
             if (events & (POLLERR | POLLHUP | POLLNVAL))
             {
+                log_client_poll_end("tcp-ctl", "Control", ctl_client, events);
                 close_ctl_client(&ctl_client, &data_client, true);
             }
             else if (events & POLLIN)
