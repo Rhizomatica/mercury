@@ -71,6 +71,12 @@ extern "C" {
 // Ported from the Rhizomatica codec2 fork (enum renumbered: the fork
 // uses 22, which collides with FREEDV_MODE_DATAC15 here)
 #define FREEDV_MODE_QAM16C2 25
+// Mercury 2.0: BW2750's wide top rungs and BW500's narrow rungs
+#define FREEDV_MODE_DATAC17W 26
+#define FREEDV_MODE_QAM16C2W 27
+#define FREEDV_MODE_DATAN1 28
+#define FREEDV_MODE_QAM16N1 29
+#define FREEDV_MODE_QAM16N2 30
 
 // Sample rates used
 #define FREEDV_FS_8000 8000
@@ -167,6 +173,21 @@ extern "C" {
 #endif
 #if !defined(FREEDV_MODE_QAM16C2_EN)
 #define FREEDV_MODE_QAM16C2_EN FREEDV_MODE_EN_DEFAULT
+#endif
+#if !defined(FREEDV_MODE_DATAC17W_EN)
+#define FREEDV_MODE_DATAC17W_EN FREEDV_MODE_EN_DEFAULT
+#endif
+#if !defined(FREEDV_MODE_QAM16C2W_EN)
+#define FREEDV_MODE_QAM16C2W_EN FREEDV_MODE_EN_DEFAULT
+#endif
+#if !defined(FREEDV_MODE_DATAN1_EN)
+#define FREEDV_MODE_DATAN1_EN FREEDV_MODE_EN_DEFAULT
+#endif
+#if !defined(FREEDV_MODE_QAM16N1_EN)
+#define FREEDV_MODE_QAM16N1_EN FREEDV_MODE_EN_DEFAULT
+#endif
+#if !defined(FREEDV_MODE_QAM16N2_EN)
+#define FREEDV_MODE_QAM16N2_EN FREEDV_MODE_EN_DEFAULT
 #endif
 
 #define FDV_MODE_ACTIVE(mode_name, var) \

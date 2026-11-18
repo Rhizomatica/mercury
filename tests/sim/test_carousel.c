@@ -309,8 +309,9 @@ static void test_carousel_dark_rounds_drop_the_rung(void)
  * air 14 s after each pair of unheard polls (on air, NW8L-KA8RYU, MPD -5 dB:
  * 97 s, and vARIM gave up on the /OK 25 s before it came).  The frames: A's
  * message (0), B's poll (1), A's poll (2), B's message, first round (3), A's
- * poll on DATAC4 (4), B's DATAC4 round (5), then A's floor polls for 2
- * frames (6, 7, 8), the three lost. */
+ * poll on the 2 kHz MFSK rung (4), B's round there (5), then A's floor polls
+ * (6, 7, 8), the three lost.  (Through 2.0's first ladder that rung was
+ * DATAC4, and the run 11 frames.) */
 static void test_carousel_unheard_polls_free_their_slots(void)
 {
     static const int lost[] = { 5, 6, 7, 8 };
@@ -319,7 +320,7 @@ static void test_carousel_unheard_polls_free_their_slots(void)
     carousel_sim_force_losses(NULL, 0);
     carousel_sim_run(1, "cliff:-7", false, LIMIT_MS, &r);
     TEST_ASSERT_TRUE(r.intact);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(11, r.frames, "the frame order changed: pick the lost frames again (CAR_TRACE=1)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(8, r.frames, "the frame order changed: pick the lost frames again (CAR_TRACE=1)");
     carousel_sim_force_losses(lost, 4);
     carousel_sim_run(1, "cliff:-7", false, LIMIT_MS, &r);
     carousel_sim_force_losses(NULL, -1);
@@ -611,6 +612,30 @@ static void test_carousel_drop_below_the_control_mode_stays_at_the_floor(void)
     TEST_ASSERT_TRUE_MESSAGE(worst < 105000, what);
 }
 
+/* BUFFER at the floor (car_tx_inflight_unstopped): a block a BREAK said is
+ * in comes off the host's count ahead of the poll that retires it -- which on
+ * air came minutes later or was lost (VE4KLM -> K7EK, 15 Nov 2026: 753 bytes
+ * shown until the ABORT, the first block in for two minutes) -- and the count
+ * never claims a byte the peer has not delivered. */
+static void test_carousel_floor_buffer_follows_breaks(void)
+{
+    static const char *FLOOR[] = { "cliff:-9", "cliff:-11", "fade:-9:0.5" };
+    int drops = 0;
+    char what[96];
+    for (size_t c = 0; c < sizeof(FLOOR) / sizeof(FLOOR[0]); c++)
+        for (uint64_t seed = 1; seed <= 5; seed++)
+            for (int bidir = 0; bidir <= 1; bidir++) {
+                car_sim_result_t r;
+                carousel_sim_run(seed, FLOOR[c], bidir, LIMIT_MS, &r);
+                snprintf(what, sizeof(what), "seed %llu %s %s: %zu bytes shown as in, undelivered",
+                         (unsigned long long)seed, FLOOR[c], bidir ? "bidir" : "oneway", r.buffer_overclaim);
+                TEST_ASSERT_TRUE_MESSAGE(r.intact && r.done_ms, what);
+                TEST_ASSERT_EQUAL_size_t_MESSAGE(0, r.buffer_overclaim, what);
+                drops += r.buffer_break_drops;
+            }
+    TEST_ASSERT_TRUE_MESSAGE(drops > 0, "no BREAK ever lowered BUFFER at the floor");
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -643,26 +668,32 @@ static void test_carousel_piece_size_agrees(void)
 /* The bandwidth table, and the cap clamping the start rungs both ways. */
 static void test_carousel_bandwidth_max_level(void)
 {
-    TEST_ASSERT_EQUAL_INT(3, car_max_level_for_bw(500));          /* DATAC3 */
+    /* every bandwidth has all seven rungs, each its own modes on top */
+    TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, car_max_level_for_bw(500));
     TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, car_max_level_for_bw(2300));
     TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, car_max_level_for_bw(2750));
     TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, car_max_level_for_bw(0));
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3, car_level_mode(car_max_level_for_bw(500)));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16N2, car_bw_level_mode(500, CAR_NLEVELS - 1));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAN1, car_bw_level_mode(500, 4));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC17W, car_bw_level_mode(2750, 5));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, car_bw_level_mode(2300, CAR_NLEVELS - 1));
 
+    /* a cap still clamps the start rungs both ways */
     car_t *c = calloc(1, sizeof(*c));
     car_io_t io = {0};
     car_init(c, &io, 6, 5);
-    car_set_max_level(c, car_max_level_for_bw(500));
+    car_set_max_level(c, 3);
     car_start_sender(c, 0);
     TEST_ASSERT_EQUAL_INT(3, c->snr_level);
     TEST_ASSERT_EQUAL_INT(3, c->peer_snr_level);
     TEST_ASSERT_EQUAL_INT(3, c->tx_level);
     TEST_ASSERT_EQUAL_INT(3, c->poll_level);
-    /* rung 0 is the session's floor; the rest of the ladder is everyone's */
+    /* the session's ladder is its bandwidth's: BW2300's until set */
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, car_session_level_mode(c, 0));
-    car_set_floor_mode(c, MERCURY_MODE_MFSK_N32);
+    car_set_bandwidth(c, 500);
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, car_session_level_mode(c, 0));
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, car_session_level_mode(c, 1));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16N1, car_session_level_mode(c, 5));
     free(c);
 }
 
@@ -793,6 +824,7 @@ int main(void)
     RUN_TEST(test_carousel_bidir_completes_intact);
     RUN_TEST(test_carousel_oneway_completes_intact);
     RUN_TEST(test_carousel_floor_control_plane);
+    RUN_TEST(test_carousel_floor_buffer_follows_breaks);
     RUN_TEST(test_carousel_lost_probe_poll);
     RUN_TEST(test_carousel_fading_no_blind_repoll);
     RUN_TEST(test_carousel_floor_handover_not_keyed_over);

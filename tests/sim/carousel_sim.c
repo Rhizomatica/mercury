@@ -110,6 +110,12 @@ typedef struct {
 static station_t S[2];
 static sim_channel_t *ch;
 static int collisions;
+/* BUFFER's estimate (car_tx_inflight_unstopped) against what the peer really
+ * has: the most bytes it ever counted as in beyond those delivered, and how
+ * often a BREAK took bytes off it ahead of their poll. */
+static size_t buffer_overclaim;
+static int    buffer_break_drops;
+static size_t buffer_unstopped_last[2];
 static const int *spurious_idx;
 static int spurious_n;
 void carousel_sim_force_spurious_break(const int *kd_idx, int n) { spurious_idx = kd_idx; spurious_n = n; }
@@ -711,6 +717,8 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     double ctl_snr_offset = getenv("CAR_CTL_SNR_OFFSET") ? atof(getenv("CAR_CTL_SNR_OFFSET")) : 0.0;
     nev = 0;
     collisions = 0;
+    buffer_overclaim = 0; buffer_break_drops = 0;
+    buffer_unstopped_last[0] = buffer_unstopped_last[1] = 0;
     recv_fallbacks = 0;
     app_wait_says = 0;
     gated_probes = 0;
@@ -766,13 +774,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         car_seed_ctl_deaf(&s->car, peers ? CAR_DEAF_MFSK_TX : hears < ARQ_SNR_MIN_DATAC15_DB,
                           mine ? CAR_DEAF_MFSK_TX : heard < ARQ_SNR_MIN_DATAC15_DB);
         if (!getenv("CAR_NOHINT")) car_seed_snr(&s->car, (float)hears, (float)heard);   /* as arq_fsm.c's car_start */
-        /* CAR_BW=500: a BW500 session, capped at DATAC3 on the 500 Hz floor */
+        /* CAR_BW=500 or 2750: that bandwidth's ladder (car_set_bandwidth) */
         if (getenv("CAR_BW")) {
             int bw = atoi(getenv("CAR_BW"));
             car_set_max_level(&s->car, car_max_level_for_bw(bw));
-            car_set_floor_mode(&s->car, arq_floor_mode(bw));
+            car_set_bandwidth(&s->car, bw);
         }
-        if (getenv("CAR_FLOOR")) car_set_floor_mode(&s->car, atoi(getenv("CAR_FLOOR")));   /* A/B */
         s->rx_mode = -1;
     }
     for (int i = 0; i < CAR_SIM_BYTES; i++) {
@@ -857,6 +864,13 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             for (int i = 0; i < 2; i++) if (S[i].tx_len != len[i]) car_on_app_data(&S[i].car, now_ms);
         }
         for (int i = 0; i < 2; i++) car_on_time(&S[i].car, now_ms);
+        for (int i = 0; i < 2; i++) {
+            size_t inflight = car_tx_inflight(&S[i].car), shown = car_tx_inflight_unstopped(&S[i].car);
+            size_t in = S[i].tx_read - shown, have = S[i ^ 1].rx_len;
+            if (in > have && in - have > buffer_overclaim) buffer_overclaim = in - have;
+            if (shown < inflight && shown < buffer_unstopped_last[i]) buffer_break_drops++;
+            buffer_unstopped_last[i] = shown;
+        }
         if (car_failed(&S[0].car) || car_failed(&S[1].car)) break;   /* the session ends */
         /* Done when everything has arrived and been checked: data reaches the
          * application ahead of its block's check, and a corrupt piece in a
@@ -881,6 +895,8 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     for (int k = 0; k < res->msgs; k++)
         res->msg_delay_ms[k] = sc[k].delivered ? sc[k].delivered - sc[k].written : UINT64_MAX;
     res->collisions = collisions;
+    res->buffer_overclaim = buffer_overclaim;
+    res->buffer_break_drops = buffer_break_drops;
     res->frames = frame_no;
     res->non_mfsk[0] = non_mfsk[0]; res->non_mfsk[1] = non_mfsk[1];
     res->keydowns = keydown_no;

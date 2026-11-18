@@ -61,6 +61,35 @@ func TestMercuryARQConnectNarrowCallerWideCallee(t *testing.T) {
 	TestMercuryARQTransfer(t)
 }
 
+// The callee ABORTs at BW500: the host has its DISCONNECTED at once, and a
+// scanning host (BPQ32) restarts its scan 15 s later, so the callee holds
+// it with PENDING until its one DISCONNECT is out, then CANCELPENDING
+// (arq.c, abort_hold).  On air (K7EK, 2026-11-13 15:17) the scan hopped
+// 16.6 s after the ABORT while the caller's 26 s MFSK500 frame was on the
+// air, the DISCONNECT was never sent, and the caller waited 240 s.
+func TestMercuryARQCalleeAbortHoldsTheScan(t *testing.T) {
+	t.Setenv("MERCURY_TEST_DISCONNECT_BY", "B")
+	t.Setenv("MERCURY_TEST_ABORT", "1")
+	t.Setenv("MERCURY_TEST_BW_A", "500")
+	t.Setenv("MERCURY_TEST_BW_B", "500")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "64")
+	TestMercuryARQTransfer(t)
+}
+
+// The caller ABORTs while one of its floor rounds is on the air: the radio
+// unkeys within the tail, not at the round's end, and the ABORT's one
+// DISCONNECT still reaches the callee (#592).  On air (VE4KLM, 2026-11-15
+// 17:07:34, JNOS "mbox reset") a 27 s round played on 20 s past the ABORT.
+// A->B at about -9 dB (SNR3k = -No - 14.82) keeps the caller's data on the
+// MFSK floor; B->A is clean, so B's patterns and polls reach A.
+func TestMercuryARQAbortCutsTheFloorRound(t *testing.T) {
+	t.Setenv("MERCURY_TEST_ABORT_MIDROUND", "1")
+	t.Setenv("MERCURY_CH_NO_FWD", "-5.82")
+	t.Setenv("MERCURY_CH_NO_REV", "-24.82")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "1024")
+	TestMercuryARQTransfer(t)
+}
+
 func TestMercuryARQTransfer(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
@@ -443,6 +472,106 @@ func TestMercuryARQTransfer(t *testing.T) {
 		failWithLogs("write payload: %v", err)
 	}
 
+	// MERCURY_TEST_ABORT_MIDROUND=1: A ABORTs 3 s into a floor keydown of
+	// its own (an MFSK BITRATE, then PTT ON, and still keyed 3 s on), which
+	// must unkey within the tail plus a margin -- not play on to its end --
+	// and B must still hear the ABORT's DISCONNECT.  Nothing is delivered.
+	if os.Getenv("MERCURY_TEST_ABORT_MIDROUND") != "" {
+		const into = 3 * time.Second
+		const unkeyBy = 2500 * time.Millisecond // TAIL_TIME_US is 100 ms
+		searchEnd := time.Now().Add(8 * time.Minute)
+		var partial string
+		// readA: one control line, or "" at the deadline (a partial line is
+		// kept for the next call).
+		readA := func(by time.Time) (string, bool) {
+			_ = connA.SetReadDeadline(by)
+			s, err := rwA.ReadString('\r')
+			partial += s
+			if err != nil {
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					return "", true
+				}
+				failWithLogs("A's control port: %v", err)
+			}
+			line := strings.TrimSpace(partial)
+			partial = ""
+			return line, false
+		}
+		floor, keyedAt := false, time.Time{}
+		for {
+			if time.Now().After(searchEnd) {
+				failWithLogs("A keyed no floor round 3 s long in 8 min")
+			}
+			by := searchEnd
+			if !keyedAt.IsZero() {
+				by = keyedAt.Add(into)
+			}
+			line, timedOut := readA(by)
+			if timedOut {
+				if !keyedAt.IsZero() {
+					break // still keyed 3 s into a floor keydown
+				}
+				continue
+			}
+			switch {
+			case strings.HasPrefix(line, "BITRATE (100)") || strings.HasPrefix(line, "BITRATE (103)"):
+				floor = true
+			case strings.HasPrefix(line, "BITRATE"):
+				floor = false
+			case line == "PTT ON" && floor:
+				keyedAt = time.Now()
+			case line == "PTT OFF":
+				keyedAt = time.Time{}
+			case strings.HasPrefix(line, "DISCONNECTED"):
+				failWithLogs("A disconnected before a floor round: %q", line)
+			}
+		}
+		t.Logf("A keyed a floor round %.1f s ago: ABORT", time.Since(keyedAt).Seconds())
+		_ = connA.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if _, err := rwA.WriteString("ABORT\r"); err != nil {
+			t.Fatalf("write ABORT: %v", err)
+		}
+		if err := rwA.Flush(); err != nil {
+			t.Fatalf("flush ABORT: %v", err)
+		}
+		tAbort := time.Now()
+		var after []string
+		for {
+			line, timedOut := readA(tAbort.Add(30 * time.Second))
+			if timedOut {
+				failWithLogs("A never unkeyed after its ABORT: %q", after)
+			}
+			after = append(after, line)
+			if line == "PTT OFF" {
+				break
+			}
+		}
+		unkeyed := time.Since(tAbort)
+		t.Logf("A unkeyed %.2f s after its ABORT (%.1f s into the round): %q",
+			unkeyed.Seconds(), time.Since(keyedAt).Seconds()-unkeyed.Seconds(), after)
+		if unkeyed > unkeyBy {
+			failWithLogs("A unkeyed %.2f s after its ABORT, want within %.1f s", unkeyed.Seconds(), unkeyBy.Seconds())
+		}
+		if b, _ := os.ReadFile(timingLogs["A"]); !strings.Contains(string(b), "keydown cut short (ABORT)") {
+			failWithLogs("A's log never said its keydown was cut")
+		}
+		deadline := time.Now().Add(4 * time.Minute)
+		_ = connB.SetReadDeadline(deadline)
+		heard := false
+		for time.Now().Before(deadline) && !heard {
+			line, err := rwB.ReadString('\r')
+			if err != nil {
+				break
+			}
+			heard = strings.HasPrefix(strings.TrimSpace(line), "DISCONNECTED")
+		}
+		if !heard {
+			failWithLogs("B never heard A's DISCONNECT after the cut round")
+		}
+		t.Logf("B heard A's DISCONNECT %.1f s after the ABORT", time.Since(tAbort).Seconds())
+		return
+	}
+
 	rx := make([]byte, 0, len(payload))
 	buf := make([]byte, 4096)
 	// Scale on the SLOWEST rung, not a nominal one: MFSK carries 61 bit/s
@@ -509,7 +638,13 @@ func TestMercuryARQTransfer(t *testing.T) {
 		// travel on separate sockets, and on air the DISCONNECT overtook it
 		// and the session ended with the word dropped.
 		lastWord := []byte("LAST-WORD-0123")
-		if _, err := hangData.Write(lastWord); err != nil {
+		// MERCURY_TEST_ABORT=1: ABORT instead, which drops what is undelivered,
+		// so no last word; the host's lines after it are checked instead.
+		abort := os.Getenv("MERCURY_TEST_ABORT") != ""
+		hangCmd := "DISCONNECT"
+		if abort {
+			hangCmd = "ABORT"
+		} else if _, err := hangData.Write(lastWord); err != nil {
 			t.Fatalf("write last word: %v", err)
 		}
 		// Not sendControlCommand: the control port is busy with notifications
@@ -517,20 +652,55 @@ func TestMercuryARQTransfer(t *testing.T) {
 		if err := hang.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := hangRW.WriteString("DISCONNECT\r"); err != nil {
-			t.Fatalf("write DISCONNECT: %v", err)
+		if _, err := hangRW.WriteString(hangCmd + "\r"); err != nil {
+			t.Fatalf("write %s: %v", hangCmd, err)
 		}
 		if err := hangRW.Flush(); err != nil {
-			t.Fatalf("flush DISCONNECT: %v", err)
+			t.Fatalf("flush %s: %v", hangCmd, err)
 		}
+		var after []string // the host's lines from the reply on
 		for {
 			line, err := hangRW.ReadString('\r')
 			if err != nil {
-				failWithLogs("no OK for DISCONNECT: %v", err)
+				failWithLogs("no OK for %s: %v", hangCmd, err)
 			}
 			if line = strings.TrimSpace(line); strings.HasPrefix(line, "OK") {
 				break
 			}
+			after = append(after, line)
+		}
+		if abort {
+			// DISCONNECTED, then PENDING (the scan held), then CANCELPENDING
+			// once the one DISCONNECT is out: never PENDING before
+			// DISCONNECTED, which would clear it in BPQ32.
+			_ = hang.SetDeadline(time.Now().Add(90 * time.Second))
+			// The lines before it are the session's own (the connect's
+			// PENDING among them): look from the ABORT's DISCONNECTED on.
+			idx := func(want string, from int) int {
+				for i := from; i >= 0 && i < len(after); i++ {
+					if after[i] == want {
+						return i
+					}
+				}
+				return -1
+			}
+			done := func() bool {
+				d := idx("DISCONNECTED", 0)
+				p := idx("PENDING", d+1)
+				return d >= 0 && p >= 0 && idx("CANCELPENDING", p+1) >= 0
+			}
+			for !done() {
+				line, err := hangRW.ReadString('\r')
+				if err != nil {
+					break
+				}
+				after = append(after, strings.TrimSpace(line))
+			}
+			if !done() {
+				failWithLogs("%s's host after ABORT: want DISCONNECTED, then PENDING, then CANCELPENDING, got %q",
+					by, after)
+			}
+			t.Logf("%s's host after ABORT: %q", by, after)
 		}
 		_ = hang.SetDeadline(time.Time{})
 		t0 := time.Now()
@@ -548,6 +718,10 @@ func TestMercuryARQTransfer(t *testing.T) {
 		}
 		if !heard {
 			failWithLogs("%s never heard %s's DISCONNECT", name, by)
+		}
+		if abort {
+			t.Logf("%s heard %s's DISCONNECT after %.1f s", name, by, time.Since(t0).Seconds())
+			return
 		}
 		var got []byte
 		_ = otherData.SetReadDeadline(time.Now().Add(5 * time.Second))

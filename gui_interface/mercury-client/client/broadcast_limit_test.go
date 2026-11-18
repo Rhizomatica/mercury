@@ -12,7 +12,7 @@ import (
 func TestBroadcastChatLimitFitsTheFrame(t *testing.T) {
 	const mercuryFraming = 3
 
-	for _, frameSize := range []int{14, 30, 54, 126, 510, 1180, 1213} {
+	for _, frameSize := range []int{14, 30, 54, 126, 510, 1183, 1184} {
 		for _, call := range []string{"PU2UIT-3", "M0ABC", "VE7AAAAAAAAA-15"} {
 			limit := BroadcastChatLimit(frameSize, call)
 			if limit == 0 {
@@ -62,7 +62,7 @@ func TestBroadcastChatLimitDocumentedValues(t *testing.T) {
 		{126, "PU2UIT-3", 112},   // DATAC3
 		{54, "PU2UIT-3", 40},     // DATAC4
 		{510, "PU2UIT-3", 496},   // DATAC1
-		{1180, "PU2UIT-3", 1166}, // DATAC17
+		{1184, "PU2UIT-3", 1170}, // DATAC17
 	} {
 		if got := BroadcastChatLimit(tc.frame, tc.call); got != tc.want {
 			t.Errorf("frame %d as %q: got %d, want %d", tc.frame, tc.call, got, tc.want)

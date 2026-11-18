@@ -292,21 +292,25 @@ static void explore_sensing(int k)
  * heard, and it must go back to the rung it has an answer on (m_decide_recv)
  * instead of keying the unconfirmed one again.  Frames 0, 3 and 6 of the
  * 600-byte bidirectional session on cliff:-5 reach that branch; the indices
- * hold only for that size. */
+ * hold only for that size, and on the BW500 ladder: its rung above the floor
+ * is DATAC15, as BW2300's was.  BW2300's is now the 2 kHz MFSK, and no set
+ * of three frames up to 24 reaches the branch there (cliff:-5, -3, 0, 3). */
 static void oct27_recv_fallback(void)
 {
 #if CAR_SIM_BYTES == 600
     static const int idx[] = { 0, 3, 6 };    /* kept by carousel_sim_force_losses */
     car_sim_result_t r;
     carousel_sim_force_losses(idx, 3);
+    setenv("CAR_BW", "500", 1);
     carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &r);
+    unsetenv("CAR_BW");
     runs++;
     if (!r.intact || !r.done_ms || r.recv_fallbacks < 1) {
         failures++;
-        printf("FAIL oct27: cliff:-5 bidir lost {0,3,6}: intact=%d done=%llu recv_fallbacks=%d (want >= 1)\n",
+        printf("FAIL oct27: BW500 cliff:-5 bidir lost {0,3,6}: intact=%d done=%llu recv_fallbacks=%d (want >= 1)\n",
                r.intact, (unsigned long long)r.done_ms, r.recv_fallbacks);
         printf("  If the frame order changed and the fall-back still works, pick a new set: run\n"
-               "  CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 test_car_explore replay 1 <i> <j> <k> on sets from\n"
+               "  CAR_BW=500 CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 test_car_explore replay 1 <i> <j> <k> on sets from\n"
                "  `test_car_explore 1 3` until \"back to\" follows \"turn: mine\" at once; use it above.\n");
     }
 #endif

@@ -26,6 +26,7 @@
 #include <stdatomic.h>
 
 #ifdef HAVE_HAMLIB
+#include "net_probe.h"              /* before rig.h: winsock2.h first */
 #include <hamlib/rig.h>
 #include "rigctl_parse.h"
 #endif
@@ -367,14 +368,50 @@ static int hamlib_ptt(bool on)
  * call fails with -RIG_EIO ("Broken pipe"), so the station never keys again,
  * and a PTT OFF that fails leaves a rig keyed that Mercury can no longer
  * release.  Reopen the session from the same config and retry the one call.
+ * A server on another host can also vanish without closing the connection
+ * (power lost, Wi-Fi dropped, a NAT forgetting the flow): writes still
+ * succeed, and the call fails with -RIG_ETIMEOUT instead.  That session is
+ * just as dead, and even when the server only answered late, its late reply
+ * would be read as the answer to the next command; so a timeout reopens it
+ * too.  The cost, when the server is fine but the radio behind it does not
+ * answer, is one more timeout on a call that was failing anyway.
  * Serial rigs are left alone: their open can take seconds and a USB fd handed
  * over by the UI cannot be opened twice.  Key-ups (and the idle retry below)
- * make at most one attempt every HAMLIB_REOPEN_INTERVAL_MS, since an
- * unreachable server costs a connect timeout on the keying path.  An unkey is
- * not paced: a late unkey costs a carrier left on air, and a refused connect
- * to a local server is immediate.  Caller holds g_radio_mutex. */
+ * make at most one attempt every HAMLIB_REOPEN_INTERVAL_MS.  An unkey is not
+ * paced: a late unkey costs a carrier left on air.
+ *
+ * Each attempt is bounded.  Hamlib's own connect has no timeout, and to a
+ * host that answers nothing the kernel's SYN retries run for ~135 s (Linux
+ * defaults) -- with the radio lock held, on the keying path.  So a TCP rig's
+ * host is first asked, without blocking, whether it answers at all within
+ * HAMLIB_REOPEN_PROBE_MS (net_probe.h); if it does not, rig_open() is not
+ * called and the attempt costs that much.  A device string the probe cannot
+ * read (none, ":port" alone) is left to Hamlib as before.  Name resolution
+ * stays the system resolver's to bound.  Caller holds g_radio_mutex. */
 #define HAMLIB_REOPEN_INTERVAL_MS 3000U
+#define HAMLIB_REOPEN_PROBE_MS 1500
 static uint64_t g_hamlib_reopen_ms = 0;
+
+/* Is the rig's host there?  false only when a TCP rig's host was asked and
+ * did not answer; anything the probe cannot judge is left to rig_open(). */
+static bool hamlib_host_answers(void)
+{
+    char host[256], port[8];
+
+    if ((rig_port_t)rig_get_caps_int(g_config.hamlib_model, RIG_CAPS_PORT_TYPE) !=
+        RIG_PORT_NETWORK)
+        return true;                /* UDP: nothing to connect to */
+    if (!radio_port_split_host(g_config.device, host, sizeof host, port, sizeof port))
+        return true;
+
+    uint64_t started = hermes_uptime_ms();
+    net_probe_result_t r = net_probe_host(host, port, HAMLIB_REOPEN_PROBE_MS);
+    if (r != NET_PROBE_SILENT)
+        return true;
+    HLOGW(RADIO_LOG_TAG, "Hamlib reopen: %s not answering (%llu ms); not opening",
+          g_config.device, (unsigned long long)(hermes_uptime_ms() - started));
+    return false;
+}
 
 /* Set when a PTT OFF could not be delivered, cleared when any PTT change
  * reaches the rig.  While it is set, radio_io_service() (main loop) and the
@@ -398,12 +435,19 @@ static bool hamlib_reopen(bool paced)
           g_config.device[0] ? g_config.device : "default");
     if (g_radio)
     {
+        /* This session is being thrown away.  rig_close() says goodbye to
+         * the server and waits for the answer, which a silent server never
+         * sends: a full timeout (10 s with netrigctl) more on the keying
+         * path.  Shorten it first.  Through rig_set_conf, not the port
+         * struct, whose layout differs between Hamlib releases. */
+        (void)rig_set_conf(g_radio, rig_token_lookup(g_radio, "timeout"), "100");
+        (void)rig_set_conf(g_radio, rig_token_lookup(g_radio, "retry"), "0");
         errno = 0;                  /* see hamlib_ptt */
         rig_close(g_radio);
         rig_cleanup(g_radio);
         g_radio = NULL;
     }
-    if (hamlib_open(&g_config) != 0)
+    if (!hamlib_host_answers() || hamlib_open(&g_config) != 0)
     {
         HLOGW(RADIO_LOG_TAG, "Hamlib reopen failed; next attempt at the next "
               "PTT change, or within %u ms while a PTT OFF is pending",
@@ -429,7 +473,8 @@ static int hamlib_send(bool on, bool paced)
     else
     {
         ret = hamlib_ptt(on);
-        if (ret == -RIG_EIO && !reopened && hamlib_reopen(paced))
+        if ((ret == -RIG_EIO || ret == -RIG_ETIMEOUT) && !reopened &&
+            hamlib_reopen(paced))
             ret = hamlib_ptt(on);
         if (ret != RIG_OK)
         {

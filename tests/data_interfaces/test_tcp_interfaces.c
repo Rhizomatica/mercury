@@ -93,8 +93,12 @@ int arq_reported_bandwidth_hz(void)
 }
 
 bool arq_is_link_connected(void) { return false; }
+bool arq_call_in_progress(void) { return false; }
+bool arq_link_connected_now(bool *connected) { if (connected) *connected = false; return true; }
+int arq_buffer_bytes_nowait(void) { return mock_snapshot_valid ? mock_snapshot.tx_backlog_bytes : 0; }
 static atomic_int discard_stale_rx_calls;
 void arq_discard_stale_rx(void) { discard_stale_rx_calls++; }
+size_t arq_discard_stale_tx(void) { return 0; }
 
 void arq_set_trx(int trx) { arq_conn.TRX = trx; }
 int  arq_get_trx(void)    { return arq_conn.TRX; }
@@ -1130,6 +1134,83 @@ void test_tnc_buffer_report_repeats_unchanged_backlog(void)
     TEST_ASSERT_TRUE(tnc_buffer_report_due(1322, 1322, true, 50900, 900));     /* 50 s */
     TEST_ASSERT_FALSE(tnc_buffer_report_due(1322, 1322, false, 90000, 900));   /* no session */
     TEST_ASSERT_FALSE(tnc_buffer_report_due(0, 0, true, 90000, 900));          /* empty */
+}
+
+/* Winlink Express's P2P inactivity DISCONNECT, 300 s after each write of
+ * the host's, with the modem still sending it or the answer not yet back
+ * (#392, PR #581): absorbed when switched on, in a session, with the host
+ * idle that long or its data held back, as often as it comes, unless
+ * another DISCONNECT came in the last 60 s or one has gone through. */
+void test_tnc_absorb_disconnect_due(void)
+{
+    const uint64_t last = 1000;
+    tnc_absorb_state_t base = { .idle_ms = 240000, .session_up = true, .last_data_rx_ms = last };
+    tnc_absorb_state_t s;
+#define AT(ms) (s = base, s.now_ms = (ms), &s)
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(AT(last + 300000)));
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(AT(last + 240000)));       /* 240 s */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(AT(last + 239999)));      /* host just wrote */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(AT(last + 4100)));        /* a real end */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(AT(last - 1)));           /* clock behind */
+    (void)AT(last + 300000); s.idle_ms = 0;
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));                     /* off */
+    (void)AT(last + 300000); s.session_up = false;
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));                     /* no session */
+
+    /* the timer's next, 300 s after the one absorbed: absorbed too */
+    base.last_disconnect_ms = last + 300000;
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(AT(last + 600000)));
+    /* said again within 60 s: meant, goes through */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(AT(last + 308000)));
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(AT(last + 359999)));
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(AT(last + 360000)));
+    base.last_disconnect_ms = 0;
+
+    /* one has gone through (its drain under way): none absorbed after it */
+    (void)AT(last + 600000); s.disconnect_passed = true;
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));
+
+    /* a piece of the host's data held back from a full ARQ queue (#590):
+     * its timer runs from its write, ours from our read -- absorbed however
+     * recent our last read */
+    (void)AT(last + 4100); s.host_data_held = true;
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(&s));
+    /* ...but said again within 60 s still goes through */
+    (void)AT(last + 4100); s.host_data_held = true; s.last_disconnect_ms = last + 1000;
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));
+    (void)AT(last + 4100); s.host_data_held = true; s.session_up = false;
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));
+#undef AT
+}
+
+/* Switched on but no session up: the DISCONNECT goes to the ARQ. */
+void test_cmd_disconnect_not_absorbed_without_session(void)
+{
+    tnc_set_absorb_idle_disconnect_s(240);
+    memset(&mock_snapshot, 0, sizeof(mock_snapshot));
+    memset(&captured_cmd, 0, sizeof(captured_cmd));
+    char cmd[] = "DISCONNECT";
+    execute_control_command(cmd);
+    tnc_set_absorb_idle_disconnect_s(0);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_DISCONNECT, captured_cmd.type);
+}
+
+/* In a session, a DISCONNECT seconds after the host was last active (here
+ * the CONNECTED itself) is the host's real end: it goes to the ARQ. */
+void test_cmd_disconnect_not_absorbed_right_after_connected(void)
+{
+    tnc_set_absorb_idle_disconnect_s(240);
+    tnc_send_connected();
+    memset(&captured_cmd, 0, sizeof(captured_cmd));
+    char cmd[] = "DISCONNECT";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_DISCONNECT, captured_cmd.type);
+    tnc_send_disconnected();
+    tnc_set_absorb_idle_disconnect_s(0);
 }
 
 void test_tnc_send_sn(void)
@@ -2421,5 +2502,8 @@ int main(void)
     RUN_TEST(test_host_tnc_command_busy_while_a_tcp_client_is_attached);
     RUN_TEST(test_host_tnc_command_runs_a_control_line);
     RUN_TEST(test_host_tnc_release_is_a_client_leaving_once);
+    RUN_TEST(test_tnc_absorb_disconnect_due);
+    RUN_TEST(test_cmd_disconnect_not_absorbed_right_after_connected);
+    RUN_TEST(test_cmd_disconnect_not_absorbed_without_session);
     return UNITY_END();
 }

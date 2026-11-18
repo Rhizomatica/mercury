@@ -193,6 +193,19 @@ void arq_modem_floor_mode(int mode)
         g_floor_mode_fn(mode);
 }
 
+static void (*g_cut_tx_fn)(void) = NULL;
+
+void arq_modem_set_cut_tx_fn(void (*fn)(void))
+{
+    g_cut_tx_fn = fn;
+}
+
+void arq_modem_cut_tx(void)
+{
+    if (g_cut_tx_fn)
+        g_cut_tx_fn();
+}
+
 void arq_modem_ptt_on(int mode, size_t frame_size)
 {
     (void)frame_size;

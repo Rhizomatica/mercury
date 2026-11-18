@@ -51,10 +51,14 @@ rungs that could beat it; a rung's round is capped at one frame more than it
 recently delivered; 4 frames lost in a row is a dead verdict (2 near the rung's
 SNR threshold, or once two rounds in a row brought nothing of the peer at all),
 re-probed after 60 s, doubling to 8 min.  A direction starts on the rung the connect's SNR
-supports (`ARQ_SNR_MIN_*`), as a one-frame probe.  The session's bandwidth caps the
-ladder in both directions: BW500 uses its own MFSK floor, DATAC15, DATAC4
-and DATAC3; BW2300 and BW2750 use every rung (nothing is wider than 2.1 kHz
-yet).
+supports (`ARQ_SNR_MIN_*`), as a one-frame probe.  Each bandwidth has its own
+ladder, in both directions (`car_set_bandwidth`; the rung on the wire maps to
+the session's mode): rungs 2-3 (DATAC4, DATAC3) are shared; BW500 has the
+500 Hz MFSK floor, DATAC15 and 9-carrier top rungs (DATAN1, QAM16N1,
+QAM16N2), BW2300 the 2 kHz MFSK (MFSK2K) as rung 1 and DATAC1, DATAC17 and
+QAM16C2 on 36 carriers (inside a 300-2700 Hz transmit passband), BW2750 the
+same rung 1, DATAC1 and 44-carrier DATAC17W and QAM16C2W
+([MODES.md](MODES.md)).
 
 **The BW500 floor.**  A BW500 session's rung 0 is the 500 Hz MFSK (`MFSK500`,
 mode 103): the same 98-byte frame on 32 tones 15.6 Hz apart, 80 ms symbols,
@@ -220,6 +224,24 @@ frame on MFSK.
   the dead-forward cells unchanged, nvis (random DATAC16 loss) +9.7 s on
   the 8 seeds that lose one ACCEPT and -21..-30 s on the 2 that lose two
   (specs/connect/ConnectCarrier.tla).
+- The callee answers a CALL one channel guard after it decodes it, in the
+  gap the caller opened by dropping PTT.  A CALL whose gap has gone is not
+  answered: one decoded later than its mode's decode bound (R4 in
+  CAROUSEL-TURNS.md: 1 s OFDM, 4.5 s MFSK; the modem's backlog is the
+  frame's age), or one decoded while the callee is keyed (half duplex: its
+  audio came before the keydown, so the ACCEPT on the air already answers
+  the caller's latest gap).  It still says the caller is there: PENDING
+  again, the ACCEPT retries restart, and a first CALL still takes the callee
+  to ACCEPTING.  The caller's next CALL, decoded on time, is answered.  On
+  air (K7EK answering N3MEL-7, BW500, 2026-11-13 14:55) an MFSK500 CALL
+  decoded 3.9 s late, while K7EK's ACCEPT to the caller's newer DATAC16 CALL
+  was on the air, drew a second, 26 s ACCEPT straight after the first (1 of
+  86 CALLs decoded at K7EK and KG9NI on 12-13 Nov; `call_too_late`).
+  If every CALL from a caller logs "decoded too late: not answered", the
+  callee's decoder is behind on every frame and the callee never answers:
+  look at the `age=` of its "Decoded frame" lines (the modem's backlog, for
+  example a CPU too slow for the bandwidth).  The carousel's frames would
+  go unanswered by the same bound.
 - The callee's callsign is not on the air in full: the caller knows whom it
   called, and the CRC confirms it.
 

@@ -52,6 +52,15 @@ static int mode_of(const char *s)
     if (!strcmp(s, "DATAC3"))  return FREEDV_MODE_DATAC3;
     if (!strcmp(s, "DATAC1"))  return FREEDV_MODE_DATAC1;
     if (!strcmp(s, "DATAC0"))  return FREEDV_MODE_DATAC0;
+    if (!strcmp(s, "DATAC17")) return FREEDV_MODE_DATAC17;
+    if (!strcmp(s, "QAM16C2")) return FREEDV_MODE_QAM16C2;
+#ifdef FREEDV_MODE_DATAC17W
+    if (!strcmp(s, "DATAC17W")) return FREEDV_MODE_DATAC17W;
+    if (!strcmp(s, "QAM16C2W")) return FREEDV_MODE_QAM16C2W;
+    if (!strcmp(s, "DATAN1"))   return FREEDV_MODE_DATAN1;
+    if (!strcmp(s, "QAM16N1"))  return FREEDV_MODE_QAM16N1;
+    if (!strcmp(s, "QAM16N2"))  return FREEDV_MODE_QAM16N2;
+#endif
     return -1;
 }
 
@@ -92,15 +101,18 @@ int main(int argc, char **argv)
 {
     int seconds = (argc > 1) ? atoi(argv[1]) : 20;
 
-    static const char *modes[] = { "DATAC16", "DATAC15", "DATAC13",
-                                   "DATAC4", "DATAC3", "DATAC1" };
+    static const char *defaults[] = { "DATAC16", "DATAC15", "DATAC13",
+                                      "DATAC4", "DATAC3", "DATAC1" };
+    /* rxcost_bench [seconds [mode...]]: the modes named, else the defaults */
+    const char **modes = argc > 2 ? (const char **)&argv[2] : defaults;
+    unsigned nmodes = argc > 2 ? (unsigned)(argc - 2) : sizeof(defaults) / sizeof(defaults[0]);
 
     printf("Idle RX demod cost, %d s of noise per mode\n", seconds);
     printf("(a decoder that never syncs does the most search work)\n\n");
     printf("  mode       CPU s   %% of one core\n");
 
     double c16 = 0.0, c3 = 0.0;
-    for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); i++)
+    for (unsigned i = 0; i < nmodes; i++)
     {
         double dt = cost_of(modes[i], seconds);
         printf("  %-9s %7.3f   %8.2f %%\n", modes[i], dt, 100.0 * dt / seconds);

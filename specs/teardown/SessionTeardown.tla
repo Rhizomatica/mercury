@@ -142,6 +142,9 @@ CONSTANTS NS,      \* sessions the caller may place
                    \*                    (#514 as first written)
                    \*   "abortsilent":   S's ABORT ends it without keying its
                    \*                    DISCONNECT (#218 undone)
+                   \*   "holdlate":      the ABORT hold's CANCELPENDING goes
+                   \*                    after the event loop's pass, not as
+                   \*                    the session ends (#560 as opened)
 
 E == {"M", "S"}
 Other(e) == IF e = "M" THEN "S" ELSE "M"
@@ -188,15 +191,18 @@ VARIABLES
     hq,      \* [E -> BOOLEAN]: e's host DISCONNECT, answered at once, still
              \*   queued for the FSM
     raced,   \* ghost: such a DISCONNECT found its end in a session
-    sab      \* S's host sent ABORT: its one DISCONNECT ends it once out
+    sab,     \* S's host sent ABORT: its one DISCONNECT ends it once out
              \*   (abort_teardown, tx_retries_left = 0 on the callee)
+    held     \* [E -> 0..NS]: the session whose ABORT hold is on, PENDING said
+             \*   after the ABORT's DISCONNECTED and no CANCELPENDING yet
+             \*   (arq.c abort_hold); 0 none
 
 \* The air side's variables; the actions on them (Air) leave the host's
 \* notice to FSMNotice, and their fairness is stated over these.
 avars == <<st, gen, sid, sent, tries, slot, q, placed, mcall, scall, how, dropped, wish, unasked, word, lostword, mw,
           mdrain, asked, forced, mend, cut, wordgone, sab>>
 HostVars == <<htold, hq, raced>>
-vars == <<avars, told, HostVars>>
+vars == <<avars, told, HostVars, held>>
 
 Frame(k, s, g) == [k |-> k, sid |-> s, g |-> g, c |-> mcall]
 \* The reply to a DISCONNECT is an ACK pattern (send_disconnect_reply): no
@@ -217,7 +223,7 @@ Init == /\ st = [e \in E |-> "idle"] /\ gen = [e \in E |-> 0] /\ sid = [e \in E 
         /\ mdrain = FALSE /\ asked = FALSE /\ forced = FALSE
         /\ mend = FALSE /\ cut = FALSE /\ wordgone = FALSE /\ sab = FALSE
         /\ told = [e \in E |-> [g \in 1 .. NS |-> 0]] /\ htold = [e \in E |-> 0]
-        /\ hq = [e \in E |-> FALSE] /\ raced = FALSE
+        /\ hq = [e \in E |-> FALSE] /\ raced = FALSE /\ held = [e \in E |-> 0]
 
 \* Something more will come to e from its peer, or is already on its way:
 \* a peer in the same session talks while connected (M polls at least every
@@ -542,7 +548,7 @@ HostDisc(e) == /\ "race" \in HOST /\ ~Owed(e) /\ ~hq[e] /\ (e = "S" \/ st[e] = "
                /\ hq' = [hq EXCEPT ![e] = TRUE]
                /\ told' = IF st[e] = "reply" THEN [told EXCEPT ![e] = Bump(@, gen[e])] ELSE told
                /\ UNCHANGED <<st, gen, sid, sent, tries, slot, q, placed, mcall, scall, how, dropped, wish, unasked,
-                              word, lostword, mw, mdrain, asked, forced, mend, cut, wordgone, sab, htold, raced>>
+                              word, lostword, mw, mdrain, asked, forced, mend, cut, wordgone, sab, htold, raced, held>>
 \* The FSM takes it.  S, in the session a CALL opened meanwhile (the race):
 \* its application has hung up (SAppDisc, or SWish owing the ack).  Anywhere
 \* else it ends nothing (M places no call before it: one queue, in order).
@@ -555,7 +561,27 @@ HostDiscTaken(e) ==
                ELSE wish' = gen["S"] /\ word' = "none" /\ UNCHANGED <<st, sent>>
        ELSE UNCHANGED <<raced, st, sent, wish, word>>
     /\ UNCHANGED <<gen, sid, tries, slot, q, placed, mcall, scall, how, dropped, unasked, lostword, mw, mdrain,
-                   asked, forced, mend, cut, wordgone, sab, told, htold>>
+                   asked, forced, mend, cut, wordgone, sab, told, htold, held>>
+\* ---- the ABORT hold (arq.c abort_hold) ----
+\* Owed while the host was told at its ABORT and the session's teardown is on
+\* with its DISCONNECT not out: DISCONNECTING ("ending"; a reply to the
+\* peer's DISCONNECT is DISCONNECTED in arq_fsm.c, "reply" here), not
+\* ARQ_TD_SENT.  Derived from these, as abort_hold derives it.
+HoldOwed(e) == gen[e] # 0 /\ htold[e] = gen[e] /\ st[e] \in {"conn", "ending"} /\ ~sent[e]
+\* At the ABORT, after its DISCONNECTED: PENDING if a hold is owed.
+HoldAtAbort(e) == held' = [held EXCEPT ![e] = IF HoldOwed(e)' THEN gen[e] ELSE 0]
+\* On a step of the FSM: CANCELPENDING as the hold stops being owed, in the
+\* same step -- before the PENDING of a CALL the same step takes (the
+\* session's end, cb_notify_disconnected; or the DISCONNECT gone out).
+\* "holdlate": not here, but in HoldEnd, the next step.
+HoldAir == held' = IF Mutant = "holdlate" THEN held
+                   ELSE [e \in E |-> IF held[e] # 0 /\ ~HoldOwed(e)' THEN 0 ELSE held[e]]
+\* "holdlate": the CANCELPENDING after the pass, before any other event.
+HoldDue == \E e \in E : held[e] # 0 /\ ~HoldOwed(e)
+HoldEnd == /\ Mutant = "holdlate"
+           /\ \E e \in E : held[e] # 0 /\ ~HoldOwed(e) /\ held' = [held EXCEPT ![e] = 0]
+           /\ UNCHANGED <<avars, told, HostVars>>
+
 \* e's host ABORTs (with a notice owed): DISCONNECTED at once, the session's
 \* only one -- its end then says nothing more (g_host_told).  One ABORT per
 \* session: the host is done with it.
@@ -563,13 +589,13 @@ Told(e) == /\ htold' = [htold EXCEPT ![e] = gen[e]]
            /\ told' = [told EXCEPT ![e] = Bump(@, gen[e])]
            /\ UNCHANGED <<hq, raced>>
 MAbort == /\ ABORT /\ st["M"] \in {"conn", "ending", "reply"} /\ htold["M"] # gen["M"]
-          /\ MAbortAir /\ Told("M")
+          /\ MAbortAir /\ Told("M") /\ HoldAtAbort("M")
 SAbort == /\ ABORT /\ st["S"] \in {"conn", "ending"} /\ ~sab /\ htold["S"] # gen["S"]
-          /\ SAbortAir /\ Told("S")
+          /\ SAbortAir /\ Told("S") /\ HoldAtAbort("S")
 \* The old rule: M's host is told when it hangs up, its session still up.
 MEarly == /\ Mutant = "toldearly" /\ st["M"] = "conn" /\ told["M"][gen["M"]] = 0
           /\ told' = [told EXCEPT !["M"] = Bump(@, gen["M"])]
-          /\ UNCHANGED <<avars, htold, hq, raced>>
+          /\ UNCHANGED <<avars, htold, hq, raced, held>>
 
 Air == \/ CallFails \/ Poll \/ MAppDisc \/ MDisc \/ MRetry \/ MGiveUp
        \/ MHold \/ MDrained \/ MDrainEnd \/ MAgain \/ MRedial \/ MEndSilent
@@ -577,9 +603,9 @@ Air == \/ CallFails \/ Poll \/ MAppDisc \/ MDisc \/ MRetry \/ MGiveUp
        \/ \E e \in E : Lost(e) \/ Reply(e) \/ SkipReply(e) \/ Receive(e) \/ Lose(e) \/ Foreign(e)
 
 Next == \/ Done
-        \/ Air /\ FSMNotice /\ UNCHANGED HostVars
-        \/ Call /\ ~hq["M"] /\ UNCHANGED <<told, HostVars>>
-        \/ MAbort \/ SAbort \/ MEarly
+        \/ Air /\ ~(Mutant = "holdlate" /\ HoldDue) /\ FSMNotice /\ UNCHANGED HostVars /\ HoldAir
+        \/ Call /\ ~hq["M"] /\ UNCHANGED <<told, HostVars, held>>
+        \/ MAbort \/ SAbort \/ MEarly \/ HoldEnd
         \/ \E e \in E : HostDisc(e) \/ HostDiscTaken(e)
 
 \* Progress is fair; the application, the channel's losses and other
@@ -599,7 +625,7 @@ TypeOK == /\ st \in [E -> {"idle", "calling", "conn", "ending", "reply"}]
           /\ mdrain \in BOOLEAN /\ asked \in BOOLEAN /\ forced \in BOOLEAN
           /\ mend \in BOOLEAN /\ cut \in BOOLEAN /\ wordgone \in BOOLEAN /\ sab \in BOOLEAN
           /\ told \in [E -> [1 .. NS -> 0 .. 2]] /\ htold \in [E -> 0 .. NS]
-          /\ hq \in [E -> BOOLEAN] /\ raced \in BOOLEAN
+          /\ hq \in [E -> BOOLEAN] /\ raced \in BOOLEAN /\ held \in [E -> 0 .. NS]
 NoKill == \A h \in how : h.why # "killed"
 \* No end leaves on the answer to an earlier session's DISCONNECT, nor on
 \* another station's pattern.
@@ -630,6 +656,12 @@ ToldOnce == \A e \in E, g \in 1 .. NS : told[e][g] <= 1
 \* ...and only once e has left that session (an ABORTed one excepted).
 ToldAtEnd == \A e \in E : gen[e] # 0 /\ told[e][gen[e]] > 0 =>
                  ~InSession(e) \/ htold[e] = gen[e]
+\* The ABORT hold: only after the ABORT's notice, and none outlives its
+\* teardown: no step leaves a hold on that is no longer owed.
+HoldInTeardown == \A e \in E : held[e] # 0 => held[e] = gen[e] /\ HoldOwed(e)
+\* ...in particular, no hold's CANCELPENDING is still to come once e is in a
+\* later session, whose PENDING it would cancel.
+HoldOwnSession == \A e \in E : held[e] # 0 => held[e] = gen[e]
 \* A witness, expected to fail (Race.cfg): the race is reached.
 NoRace == ~raced
 In(e, g) == gen[e] = g /\ st[e] \in {"calling", "conn", "ending", "reply"}
