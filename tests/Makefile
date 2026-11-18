@@ -183,6 +183,11 @@ carousel_bound: sim/carousel_bound.c $(CAROUSEL_SIM_SRC)
 carousel_bench: sim/carousel_bench.c $(CAROUSEL_SIM_SRC)
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
+# How long a sender goes on after its receiver has everything (sim/done_tail.c):
+#   ./done_tail 1 50 ctlloss:-9:-3:0.6
+done_tail: sim/done_tail.c $(CAROUSEL_SIM_SRC)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 # Idle sessions at the floor, with patterns: the runs a station went 240 s
 # without hearing its peer (a bench, not run by `make test`):
 #   CAR_CS_DECODABLE=1 CAR_SCRIPT='A30,B30+1800000' ./floor_idle 1 100 cliff:-9:0.2
