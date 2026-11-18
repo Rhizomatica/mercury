@@ -44,6 +44,14 @@ static double mode_cliff_db(int freedv_mode)
     {
     case FREEDV_MODE_QAM16C2: return 13.0;
     case FREEDV_MODE_DATAC17: return  8.0;
+    /* the 2.0 bandwidth ladders, by what rung_sweep measured against the
+     * modes above: BW2750's 44-carrier rungs 1 dB over their BW2300
+     * versions; BW500's 9-carrier ones 1, 5 and 7 dB over DATAC3 */
+    case FREEDV_MODE_QAM16C2W: return 14.0;
+    case FREEDV_MODE_DATAC17W: return  9.0;
+    case FREEDV_MODE_QAM16N2:  return  7.0;
+    case FREEDV_MODE_QAM16N1:  return  5.0;
+    case FREEDV_MODE_DATAN1:   return  1.0;
     case FREEDV_MODE_DATAC1:  return  5.0;
     case FREEDV_MODE_DATAC3:  return  0.0;
     case FREEDV_MODE_DATAC4:  return -4.0;
@@ -53,6 +61,7 @@ static double mode_cliff_db(int freedv_mode)
     /* BW500's floor: 3 dB below (twice the airtime a bit), sim AWGN 90 %
      * at -14.1 dB against the 1 kHz floor's -11.1 (mfsk_channel_sweep) */
     case MERCURY_MODE_MFSK_N32: return -16.0;
+    case MERCURY_MODE_MFSK_W2:  return -10.0;   /* the floor + 3 dB (twice the rate) */
     case SIM_MODE_PATTERN: {  /* ~10 dB below DATAC16 (mfsk-margin) */
         /* SIM_PATTERN_CLIFF: utils/pattern_probe measures the real detector
          * at 50 % near -14.5 dB, -14 with a +25 Hz offset. */

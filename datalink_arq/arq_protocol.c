@@ -65,8 +65,15 @@ const arq_mode_timing_t arq_mode_table[] = {
     {  FREEDV_MODE_DATAC4,    5.80f,     14.0f,          54   },
     {  FREEDV_MODE_DATAC3,    3.82f,     12.0f,          126  },
     {  FREEDV_MODE_DATAC1,    4.81f,     13.0f,          510  },
-    {  FREEDV_MODE_DATAC17,   7.40f,     15.0f,          1180 },
-    {  FREEDV_MODE_QAM16C2,   3.70f,     12.0f,          1213 },
+    {  FREEDV_MODE_DATAC17,   5.90f,     15.0f,          1184 },
+    {  FREEDV_MODE_QAM16C2,   3.30f,     12.0f,          1183 },
+    /* BW2750's top rungs (44 carriers) and BW500's above DATAC3 (9):
+     * the burst and the same ~0.45 s margin as their BW2300 versions. */
+    {  FREEDV_MODE_DATAC17W,  4.95f,     15.0f,          1170 },
+    {  FREEDV_MODE_QAM16C2W,  2.85f,     12.0f,          1169 },
+    {  FREEDV_MODE_DATAN1,    4.60f,     12.0f,          243  },
+    {  FREEDV_MODE_QAM16N1,   2.70f,     12.0f,          179  },
+    {  FREEDV_MODE_QAM16N2,   2.70f,     12.0f,          242  },
     /* The MFSK fringe rung: non-coherent 32-MFSK, a ~13.5 s burst of 98
      * payload bytes, below DATAC15 (50 % FER at -11.2 dB AWGN against
      * DATAC15's -10.3, docs/MFSK-PORT.md).  Its row also sets the
@@ -76,6 +83,9 @@ const arq_mode_timing_t arq_mode_table[] = {
     /* The BW500 floor: the same frame on 32 tones 15.6 Hz apart, twice the
      * symbol length, 26.2 s on the air (arq_floor_mode). */
     {  MERCURY_MODE_MFSK_N32, 27.00f,    32.0f,          98   },
+    /* The 2 kHz rung: the same frame on 62.5 Hz tones, half the symbol
+     * length, 6.56 s on the air. */
+    {  MERCURY_MODE_MFSK_W2,   6.95f,    12.0f,          98   },
 };
 
 const int arq_mode_table_count =

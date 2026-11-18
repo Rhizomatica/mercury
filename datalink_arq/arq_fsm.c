@@ -13,6 +13,7 @@
 #include "arq.h"
 
 #include <limits.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
@@ -140,6 +141,43 @@ static bool abort_teardown(arq_session_t *sess, uint64_t now);
 /* The station enters a connection state, at teardown step td (ARQ_TD_NONE
  * but for a reply owed to the peer's DISCONNECT): no step outlives its
  * state. */
+/* What BUFFER counts of the carousel's open blocks: those no floor BREAK has
+ * said are in (car_tx_inflight_unstopped) -- but never 0 while any is
+ * unconfirmed, for BUFFER 0 means "all data has been acknowledged by the
+ * peer" (docs/TNC.md), and only a poll says that.  A BREAK never retires a
+ * block (spec risk R5): this is the figure the host is shown, nothing more.
+ * On air, VE4KLM -> K7EK 15 Nov 2026: the first block of a 753-byte message
+ * was in by 18:03:07, the polls after it were lost, and BUFFER read 753
+ * until the host's ABORT at 18:05:21. */
+int arq_buffer_inflight_shown(int inflight, int unstopped)
+{
+    if (inflight <= 0)
+        return 0;
+    if (unstopped < 0 || unstopped > inflight)
+        unstopped = inflight;
+    return unstopped > 0 ? unstopped : 1;
+}
+
+static int car_inflight_shown(const car_t *car)
+{
+    return car ? arq_buffer_inflight_shown((int)car_tx_inflight(car), (int)car_tx_inflight_unstopped(car)) : 0;
+}
+
+/* tx_inflight_bytes, exact: the drain, the unconfirmed-bytes warnings and the
+ * modem's "ARQ traffic queued" read it.  Published with it, for the TCP
+ * reactor's BUFFER figure, which must not take the session lock
+ * (arq_buffer_bytes_nowait): the same blocks as BUFFER shows them
+ * (car_inflight_shown), so the reactor's periodic BUFFER and the FSM's own
+ * report agree.  Written only here.  One per process: the runtime has one
+ * session.  NULL: none in flight. */
+static _Atomic int g_tx_inflight_pub = 0;
+static void set_tx_inflight(arq_session_t *sess, const car_t *car)
+{
+    sess->tx_inflight_bytes = car ? (int)car_tx_inflight(car) : 0;
+    atomic_store(&g_tx_inflight_pub, car_inflight_shown(car));
+}
+int arq_fsm_tx_inflight_published(void) { return atomic_load(&g_tx_inflight_pub); }
+
 static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_teardown_t td,
                           uint64_t deadline_ms, arq_event_id_t deadline_event)
 {
@@ -187,7 +225,7 @@ static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_t
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
     {
         sess->peer_tx_mode      = sess->initial_payload_mode;
-        sess->tx_inflight_bytes = 0;
+        set_tx_inflight(sess, NULL);
     }
 }
 
@@ -442,7 +480,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
          * the ACCEPT names. */
         car_set_seed(sess, car_seed(sess, false));
         sess->peer_tx_mode = sess->car_rx_level == 0 ? sess->floor_mode
-                                                     : car_level_mode(sess->car_rx_level);
+                                                     : car_bw_level_mode(arq_reported_bandwidth_hz(), sess->car_rx_level);
     }
     else
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
@@ -614,15 +652,18 @@ bool arq_fsm_notice_owed(const arq_session_t *sess)
 static int decoder_hears_frame(const arq_session_t *sess)
 {
     uint64_t now = time_now_ms();
+    /* A decoder in sync now first: it is a frame on the air, where a caught
+     * preamble or a NAV header only reserves the airtime one announced, and
+     * the carousel ends a reservation nothing live renews (defer_if_busy). */
+    if (sess->last_rx_sync_ms != 0 &&
+        (now < sess->last_rx_sync_ms ||          /* clock went backwards; treat as busy */
+         now - sess->last_rx_sync_ms < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS))
+        return CAR_KEYED_SYNC;
     if (now < sess->rx_frame_busy_until_ms)
         return CAR_KEYED_PREAMBLE;   /* a frame whose preamble was caught: see arq_note_rx_preamble */
     if (now < sess->nav_busy_until_ms)
         return CAR_KEYED_NAV;        /* its NAV header was heard: see arq_note_rx_nav */
-    if (sess->last_rx_sync_ms == 0)
-        return 0;
-    if (now < sess->last_rx_sync_ms)
-        return CAR_KEYED_SYNC;       /* clock went backwards; treat as busy */
-    return (now - sess->last_rx_sync_ms) < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS ? CAR_KEYED_SYNC : 0;
+    return 0;
 }
 
 
@@ -818,15 +859,16 @@ static void car_io_deliver(void *ctx, const uint8_t *buf, size_t len)
 }
 
 /* BUFFER is what the peer has not confirmed: the application's queue plus
- * the carousel's open blocks (tx_inflight_bytes, which the runtime adds to
- * the backlog in its own periodic BUFFER report). */
+ * the carousel's open blocks as BUFFER shows them (car_inflight_shown, which
+ * the runtime adds to the backlog the same way in its own periodic BUFFER
+ * report). */
 static void car_io_tx_confirmed(void *ctx, size_t len)
 {
     arq_session_t *sess = ctx;
     (void)len;
-    sess->tx_inflight_bytes = (int)car_tx_inflight(sess->car);
+    set_tx_inflight(sess, sess->car);
     if (g_cbs.send_buffer_status)
-        g_cbs.send_buffer_status(session_tx_backlog(sess) + sess->tx_inflight_bytes);
+        g_cbs.send_buffer_status(session_tx_backlog(sess) + car_inflight_shown(sess->car));
 }
 
 /* The callee's session nonce: unique, not secret -- a session's frames must
@@ -956,7 +998,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     sess->nav_busy_until_ms = 0;
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
     car_set_max_level(sess->car, session_max_level());
-    car_set_floor_mode(sess->car, sess->floor_mode);
+    car_set_bandwidth(sess->car, arq_reported_bandwidth_hz());
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf,
                       ARQ_TX_MFSK_ONLY ? CAR_DEAF_MFSK_TX : sess->car_peer_ctl_deaf);
     car_seed_snr(sess->car, sess->car_my_snr, is_caller ? sess->car_call_snr : 0.0f);
@@ -1929,9 +1971,16 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
     {
     case ARQ_EV_TX_COMPLETE:
         /* The caller's DISCONNECT is out: keep the callee's reply slot clear
-         * of the next one. */
-        if (sess->car_session && car_is_master(sess->car))
-            car_log_ctl(sess->car, now, ARQ_CHANNEL_GUARD_MS);
+         * of the next one.  Before it is (ARQ_TD_SENT), this is a keydown
+         * the teardown found on the air, an ABORT's cut round: the callee
+         * may answer that on the floor, and the DISCONNECT keeps clear of
+         * it (integration TestMercuryARQAbortCutsTheFloorRound). */
+        if (sess->car_session && car_is_master(sess->car)) {
+            if (sess->teardown == ARQ_TD_SENT)
+                car_log_disconnect(sess->car, now, ARQ_CHANNEL_GUARD_MS);
+            else
+                car_log_ctl(sess->car, now, ARQ_CHANNEL_GUARD_MS);
+        }
         break;
 
     case ARQ_EV_APP_CONNECT:
@@ -2168,7 +2217,14 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
          * hang-up, and ends the session itself.  Its DISCONNECT keyed at once
          * took that answer's slot, and the caller never heard that its last
          * bytes arrived (KG9NI-K7EK, 2026-11-04: "3 bytes of ours
-         * undelivered" at every end, each FQ delivered). */
+         * undelivered" at every end, each FQ delivered).
+         *
+         * The caller likewise (#585): its application hanging up on the
+         * callee's last bytes, its DONE goes first, then the DISCONNECT
+         * below once nothing is owed.  The DISCONNECT keyed at once took the
+         * DONE's place, and the callee logged its last bytes unconfirmed
+         * with all of them delivered (a P2P host and a TNC probe,
+         * 2026-11-16). */
         else if (!car_drained(sess) || sess->tx_active || car_owes_ack(sess->car))
         {
             /* The configured drain is the least it gets; the carousel's
@@ -2184,7 +2240,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             else
                 HLOGI(LOG_COMP, "DISCONNECT deferred until delivered (up to %llu s)",
                       (unsigned long long)(budget / 1000));
-            car_wish_end(sess->car);      /* the callee's polls say so: M_END */
+            car_wish_end(sess->car);      /* the callee's polls say so: M_END; the caller's last ack too */
             break;
         }
         if (!ev->abort && !repeat)
@@ -2199,9 +2255,13 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     default:
         return false;
     }
-    /* A deferred DISCONNECT goes once everything has been delivered. */
+    /* A deferred DISCONNECT goes once everything has been delivered, and
+     * the last ack is off the air: keyed in this same dispatch, before the
+     * radio's TX_STARTED, the teardown took the ack's TX_COMPLETE for the
+     * DISCONNECT's, and held the DISCONNECT 16 s for a reply slot the ack
+     * never opened (#585). */
     if (sess->teardown == ARQ_TD_DRAINING && car_drained(sess) && !sess->tx_active &&
-        !car_owes_ack(sess->car))
+        !car_owes_ack(sess->car) && !car_keyed(sess->car))
         car_begin_disconnect(sess, now);
     /* The callee's application has hung up (M_END), and everything is
      * delivered both ways: the caller ends the session now, its DISCONNECT
@@ -2487,7 +2547,7 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     }
     if (sess->car_active && sess->conn_state == ARQ_CONN_CONNECTED)
     {
-        sess->tx_inflight_bytes = (int)car_tx_inflight(sess->car);
+        set_tx_inflight(sess, sess->car);
         uint64_t d = car_next_deadline(sess->car);
         if (car_lost_at(sess) < d)
             d = car_lost_at(sess);

@@ -289,6 +289,31 @@ While that delivery is under way:
   its DISCONNECT goes out, and the new call is placed after it.  A
   `DISCONNECT` before that call is placed cancels the call.
 
+**Winlink Express P2P (opt-in).** Winlink Express sends `DISCONNECT` in a
+P2P session 5 minutes after it last wrote to the data port ("P2P session
+inactivity timeout"), even while the modem is still sending that data.
+`BUFFER`, `PTT` and `SN` lines do not reset its timer, so a message that
+takes longer than 5 minutes to send is lost: the session ends and the
+message stays in the Outbox.  VARA HF behaves the same way (#392).  The
+timer restarts with each write, so every long message brings its own
+`DISCONNECT`, and one that takes over 10 minutes brings one every 300 s.
+
+With `[tnc] absorb_idle_disconnect_s = 240`, a `DISCONNECT` in a session is
+answered `OK` and otherwise ignored when nothing has been written to the
+data port for that long (or since the session came up), as often as it
+comes.  Winlink then carries on.  A real end of session comes seconds
+after the host's last write, never with host data held back, and goes
+through.  A `DISCONNECT` that comes while Mercury is holding the host's
+data back because the TX queue is full is absorbed too.  Winlink's timer
+starts when its write returns, but Mercury reads that data only as the
+queue has room, so its idle time can start minutes later.  A `DISCONNECT`
+within 60 s of the previous one always goes through, so a host or operator
+that means it is heard on the second.  Once one has gone through, none is
+absorbed for the rest of that session, so a `DISCONNECT` during its drain
+still ends the session at once.  `ABORT` ends the session at once as usual.
+The default is 0 (off), which keeps VARA's behaviour.  Accepted values are
+0 or 30–3600 s.
+
 ---
 
 ### ABORT
@@ -879,7 +904,10 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
     the DATAC16 decoder's, the payload decoder's and the two MFSK call
     listeners', sync included.  A partly received CALL is dropped even when
     `LISTEN ON` follows a moment later on the same frequency; the caller's
-    next CALL is heard as usual.  Up to 1.9.22 such a CALL could still
+    next CALL is heard as usual.  The same holds for a host that pauses the
+    modem with `LISTEN OFF` and resumes it on the same channel without
+    scanning: a CALL on the air across the pause costs that one CALL, and
+    the caller's retry is answered.  Up to 1.9.22 such a CALL could still
     decode, on the next channel, and was answered there, where the caller
     could not hear it.  BPQ32 then held the wrong channel for about 2 min
     (six scan intervals) while the caller's repeats went unheard:
@@ -889,6 +917,13 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
       0.2-4.2 s after it);
     - DATAC16: its decoder was not flushed at all (K7EK, 2026-11-07: two
       calls decoded 1.4 s and 1.9 s after the hop);
+    - MFSK, up to 1.9.24: the flush emptied only the audio queue in front of
+      the listener, which keeps up to two frames of audio of its own, and
+      the next channel's audio completed a CALL cut off near its end (K7EK,
+      2026-11-14 and 15: decoded 1.2 s and 4.2 s after a hop that logged
+      "drops it"; KG9NI, 2026-11-16: decoded 1.1 s after its scanner came
+      back to the channel, 30 s after the CALL, and answered once the caller
+      had given up);
   - a `BW` change between `BW500` and `BW2300`/`BW2750` flushes both too: the
     listeners swap floors, and each swap drops what it holds.
 
@@ -980,6 +1015,16 @@ Sent periodically during data transfer.  The value reflects the number of
 application bytes still queued for transmission.  When it reaches `0`, all
 data has been acknowledged by the peer.
 
+Above `0` it can run ahead of the acknowledgements.  At the MFSK floor the
+receiver answers rounds with short patterns and polls only every few rounds,
+so a block's acknowledgement can come minutes after the block is in, or be
+lost.  A BREAK pattern ("the block you are on is in") takes that block's
+bytes off `BUFFER` at once; the poll that acknowledges it comes later.  A
+pattern carries no session, so the block is still held and resent until that
+poll; if the poll says it is not in after all, its bytes go back on `BUFFER`.
+`0` itself is only ever sent once every byte has been acknowledged: while any
+is not, `BUFFER` says at least `1`.
+
 ### IAMALIVE
 
 Sent periodically on the control port as a keepalive to detect broken
@@ -1030,6 +1075,13 @@ Bytes are dropped when:
 
 A host that keeps its data connection open and must start a session with an
 empty queue should check `BUFFER` and send `ABORT` if it is not 0.
+
+While a call is being placed, answered or carried, nothing a host writes is
+dropped for lack of room: when the TX queue (64 kB) and the bus in front of
+it are full, Mercury stops reading the data port until the session has made
+room, and TCP holds the host's writes.  A host may write a whole file at
+once.  (With no call up, bytes beyond the queue are not kept: nothing would
+send them, and they would be dropped with the rest when the host leaves.)
 
 ---
 

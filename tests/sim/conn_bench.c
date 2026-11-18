@@ -18,6 +18,9 @@
  *   banner=    ...to B's banner delivered to A: what a user waits for
  *   disc=      the hang-up to both ends idle (-1: not in 10 min)
  *   disc_x=    ...to the end that hung up idle
+ *   unconf=    bytes the other end still held unconfirmed as it left the
+ *              session: what its "Peer ended the session: N bytes of ours
+ *              unconfirmed" warning says (#585)
  *   coll=      keydowns destroyed by overlap (SIM_HD)
  */
 #include "sim_clock.h"
@@ -25,6 +28,7 @@
 #include "sim_endpoint.h"
 #include "sim_core.h"
 #include "arq_fsm.h"
+#include "carousel.h"
 #include "arq_protocol.h"
 #include "freedv_api.h"
 #include <stdio.h>
@@ -144,15 +148,19 @@ int main(int argc, char **argv)
     uint64_t t2 = sim_clock_now();
     sim_inject(s, x, &disc);
     uint64_t tx = 0, tboth = 0;
+    sim_endpoint_t *y = callee_ends ? sim_a(s) : sim_b(s);
+    size_t unconf = 0;
     while (sim_clock_now() - t2 < LIMIT_MS && !tboth) {
+        if (st(y) == ARQ_CONN_CONNECTED && sim_endpoint_session(y)->car)
+            unconf = car_tx_inflight(sim_endpoint_session(y)->car);
         bool moved = sim_run_until_idle(s, 100) != 0;
         if (!tx && idle(x)) tx = sim_clock_now();
         if (idle(sim_a(s)) && idle(sim_b(s))) tboth = sim_clock_now();
         if (!moved) break;
     }
-    printf("seed=%llu chan=%s connect=%.1f connect_b=%.1f banner=%.1f disc=%.1f disc_x=%.1f coll=%d",
+    printf("seed=%llu chan=%s connect=%.1f connect_b=%.1f banner=%.1f disc=%.1f disc_x=%.1f unconf=%zu coll=%d",
            (unsigned long long)seed, ch, c_a, c_b, c_bn,
-           tboth ? (tboth - t2) / 1000.0 : -1.0, tx ? (tx - t2) / 1000.0 : -1.0, sim_collisions(s));
+           tboth ? (tboth - t2) / 1000.0 : -1.0, tx ? (tx - t2) / 1000.0 : -1.0, unconf, sim_collisions(s));
     if (mt) printf(" nonmfsk=%d/%d rx=%zu/%zu", sim_non_mfsk_frames(s, sim_a(s)), sim_non_mfsk_frames(s, sim_b(s)),
                    sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)), sim_endpoint_delivered(sim_b(s), rx, sizeof(rx)));
     printf("\n");

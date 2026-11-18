@@ -1480,8 +1480,11 @@ void test_silent_peer_after_hangup_waits_the_callees_drain(void)
     atomic_store(&arq_disconnect_drain_timeout_s, 110);
     goto_connected();
     sess.car->end_req = CAR_END_WISH;
-    sess.car->tx_level = sess.car->poll_level = 1;      /* a rung whose budget is under 110 s */
-    uint64_t budget = car_drain_budget_ms(sess.car);
+    uint64_t budget = UINT64_MAX;                       /* a rung whose budget is under 110 s */
+    for (int lv = 1; lv < CAR_NLEVELS && budget >= 110000; lv++) {
+        sess.car->tx_level = sess.car->poll_level = lv;
+        budget = car_drain_budget_ms(sess.car);
+    }
     TEST_ASSERT_TRUE_MESSAGE(budget < 110000, "the rung's budget is under the drain timeout");
 
     mock_set_uptime_ms(sess.car_last_rx_ms + budget + 1000);
@@ -1489,13 +1492,27 @@ void test_silent_peer_after_hangup_waits_the_callees_drain(void)
     arq_fsm_dispatch(&sess, &ev);
     bool held = sess.conn_state == ARQ_CONN_CONNECTED;
 
-    mock_set_uptime_ms(sess.car_last_rx_ms + 110000);
+    /* The silence may have taken the poll a rung down, whose budget can be
+     * past the timeout: the wait is then that budget, at most the 120 s cap.
+     * Either way it is at least the configured 110 s.  (This mirrors
+     * car_peer_end_wait_ms in arq_fsm.c: the timeout set above, and the
+     * 120 s of ARQ_CAR_PEER_QUIET_MS; if either changes, change it here.) */
+    uint64_t end = car_drain_budget_ms(sess.car);
+    if (end < 110000) end = 110000;
+    if (end > 120000) end = 120000;
+    mock_set_uptime_ms(sess.car_last_rx_ms + 110000 - 1000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    bool held_to_timeout = sess.conn_state == ARQ_CONN_CONNECTED;
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + end);
     ev = make_event(ARQ_EV_TIMER_CAROUSEL);
     arq_fsm_dispatch(&sess, &ev);
     arq_conn_state_t after = sess.conn_state;
     atomic_store(&arq_disconnect_drain_timeout_s, saved);
 
     TEST_ASSERT_TRUE_MESSAGE(held, "past the budget, inside the callee's drain");
+    TEST_ASSERT_TRUE_MESSAGE(held_to_timeout, "inside the configured drain timeout");
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, after);
 }
 
@@ -2404,9 +2421,30 @@ void test_disconnect_reply_survives_another_tx_complete(void)
     TEST_ASSERT_EQUAL_INT(0, sess.crc_seed);
 }
 
+/* BUFFER's figure for the carousel's open blocks (arq_buffer_inflight_shown):
+ * the blocks a floor BREAK said are in come off, but 0 -- "all data has been
+ * acknowledged by the peer" -- only once nothing is unconfirmed. */
+void test_buffer_shown_counts_break_stopped_blocks_as_in(void)
+{
+    /* VE4KLM -> K7EK, 15 Nov 2026: blocks of 524 and 229, the first BREAKed */
+    TEST_ASSERT_EQUAL_INT(753, arq_buffer_inflight_shown(753, 753));
+    TEST_ASSERT_EQUAL_INT(229, arq_buffer_inflight_shown(753, 229));
+}
+
+void test_buffer_shown_is_never_zero_while_unconfirmed(void)
+{
+    TEST_ASSERT_EQUAL_INT(1, arq_buffer_inflight_shown(753, 0));    /* every block BREAKed */
+    TEST_ASSERT_EQUAL_INT(0, arq_buffer_inflight_shown(0, 0));      /* a poll retired them */
+    /* never above the exact count, whatever it is handed */
+    TEST_ASSERT_EQUAL_INT(753, arq_buffer_inflight_shown(753, 900));
+    TEST_ASSERT_EQUAL_INT(0, arq_buffer_inflight_shown(-3, -1));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_buffer_shown_counts_break_stopped_blocks_as_in);
+    RUN_TEST(test_buffer_shown_is_never_zero_while_unconfirmed);
     /* Connection lifecycle tests */
     RUN_TEST(test_init_state_disconnected);
     RUN_TEST(test_init_mode_defaults);

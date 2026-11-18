@@ -16,4 +16,6 @@ func mercuryStart(defaultConfig, logPath string, args []string) error {
 
 func mercuryLogStatus() string { return "" }
 
+func mercuryGoodbye() {}
+
 func mercuryStop() {}

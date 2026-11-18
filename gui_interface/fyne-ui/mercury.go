@@ -95,6 +95,12 @@ func mercuryLogStatus() string {
 	return ""
 }
 
+// mercuryGoodbye ends a session that is up on the air (one DISCONNECT, up
+// to 40 s), before the engine is stopped; it returns at once with none.
+func mercuryGoodbye() {
+	C.mercury_say_goodbye()
+}
+
 func mercuryStop() {
 	C.mercury_request_shutdown()
 	C.mercury_shutdown()

@@ -32,7 +32,16 @@ int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        MERCURY_MODE_MFSK,
                        /* ...and its 500 Hz geometry, the floor of a BW500
                         * session. */
-                       MERCURY_MODE_MFSK_N32 };
+                       MERCURY_MODE_MFSK_N32,
+                       /* 2.0: BW2750's wide top rungs and BW500's narrow
+                        * rungs, after the floors so no index above moves. */
+                       FREEDV_MODE_DATAC17W,
+                       FREEDV_MODE_QAM16C2W,
+                       FREEDV_MODE_DATAN1,
+                       FREEDV_MODE_QAM16N1,
+                       FREEDV_MODE_QAM16N2,
+                       /* the 2 kHz MFSK rung */
+                       MERCURY_MODE_MFSK_W2 };
 
 char *freedv_mode_names[] = { "DATAC1",
                               "DATAC3",
@@ -46,7 +55,13 @@ char *freedv_mode_names[] = { "DATAC1",
                               "DATAC17",
                               "QAM16C2",
                               "MFSK",
-                              "MFSK500" };
+                              "MFSK500",
+                              "DATAC17W",
+                              "QAM16C2W",
+                              "DATAN1",
+                              "QAM16N1",
+                              "QAM16N2",
+                              "MFSK2K" };
 
 int mercury_cli_mode_count(void)
 {

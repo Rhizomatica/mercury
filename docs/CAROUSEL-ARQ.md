@@ -51,10 +51,14 @@ rungs that could beat it; a rung's round is capped at one frame more than it
 recently delivered; 4 frames lost in a row is a dead verdict (2 near the rung's
 SNR threshold, or once two rounds in a row brought nothing of the peer at all),
 re-probed after 60 s, doubling to 8 min.  A direction starts on the rung the connect's SNR
-supports (`ARQ_SNR_MIN_*`), as a one-frame probe.  The session's bandwidth caps the
-ladder in both directions: BW500 uses its own MFSK floor, DATAC15, DATAC4
-and DATAC3; BW2300 and BW2750 use every rung (nothing is wider than 2.1 kHz
-yet).
+supports (`ARQ_SNR_MIN_*`), as a one-frame probe.  Each bandwidth has its own
+ladder, in both directions (`car_set_bandwidth`; the rung on the wire maps to
+the session's mode): rungs 2-3 (DATAC4, DATAC3) are shared; BW500 has the
+500 Hz MFSK floor, DATAC15 and 9-carrier top rungs (DATAN1, QAM16N1,
+QAM16N2), BW2300 the 2 kHz MFSK (MFSK2K) as rung 1 and DATAC1, DATAC17 and
+QAM16C2 on 36 carriers (inside a 300-2700 Hz transmit passband), BW2750 the
+same rung 1, DATAC1 and 44-carrier DATAC17W and QAM16C2W
+([MODES.md](MODES.md)).
 
 **The BW500 floor.**  A BW500 session's rung 0 is the 500 Hz MFSK (`MFSK500`,
 mode 103): the same 98-byte frame on 32 tones 15.6 Hz apart, 80 ms symbols,
@@ -124,6 +128,18 @@ frame of it; patterns are detected down to about −14 dB SNR3k on AWGN, where
 DATAC16 frames stop near −10 dB (`utils/pattern_probe`).  The detector
 (one FFT per 5 ms step, all lists scored by lookup) runs throughout a
 session, for about 1 % of an x86 core.  `MERCURY_NAV=0` turns headers off.
+
+A *reservation* holds the caller's planned keydown for at most one
+keydown's length with its guard (`CARRIER_HOLD_MAX_MS`, 30.7 s); then it
+keys.  A reservation is a caught preamble (its frame's airtime, 26.2 s on
+MFSK500) or a NAV header (its keydown), and each false one renews it: on air
+(N3JXB-VE4KLM, 2026-11-16) QRM that kept looking like a frame's start held
+the caller 116 s, and the lost-peer watchdog ended the session.  The callee
+keys only in its slots, which the caller keeps clear of without carrier
+sense (`docs/CAROUSEL-TURNS.md`), so a reservation nothing live renews past
+that is not the peer.  A live sign -- a decoder in sync, the busy detector --
+holds the caller as long as it lasts: Mercury does not key over a signal it
+senses, only into a gap of one.
 
 ## Wire formats
 
