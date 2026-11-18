@@ -652,15 +652,18 @@ bool arq_fsm_notice_owed(const arq_session_t *sess)
 static int decoder_hears_frame(const arq_session_t *sess)
 {
     uint64_t now = time_now_ms();
+    /* A decoder in sync now first: it is a frame on the air, where a caught
+     * preamble or a NAV header only reserves the airtime one announced, and
+     * the carousel ends a reservation nothing live renews (defer_if_busy). */
+    if (sess->last_rx_sync_ms != 0 &&
+        (now < sess->last_rx_sync_ms ||          /* clock went backwards; treat as busy */
+         now - sess->last_rx_sync_ms < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS))
+        return CAR_KEYED_SYNC;
     if (now < sess->rx_frame_busy_until_ms)
         return CAR_KEYED_PREAMBLE;   /* a frame whose preamble was caught: see arq_note_rx_preamble */
     if (now < sess->nav_busy_until_ms)
         return CAR_KEYED_NAV;        /* its NAV header was heard: see arq_note_rx_nav */
-    if (sess->last_rx_sync_ms == 0)
-        return 0;
-    if (now < sess->last_rx_sync_ms)
-        return CAR_KEYED_SYNC;       /* clock went backwards; treat as busy */
-    return (now - sess->last_rx_sync_ms) < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS ? CAR_KEYED_SYNC : 0;
+    return 0;
 }
 
 

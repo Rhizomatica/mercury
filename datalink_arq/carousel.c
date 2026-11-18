@@ -685,12 +685,33 @@ static void note_held(car_t *c, int why, int keyed, uint64_t now, uint64_t ms)
     }
 }
 
+/* The longest a *reservation* holds my planned keydown: longer than any
+ * keydown, mine or the peer's, with its guard.  A caught preamble reserves
+ * its frame's airtime (26.2 s on MFSK500) and a NAV header its keydown, and
+ * each new false one renews it: on air (N3JXB-VE4KLM, 2026-11-16, MFSK500)
+ * QRM kept "a frame's preamble was caught" for 116 s after the peer's slots
+ * were over, and the lost-peer watchdog ended the session before I keyed
+ * again.  Past the cap a reservation alone is not the peer -- it keys only in
+ * the slots m_free_from() already keeps clear of, and the turn rules need no
+ * carrier sense (specs/turns) -- so I key.  A live sign -- a decoder in sync
+ * now, the busy detector -- still holds me as long as it lasts: I do not key
+ * over a signal I sense, only into a gap of one (#607 review). */
+#define CARRIER_HOLD_MAX_MS (MAX_KEYDOWN_MS + GUARD_MS)
+
 /* Listen before talk: true (and the timer re-armed) when we must wait for the
  * peer to be off the air for a guard. */
 static bool defer_if_busy(car_t *c, int t, uint64_t now)
 {
     if (c->tx_busy) { arm(c, t, now + CARRIER_CHECK_MS); return true; }
     int k = peer_keyed(c, now);
+    bool holding = c->held == HELD_CARRIER || c->held == HELD_CARRIER_SAID;
+    bool reserved = k == CAR_KEYED_PREAMBLE || k == CAR_KEYED_NAV;
+    if (reserved && holding && now - c->held_since >= CARRIER_HOLD_MAX_MS) {
+        car_trace(c, "tx: held %llu ms, longer than any keydown, and still only by a reservation "
+                  "(%s), nothing live -- not the peer: keying anyway",
+                  (unsigned long long)(now - c->held_since), keyed_why(k));
+        return false;
+    }
     if (k) {
         note_held(c, HELD_CARRIER, k, now, 0);
         arm(c, t, now + CARRIER_CHECK_MS);

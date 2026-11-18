@@ -162,6 +162,13 @@ static uint64_t now_ms;
 static bool trace;
 static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
 static bool cs_decodable;              /* CAR_CS_DECODABLE: carrier sense needs a decodable frame */
+/* CAR_NOISE=from_ms:len_ms[:kind]: the caller's carrier sense reads busy all
+ * that while, peer or not, by that sign: pre (default) a caught preamble --
+ * QRM that keeps looking like the start of a frame (on air, N3JXB
+ * 2026-11-16: 116 s held, then link lost) -- nav a NAV header, sync a
+ * decoder in sync, busy the energy detector: another station on the air. */
+static uint64_t noise_from, noise_len;
+static int noise_kind = CAR_KEYED_PREAMBLE;
 static int nav_mode;                   /* CAR_NAV: 0 off, 1 modelled header, 2 always heard */
 static uint32_t nav_air;               /* CAR_NAV_AIR: the header's lead, header + gap */
 /* CAR_SNR_BIAS: the estimate as the bench read it at 10 %: DATAC15, DATAC4 and
@@ -435,6 +442,8 @@ static void io_pattern(void *ctx, int kind)
 static int io_peer_keyed(void *ctx)
 {
     const station_t *l = ctx, *p = &S[l->id ^ 1];
+    if (l->id == 0 && noise_len && now_ms >= noise_from && now_ms < noise_from + noise_len)
+        return noise_kind;
     /* CAR_CS_DECODABLE: carrier sense is a decoder in sync, so a keydown the
      * listener cannot decode is not sensed (on air: a DATAC1 probe at 4.5 dB,
      * and patterns, which no OFDM decoder syncs on) -- nor the part of it
@@ -703,6 +712,15 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     trace = getenv("CAR_TRACE") != NULL;
     asym = false; step_back = NAN; ctl_step = false;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
+    noise_from = noise_len = 0;
+    noise_kind = CAR_KEYED_PREAMBLE;
+    if (getenv("CAR_NOISE")) {
+        unsigned long long f = 0, l = 0;
+        char kind[8] = "";
+        if (sscanf(getenv("CAR_NOISE"), "%llu:%llu:%7s", &f, &l, kind) >= 2) { noise_from = f; noise_len = l; }
+        noise_kind = !strcmp(kind, "nav") ? CAR_KEYED_NAV : !strcmp(kind, "sync") ? CAR_KEYED_SYNC
+                   : !strcmp(kind, "busy") ? CAR_KEYED_BUSY : CAR_KEYED_PREAMBLE;
+    }
     nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
     nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
     car_set_nav_ms(nav_air);
