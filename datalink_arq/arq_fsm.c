@@ -1971,9 +1971,16 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
     {
     case ARQ_EV_TX_COMPLETE:
         /* The caller's DISCONNECT is out: keep the callee's reply slot clear
-         * of the next one. */
-        if (sess->car_session && car_is_master(sess->car))
-            car_log_ctl(sess->car, now, ARQ_CHANNEL_GUARD_MS);
+         * of the next one.  Before it is (ARQ_TD_SENT), this is a keydown
+         * the teardown found on the air, an ABORT's cut round: the callee
+         * may answer that on the floor, and the DISCONNECT keeps clear of
+         * it (integration TestMercuryARQAbortCutsTheFloorRound). */
+        if (sess->car_session && car_is_master(sess->car)) {
+            if (sess->teardown == ARQ_TD_SENT)
+                car_log_disconnect(sess->car, now, ARQ_CHANNEL_GUARD_MS);
+            else
+                car_log_ctl(sess->car, now, ARQ_CHANNEL_GUARD_MS);
+        }
         break;
 
     case ARQ_EV_APP_CONNECT:
