@@ -284,11 +284,11 @@ void test_mode_timing_fast_modes(void)
 {
     const arq_mode_timing_t *t17 = arq_protocol_mode_timing(FREEDV_MODE_DATAC17);
     TEST_ASSERT_NOT_NULL(t17);
-    TEST_ASSERT_EQUAL(1180, t17->payload_bytes);
+    TEST_ASSERT_EQUAL(1184, t17->payload_bytes);
 
     const arq_mode_timing_t *tq = arq_protocol_mode_timing(FREEDV_MODE_QAM16C2);
     TEST_ASSERT_NOT_NULL(tq);
-    TEST_ASSERT_EQUAL(1213, tq->payload_bytes);
+    TEST_ASSERT_EQUAL(1183, tq->payload_bytes);
 
     /* Frame sizes stay pairwise unique across the OFDM rungs, where the
      * stop-and-wait plane once inferred the peer's TX mode from the size.

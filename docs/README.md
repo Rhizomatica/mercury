@@ -49,6 +49,7 @@ having — they are not updated as the code moves on.
 | [HERMES-LITE-2.md](HERMES-LITE-2.md) | A Hermes-Lite 2 on the network as Mercury's radio and sound card (`-x hl2`): no sound card, CAT or PTT; settings, what goes on the wire, networking, and what was tested. |
 | [RETICULUM.md](RETICULUM.md) | Carrying a Reticulum mesh over HF, via the broadcast port or an ARQ backbone. |
 | [JNOS.md](JNOS.md) | JNOS 2.0 over Mercury's VARA-compatible TNC: BBS to BBS, and telnet to the other station's Linux with no IP on the air. Bench setup, configs, test transcripts and the problems found. |
+| [WINLINK.md](WINLINK.md) | Winlink gateways with Mercury: finding them (service code `MERCURY`, Pat, DigiPi), running one with RMS Trimode, and the known issues. |
 | [BROADCAST-FILE.md](BROADCAST-FILE.md) | Broadcasting a file to whoever is listening, with no return path: the RaptorQ carousel, `bcast_file_tool`, and which modes can carry it. |
 | [MACOS-UNIVERSAL.md](MACOS-UNIVERSAL.md) | Building the self-contained universal macOS app with vendored static Hamlib. |
 | [WINDOWS-SIGNING.md](WINDOWS-SIGNING.md) | Authenticode signing for Windows releases. |

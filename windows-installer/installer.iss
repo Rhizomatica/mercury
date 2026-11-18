@@ -66,7 +66,10 @@ Name: "{app}"; Permissions: users-modify
 Name: "{app}\logs"; Permissions: users-modify
 
 [Files]
-Source: "mercury.ini"; DestDir: "{app}"; Flags: ignoreversion; Permissions: users-modify
+; The station's settings (sound cards, ports, PTT, callsign): installed once,
+; never replaced by an upgrade, which used to reset them to the defaults (#579).
+; Keys a newer version adds and an older file lacks take their defaults.
+Source: "mercury.ini"; DestDir: "{app}"; Flags: onlyifdoesntexist; Permissions: users-modify
 Source: "../LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "../assets/mercury.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ignoreversion

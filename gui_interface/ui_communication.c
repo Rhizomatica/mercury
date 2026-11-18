@@ -82,8 +82,14 @@ static const char *ui_arq_mode_name(int mode)
     case FREEDV_MODE_DATAC15: return "DATAC15";
     case FREEDV_MODE_DATAC17: return "DATAC17";
     case FREEDV_MODE_QAM16C2: return "QAM16C2";
+    case FREEDV_MODE_DATAC17W: return "DATAC17W";
+    case FREEDV_MODE_QAM16C2W: return "QAM16C2W";
+    case FREEDV_MODE_DATAN1: return "DATAN1";
+    case FREEDV_MODE_QAM16N1: return "QAM16N1";
+    case FREEDV_MODE_QAM16N2: return "QAM16N2";
     case MERCURY_MODE_MFSK: return "MFSK";
     case MERCURY_MODE_MFSK_N32: return "MFSK500";
+    case MERCURY_MODE_MFSK_W2:  return "MFSK2K";
     default: return "";
     }
 }

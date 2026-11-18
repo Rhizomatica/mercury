@@ -270,14 +270,16 @@ static void mklpf(double *lpf, double fc) { mklpf_n(lpf, fc, MFSK_LPF_TAPS); }
 /* The carrier phasor e^(j*2*pi*fc*n/MFSK_FS), one period of it, for the
  * 256-point geometry (g 0) and the 512-point one (g 1).  Either way the tones
  * are centred on 1500 Hz: fc sits half a bin below it. */
-static double complex g_fc_ph[2][MFSK_FC_PERIOD];
+static double complex g_fc_ph[3][MFSK_FC_PERIOD];
+/* The FFT size of carrier table g: 256, 512 and (g 2) 128. */
+static int fcg_nfft(int g) { return g == 2 ? MFSK_NFFT / 2 : MFSK_NFFT << g; }
 static pthread_once_t g_fc_once = PTHREAD_ONCE_INIT;
 
 static void fc_table_init(void)
 {
-    for (int g = 0; g < 2; g++)
+    for (int g = 0; g < 3; g++)
     {
-        double fc = 1500.0 - 0.5 * MFSK_FS / (double)(MFSK_NFFT << g);
+        double fc = 1500.0 - 0.5 * MFSK_FS / (double)fcg_nfft(g);   /* 1468.75 Hz at g 2: 188 cycles a period */
         for (int n = 0; n < MFSK_FC_PERIOD; n++)
         {
             double ph = 2.0 * M_PI * fc / MFSK_FS * (double)n;
@@ -307,8 +309,10 @@ static void *mfsk_be_open(int mode)
     h->nfft = MFSK_NFFT;
     if (mode == MERCURY_MODE_MFSK_N16) M = 16;
     if (mode == MERCURY_MODE_MFSK_N32) h->nfft = 2 * MFSK_NFFT;
-    h->fcg = h->nfft == MFSK_NFFT ? 0 : 1;
-    h->hyp_lo = MFSK_FREQ_HYP_LO * (h->nfft / MFSK_NFFT);
+    if (mode == MERCURY_MODE_MFSK_W2) h->nfft = MFSK_NFFT / 2;
+    h->fcg = h->nfft == MFSK_NFFT ? 0 : h->nfft > MFSK_NFFT ? 1 : 2;
+    /* +/-94 Hz in half-bins of this geometry: 7 hypotheses at 62.5 Hz. */
+    h->hyp_lo = MFSK_FREQ_HYP_LO * h->nfft / MFSK_NFFT;
     h->nhyp = 1 - 2 * h->hyp_lo;
     h->snr_bin_to_3k_db = MFSK_SNR_BIN_TO_3K_DB - 10.0 * log10((double)h->nfft / MFSK_NFFT);
     mfsk_init(&h->m, M, MFSK_NCAR, 1);
@@ -357,6 +361,8 @@ static void *mfsk_be_open(int mode)
         h->lpf_taps = MFSK_LPF_NARROW_TAPS;
         mklpf_n(h->lpf, MFSK_LPF_NARROW_FC, h->lpf_taps);
     }
+    else if (h->m.M * MFSK_FS / h->nfft > 1000.0)
+        mklpf(h->lpf, 1250.0);   /* the 2 kHz geometry: tones to +/-1000 Hz, and the dial search */
     else
         mklpf(h->lpf, MFSK_LPF_FC);
 

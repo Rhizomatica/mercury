@@ -123,13 +123,6 @@ void bench_run_burst_ex(struct freedv *rx, const short *samples, int n, int tail
     int st = freedv_get_rx_status(rx);
     if (st & FREEDV_RX_SYNC) {
       *saw_sync = 1;
-      if (snr_est_sum && snr_est_n) {
-        int sync_i = 0;
-        float se = 0.0f;
-        freedv_get_modem_stats(rx, &sync_i, &se);
-        *snr_est_sum += se;
-        (*snr_est_n)++;
-      }
       /* The first sync is the acquisition decision: its metric and its
        * frequency estimate are the ones the sweep is about. */
       if (info && !info->seen) {
@@ -141,7 +134,20 @@ void bench_run_burst_ex(struct freedv *rx, const short *samples, int n, int tail
         freedv_get_modem_stats(rx, &sync_i, &info->snr_est);
       }
     }
-    if (nb > 0 && !(st & FREEDV_RX_BIT_ERRORS)) *got_frame = 1;
+    if (nb > 0 && !(st & FREEDV_RX_BIT_ERRORS)) {
+      /* The estimate the modem reports with the decoded frame, once a
+       * burst: what the rung ladder reads.  Read at the sync it was the
+       * estimate before any frame, which QAM16C2's decision-directed
+       * estimator has not formed yet (-4.5 dB at every S/N). */
+      if (snr_est_sum && snr_est_n && !*got_frame) {
+        int sync_i = 0;
+        float se = 0.0f;
+        freedv_get_modem_stats(rx, &sync_i, &se);
+        *snr_est_sum += se;
+        (*snr_est_n)++;
+      }
+      *got_frame = 1;
+    }
   }
 }
 
@@ -294,5 +300,10 @@ int bench_mode_from_name(const char *s) {
   if (!strcmp(s, "DATAC0") || !strcmp(s, "datac0")) return FREEDV_MODE_DATAC0;
   if (!strcmp(s, "DATAC17") || !strcmp(s, "datac17")) return FREEDV_MODE_DATAC17;
   if (!strcmp(s, "QAM16C2") || !strcmp(s, "qam16c2")) return FREEDV_MODE_QAM16C2;
+  if (!strcmp(s, "DATAC17W") || !strcmp(s, "datac17w")) return FREEDV_MODE_DATAC17W;
+  if (!strcmp(s, "QAM16C2W") || !strcmp(s, "qam16c2w")) return FREEDV_MODE_QAM16C2W;
+  if (!strcmp(s, "DATAN1") || !strcmp(s, "datan1")) return FREEDV_MODE_DATAN1;
+  if (!strcmp(s, "QAM16N1") || !strcmp(s, "qam16n1")) return FREEDV_MODE_QAM16N1;
+  if (!strcmp(s, "QAM16N2") || !strcmp(s, "qam16n2")) return FREEDV_MODE_QAM16N2;
   return -1;
 }

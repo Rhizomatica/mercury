@@ -61,12 +61,12 @@ endif
 ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
-TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
+TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm test_arq_reactor_lock \
             test_tcp_interfaces test_resampler test_pcm24 test_cap_recover test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_rtp_wire test_hl2_wire test_hl2_dsp test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
-            test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
+            test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port test_net_probe \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
             test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
             test_message_store test_ui_history test_ws_protocol \
@@ -250,6 +250,17 @@ test_hermes_log: common/test_hermes_log.c $(UNITY_SRC) ../common/hermes_log.c
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # ARQ→TNC seam test (standalone TU, no threads/bus)
+# #579 regression: the TCP reactor never waits on g_sess_lock while the event
+# loop holds it, blocked on a full RX ring.  Includes arq.c for its statics.
+test_arq_reactor_lock: datalink_arq/test_arq_reactor_lock.c $(UNITY_SRC) ../datalink_arq/arq.c \
+                       ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c \
+                       ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c ../datalink_arq/arith.c \
+                       ../datalink_arq/arq_channels.c ../datalink_arq/arq_trace.c ../datalink_arq/arq_tnc.c \
+                       ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c \
+                       ../common/virtual_clock.c ../common/hermes_log.c ../common/message_store.c \
+                       ../common/chan.c ../common/queue.c ../modem/framer.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -I../modem/freedv -I.. -o $@ $(filter-out ../datalink_arq/arq.c,$(filter %.c %.a %.o,$^)) $(LDFLAGS)
+
 test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
@@ -357,6 +368,10 @@ test_tx_pacing: modem/test_tx_pacing.c $(UNITY_SRC) ../modem/tx_pacing.h
 # radio_port.h is a PREREQUISITE -- the logic under test lives in the header.
 test_radio_port: radio_io/test_radio_port.c $(UNITY_SRC) ../radio_io/radio_port.h
 	$(CC) $(CFLAGS) -I../radio_io -o $@ radio_io/test_radio_port.c $(UNITY_SRC) $(LDFLAGS)
+
+# The bounded reachability probe a Hamlib reopen runs first (header-only).
+test_net_probe: radio_io/test_net_probe.c $(UNITY_SRC) ../radio_io/net_probe.h
+	$(CC) $(CFLAGS) -I../radio_io -o $@ radio_io/test_net_probe.c $(UNITY_SRC) $(LDFLAGS)
 
 # Optional CAT telemetry must return its cache immediately while PTT or another
 # timing-sensitive radio operation owns the shared mutex.

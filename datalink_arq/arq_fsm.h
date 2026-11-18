@@ -99,8 +99,8 @@ typedef struct
      * frame itself (RX_CAROUSEL). */
     uint8_t  session_id;
     int      mode;
-    uint8_t  payload[1280];           /* >= largest user payload: QAM16C2
-                                       * carries 1213 - 8 = 1205 bytes      */
+    uint8_t  payload[1280];           /* >= largest user payload: DATAC17
+                                       * carries 1184 - 8 = 1176 bytes      */
     size_t   payload_len;
 
     /* RX_CAROUSEL: the control decoder (DATAC16) produced it; otherwise the
@@ -458,5 +458,14 @@ bool arq_conn_state_has_peer(arq_conn_state_t s);
  * @brief Human-readable name for an event (for log output).
  */
 const char *arq_event_name(arq_event_id_t ev);
+
+/* The carousel's open blocks as BUFFER shows them (arq_buffer_inflight_shown),
+ * as last set with tx_inflight_bytes, readable without the session lock
+ * (BUFFER from the TCP reactor). */
+int arq_fsm_tx_inflight_published(void);
+/* What BUFFER counts of `inflight` unconfirmed bytes in the carousel's open
+ * blocks, `unstopped` of them in blocks no floor BREAK has said are in: those,
+ * but at least 1 while any is unconfirmed (0 means all acknowledged). */
+int arq_buffer_inflight_shown(int inflight, int unstopped);
 
 #endif /* ARQ_FSM_H_ */

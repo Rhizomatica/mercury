@@ -45,6 +45,8 @@ void           sim_channel_set_return_snr(sim_channel_t *ch, double snr_db);
  * SNR says: a control mode that decodes some of the time where the floor gets
  * through (on air, KG9NI hearing K7EK at -6..-7 dB, 2026-11-11). */
 void sim_channel_set_return_mode_per(sim_channel_t *ch, int freedv_mode, double per);
+/* The same for direction dir (0: A to B, 1: B to A). */
+void sim_channel_set_dir_mode_per(sim_channel_t *ch, int dir, int freedv_mode, double per);
 void           sim_channel_set_mode_per(sim_channel_t *ch,
                                         const sim_mode_per_t *table, int count);
 

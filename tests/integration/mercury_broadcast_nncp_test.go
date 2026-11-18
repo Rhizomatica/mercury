@@ -39,7 +39,7 @@ import (
 )
 
 // bcastFrameSize mirrors bcast_frame_size[] in datalink_broadcast/bcast_modes.h.
-var bcastFrameSize = []int{510, 126, 14, 54, 14, 3, 30, 30, 14, 1180, 1213}
+var bcastFrameSize = []int{510, 126, 14, 54, 14, 3, 30, 30, 14, 1184, 1183}
 
 const bcastFrameOverhead = 12
 const bcastSymbolSize = 41
