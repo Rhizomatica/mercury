@@ -2538,6 +2538,18 @@ static int rx_decoder_bind_own(rx_decoder_state_t *state, modem_codec_t codec, i
     size_t bytes_cap = (size_t)(codec.be->bits_per_frame(codec.ctx) / 8);
     if (max_samples <= 0 || bytes_cap == 0)
         return -1;
+    /* The codec left behind keeps what it holds until this worker binds it
+     * again: an MFSK listener swapping floors at a BW change would come back
+     * to the other floor's half-heard CALL.  Drop it now, whichever of the
+     * swap's flush and this bind runs first. */
+    if (modem_codec_valid(&state->codec) && state->codec.ctx != codec.ctx &&
+        state->codec.be->unsync)
+    {
+        pthread_mutex_t *rl = modem_inst_lock_for(state->codec.ctx);
+        pthread_mutex_lock(rl);
+        state->codec.be->unsync(state->codec.ctx);
+        pthread_mutex_unlock(rl);
+    }
     state->demod_count = 0;
     return rx_decoder_adopt(state, codec, mode, max_samples, bytes_cap);
 }
@@ -2599,7 +2611,11 @@ static void *rx_worker_thread(void *arg)
         if (w->takes_payload_resync &&
             atomic_exchange(&g_payload_resync_req, false))
         {
-            if (modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync)
+            /* Not an MFSK payload decoder: it has no trial sync on DATAC16
+             * to drop, and its window holds whole bursts, so an UNSYNC here
+             * could lose a payload frame already in it. */
+            if (modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync &&
+                !mercury_mode_is_mfsk(w->state.mode))
             {
                 pthread_mutex_t *rl = modem_inst_lock_for(w->state.codec.ctx);
                 pthread_mutex_lock(rl);

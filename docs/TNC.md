@@ -914,6 +914,13 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
       0.2-4.2 s after it);
     - DATAC16: its decoder was not flushed at all (K7EK, 2026-11-07: two
       calls decoded 1.4 s and 1.9 s after the hop);
+    - MFSK, up to 1.9.24: the flush emptied only the audio queue in front of
+      the listener, which keeps up to two frames of audio of its own, and
+      the next channel's audio completed a CALL cut off near its end (K7EK,
+      2026-11-14 and 15: decoded 1.2 s and 4.2 s after a hop that logged
+      "drops it"; KG9NI, 2026-11-16: decoded 1.1 s after its scanner came
+      back to the channel, 30 s after the CALL, and answered once the caller
+      had given up);
   - a `BW` change between `BW500` and `BW2300`/`BW2750` flushes both too: the
     listeners swap floors, and each swap drops what it holds.
 
