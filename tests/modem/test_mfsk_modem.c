@@ -1009,6 +1009,70 @@ void test_mfsk_modem_no_carrier_in_noise(void)
     }
 }
 
+/* A scan hop cuts a CALL off near its end.  What the receiver holds of it
+ * must go with the hop (unsync, as modem.c asks at every LISTEN OFF that hands
+ * the radio back), or the next channel's audio completes it.  On air (KG9NI,
+ * 1.9.24, 2026-11-16) the hop left 1.3 s of a 13.5 s CALL unheard, and 1.1 s
+ * of audio after the scanner came back decoded it, 30 s late: KG9NI answered
+ * a caller that had given up and held its scanner 3.7 min.  cut_tail_decodes
+ * returns whether the cut frame decodes; unsync drops it first. */
+static int cut_tail_decodes(int unsync)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int nin   = be->nin(ctx);
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 11 + 5);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int cap = be->n_tx_samples(ctx) * 2 + 40000;
+    int16_t *pre = calloc(cap, 2), *dat = calloc(cap, 2), *post = calloc(cap, 2);
+    int np = be->preamble_tx(ctx, pre);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+    int ns = be->postamble_tx(ctx, post);
+
+    /* [lead | preamble | data | postamble], then the burst's last ~10 %
+     * (1.3 s of 13.5 s, as on air) replaced by noise: the hop. */
+    int lead = 4 * nin;
+    int burst = np + nd + ns;
+    int keep = lead + (burst - burst / 10) / nin * nin;
+    int after = (int)(3.0 * 8000) / nin * nin;     /* 3 s of the next channel */
+    int total = lead + burst + after;
+    int16_t *pb = calloc(total, 2);
+    memcpy(pb + lead, pre, (size_t)np * 2);
+    memcpy(pb + lead + np, dat, (size_t)nd * 2);
+    memcpy(pb + lead + np + nd, post, (size_t)ns * 2);
+    double e = 0.0;
+    for (int k = 0; k < nd; k++) e += (double)dat[k] * dat[k];
+    double sigma = sqrt(e / nd) * 0.05;            /* ~26 dB SNR */
+    for (int k = 0; k < total; k++) {
+        double v = (k < keep ? pb[k] : 0.0) + sigma * gauss();
+        pb[k] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+
+    uint8_t *out = calloc(bytes, 1);
+    int got = 0;
+    for (int off = 0; off + nin <= keep && !got; off += nin)
+        got = be->rawdata_rx(ctx, out, &pb[off]) > 0;
+    TEST_ASSERT_FALSE_MESSAGE(got, "the cut frame decoded before the hop");
+    if (unsync) be->unsync(ctx);
+    for (int off = keep; off + nin <= total && !got; off += nin)
+        got = be->rawdata_rx(ctx, out, &pb[off]) > 0 && !memcmp(out, frame, bytes);
+
+    free(frame); free(pre); free(dat); free(post); free(pb); free(out);
+    return got;
+}
+
+void test_mfsk_modem_unsync_drops_a_frame_cut_by_a_hop(void)
+{
+    TEST_ASSERT_NOT_NULL(be->unsync);
+    /* Without it the next channel's audio completes the frame (the bug)... */
+    TEST_ASSERT_TRUE_MESSAGE(cut_tail_decodes(0), "a cut frame no longer completes: the test lost its point");
+    be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
+    /* ...and with it, nothing decodes. */
+    TEST_ASSERT_FALSE(cut_tail_decodes(1));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1030,5 +1094,6 @@ int main(void)
     RUN_TEST(test_mfsk_modem_sync_while_burst_arrives);
     RUN_TEST(test_mfsk_modem_sync_soon_after_open);
     RUN_TEST(test_mfsk_modem_no_carrier_in_noise);
+    RUN_TEST(test_mfsk_modem_unsync_drops_a_frame_cut_by_a_hop);
     return UNITY_END();
 }

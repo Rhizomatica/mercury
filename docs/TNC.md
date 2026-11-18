@@ -904,7 +904,10 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
     the DATAC16 decoder's, the payload decoder's and the two MFSK call
     listeners', sync included.  A partly received CALL is dropped even when
     `LISTEN ON` follows a moment later on the same frequency; the caller's
-    next CALL is heard as usual.  Up to 1.9.22 such a CALL could still
+    next CALL is heard as usual.  The same holds for a host that pauses the
+    modem with `LISTEN OFF` and resumes it on the same channel without
+    scanning: a CALL on the air across the pause costs that one CALL, and
+    the caller's retry is answered.  Up to 1.9.22 such a CALL could still
     decode, on the next channel, and was answered there, where the caller
     could not hear it.  BPQ32 then held the wrong channel for about 2 min
     (six scan intervals) while the caller's repeats went unheard:
@@ -914,6 +917,13 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
       0.2-4.2 s after it);
     - DATAC16: its decoder was not flushed at all (K7EK, 2026-11-07: two
       calls decoded 1.4 s and 1.9 s after the hop);
+    - MFSK, up to 1.9.24: the flush emptied only the audio queue in front of
+      the listener, which keeps up to two frames of audio of its own, and
+      the next channel's audio completed a CALL cut off near its end (K7EK,
+      2026-11-14 and 15: decoded 1.2 s and 4.2 s after a hop that logged
+      "drops it"; KG9NI, 2026-11-16: decoded 1.1 s after its scanner came
+      back to the channel, 30 s after the CALL, and answered once the caller
+      had given up);
   - a `BW` change between `BW500` and `BW2300`/`BW2750` flushes both too: the
     listeners swap floors, and each swap drops what it holds.
 

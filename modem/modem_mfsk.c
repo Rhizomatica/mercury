@@ -1211,6 +1211,23 @@ static int mfsk_carrier_sense(mfsk_modem_t *h, int search_len)
     return h->carrier_abs + burst > end_abs;
 }
 
+/* Empty the receive window and forget every burst found in it.  After a
+ * decode the burst is consumed; at a scan hop (unsync) what the window holds
+ * was heard on the channel the host has left.  The sample counters run on, so
+ * the carrier phase stays tied to the sample. */
+static void mfsk_rx_window_clear(mfsk_modem_t *h)
+{
+    h->carrier_abs = h->carrier_scan_abs = -1;
+    h->pre_scan_abs = h->pst_scan_abs = -1;
+    h->n_abs += h->rxlen;
+    h->b_abs = h->n_abs / h->dec;           /* rxlen is whole chunks: a multiple of dec */
+    h->rxlen = h->bb_len = h->bf_len = h->bf8_len = h->bf8_lo = 0;
+    h->anchor_abs = -1;
+    h->tried_abs  = -1;
+    h->reject_abs = -1;                     /* next burst searches from the top */
+    h->pre_fail_abs = -1;
+}
+
 static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demod_in)
 {
     mfsk_modem_t *h = ctx;
@@ -1501,15 +1518,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     h->last_sync = nbytes <= 0 && arriving;
     if (nbytes <= 0)
         return 0;
-    h->carrier_abs = h->carrier_scan_abs = -1;
-    h->pre_scan_abs = h->pst_scan_abs = -1;
-    h->n_abs += h->rxlen;
-    h->b_abs = h->n_abs / h->dec;           /* rxlen is whole chunks: a multiple of dec */
-    h->rxlen = h->bb_len = h->bf_len = h->bf8_len = h->bf8_lo = 0;   /* burst consumed */
-    h->anchor_abs = -1;
-    h->tried_abs  = -1;
-    h->reject_abs = -1;                     /* next burst searches from the top */
-    h->pre_fail_abs = -1;
+    mfsk_rx_window_clear(h);                /* burst consumed */
     return nbytes;
 }
 
@@ -1772,6 +1781,22 @@ static void mfsk_be_harq_reset(void *ctx)
     h->harq_first_ms = 0;
 }
 
+/* Drop what the receiver holds of a frame, as freedv's UNSYNC does.  The
+ * window keeps up to two bursts of audio, so emptying the ring in front of it
+ * (modem.c, at a scan hop) left a CALL cut off by the hop in here, and audio
+ * from the next channel completed it: on air (KG9NI, 1.9.24, 2026-11-16) an
+ * MFSK CALL decoded 1.1 s after the scanner came back to its channel, 30 s
+ * after it was sent, and was answered after the caller had given up. */
+static void mfsk_be_unsync(void *ctx)
+{
+    mfsk_modem_t *h = (mfsk_modem_t *)ctx;
+    if (!h) return;
+    mfsk_rx_window_clear(h);
+    h->since_search = 0;
+    h->last_sync = 0;
+    mfsk_be_harq_reset(ctx);
+}
+
 static void mfsk_be_set_harq(void *ctx, int enabled)
 {
     mfsk_modem_t *h = (mfsk_modem_t *)ctx;
@@ -1802,6 +1827,7 @@ const modem_backend_t modem_backend_mfsk = {
     .get_rx_status    = mfsk_be_get_rx_status,
     .harq_reset       = mfsk_be_harq_reset,
     .set_harq         = mfsk_be_set_harq,
+    .unsync           = mfsk_be_unsync,
     .set_crc_seed     = mfsk_be_set_crc_seed,
     .rx_crc_seeded    = mfsk_be_rx_crc_seeded,
     .get_freq_offset  = mfsk_be_get_freq_offset,
