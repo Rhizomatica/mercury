@@ -330,7 +330,8 @@ Results:
   silence after an M_END, 21 317 before the caller's drain, 10 645 before the callee's owed ack, 4 957 before the
   last word, 2 069 before M_END).
 - `SessionTeardown_lossy.cfg`: the same with any frame lost.  No error,
-  2 568 389 distinct states (1 373 461 before the silence after an M_END,
+  11 077 245 distinct states (2 568 389 before the caller's owed ack,
+  1 373 461 before the silence after an M_END,
   599 881 before the caller's drain, 264 149
   before the owed ack, 124 141 before the last word, 52 041 before M_END).  `Clean` does not apply
   here.
@@ -407,7 +408,7 @@ Results:
   DISCONNECT goes idle without keying it.  It violates `Clean`: the peer
   retries and times out.
 - `Mut_anypattern.cfg`: a pattern ends an end in any state, not only one
-  whose DISCONNECT is out.  No error, the same 2 568 389 states: as with the
+  whose DISCONNECT is out.  No error, the same 11 077 245 states: as with the
   session-id check below, frames in order and timers longer than an
   exchange mean no pattern reaches an end that is not waiting for one.
   In the code the rule keeps the carousel's own patterns (not modelled
