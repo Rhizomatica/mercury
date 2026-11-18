@@ -28,6 +28,7 @@ const int mpsk_nlevels = (int)(sizeof(mpsk_levels) / sizeof(mpsk_levels[0]));
 #define CHI_MIN 20.0
 
 struct mpsk {
+    int dbg_t; double dbg_chi;                /* last lock (debug)            */
     float *dbg_llr;                           /* last soft bits (debug)       */
     const mpsk_level_t *lv;
     int lvi;
@@ -111,7 +112,13 @@ mpsk_t *mpsk_open(int level)
     for (int c = 0; c < l->nc; c++) {
         uint32_t s = 0x9E3779B9u ^ (uint32_t)(level * 131 + c * 7919 + 1);
         for (int k = 0; k < l->nsym; k++) {
-            m->ph[c][k] = CST[xs32(&s) & 3];
+            /* Sixteen phases, not four: the search's data term correlates the
+             * fourth power of each product with that of the scrambling, and a
+             * QPSK scrambling phase to the fourth is 1 -- the data term then
+             * ignored the scrambling, scored any window mostly over the frame
+             * about as high as the right one, and under CCIR Moderate psk8
+             * locked 20-29 symbols early, 3 frames in 30 at +14 dB. */
+            m->ph[c][k] = cexp(I * 2.0 * M_PI * (double)(xs32(&s) & 15) / 16.0);
             m->pil[c][k] = 0;
             m->cell[c][k] = -1;
         }
@@ -300,6 +307,7 @@ int mpsk_demod(mpsk_t *m, const int16_t *in, int n, uint8_t *frame, int *found, 
         }
         double chi = creal(A * conj(A)) / np + creal(B * conj(B)) / nd;
         if (chi > best) { best = chi; bt = T; bA = A; }
+        m->dbg_t = bt; m->dbg_chi = best;
     }
     int ok = 0;
     int t0 = bt;
@@ -429,4 +437,14 @@ void mpsk_debug_errmap(const mpsk_t *m, const uint8_t *cw, char *out, int cap)
     o += snprintf(out + o, (size_t)(cap - o), " | by eighth:");
     for (int t = 0; t < 8; t++) o += snprintf(out + o, (size_t)(cap - o), " %d", et[t]);
     snprintf(out + o, (size_t)(cap - o), " | confident wrong (|llr|>5): %d", big);
+}
+
+/* Debug: where the last search locked, and the z index frame symbol 0 of
+ * carrier 0 has when the frame starts at input sample off. */
+int mpsk_debug_lock(const mpsk_t *m, int off, double *chi)
+{
+    if (chi) *chi = m->dbg_chi;
+    int s0 = off + MPSK_LEAD * MPSK_SPS + (m->ntxp - 1) / 2;
+    int expect = (s0 - (LPF_N - 1) / 2) / MPSK_DEC - (m->nmf - 1) / 2;
+    return m->dbg_t - expect;
 }

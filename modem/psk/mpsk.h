@@ -59,6 +59,7 @@ int  mpsk_demod(mpsk_t *m, const int16_t *in, int n, uint8_t *frame, int *found,
 
 int mpsk_debug_codeword(mpsk_t *m, uint8_t *frame, uint8_t *cwout);
 const float *mpsk_debug_llr(const mpsk_t *m);
+int mpsk_debug_lock(const mpsk_t *m, int off, double *chi);
 void mpsk_debug_errmap(const mpsk_t *m, const uint8_t *cw, char *out, int cap);
 
 #endif

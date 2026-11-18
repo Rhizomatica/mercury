@@ -126,7 +126,9 @@ int main(int argc, char **argv)
                 for (int i = 0; i < N; i++) { if ((L[i] < 0) != (cw[i] != 0)) e++; ma += fabs(L[i]); }
                 char em[256];
                 mpsk_debug_errmap(rx, cw, em, sizeof em);
-                fprintf(stderr, "snr %+.0f trial %d ok %d rawBER %.4f mean|llr| %.2f est %.1f %s\n", s, t, ok, (double)e / N, ma / N, snr, em);
+                double chi = 0;
+                int dt = mpsk_debug_lock(rx, off, &chi);
+                fprintf(stderr, "snr %+.0f trial %d ok %d rawBER %.4f mean|llr| %.2f est %.1f lock %+d chi %.0f %s\n", s, t, ok, (double)e / N, ma / N, snr, dt, chi, em);
             }
             acq += found;
             del += ok;
