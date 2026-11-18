@@ -643,26 +643,32 @@ static void test_carousel_piece_size_agrees(void)
 /* The bandwidth table, and the cap clamping the start rungs both ways. */
 static void test_carousel_bandwidth_max_level(void)
 {
-    TEST_ASSERT_EQUAL_INT(3, car_max_level_for_bw(500));          /* DATAC3 */
+    /* every bandwidth has all seven rungs, each its own modes on top */
+    TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, car_max_level_for_bw(500));
     TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, car_max_level_for_bw(2300));
     TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, car_max_level_for_bw(2750));
     TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, car_max_level_for_bw(0));
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3, car_level_mode(car_max_level_for_bw(500)));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16N2, car_bw_level_mode(500, CAR_NLEVELS - 1));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAN1, car_bw_level_mode(500, 4));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC17W, car_bw_level_mode(2750, 5));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, car_bw_level_mode(2300, CAR_NLEVELS - 1));
 
+    /* a cap still clamps the start rungs both ways */
     car_t *c = calloc(1, sizeof(*c));
     car_io_t io = {0};
     car_init(c, &io, 6, 5);
-    car_set_max_level(c, car_max_level_for_bw(500));
+    car_set_max_level(c, 3);
     car_start_sender(c, 0);
     TEST_ASSERT_EQUAL_INT(3, c->snr_level);
     TEST_ASSERT_EQUAL_INT(3, c->peer_snr_level);
     TEST_ASSERT_EQUAL_INT(3, c->tx_level);
     TEST_ASSERT_EQUAL_INT(3, c->poll_level);
-    /* rung 0 is the session's floor; the rest of the ladder is everyone's */
+    /* the session's ladder is its bandwidth's: BW2300's until set */
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, car_session_level_mode(c, 0));
-    car_set_floor_mode(c, MERCURY_MODE_MFSK_N32);
+    car_set_bandwidth(c, 500);
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, car_session_level_mode(c, 0));
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, car_session_level_mode(c, 1));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16N1, car_session_level_mode(c, 5));
     free(c);
 }
 

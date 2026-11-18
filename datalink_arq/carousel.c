@@ -177,16 +177,35 @@ static uint32_t nav_lead(const car_t *c) { (void)c; return 0; }
 enum { M_DATA, M_POLL, M_REQ, M_STATUS };
 
 /* MFSK is the floor: ~10 dB below DATAC15, at 3 pieces per 13.5 s frame.
- * A session's floor is its own (car_set_floor_mode): BW500's is the 500 Hz
- * MFSK, the same frame in 26.2 s; every other rung is the same for all. */
+ * A session's ladder is its bandwidth's (car_set_bandwidth); both ends hold
+ * the same bandwidth once the ACCEPT is through.  BW2300's is the default.
+ * BW500's floor is the 500 Hz MFSK (the same frame in 26.2 s) and its top
+ * three rungs are 9-carrier modes in DATAC3's 562 Hz; BW2750's top two are
+ * 44-carrier modes (125-2812.5 Hz) for radios with a wider transmit
+ * passband.  The levels are the same on every ladder: the wire names a
+ * level, each end maps it to its session's mode. */
 static const int LADDER[CAR_NLEVELS] = {
     MERCURY_MODE_MFSK,
     FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
     FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
 };
+static const int LADDER_500[CAR_NLEVELS] = {
+    MERCURY_MODE_MFSK_N32,
+    FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
+    FREEDV_MODE_DATAN1, FREEDV_MODE_QAM16N1, FREEDV_MODE_QAM16N2,
+};
+static const int LADDER_2750[CAR_NLEVELS] = {
+    MERCURY_MODE_MFSK,
+    FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
+    FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17W, FREEDV_MODE_QAM16C2W,
+};
+static const int *ladder_for_bw(int bw_hz)
+{
+    return bw_hz == ARQ_BANDWIDTH_NARROW_HZ ? LADDER_500 : bw_hz == ARQ_BANDWIDTH_TACTICAL_HZ ? LADDER_2750 : LADDER;
+}
 static int lmode(const car_t *c, int lv)
 {
-    return lv == 0 && c->floor_mode ? c->floor_mode : LADDER[lv];
+    return (c->ladder ? c->ladder : LADDER)[lv];
 }
 
 static uint32_t burst_gap_ms(const car_t *c, int lv)
@@ -194,6 +213,7 @@ static uint32_t burst_gap_ms(const car_t *c, int lv)
     return lmode(c, lv) == FREEDV_MODE_QAM16C2 || mercury_mode_is_mfsk(lmode(c, lv)) ? 200 : 100;
 }
 int car_level_mode(int level) { return LADDER[level]; }
+int car_bw_level_mode(int bw_hz, int level) { return ladder_for_bw(bw_hz)[level]; }
 int car_session_level_mode(const car_t *c, int level) { return lmode(c, level); }
 static bool has_data(const car_t *c);
 static bool peer_direction_done(const car_t *c);
@@ -273,8 +293,9 @@ static uint32_t block_check(const car_t *c, uint8_t id, int K, const uint8_t (*p
 static int level_of_mode(int mode)
 {
     if (mercury_mode_is_mfsk(mode)) return 0;      /* either floor */
+    /* A mode is on one level of every ladder it is on. */
     for (int lv = 0; lv < CAR_NLEVELS; lv++)
-        if (LADDER[lv] == mode) return lv;
+        if (LADDER[lv] == mode || LADDER_500[lv] == mode || LADDER_2750[lv] == mode) return lv;
     return -1;
 }
 
@@ -368,9 +389,9 @@ static int piece_of(const car_t *c) { return c->piece ? c->piece : CAR_PIECE; }
 static int pieces_per_frame(const car_t *c, int lv) { return (mode_payload(lmode(c, lv)) - FRAME_HDR - SEG_HDR) / piece_of(c); }
 /* A rung whose first frame holds an inline poll and still a piece: not the
  * floor, nor DATAC15. */
-static bool inline_ok(int lv)
+static bool inline_ok(const car_t *c, int lv)
 {
-    return lv > 0 && mode_payload(LADDER[lv]) - FRAME_HDR - INLINE_CTL >= SEG_HDR + CAR_PIECE;
+    return lv > 0 && mode_payload(lmode(c, lv)) - FRAME_HDR - INLINE_CTL >= SEG_HDR + CAR_PIECE;
 }
 /* My next poll with a round rides in the round: on a rung that holds it,
  * and that my last round got an answer on (the peer listens there).  The one
@@ -380,7 +401,7 @@ static bool inline_ok(int lv)
  * continuation (sim, fade:-5 both ways seed 20). */
 static bool inline_poll(const car_t *c)
 {
-    return c->tx_level > 0 && inline_ok(c->tx_level) && c->ok_lv == c->tx_level;
+    return c->tx_level > 0 && inline_ok(c, c->tx_level) && c->ok_lv == c->tx_level;
 }
 static uint64_t round_air(const car_t *c, int lv, int n)
 {
@@ -949,7 +970,7 @@ static double level_rate(const car_t *c, int lv)   /* raw piece bytes per ms of 
  *     is a ceiling nothing at or above is chosen from, re-probed with backoff;
  *   - below it, selection uses (lost + 1/2) / (sent + 2), optimistic enough to
  *     climb, and the earned round size bounds what any trial can cost. */
-static float level_min_db(int lv);
+static float level_min_db(const car_t *c, int lv);
 static bool level_marginal(const car_t *c, int lv);
 
 /* A rung the SNR supports with room to spare gets the benefit of the doubt:
@@ -1043,9 +1064,14 @@ static void measure_level(car_t *c, int lv, int frames, double loss, uint64_t no
  * ceiling then locked out a DATAC3 and a DATAC1 that were delivering.
  * Evidence of delivery beats the inference. */
 /* The SNR a rung needs (ARQ_SNR_MIN_*). */
-static float level_min_db(int lv)
+static float level_min_db(const car_t *c, int lv)
 {
-    switch (LADDER[lv]) {
+    switch (c ? lmode(c, lv) : LADDER[lv]) {
+    case FREEDV_MODE_QAM16C2W: return ARQ_SNR_MIN_QAM16C2W_DB;
+    case FREEDV_MODE_DATAC17W: return ARQ_SNR_MIN_DATAC17W_DB;
+    case FREEDV_MODE_QAM16N2: return ARQ_SNR_MIN_QAM16N2_DB;
+    case FREEDV_MODE_QAM16N1: return ARQ_SNR_MIN_QAM16N1_DB;
+    case FREEDV_MODE_DATAN1:  return ARQ_SNR_MIN_DATAN1_DB;
     case FREEDV_MODE_QAM16C2: return ARQ_SNR_MIN_QAM16C2_DB;
     case FREEDV_MODE_DATAC17: return ARQ_SNR_MIN_DATAC17_DB;
     case FREEDV_MODE_DATAC1:  return ARQ_SNR_MIN_DATAC1_DB;
@@ -1097,16 +1123,16 @@ static void peer_data_heard(car_t *c, uint64_t now)
 }
 static bool level_marginal(const car_t *c, int lv)
 {
-    return c->snr_valid && c->snr_ema < level_min_db(lv) + SNR_GATE_DB;
+    return c->snr_valid && c->snr_ema < level_min_db(c, lv) + SNR_GATE_DB;
 }
 
 static bool level_gated(const car_t *c, int lv)
 {
-    return c->snr_valid && c->snr_ema < level_min_db(lv) - SNR_GATE_DB &&
+    return c->snr_valid && c->snr_ema < level_min_db(c, lv) - SNR_GATE_DB &&
            !(c->rung[lv].sent >= 3.0 && level_delivery(c, lv) >= 0.7);
 }
 
-float car_rung_gate_db(int lv) { return level_min_db(lv) - SNR_GATE_DB; }
+float car_rung_gate_db(int lv) { return level_min_db(NULL, lv) - SNR_GATE_DB; }
 
 static bool level_allowed(const car_t *c, int lv)
 {
@@ -1178,7 +1204,7 @@ void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *f
 static int keydown_cap_ms(const car_t *c, int lv, uint32_t max_ms)
 {
     int cap = (int)(max_ms / level_air(c, lv));
-    bool slow = LADDER[lv] == FREEDV_MODE_DATAC15 || LADDER[lv] == FREEDV_MODE_DATAC4;
+    bool slow = lmode(c, lv) == FREEDV_MODE_DATAC15 || lmode(c, lv) == FREEDV_MODE_DATAC4;
     if (slow && cap > SLOW_RUNG_FRAMES) cap = SLOW_RUNG_FRAMES;
     return cap > 15 ? 15 : cap < 1 ? 1 : cap;                          /* 4 bits */
 }
@@ -1354,7 +1380,7 @@ static int choose_level(const car_t *c, uint64_t now)
     for (int up = best + 1; up <= c->max_level; up++)
         if (c->rung[up].rounds && c->rung[up].round_at == c->polls && c->rung[up].sent < 3.0 &&
             c->rung[up].lost < 0.05 && level_allowed(c, up) && level_potential(c, up) > best_gp &&
-            !(c->snr_valid && c->snr_ema < level_min_db(up) - SNR_GATE_DB / 2)) {
+            !(c->snr_valid && c->snr_ema < level_min_db(c, up) - SNR_GATE_DB / 2)) {
             car_trace(c, "rx confirms lv=%d", up);
             return up;
         }
@@ -1385,7 +1411,7 @@ static int choose_level(const car_t *c, uint64_t now)
          * at 6.1-6.8 dB, DATAC17 (7 dB) was never tried, and the session
          * stayed on DATAC1; the build before reached DATAC17 there, and it
          * delivered. */
-        if (!c->rung[up].rounds && c->snr_valid && c->snr_ema < level_min_db(up) - SNR_GATE_DB / 2) break;
+        if (!c->rung[up].rounds && c->snr_valid && c->snr_ema < level_min_db(c, up) - SNR_GATE_DB / 2) break;
         if (!level_allowed(c, up)) {
             if (!reprobe_due(c, up, now)) break;
         } else if (c->rung[up].rounds && c->polls - c->rung[up].round_at < probe_every(c, up)) {
@@ -2438,7 +2464,20 @@ static void m_try(car_t *c, uint64_t now)
             car_trace(c, "tx: data came -- the ack goes with my round");
             m_enter(c, PH_RECV, now);
             c->offered = true;
-            m_plan(c, KD_BOTH, lv, poll_size(c, lv, now));
+            /* ...and the poll in it sized for the peer's answer, as every
+             * other poll is: a UUCP reply of 10 to 15 bytes was asked on the
+             * rung choose_level climbs to, DATAC1 or DATAC17 (7.4 s), and went
+             * behind a control frame, not inline (on air 2026-11-16: 8 to
+             * 12 s a reply, 4 s the other way).  Sim, UUCP's own messages, 30
+             * seeds: cliff:10 140 -> 114 s, fade:10 209 -> 155 s; nvis a tie
+             * over 90 (+0.6 %).  m_peer_expect, as m_start_recv and
+             * offer_both size theirs: with the peer's direction done,
+             * s_peer_expect is its backlog alone, and says 0 for a peer whose
+             * last frame said BL_NONE, which left the poll on lv. */
+            int n = poll_size(c, lv, now);
+            int sl = short_rung(c, lv, m_peer_expect(c), &n);
+            if (sl != lv) car_trace(c, "tx: the poll sized for the answer -- lv=%d n=%d, not lv=%d", sl, n, lv);
+            m_plan(c, KD_BOTH, sl, n);
         }
     }
     if (c->plan == KD_DONE && now < c->plan_not_before) {     /* waiting for my application */
@@ -3173,25 +3212,23 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->s_prev_lv = c->ok_lv = -1;
     c->rx_data_lv = -1;
     c->max_level = CAR_NLEVELS - 1;
-    c->floor_mode = MERCURY_MODE_MFSK;
+    c->ladder = NULL;
     c->io.max_keydown_ms = io->max_keydown_ms ? clamp_keydown_ms(io->max_keydown_ms) : g_max_keydown_ms;
 }
 
-void car_set_floor_mode(car_t *c, int mode)
+void car_set_bandwidth(car_t *c, int bw_hz)
 {
-    c->floor_mode = mercury_mode_is_mfsk(mode) ? mode : MERCURY_MODE_MFSK;
+    c->ladder = ladder_for_bw(bw_hz);
 }
 
-/* The top rung of each session bandwidth.  A BW500 session keeps everything
- * but the wideband modes (DATAC1, DATAC17, QAM16C2, 1.7-2.1 kHz): DATAC3
- * occupies 562 Hz and the MFSK floor 1000 Hz, kept for its reach.  Nothing
- * on the ladder is wider than 2.1 kHz yet, so BW2750 has BW2300's ladder;
- * a wider rung joins it here.  An unknown bandwidth gets the full ladder,
- * as before. */
+/* The top rung of each session bandwidth.  Every ladder now has all seven
+ * rungs (car_set_bandwidth): BW500's top three are 9-carrier modes in
+ * DATAC3's 562 Hz, BW2750's top two 44-carrier ones.  An unknown bandwidth
+ * gets the full ladder, as before. */
 static const struct { int bw_hz; int top_mode; } BW_TOP[] = {
-    { ARQ_BANDWIDTH_NARROW_HZ,   FREEDV_MODE_DATAC3  },
-    { ARQ_BANDWIDTH_FULL_HZ,     FREEDV_MODE_QAM16C2 },
-    { ARQ_BANDWIDTH_TACTICAL_HZ, FREEDV_MODE_QAM16C2 },
+    { ARQ_BANDWIDTH_NARROW_HZ,   FREEDV_MODE_QAM16N2  },
+    { ARQ_BANDWIDTH_FULL_HZ,     FREEDV_MODE_QAM16C2  },
+    { ARQ_BANDWIDTH_TACTICAL_HZ, FREEDV_MODE_QAM16C2W },
 };
 
 int car_max_level_for_bw(int bw_hz)
@@ -3282,6 +3319,18 @@ static void note_peer_ctl_deaf(car_t *c, bool deaf)
 }
 
 bool car_peer_ctl_deaf(const car_t *c) { return c && ctl_on_floor(c); }
+
+/* The peer hears my control mode, but not by much: how it last said it hears
+ * me, moved by my own readings since where I have them (peer_hears_me_db),
+ * is below CTL_LOSS_OFF_DB (-3 dB), the band where on air DATAC16 got
+ * through only part of the time (ctl_deaf_on_asks).  False with no report. */
+bool car_peer_hears_ctl_marginal(const car_t *c)
+{
+    if (!c || !c->peer_snr_ms || isnan(c->peer_snr_db)) return false;
+    float db = peer_hears_me_db(c);
+    if (isnan(db)) db = c->peer_snr_db;
+    return db < CTL_LOSS_OFF_DB;
+}
 
 void car_seed_ctl_deaf(car_t *c, uint8_t mine, uint8_t peers)
 {

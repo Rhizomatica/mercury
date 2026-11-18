@@ -155,7 +155,8 @@ typedef struct {
     int      snr_level;             /* where the SNR measured here starts the peer */
     int      max_level;             /* the highest rung the session's bandwidth
                                      * allows (car_set_max_level) */
-    int      floor_mode;            /* rung 0's mode (car_set_floor_mode) */
+    const int *ladder;              /* the session bandwidth's modes, rung by
+                                     * rung (car_set_bandwidth); NULL: BW2300's */
     uint8_t  ctl_deaf;              /* I hear the peer below the control mode
                                      * (CAR_DEAF_*): its control must reach me
                                      * on MFSK (reported) */
@@ -307,9 +308,13 @@ void car_set_max_level(car_t *c, int lv);
 /* The highest rung a session bandwidth (Hz, VARA's BW500/BW2300/BW2750)
  * allows. */
 int  car_max_level_for_bw(int bw_hz);
-/* The session's floor, rung 0 (arq_floor_mode of its bandwidth): the 1 kHz
- * MFSK unless set.  Both ends set the same, after car_init. */
-void car_set_floor_mode(car_t *c, int mode);
+/* The session's ladder, its bandwidth's (Hz): BW500's floor is the 500 Hz
+ * MFSK and its top rungs the 9-carrier modes, BW2750's top rungs the
+ * 44-carrier ones; BW2300's unless set.  Both ends set the same, after
+ * car_init. */
+void car_set_bandwidth(car_t *c, int bw_hz);
+/* A level's mode on a bandwidth's ladder (car_level_mode: BW2300's). */
+int  car_bw_level_mode(int bw_hz, int level);
 /* The latest a frame on this mode decodes after its end, on time: D in
  * docs/CAROUSEL-TURNS.md R4 (1 s OFDM, 4.5 s MFSK).  A frame decoded later
  * is used, but not answered: the slot its end opened has passed. */
@@ -339,6 +344,10 @@ void car_seed_snr(car_t *c, float mine, float peers);
 /* The peer hears us below the control mode, as it last reported: our control
  * frames go on MFSK.  The session's own control frames follow the same rule. */
 bool car_peer_ctl_deaf(const car_t *c);
+/* The peer hears my control mode, but below -3 dB as it last reported
+ * (moved by my readings since): a frame there gets through only part of the
+ * time.  False with no report. */
+bool car_peer_hears_ctl_marginal(const car_t *c);
 void car_start_sender(car_t *c, uint64_t now);
 void car_start_receiver(car_t *c, uint64_t now);
 

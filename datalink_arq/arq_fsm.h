@@ -99,8 +99,8 @@ typedef struct
      * frame itself (RX_CAROUSEL). */
     uint8_t  session_id;
     int      mode;
-    uint8_t  payload[1280];           /* >= largest user payload: QAM16C2
-                                       * carries 1213 - 8 = 1205 bytes      */
+    uint8_t  payload[1280];           /* >= largest user payload: DATAC17
+                                       * carries 1184 - 8 = 1176 bytes      */
     size_t   payload_len;
 
     /* RX_CAROUSEL: the control decoder (DATAC16) produced it; otherwise the
@@ -458,5 +458,9 @@ bool arq_conn_state_has_peer(arq_conn_state_t s);
  * @brief Human-readable name for an event (for log output).
  */
 const char *arq_event_name(arq_event_id_t ev);
+
+/* tx_inflight_bytes as last set, readable without the session lock (BUFFER
+ * from the TCP reactor). */
+int arq_fsm_tx_inflight_published(void);
 
 #endif /* ARQ_FSM_H_ */
