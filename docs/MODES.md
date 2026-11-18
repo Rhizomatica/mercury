@@ -118,8 +118,29 @@ same on 44 carriers (94-2844 Hz, +20 % and +19 %), BW500's DATAN1, QAM16N1
 and QAM16N2 9-carrier modes on repeat-accumulate codes built by
 `utils/ldpc_ira_peg.py`.  The DVB-S2 short codes of rates 2/5 to 4/5
 (`utils/ldpc_dvbs2_gen.py`) are in the code table; rates 3/4 and up floor
-under fading and are not used.  The history below describes the
-1.9.x modes.
+under fading and are not used.
+
+**16-QAM under fading: the preamble detector.**  The 16-QAM rungs (QAM16C2,
+QAM16C2W, QAM16N1, QAM16N2) kept codec2's default preamble-detector
+threshold, 0.30, where DATAC1, DATAC3 and DATAC17 use 0.10.  Under CCIR Poor
+a fade over both the preamble and the postamble then lost the frame at any
+S/N: QAM16C2 found 33 of 40 bursts from +18 to +28 dB (37 of 40 on
+Moderate), QAM16C2W 30-34, and the unique word never failed
+(`RS_DIAG=1 utils/rung_sweep`).  At 0.10 every burst is found.
+
+| Delivered (40 bursts) | +18/+20 dB | +23/+24 dB | +28 dB |
+|---|---|---|---|
+| QAM16C2, Poor (0.30 -> 0.10) | 19 -> 20 | 31 -> 36 | 32 -> 37 |
+| QAM16C2, Moderate | -- | 37 -> 40 | 37 -> 40 |
+| QAM16C2W, Moderate | 25 -> 32 | 32 -> 37 | 32 -> 38 |
+| QAM16C2W, Poor | 20 -> 20 | 25 -> 30 | 29 -> 37 |
+
+QAM16N1 and QAM16N2 under Poor, 160 bursts: equal or better at every point
+(QAM16N2 113/125/126 -> 117/125/128 at +20/+24/+28 dB).  White noise is
+unchanged, and no trigger came from 600 s of white noise or from DATAC1, 3,
+4, 16 and 17 frames.
+
+The history below describes the 1.9.x modes.
 
 Goodput, not raw bps, picks the ladder order.  Under the old stop-and-wait ARQ,
 where every frame paid a ~5.3 s ACK cycle, that was DATAC1 ≈ 50 B/s, DATAC17

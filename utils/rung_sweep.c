@@ -33,6 +33,11 @@
  *
  * Channels: awgn, or a chanutil preset (ccir-poor is MODES.md's MPP).
  *
+ * RS_DIAG=1 adds, per point, how the receiver found the bursts: preamble
+ * detections, postamble detections, and unique-word failures.  A burst never
+ * detected at all is a detector miss; one detected and then dropped is the
+ * unique word.
+ *
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -49,6 +54,7 @@
 #include "freedv_api.h"
 #include "ldpc_codes.h"
 #include "ofdm_internal.h"
+#include "freedv_api_internal.h"
 
 #define FS 8000.0
 #define COMMON_PEAK 4000.0
@@ -255,6 +261,7 @@ int main(int argc, char **argv) {
     if (chan != CHAN_AWGN && !(ch = chanutil_open(chan, (float)(a_tone - s), 1234u))) return 1;
 
     int delivered = 0, acquired = 0, nest = 0;
+    int pre0 = rx->ofdm->pre, post0 = rx->ofdm->post, uwf0 = rx->ofdm->uw_fails;
     double achieved = 0.0;
     float est = 0.0f;
     bench_seq tailseq = {0};
@@ -288,6 +295,9 @@ int main(int argc, char **argv) {
     if (nest) snprintf(reads, sizeof(reads), "%+7.1f", est / nest);
     printf("  %+7.1f     %+7.1f      %7s      %3d/%-3d     %3d/%-3d   %6.0f\n", s, achieved / trials, reads,
            delivered, trials, acquired, trials, rate * delivered / trials);
+    if (getenv("RS_DIAG"))
+      printf("      diag: pre %d post %d uw_fails %d\n", rx->ofdm->pre - pre0, rx->ofdm->post - post0,
+             rx->ofdm->uw_fails - uwf0);
     fflush(stdout);
   }
 

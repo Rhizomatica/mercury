@@ -126,6 +126,14 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->state_machine = "data";
     config->amp_est_mode = 1;
     config->tx_bpf_en = true;
+    /* The preamble detector's threshold, as DATAC1, DATAC3 and DATAC17: at
+       the default 0.30 a fade on the preamble and the postamble lost the
+       frame, at any S/N (utils/rung_sweep, 40 bursts: CCIR Poor 33/40
+       found, CCIR Moderate 37/40, the unique word never the cause).  At
+       0.10 all 40 are found; QAM16C2W, QAM16N1 and QAM16N2 take it from
+       here.  No trigger on 600 s of white noise or on DATAC1/3/4/16/17
+       frames. */
+    config->timing_mx_thresh = 0.10f;
     /* Clipped, as every other data mode: unclipped it peaks 11.4 dB over its
        average, so a peak-limited transmitter sent it 4.7 dB weaker than
        DATAC17 at the same setting.  Drive 2.0 and no make-up gain bring the
