@@ -14,7 +14,12 @@ seed after a cold run wrote its hint):
 
 The 32 KB transfer at 25 dB AWGN measures 1954 bps. QAM16C2's raw piece rate
 is about 2.6 kbps (`arq_mode_table`: 1213 B payload in 3.70 s, minus frame
-and segment headers), so the session achieves **~75 % of the top rung**. The
+and segment headers), so the session achieves **~75 % of the top rung**.
+(A frame-time note, since the two docs disagree on purpose: FINDINGS §3's
+probe frames are the bare freedv burst -- 1215 B in 3.30 s, DATAC16 16 B in
+3.30 s -- while this doc quotes `arq_mode_table`'s session slot: payload
+minus headers, preamble and margin counted -- 1213 B in 3.70 s, DATAC16
+14 B in 3.74 s.) The
 missing quarter is, in the order the efficiency report priced it:
 
 - **the connect** (7.8–7.9 s of DATAC16 in every run, §1);
@@ -40,7 +45,7 @@ And two ceilings protocol work cannot move:
 
 | # | candidate | layer | expected gain | cost |
 |---|---|---|---|---|
-| A | per-peer rung memory | protocol, receiver-only, no wire change | measured below: -11 % clean, four of ten fade seeds to -17 %; +6 % cliff:8, +3..+18 % nvis — off by default | small: a state file + seeding the estimator |
+| A | per-peer rung memory | protocol, receiver-only, no wire change | measured below: -11 % clean, three of ten fade seeds to -17 %; +6 % cliff:8, +3..+18 % nvis — off by default | small: a state file + seeding the estimator |
 | B | HARQ in the carousel's retx path | modem + protocol glue | large at low SNR and under fading | medium: hook exists, integration open |
 | C | clipped QAM16C2 (2.0/1.0) | modem config, TX-only | fading crossover vs DATAC17 ~3 dB earlier | one line, held for the OTA bench (#464) |
 | D | trim the connect handshake | protocol | ~4 s a session | small, touches the connect FSM |
@@ -54,7 +59,7 @@ Measured against trunk, 6 channels x 5 seeds, bulk one-way, warm = the same
 seed run again after its cold run wrote the hint (the prototype branch,
 `MERCURY_RUNG_HINTS=<file>`; cold cells fresh):
 
-| channel | cold median s | warm median s | median delta | per-seed delta |
+| channel | cold median s | warm median s | median of per-seed deltas | per-seed delta |
 |---|---|---|---|---|
 | awgn:0.02 | 52.1 | 46.3 | **-11.1 %** | -11 x5 |
 | cliff:3 | 361.7 | 361.7 | 0 | 0 x5 |
@@ -64,8 +69,8 @@ seed run again after its cold run wrote the hint (the prototype branch,
 | nvis | 1482.8 | 1646.5 | **+3.2 %** | +3, +18, +3, +10, 0 |
 
 The wins are where a rung clearly delivers and the cold session spends
-early rounds failing on the one above it; the fade seeds split — four of
-ten win by 12–17 %, one loses 2 %. The costs are deterministic, and they
+early rounds failing on the one above it; the fade seeds split — three of
+ten win by 12–17 %, one by 4 %, one loses 2 %. The costs are deterministic, and they
 are the design's real edge: on cliff:8, where the cold session never
 leaves DATAC17, the hint buys nothing but re-aligns the poll schedule
 (+6 %, all five seeds); on nvis, where nothing delivers above ~0.7, the
@@ -81,8 +86,9 @@ re-measuring.
 
 That is why the branch ships **off by default**: `MERCURY_RUNG_MEMORY=1`
 turns it on. Where the hint has something solid to say it buys a tenth of
-the session (awgn, all five seeds) and takes four of the ten fade seeds by
-12–17 %; where the channel never lets a rung deliver it costs 3–18 %.
+the session (awgn, all five seeds) and takes three of the ten fade seeds by
+12–17 %, a fourth by 4 %; where the channel never lets a rung deliver it
+costs 3–18 %.
 The open question for the on-air A/B is whether the hint should carry a
 "settled" mark only when the top rung delivered cleanly, so a struggling
 channel writes no hint at all — that keeps the clean and fade wins and
