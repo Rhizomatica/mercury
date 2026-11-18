@@ -284,6 +284,7 @@ typedef struct {
     uint8_t  peer_hi;
     uint8_t  polled_base;           /* the window base my last poll reported */
     bool     round_fresh;           /* this round carried a block I do not have yet */
+    int      loss_fires;            /* #604 experiment: floor LOSS set this session */
     int      stale_rounds;          /* floor rounds in a row that carried nothing new */
     const char *failed;             /* car_failed() */
     bool     peer_hi_known;

@@ -108,7 +108,8 @@ static bool g_short_rung = true;
 void car_set_short_rung(bool on) { g_short_rung = on; }
 /* #604 experiment: bit 0 the receiver's "done" on the floor after a stale
  * round; bit 1 the sender control-deaf after two floor rounds unanswered
- * (bit 2: after one).  Default off; the sim takes CAR_DONE_FIX. */
+ * (bit 2: after one; bit 3: its hold doubled on each refire; bit 4: from the
+ * second, only the hold clears it).  Default off; the sim takes CAR_DONE_FIX. */
 static int g_done_fix = 0;
 void car_set_done_fix(int mask) { g_done_fix = mask; }
 enum { BL_NONE, BL_SMALL, BL_MEDIUM, BL_LARGE };
@@ -2739,7 +2740,9 @@ static void m_decide_send(car_t *c, uint64_t now)
             car_trace(c, "tx: no answer -- continuing (%d)", c->floor_silent);
             if ((g_done_fix & 2) && c->floor_silent >= ((g_done_fix & 4) ? 1 : 2) && !c->ctl_deaf && now < c->heard_ms + SILENT_MS) {
                 c->ctl_deaf = CAR_DEAF_LOSS;
-                arm(c, CAR_T_F, now + LOSS_HOLD_MS);
+                int sh = (g_done_fix & 8) ? (c->loss_fires < 4 ? c->loss_fires : 4) : 0;
+                c->loss_fires++;
+                arm(c, CAR_T_F, now + ((uint64_t)LOSS_HOLD_MS << sh));
                 car_trace(c, "%d floor rounds unanswered, the peer heard %d s ago: its control does not "
                           "reach me -- control on MFSK", c->floor_silent, (int)((now - c->heard_ms) / 1000));
             }
@@ -3447,7 +3450,7 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
              * clear of the band DATAC16 decodes part of takes me out.  The
              * reading as it would have moved the estimate, control readings
              * included, as for the test below (#545). */
-            if (ema >= CTL_LOSS_OFF_DB) {
+            if (ema >= CTL_LOSS_OFF_DB && !((g_done_fix & 16) && c->loss_fires >= 2)) {
                 c->ctl_deaf = 0;
                 car_trace(c, "I hear the peer well above the control mode (%.1f dB): control on it again",
                           ema);
