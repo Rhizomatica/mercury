@@ -402,6 +402,7 @@ bool car_slot_reserved(const car_t *m, uint64_t start, uint64_t end);
  * car_wants_nav() says the peer may not sense it otherwise (car_set_nav_below_db). */
 void car_set_nav_ms(uint32_t ms);
 void car_set_short_rung(bool on);   /* small backlogs on the shortest rung (default on) */
+void car_set_done_fix(int mask);    /* #604 experiment */
 /* The longest keydown this station keys, in ms (0: the protocol's 30 s
  * round); rounds it accepts stay at 30 s (arq:max_keydown_s, #445).  A
  * session takes it at car_init unless its car_io_t sets one. */

@@ -106,6 +106,11 @@ void car_set_nav_ms(uint32_t ms) { g_nav_ms = ms; }
  * older peer leaves zero: it is never asked to do anything new. */
 static bool g_short_rung = true;
 void car_set_short_rung(bool on) { g_short_rung = on; }
+/* #604 experiment: bit 0 the receiver's "done" on the floor after a stale
+ * round; bit 1 the sender control-deaf after two floor rounds unanswered
+ * (bit 2: after one).  Default off; the sim takes CAR_DONE_FIX. */
+static int g_done_fix = 0;
+void car_set_done_fix(int mask) { g_done_fix = mask; }
 enum { BL_NONE, BL_SMALL, BL_MEDIUM, BL_LARGE };
 #define BL_SMALL_BYTES  90    /* one DATAC3 frame's pieces, with the check and a margin */
 #define BL_MEDIUM_BYTES 460   /* ...one DATAC1 frame's */
@@ -493,10 +498,10 @@ static void encode_ctl(const msg_t *m, uint8_t *b)
 
 /* A control frame: on the control mode, or on MFSK behind CTL_FLOOR_MARK to a
  * control-deaf peer (see ctl_on_floor). */
-static void put_ctl(const car_t *c, car_frame_t *f, const msg_t *m)
+static void put_ctl_ex(const car_t *c, car_frame_t *f, const msg_t *m, bool floor)
 {
     f->gap_ms = 0;
-    if (ctl_on_floor(c)) {
+    if (floor) {
         /* A frame fills its mode: the modem refuses anything shorter (on
          * the real modem a 15-byte MFSK control frame never went out). */
         int room = mode_payload(lmode(c, 0));
@@ -509,6 +514,7 @@ static void put_ctl(const car_t *c, car_frame_t *f, const msg_t *m)
         f->mode = ARQ_CONTROL_MODE; f->len = CAR_POLL_BYTES;
     }
 }
+static void put_ctl(const car_t *c, car_frame_t *f, const msg_t *m) { put_ctl_ex(c, f, m, ctl_on_floor(c)); }
 
 static bool decode_ctl(const car_t *c, const uint8_t *b, size_t len, msg_t *m)
 {
@@ -1915,6 +1921,11 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
 {
     car_frame_t *fr = c->txbuf;
     msg_t m;
+    /* #604: a "done" answering a round that brought nothing new -- the
+     * sender did not hear my last one -- goes on the floor */
+    bool done_floor = (g_done_fix & 1) && !n && c->io.pattern && peer_direction_done(c) &&
+                      c->round_seen > 0 && !c->round_fresh && !ctl_on_floor(c);
+    if (done_floor) car_trace(c, "rx: a round after my done -- the done on the floor");
     fill_poll(c, &m);
     m.type = M_POLL;
     /* ...saying my application has hung up, once I have all of M's: M with
@@ -1977,7 +1988,7 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
         keydown(c, fr, nd);
         return nd;
     }
-    put_ctl(c, &fr[0], &m);
+    put_ctl_ex(c, &fr[0], &m, done_floor || ctl_on_floor(c));
     keydown(c, fr, 1 + nd);
     return nd;
 }
@@ -2726,6 +2737,12 @@ static void m_decide_send(car_t *c, uint64_t now)
          * many, ask the receiver where it stands. */
         if (c->m_kind == KD_ROUND && c->last_lv == 0 && c->io.pattern && ++c->floor_silent <= FLOOR_SILENT_MAX) {
             car_trace(c, "tx: no answer -- continuing (%d)", c->floor_silent);
+            if ((g_done_fix & 2) && c->floor_silent >= ((g_done_fix & 4) ? 1 : 2) && !c->ctl_deaf && now < c->heard_ms + SILENT_MS) {
+                c->ctl_deaf = CAR_DEAF_LOSS;
+                arm(c, CAR_T_F, now + LOSS_HOLD_MS);
+                car_trace(c, "%d floor rounds unanswered, the peer heard %d s ago: its control does not "
+                          "reach me -- control on MFSK", c->floor_silent, (int)((now - c->heard_ms) / 1000));
+            }
             m_plan(c, KD_ROUND, 0, 0);
             return;
         }
