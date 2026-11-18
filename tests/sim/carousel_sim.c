@@ -351,9 +351,13 @@ static bool round_marked_out(const station_t *s, int lv)
     while (*p && *p != ' ') p++;
     return p[-1] == 'x';
 }
+static int done_polls, done_heard, floor_continues;
 static void io_trace(void *ctx, const char *line)
 {
     station_t *s = ctx;
+    if (!strcmp(line, "rx -> done")) done_polls++;
+    if (!strncmp(line, "tx polled lv=", 13) && strstr(line, " n=0 ")) done_heard++;
+    if (!strncmp(line, "tx: no answer -- continuing (", 29)) floor_continues++;
     /* the fall-back to ok_lv taken as the turn passes (m_decide_recv, #448) is
      * traced right after "turn: mine"; m_decide_send's is not */
     if (s->turn_mine && !strncmp(line, "tx: no answer on lv=", 20) && strstr(line, "back to")) recv_fallbacks++;
@@ -736,6 +740,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     collisions = 0;
     buffer_overclaim = 0; buffer_break_drops = 0;
     buffer_unstopped_last[0] = buffer_unstopped_last[1] = 0;
+    done_polls = done_heard = floor_continues = 0;
     recv_fallbacks = 0;
     app_wait_says = 0;
     gated_probes = 0;
@@ -817,7 +822,8 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     car_start_receiver(&S[1].car, 0);
     car_start_sender(&S[0].car, 0);
 
-    uint64_t done_ms = 0;
+    uint64_t done_ms = 0, confirm_ms = 0;
+    bool wait_confirm = getenv("CAR_CONFIRM") != NULL;
     for (;;) {
         uint64_t t = next_event_time();
         for (int i = 0; i < 2; i++) {
@@ -893,9 +899,16 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
          * application ahead of its block's check, and a corrupt piece in a
          * block whose check piece had not come yet passed as a completed
          * transfer. */
-        if (S[1].rx_len >= S[0].tx_len && S[0].rx_len >= S[1].tx_len &&
+        if (!done_ms && S[1].rx_len >= S[0].tx_len && S[0].rx_len >= S[1].tx_len &&
             car_rx_verified(&S[0].car) && car_rx_verified(&S[1].car) &&
-            (!script || sc_done())) { done_ms = now_ms; break; }
+            (!script || sc_done())) {
+            done_ms = now_ms;
+            if (!wait_confirm) break;
+        }
+        /* CAR_CONFIRM: ...and each sender knows it (its blocks retired). */
+        if (done_ms && wait_confirm &&
+            car_tx_inflight(&S[0].car) == 0 && S[0].tx_read == S[0].tx_len &&
+            car_tx_inflight(&S[1].car) == 0 && S[1].tx_read == S[1].tx_len) { confirm_ms = now_ms; break; }
     }
     while (nev) { event_t e; pop(&e); free(e.bytes); }
 
@@ -904,9 +917,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->intact = !memcmp(S[1].rx, S[0].tx, S[1].rx_len < S[0].tx_len ? S[1].rx_len : S[0].tx_len) &&
                   !memcmp(S[0].rx, S[1].tx, S[0].rx_len < S[1].tx_len ? S[0].rx_len : S[1].tx_len);
     res->done_ms = done_ms;
+    res->confirm_ms = confirm_ms;
+    res->done_polls = done_polls; res->done_heard = done_heard;
+    res->floor_continues = floor_continues;
     res->air_ms[0] = S[0].air_ms; res->air_ms[1] = S[1].air_ms;
     res->max_kd_ms[0] = S[0].max_kd_ms; res->max_kd_ms[1] = S[1].max_kd_ms;
-    now_ms = done_ms ? done_ms : limit_ms;              /* ...and the silence still running */
+    now_ms = confirm_ms ? confirm_ms : done_ms ? done_ms : limit_ms;   /* ...and the silence still running */
     for (int i = 0; i < 2; i++) { heard(&S[i]); res->silent_ms[i] = S[i].silent_ms; }
     res->msgs = script ? sc_n : 0;
     for (int k = 0; k < res->msgs; k++)

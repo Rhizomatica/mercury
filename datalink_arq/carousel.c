@@ -2753,6 +2753,57 @@ static void ctl_deaf_on_asks(car_t *c, uint64_t now)
               LOSS_HOLD_MS / 1000);
 }
 
+/* My floor rounds unanswered while the peer is still heard: the same
+ * evidence at the floor, where I do not ask (FLOOR_SILENT_MAX).  S answers a
+ * floor round with a pattern, which gets through where DATAC16 does not, or
+ * with a poll on DATAC16 -- every FLOOR_POLL_EVERY rounds, and its "done"
+ * when it has all I sent.  Two rounds in a row with nothing heard say those
+ * polls are lost on their way to me, so I set CAR_DEAF_LOSS as for the asks,
+ * and my next round's frames tell S to put its control on MFSK, where I now
+ * listen for it.
+ *
+ * Only I can make that switch: I time my wait for S's answer, and bind my
+ * decoder, by my own bit.  S putting its "done" on MFSK on its own, after a
+ * round that brought it nothing new, keyed it out of my slot and onto my next
+ * round (sim, ctlloss:-9:-3:0.85, 50 seeds: 9 runs past the 240 s watchdog,
+ * against 1).
+ *
+ * The floor is S's direction as much as mine: a round of mine S did not hear
+ * also goes unanswered, and then S's control goes on MFSK for nothing -- a
+ * 13.5 s frame, 27 s at BW500 -- until the hold or a reading ends it.
+ *
+ * Without the SNR test of ctl_deaf_on_asks: here my reading of S is at
+ * CTL_LOSS_OFF_DB (the K7EK -> VE4KLM path of 2026-11-15 in the sim: -3 dB,
+ * most of S's DATAC16 lost) and the test would never let it set, while the
+ * first reading clears it as before.
+ *
+ * Sim (#604), done_tail 1..50, A753, from S having everything to my knowing
+ * it, ctlloss:-9:-3:0.85: 166.6 -> 90.6 s median, 252.2 -> 138.3 s worst, my
+ * longest silence 280.2 -> 166.4 s (runs past the 240 s watchdog 1 -> 0); at
+ * BW500 141.5 -> 103.7 s median, 278.0 -> 164.8 s worst, past 240 s 22 -> 0.
+ * At 0.5 the worst 218.2 -> 138.3 s; with no loss the median unchanged.
+ * carousel_bench, 30 seeds, 8 KB, bytes in 30 min: cliff:-7, cliff:-5/-7
+ * bidir, step:10:-12, nvis, awgn:0.25, ctlloss at 0.5 unchanged;
+ * ctlloss:-9:-3:0.85 +1 % (+4 % at BW500), fade:-5 +0.7 % (26 -> 29 runs
+ * finished), nvis bidir -2 %, fade:-5 bidir -1.6 %.  The cost is at BW500,
+ * where my peer's MFSK control is a 27 s frame: fade:-5 -3.8 % (60 seeds),
+ * the fade taking S's polls as it takes its "done".  After one round instead
+ * of two the tail was 52.7 s, but cliff:-7 finished 19 runs of 30, not 26.
+ * Held for LOSS_HOLD_MS as for the asks: doubling the hold on each refire, or
+ * keeping it past a reading from the second on, changed nothing measurable
+ * (within 1.3 %): here the first reading, not the hold, ends it. */
+#define FLOOR_SILENT_LOSS 2
+static void ctl_deaf_on_floor_silence(car_t *c, uint64_t now)
+{
+    if (c->floor_silent < FLOOR_SILENT_LOSS || c->ctl_deaf || !c->io.pattern || now >= c->heard_ms + SILENT_MS)
+        return;
+    c->ctl_deaf = CAR_DEAF_LOSS;
+    arm(c, CAR_T_F, now + LOSS_HOLD_MS);
+    car_trace(c, "%d floor rounds unanswered, the peer heard %d s ago: its control does not reach me "
+              "-- control on MFSK for %d s", c->floor_silent, (int)((now - c->heard_ms) / 1000),
+              LOSS_HOLD_MS / 1000);
+}
+
 /* LOSS_HOLD_MS over: my control back to what my reading says. */
 static void ctl_loss_expired(car_t *c)
 {
@@ -2778,6 +2829,7 @@ static void m_decide_send(car_t *c, uint64_t now)
          * many, ask the receiver where it stands. */
         if (c->m_kind == KD_ROUND && c->last_lv == 0 && c->io.pattern && ++c->floor_silent <= FLOOR_SILENT_MAX) {
             car_trace(c, "tx: no answer -- continuing (%d)", c->floor_silent);
+            ctl_deaf_on_floor_silence(c, now);
             m_plan(c, KD_ROUND, 0, 0);
             return;
         }
