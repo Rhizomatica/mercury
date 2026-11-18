@@ -2732,12 +2732,14 @@ static void ctl_deaf_on_asks(car_t *c, uint64_t now)
  * round (sim, ctlloss:-9:-3:0.85, 50 seeds: 9 runs past the 240 s watchdog,
  * against 1).
  *
+ * The floor is S's direction as much as mine: a round of mine S did not hear
+ * also goes unanswered, and then S's control goes on MFSK for nothing -- a
+ * 13.5 s frame, 27 s at BW500 -- until the hold or a reading ends it.
+ *
  * Without the SNR test of ctl_deaf_on_asks: here my reading of S is at
  * CTL_LOSS_OFF_DB (the K7EK -> VE4KLM path of 2026-11-15 in the sim: -3 dB,
  * most of S's DATAC16 lost) and the test would never let it set, while the
- * first reading clears it as before.  The floor is S's direction as much as
- * mine: a round of mine S did not hear also goes unanswered, and costs S's
- * control a 13.5 s MFSK frame until the hold or a reading ends it.
+ * first reading clears it as before.
  *
  * Sim (#604), done_tail 1..50, A753, from S having everything to my knowing
  * it, ctlloss:-9:-3:0.85: 166.6 -> 90.6 s median, 252.2 -> 138.3 s worst, my
