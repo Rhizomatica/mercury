@@ -420,12 +420,15 @@ float car_rung_gate_db(int lv);
 /* The session's own control keydowns (its DISCONNECT) follow the turn rules
  * too.  The caller: car_free_at() is the earliest time from now a keydown of
  * len ms misses every slot the callee could be using; once one has gone out,
- * car_log_ctl() keeps the callee's reply (tg ms after it) clear of the next.
+ * car_log_disconnect() keeps the callee's reply (tg ms after it) clear of the
+ * next; car_log_ctl() does the same for another keydown of mine that ends in
+ * the teardown (one an ABORT cut short).
  * The callee: car_request_end() makes its next slot call io.end instead of
  * answering -- it never keys a DISCONNECT on a timer of its own. */
 bool     car_is_master(const car_t *c);
 uint64_t car_free_at(const car_t *c, uint64_t now, uint64_t len);
 void     car_log_ctl(car_t *c, uint64_t end, uint32_t tg);
+void     car_log_disconnect(car_t *c, uint64_t end, uint32_t tg);
 void     car_request_end(car_t *c);
 /* The callee whose application has hung up while its DISCONNECT waits for
  * its data to be acknowledged: car_wish_end() makes its polls say so (type

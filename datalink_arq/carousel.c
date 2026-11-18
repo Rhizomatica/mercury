@@ -3701,12 +3701,28 @@ uint64_t car_free_at(const car_t *c, uint64_t now, uint64_t len)
     return c->master ? m_free_from(c, now, len) : now;
 }
 
-/* My control keydown that ended at end; the peer may answer it tg later, as
- * the session's control (MFSK to a control-deaf end), up to D late. */
+/* A keydown of mine that ended at end while the session tears down (one cut
+ * by an ABORT, say); the peer may answer it tg later, as the session's
+ * control (MFSK to a control-deaf end), up to D late: the longest control
+ * answer there is, the floor frame. */
 void car_log_ctl(car_t *c, uint64_t end, uint32_t tg)
 {
     if (!c->master) return;
     m_note(c, KD_REQ, s_ctl_ms(c), my_ctl_d(c), 0, 0);
+    m_log_add(c, end);
+    c->mlog[c->nmlog - 1].tg = tg;
+}
+
+/* My DISCONNECT, which ended at end: the peer answers it on the control mode,
+ * or the floor when my last frames told it I am deaf to the control mode, as
+ * a poll's slot (m_key_plan).  car_log_ctl's floor-sized slot held a lost
+ * DISCONNECT's retry 30 s after it at 500 Hz (26.6 s of MFSK), past BPQ32's
+ * ABORT, and the retry never went (on air, KG9NI and K7EK, 40 m, 16 and 17
+ * Nov 2026: the callee to its 240 s watchdog, three times). */
+void car_log_disconnect(car_t *c, uint64_t end, uint32_t tg)
+{
+    if (!c->master) return;
+    m_note(c, KD_REQ, s_ctl_for(c, c->ctl_deaf), my_ctl_d(c), 0, 0);
     m_log_add(c, end);
     c->mlog[c->nmlog - 1].tg = tg;
 }

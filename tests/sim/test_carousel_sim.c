@@ -1158,6 +1158,85 @@ void test_car_step_drop_watchdog_waits_for_the_floor_answer(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(runs, done, what);
 }
 
+/* On air, 2026-11-16 18:32 (KG9NI calling K7EK, 1.9.24): K7EK sent its BBS's
+ * last 3 bytes, KG9NI's BPQ32 hung up as they arrived, and KG9NI's one
+ * DISCONNECT went unheard.  Its retry waited for K7EK's answer slot until
+ * 34 s after the host's DISCONNECT, BPQ32 ABORTed at 30.8 s ("no more
+ * retries"), and K7EK sat out its 240 s watchdog.  Returns, for one seed, the
+ * ms from the host's DISCONNECT to the caller's second DISCONNECT keydown (0:
+ * none within 60 s); with abort_at_ms, the caller's host ABORTs then, and
+ * *told says whether the callee left CONNECTED within 60 s of it. */
+static uint64_t lost_disconnect_retry_ms(uint64_t seed, int bw_hz, uint64_t abort_at_ms, bool *told)
+{
+    int bw = arq_conn.bw, sbw = arq_test_session_bw_hz;
+    arq_conn.bw = bw_hz;
+    arq_test_session_bw_hz = bw_hz;
+    sim_t *s = make_sim(seed, 0.0);
+    sim_set_snr_asym(s, 7.0, -3.0);         /* B hears A at +7, A hears B at -3 */
+    connect_ab(s);
+    for (int i = 0; i < 1200 && !(state(sim_a(s)) == ARQ_CONN_CONNECTED &&
+                                  state(sim_b(s)) == ARQ_CONN_CONNECTED); i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    sim_run_until_idle(s, 20000);
+    static uint8_t rx[64];
+    uint8_t fq[3] = { 'F', 'Q', '\r' };
+    sim_endpoint_queue_tx(sim_b(s), fq, sizeof(fq));
+    for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)) < sizeof(fq); i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_EQUAL_size_t(sizeof(fq), sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)));
+    arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+    sim_inject(s, sim_a(s), &disc);
+    /* everything of A's lost until its first DISCONNECT is off the air */
+    sim_set_dir_mode_per(s, 0, FREEDV_MODE_DATAC16, 1.0);
+    const arq_session_t *sa = sim_endpoint_session(sim_a(s));
+    uint64_t t = 0, retry = 0;
+    for (; t < 30000 && !(sa->teardown == ARQ_TD_SENT && !sa->tx_active); t += 100)
+        sim_run_until_idle(s, 100);
+    sim_set_dir_mode_per(s, 0, FREEDV_MODE_DATAC16, 0.0);
+    bool was = sim_keyed(s, sim_a(s));
+    for (; t < 60000; t += 100) {
+        if (abort_at_ms && t == abort_at_ms) {
+            arq_event_t ab = { .id = ARQ_EV_APP_DISCONNECT, .abort = true };
+            sim_inject(s, sim_a(s), &ab);
+        }
+        sim_run_until_idle(s, 100);
+        bool k = sim_keyed(s, sim_a(s));
+        if (k && !was && !retry) retry = t + 100;
+        was = k;
+    }
+    if (told) {
+        for (int i = 0; i < 600 && state(sim_b(s)) == ARQ_CONN_CONNECTED; i++)
+            sim_run_until_idle(s, 100);
+        *told = state(sim_b(s)) != ARQ_CONN_CONNECTED;
+    }
+    sim_destroy(s);
+    arq_conn.bw = bw;
+    arq_test_session_bw_hz = sbw;
+    return retry;
+}
+
+/* Its retry goes before BPQ32's ABORT, 30.8 s after the host's DISCONNECT
+ * as on air, at both bandwidths, and the callee is told.  The retry waited
+ * for the callee's answer slot sized for the floor frame, which it answers a
+ * DISCONNECT on only to a caller deaf to the control mode: at 500 Hz, 26.6 s
+ * of MFSK, and no retry before the ABORT in 12 of 12 seeds (2300 Hz: at
+ * 21 s).  Sized for the control mode, as a poll's (s_ctl_for), at 11.2 s. */
+void test_car_lost_disconnect_retried_before_the_hosts_abort(void)
+{
+    const int bws[] = { ARQ_BANDWIDTH_NARROW_HZ, ARQ_BANDWIDTH_FULL_HZ };
+    for (size_t b = 0; b < sizeof(bws) / sizeof(bws[0]); b++)
+        for (uint64_t seed = 1; seed <= 6; seed++) {
+            bool told = false;
+            uint64_t r = lost_disconnect_retry_ms(seed, bws[b], 30800, &told);
+            char msg[96];
+            snprintf(msg, sizeof msg, "%d Hz seed %llu: retry at %llu ms, callee told %d",
+                     bws[b], (unsigned long long)seed, (unsigned long long)r, told);
+            TEST_ASSERT_TRUE_MESSAGE(r > 0 && r < 30800, msg);
+            TEST_ASSERT_TRUE_MESSAGE(told, msg);
+        }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1186,6 +1265,7 @@ int main(void)
     RUN_TEST(test_car_callee_abort_one_disconnect);
     RUN_TEST(test_car_ctl_loss_callee_abort_tells_the_caller);
     RUN_TEST(test_car_ctl_loss_caller_abort_tells_the_callee);
+    RUN_TEST(test_car_lost_disconnect_retried_before_the_hosts_abort);
     RUN_TEST(test_car_abort_disconnect_before_the_hop);
     RUN_TEST(test_car_callee_abort_disconnect_before_the_hop);
     RUN_TEST(test_car_reply_during_final_poll);
