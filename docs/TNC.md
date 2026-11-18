@@ -904,7 +904,10 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
     the DATAC16 decoder's, the payload decoder's and the two MFSK call
     listeners', sync included.  A partly received CALL is dropped even when
     `LISTEN ON` follows a moment later on the same frequency; the caller's
-    next CALL is heard as usual.  Up to 1.9.22 such a CALL could still
+    next CALL is heard as usual.  The same holds for a host that pauses the
+    modem with `LISTEN OFF` and resumes it on the same channel without
+    scanning: a CALL on the air across the pause costs that one CALL, and
+    the caller's retry is answered.  Up to 1.9.22 such a CALL could still
     decode, on the next channel, and was answered there, where the caller
     could not hear it.  BPQ32 then held the wrong channel for about 2 min
     (six scan intervals) while the caller's repeats went unheard:
