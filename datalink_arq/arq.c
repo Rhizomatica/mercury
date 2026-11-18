@@ -304,7 +304,9 @@ static void rx_dropped_summary(const char *when)
  * ABORT does, so the peer hears a DISCONNECT and its application reports the
  * transfer failed, instead of its bytes being acknowledged and thrown away
  * until it hangs up.  Non-blocking: the command thread takes the session
- * lock this thread holds.  Retried on the next delivery if the bus is full. */
+ * lock this thread holds.  If the command bus is full, rx_abort_tick retries
+ * on every pass of the event loop (at least every 500 ms), not only on the
+ * next delivery: a peer that stops sending would make none. */
 static void rx_end_session_for_no_reader(void)
 {
     if (g_rx_abort_sent)
@@ -317,6 +319,17 @@ static void rx_end_session_for_no_reader(void)
         g_rx_abort_sent = true;
         HLOGW(LOG_COMP, "Ending the session (ABORT): it can't deliver what it receives");
     }
+    else
+        HLOGD(LOG_COMP, "Command bus full: the session's ABORT will be retried");
+}
+
+/* Event loop, under g_sess_lock: an ABORT owed for a drop and not yet on the
+ * bus.  g_rx_dropped resets when the session ends, so one owed is always for
+ * the session still up. */
+static void rx_abort_tick(void)
+{
+    if (g_rx_dropped && !g_rx_abort_sent)
+        rx_end_session_for_no_reader();
 }
 
 static void cb_notify_connected(const char *remote_call, const char *local_call,
@@ -1129,6 +1142,7 @@ static void *arq_event_loop_worker(void *arg)
         call_progress(now);
         pending_hold(now);
         abort_hold(now);
+        rx_abort_tick();
         pthread_mutex_unlock(&g_sess_lock);
     }
 

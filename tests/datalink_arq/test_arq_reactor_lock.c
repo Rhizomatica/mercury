@@ -325,6 +325,67 @@ void test_nothing_is_delivered_after_a_drop_even_to_a_returning_reader(void)
     TEST_ASSERT_EQUAL_INT(1, queued_cmds(types, 8));          /* the first session's ABORT only */
 }
 
+/* The bus full when the first drop comes (the command thread behind), and
+ * the peer silent after it: no delivery retries the ABORT.  The event loop
+ * itself does, on its next pass, once the bus has room. */
+static void *run_event_loop(void *arg)
+{
+    (void)arg;
+    return arq_event_loop_worker(NULL);
+}
+
+void test_an_abort_the_full_bus_refused_goes_on_the_event_loops_next_pass(void)
+{
+    arq_cmd_msg_t filler;
+    memset(&filler, 0, sizeof(filler));
+    filler.type = ARQ_CMD_CLIENT_CONNECT;
+    int cap = 0;
+    while (arq_channel_bus_try_send_cmd(&g_bus, &filler) == 0)
+        cap++;
+    TEST_ASSERT_EQUAL_INT(ARQ_CH_CAP_TCP_CMD, cap);
+
+    atomic_store(&reader_attached, false);
+    deliver_burst_by(mono_ms() + 2000, __func__, __LINE__);   /* the drop, and then silence */
+    TEST_ASSERT_GREATER_THAN(0, g_rx_dropped);
+    TEST_ASSERT_FALSE_MESSAGE(g_rx_abort_sent, "the full bus took the ABORT");
+
+    g_running = true;                         /* the real event loop, idle: no events, no deliveries */
+    pthread_t lt;
+    pthread_create(&lt, NULL, run_event_loop, NULL);
+    pause_ms(700);                            /* a pass or two with the bus still full */
+    pthread_mutex_lock(&g_sess_lock);
+    bool sent_while_full = g_rx_abort_sent;
+    pthread_mutex_unlock(&g_sess_lock);
+
+    arq_cmd_msg_t cmd;                        /* the command thread catches up */
+    for (int i = 0; i < cap; i++)
+    {
+        TEST_ASSERT_EQUAL_INT(0, arq_channel_bus_recv_cmd(&g_bus, &cmd));
+        TEST_ASSERT_EQUAL_INT(ARQ_CMD_CLIENT_CONNECT, cmd.type);
+    }
+    uint64_t until = mono_ms() + 2000;        /* a pass is at most 500 ms apart */
+    bool sent = false;
+    while (!sent && mono_ms() < until)
+    {
+        pause_ms(10);
+        pthread_mutex_lock(&g_sess_lock);
+        sent = g_rx_abort_sent;
+        pthread_mutex_unlock(&g_sess_lock);
+    }
+    pause_ms(600);                            /* and no second one after it */
+    g_running = false;
+    pthread_mutex_lock(&g_evq_lock);
+    pthread_cond_broadcast(&g_evq_cond);
+    pthread_mutex_unlock(&g_evq_lock);
+    pthread_join(lt, NULL);
+
+    TEST_ASSERT_FALSE(sent_while_full);
+    TEST_ASSERT_TRUE_MESSAGE(sent, "no ABORT on the event loop's passes once the bus had room");
+    int types[8];
+    TEST_ASSERT_EQUAL_INT(1, queued_cmds(types, 8));
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_ABORT, types[0]);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -333,5 +394,6 @@ int main(void)
     RUN_TEST(test_reader_leaving_frees_a_delivery_waiting_on_a_full_ring);
     RUN_TEST(test_a_drop_ends_the_session_with_one_abort);
     RUN_TEST(test_nothing_is_delivered_after_a_drop_even_to_a_returning_reader);
+    RUN_TEST(test_an_abort_the_full_bus_refused_goes_on_the_event_loops_next_pass);
     return UNITY_END();
 }
