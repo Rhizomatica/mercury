@@ -669,6 +669,108 @@ void test_mfsk_modem_decodes_burst_with_a_playback_gap(void)
  * that symbol happened to use (a 4096-sample window spans 12.8 symbols and
  * measures ~690 Hz).  Only across the full burst does the modulation visit the
  * whole grid it occupies. */
+/* Every MFSK geometry, not only the floor's: the 1 kHz floor (100), the
+ * 500 Hz floor (103) and the 2 kHz rung (104) each have their own carrier
+ * table, tone spacing and frequency search.  For each: a round trip at
+ * offsets of 0, half a tone, 1.5 tones (between two whole-bin hypotheses)
+ * and the edge of the +/-94 Hz dial search, the offset it reports, its
+ * reported bandwidth against the spectrum it emits, centred on 1500 Hz, and
+ * no clipping.  A carrier table whose phase is not continuous over its
+ * period, or a search scaled wrongly for the spacing, fails here. */
+static int decode_at_offset(int mode, double offset_hz, float *foff_out)
+{
+    void *c = be->open(mode);
+    TEST_ASSERT_NOT_NULL(c);
+    if (be->configure) be->configure(c, 1, 0);
+    int bytes = be->bits_per_frame(c) / 8, nin = be->nin(c), cap = be->n_tx_samples(c) + 40000;
+    uint8_t *frame = malloc((size_t)bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 23 + mode);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+    int16_t *pre = calloc((size_t)cap, 2), *dat = calloc((size_t)cap, 2), *post = calloc((size_t)cap, 2);
+    int np = be->preamble_tx(c, pre), nd = be->rawdata_tx(c, dat, frame), ns = be->postamble_tx(c, post);
+    int lead = 2 * nin, trail = 8 * nin, total = lead + np + nd + ns + trail;
+    int16_t *pb = calloc((size_t)total, 2);
+    memcpy(pb + lead, pre, (size_t)np * 2);
+    memcpy(pb + lead + np, dat, (size_t)nd * 2);
+    memcpy(pb + lead + np + nd, post, (size_t)ns * 2);
+    if (offset_hz != 0.0) shift_hz(pb, total, offset_hz, 8000.0);
+    int match = 0, held = 0, chunk = 880;
+    int16_t *acc = calloc((size_t)chunk + (size_t)nin, 2);
+    uint8_t *out = calloc((size_t)bytes, 1);
+    for (int off = 0; off + chunk <= total && !match; off += chunk) {
+        memcpy(acc + held, &pb[off], (size_t)chunk * 2);
+        held += chunk;
+        while (held >= nin) {
+            if (be->rawdata_rx(c, out, acc) > 0 && memcmp(out, frame, (size_t)bytes) == 0) match = 1;
+            held -= nin;
+            if (held > 0) memmove(acc, acc + nin, (size_t)held * 2);
+        }
+    }
+    float f = 0.0f;
+    if (!be->get_freq_offset(c, &f)) f = NAN;
+    *foff_out = f;
+    free(acc); free(out); free(frame); free(pre); free(dat); free(post); free(pb);
+    be->close(c);
+    return match;
+}
+
+void test_mfsk_modem_every_geometry(void)
+{
+    const struct { int mode; double tone_hz; int bw_hz; } g[] = {
+        { MERCURY_MODE_MFSK, 31.25, 1000 }, { MERCURY_MODE_MFSK_N32, 15.625, 500 }, { MERCURY_MODE_MFSK_W2, 62.5, 2000 },
+    };
+    for (unsigned gi = 0; gi < sizeof g / sizeof g[0]; gi++) {
+        const double offs[] = { 0.0, 0.5 * g[gi].tone_hz, 1.5 * g[gi].tone_hz, 94.0 };
+        for (unsigned oi = 0; oi < sizeof offs / sizeof offs[0]; oi++) {
+            float foff = 0.0f;
+            int ok = decode_at_offset(g[gi].mode, offs[oi], &foff);
+            char msg[128];
+            snprintf(msg, sizeof msg, "mode %d: burst lost at a %.1f Hz dial offset", g[gi].mode, offs[oi]);
+            TEST_ASSERT_TRUE_MESSAGE(ok, msg);
+            /* to an eighth of a tone, as the floor's test asks */
+            snprintf(msg, sizeof msg, "mode %d: offset %.1f Hz reported as %.1f", g[gi].mode, offs[oi], (double)foff);
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE((float)(g[gi].tone_hz / 8.0 + 0.5), (float)offs[oi], foff, msg);
+        }
+        /* reported bandwidth, centre and no clipping, on the emitted burst */
+        void *c = be->open(g[gi].mode);
+        TEST_ASSERT_NOT_NULL(c);
+        TEST_ASSERT_EQUAL_INT(g[gi].bw_hz, be->bandwidth_hz(c));
+        int bytes = be->bits_per_frame(c) / 8;
+        uint8_t *frame = calloc((size_t)bytes, 1);
+        for (int i = 0; i < bytes; i++) frame[i] = (uint8_t)(i * 7 + 1);
+        int16_t *dat = calloc((size_t)be->n_tx_samples(c) + 40000, 2);
+        int nd = be->rawdata_tx(c, dat, frame);
+        int peak = 0;
+        for (int i = 0; i < nd; i++) if (abs(dat[i]) > peak) peak = abs(dat[i]);
+        TEST_ASSERT_TRUE_MESSAGE(peak <= 16384, "MFSK TX peak leaves no headroom for the operator's TX gain");
+        const int N = 512, hop = 256;
+        double *psd = calloc((size_t)N / 2, sizeof(double)), total = 0.0;
+        for (int off = 0; off + N <= nd; off += hop)
+            for (int k = 0; k < N / 2; k++) {
+                double re = 0, im = 0;
+                for (int n = 0; n < N; n++) {
+                    double w = 0.5 - 0.5 * cos(2.0 * M_PI * n / (N - 1)), a = 2.0 * M_PI * k * n / N;
+                    re += w * dat[off + n] * cos(a); im -= w * dat[off + n] * sin(a);
+                }
+                psd[k] += re * re + im * im;
+            }
+        for (int k = 0; k < N / 2; k++) total += psd[k];
+        double acc = 0; int lo = 0, hi = N / 2 - 1;
+        for (int k = 0; k < N / 2; k++) { acc += psd[k]; if (acc >= 0.005 * total) { lo = k; break; } }
+        acc = 0;
+        for (int k = N / 2 - 1; k >= 0; k--) { acc += psd[k]; if (acc >= 0.005 * total) { hi = k; break; } }
+        double bin = 8000.0 / N, occ = (hi - lo + 1) * bin, centre = (hi + lo) / 2.0 * bin;
+        char msg[160];
+        snprintf(msg, sizeof msg, "mode %d: reported %d Hz, occupies %.0f Hz centred on %.0f",
+                 g[gi].mode, g[gi].bw_hz, occ, centre);
+        TEST_ASSERT_TRUE_MESSAGE(fabs(occ - g[gi].bw_hz) <= 0.15 * g[gi].bw_hz + 2 * bin, msg);
+        TEST_ASSERT_TRUE_MESSAGE(fabs(centre - MFSK_CENTRE_HZ) <= 20.0, msg);
+        free(psd); free(dat); free(frame);
+        be->close(c);
+    }
+}
+
 void test_mfsk_modem_reported_bandwidth_matches_emitted_spectrum(void)
 {
     TEST_ASSERT_NOT_NULL_MESSAGE(be->bandwidth_hz,
@@ -1013,6 +1115,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_mfsk_modem_roundtrip);
+    RUN_TEST(test_mfsk_modem_every_geometry);
     RUN_TEST(test_mfsk_modem_reported_bandwidth_matches_emitted_spectrum);
     RUN_TEST(test_mfsk_modem_out_of_band_emission);
     RUN_TEST(test_mfsk_modem_decodes_next_burst_after_joining_midway);

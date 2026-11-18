@@ -107,7 +107,9 @@ static pthread_mutex_t modem_pool_lock = PTHREAD_MUTEX_INITIALIZER;
 /* One lock per pool slot, indexed the same way the pool array is.  The pool is
  * a generic slot array now (any backend, not just freedv), so the lock a codec
  * belongs to is found by its context pointer rather than by naming the mode. */
-#define MODEM_POOL_MAX 16   /* the BW2300 ladder, control, floors and the 2.0 BW500/BW2750 rungs: 15 */
+#define MODEM_POOL_MAX 16   /* the BW2300 ladder, control, floors, the 2.0 BW500/BW2750 rungs and
+                             * MFSK2K: 16, full -- the next mode needs this raised (and a lock
+                             * initializer below), or init_mode_pool_locked fails */
 static pthread_mutex_t modem_inst_lock[MODEM_POOL_MAX] = {
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,

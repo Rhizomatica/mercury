@@ -307,7 +307,10 @@ static uint32_t block_check(const car_t *c, uint8_t id, int K, const uint8_t (*p
 
 static int level_of_mode(int mode)
 {
-    if (mode == MERCURY_MODE_MFSK || mode == MERCURY_MODE_MFSK_N32) return 0;   /* either floor */
+    /* Either floor.  Only the floors: MFSK2K has its own rung, and the 16-tone
+     * MERCURY_MODE_MFSK_N16 (measurement only, never in a session) maps to no
+     * level, -1, where it used to count as the floor with any MFSK. */
+    if (mode == MERCURY_MODE_MFSK || mode == MERCURY_MODE_MFSK_N32) return 0;
     /* A mode is on one level of every ladder it is on. */
     for (int lv = 0; lv < CAR_NLEVELS; lv++)
         if (LADDER[lv] == mode || LADDER_500[lv] == mode || LADDER_2750[lv] == mode) return lv;

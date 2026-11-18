@@ -28,7 +28,7 @@ that index.
 | 4 | DATAC13 | 14 | 187 | broadcast and monitor; no longer an ARQ mode |
 | 5 | DATAC14 | 3 | 222 | broadcast and tests only |
 | 6 | FSK_LDPC | 30 | — | experimental, tests only |
-| 7 | DATAC15 | 30 | 187 | ARQ rung 1 |
+| 7 | DATAC15 | 30 | 187 | ARQ rung 1 (BW500) |
 | 8 | DATAC16 | 14 | 187 | ARQ control (CALL, ACCEPT, polls, DISCONNECT, CQ) |
 | 9 | DATAC17 | 1184 | 2250 | ARQ rung 5 (BW2300) |
 | 10 | QAM16C2 | 1183 | 2250 | ARQ rung 6 (BW2300) |
@@ -44,7 +44,7 @@ that index.
 An ARQ session runs each direction on rungs 0-6 of its bandwidth's ladder,
 starting on the rung the connect's SNR supports (`ARQ_SNR_MIN_*`, the
 thresholds below) and moving on measured delivery
-([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md)).  Rungs 2-4 are shared; each bandwidth
+([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md)).  Rungs 2-3 are shared; each bandwidth
 has its own floor and top, and BW2300/BW2750 their own rung 1:
 
 | Rung | BW500 | BW2300 | BW2750 |
@@ -88,7 +88,7 @@ single-frame bursts, 100 trials, "delivered" = acquired AND decoded.
 | **QAM16N2** | 560 | 868 | 242 | (3072,2048) IRA | 2.25 | 90 % reads 5.9 dB (AWGN) ³ | BW500's rung 6 |
 | **MFSK** | 1000 | ~60 | 98 | LDPC rate 8/16, N=1600 | ~13.5 | 50 % FER at −11.2 dB AWGN (DATAC15 −10.3 on the same harness) ⁴ | Fringe data and control (the carousel's floor) |
 | **MFSK500** | 500 | ~31 | 98 | LDPC rate 8/16, N=1600 | ~26.2 | 90 % at −14.1 dB AWGN, −14.1 behind a 500 Hz filter, −10.4 moderate fading ⁵ | The floor of a BW500 session |
-| **MFSK2K** | 2000 | ~118 | 98 | LDPC rate 8/16, N=1600 | ~6.6 | 90 % at −8 dB AWGN, −5 CCIR Moderate and Poor ⁵ | Rung 1 of BW2300/BW2750: twice the floor's rate for ~2 dB more under fading |
+| **MFSK2K** | 2000 | ~122 | 98 | LDPC rate 8/16, N=1600 | ~6.56 | 90 % at −8 dB AWGN, −5 CCIR Moderate and Poor ⁵ | Rung 1 of BW2300/BW2750: twice the floor's rate for ~2 dB more under fading |
 
 ⁴ [MFSK-PORT.md](MFSK-PORT.md), "The fringe floor was the sync accept
 threshold"; its sections have the fading figures and the rate ladder.
@@ -203,7 +203,8 @@ DATAC13 ≈ −9.6 dB, with DATAC16 degrading much more gracefully below that.
 Operational consequences, reflected in the ARQ design
 ([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md)):
 
-- **DATAC15** is the lowest OFDM rung (rung 1), above the MFSK floor.
+- **DATAC15** is the lowest OFDM rung (rung 1 at BW500; at BW2300 and BW2750
+  rung 1 is MFSK2K), above the MFSK floor.
   Including the stop-and-wait cycle overhead (frame + guards + DATAC16 ACK ≈
   frame + 5.3 s), goodput crossed over vs DATAC4 at ≈ −7.5 dB MPP / −8.5 dB
   AWGN, which set `ARQ_SNR_MIN_DATAC4_DB = −6 dB`.  The carousel never

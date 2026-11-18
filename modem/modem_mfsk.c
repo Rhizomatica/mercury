@@ -44,11 +44,14 @@
  * MFSK_FC_PERIOD samples and is read from a table (fc_phasor): no
  * trigonometry per sample, which on a Pi 4 is a sizeable share of what a
  * listening station spends.  The period must stay a power of two holding a
- * whole number of carrier cycles, or the phase jumps every period and no
- * burst decodes (test_mfsk_modem's round trips). */
+ * whole number of carrier cycles, or the phase jumps every period.  A small
+ * jump the non-coherent detector rides through (a 1 Hz error on the 2 kHz
+ * geometry, ~46 degrees every 128 ms, still decoded), a large one costs it
+ * the burst; test_mfsk_modem's round trips cover every geometry. */
 #define MFSK_FC        (1500.0 - 0.5 * MFSK_FS / MFSK_NFFT)   /* 1484.375 Hz */
-/* 1024 holds a whole number of cycles of both carriers: 1484.375 Hz (190
- * cycles) and, for the 15.625 Hz-spaced mode, 1492.1875 Hz (191). */
+/* 1024 holds a whole number of cycles of all three carriers: 1484.375 Hz
+ * (190 cycles), for the 15.625 Hz-spaced mode 1492.1875 Hz (191), and for
+ * the 62.5 Hz-spaced one (MERCURY_MODE_MFSK_W2) 1468.75 Hz (188). */
 #define MFSK_FC_PERIOD 1024
 #define MFSK_NCAR     50
 #define MFSK_GI       0.25
@@ -144,8 +147,8 @@
 
 typedef struct {
     int mode;
-    int nfft;                       /* MFSK_NFFT, or 512 for 15.625 Hz tones */
-    int fcg;                        /* carrier table: 0 = MFSK_FC, 1 = the 512-point one */
+    int nfft;                       /* MFSK_NFFT, 512 for 15.625 Hz tones, 128 for 62.5 Hz */
+    int fcg;                        /* carrier table: 0 = MFSK_FC, 1 = the 512-point one, 2 = the 128-point one */
     int nhyp, hyp_lo;               /* frequency hypotheses, in half-bins */
     double snr_bin_to_3k_db;        /* one bin's width against 3 kHz */
     mfsk_t m;
@@ -268,8 +271,9 @@ static void mklpf_n(double *lpf, double fc, int taps)
 static void mklpf(double *lpf, double fc) { mklpf_n(lpf, fc, MFSK_LPF_TAPS); }
 
 /* The carrier phasor e^(j*2*pi*fc*n/MFSK_FS), one period of it, for the
- * 256-point geometry (g 0) and the 512-point one (g 1).  Either way the tones
- * are centred on 1500 Hz: fc sits half a bin below it. */
+ * 256-point geometry (g 0), the 512-point one (g 1) and the 128-point one
+ * (g 2).  Every way the tones are centred on 1500 Hz: fc sits half a bin
+ * below it. */
 static double complex g_fc_ph[3][MFSK_FC_PERIOD];
 /* The FFT size of carrier table g: 256, 512 and (g 2) 128. */
 static int fcg_nfft(int g) { return g == 2 ? MFSK_NFFT / 2 : MFSK_NFFT << g; }
@@ -317,8 +321,10 @@ static void *mfsk_be_open(int mode)
     h->snr_bin_to_3k_db = MFSK_SNR_BIN_TO_3K_DB - 10.0 * log10((double)h->nfft / MFSK_NFFT);
     mfsk_init(&h->m, M, MFSK_NCAR, 1);
     ofdm_frame_init(&h->o, h->nfft, MFSK_NCAR, MFSK_GI, 0);
-    /* Code rate.  All five ported codes share N=1600, so the burst is 13.5 s
-     * whatever the rate -- a lower rate costs payload, not airtime.  Measured
+    /* Code rate.  All five ported codes share N=1600, so the burst is the
+     * same whatever the rate (13.5 s at the floor's geometry, 26.2 s at the
+     * 500 Hz one, 6.56 s at the 2 kHz one) -- a lower rate costs payload, not
+     * airtime.  Measured
      * anyway: with acquisition fixed, rate 1/8 buys only ~0.5 dB over rate 1/2
      * (4/20 vs 0/20 at SNR3k -12.1 dB) because the limit there is the preamble
      * detector reaching its own noise floor, not the code.  Not worth 4x the
@@ -362,7 +368,14 @@ static void *mfsk_be_open(int mode)
         mklpf_n(h->lpf, MFSK_LPF_NARROW_FC, h->lpf_taps);
     }
     else if (h->m.M * MFSK_FS / h->nfft > 1000.0)
-        mklpf(h->lpf, 1250.0);   /* the 2 kHz geometry: tones to +/-1000 Hz, and the dial search */
+        /* The 2 kHz geometry: tones to +/-1000 Hz, plus the +/-94 Hz dial
+         * search, and a margin.  63 taps suffice here: a 63-tap sinc at 8 kHz
+         * has a transition band of ~500 Hz, which lands it in the stopband
+         * well before 4 kHz, and the sync statistic divides by the energy
+         * the filter passes, so the wider pass costs acquisition only what
+         * the wider tones already cost (MFSK_LPF_NARROW_* explains the
+         * opposite case, where 500 Hz of tones met 2 kHz of noise). */
+        mklpf(h->lpf, 1250.0);
     else
         mklpf(h->lpf, MFSK_LPF_FC);
 
@@ -712,7 +725,8 @@ static void mfsk_full_rate(mfsk_modem_t *h, int from)
 }
 
 /* bf at a fractional index: 4-point Lagrange interpolation.  The baseband is
- * filtered to 1 kHz or less at 8 kHz, so it is smooth enough at that order;
+ * filtered to 1 kHz or less at 8 kHz (1250 Hz for the 2 kHz geometry), so it
+ * is smooth enough at that order;
  * x - 1 and x + 2 must be in bf. */
 static inline double complex bf_at(const mfsk_modem_t *h, double x)
 {
