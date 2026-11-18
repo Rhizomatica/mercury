@@ -118,6 +118,7 @@ const char *mercury_log_status(void)
 /* ------------------------------------------------------------------ */
 void mercury_request_shutdown(void)
 {
+    mercury_engine_say_goodbye();   /* a session up: ended on the air first */
     mercury_stop = true;
 }
 
