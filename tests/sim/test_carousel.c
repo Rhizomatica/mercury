@@ -611,6 +611,30 @@ static void test_carousel_drop_below_the_control_mode_stays_at_the_floor(void)
     TEST_ASSERT_TRUE_MESSAGE(worst < 105000, what);
 }
 
+/* BUFFER at the floor (car_tx_inflight_unstopped): a block a BREAK said is
+ * in comes off the host's count ahead of the poll that retires it -- which on
+ * air came minutes later or was lost (VE4KLM -> K7EK, 15 Nov 2026: 753 bytes
+ * shown until the ABORT, the first block in for two minutes) -- and the count
+ * never claims a byte the peer has not delivered. */
+static void test_carousel_floor_buffer_follows_breaks(void)
+{
+    static const char *FLOOR[] = { "cliff:-9", "cliff:-11", "fade:-9:0.5" };
+    int drops = 0;
+    char what[96];
+    for (size_t c = 0; c < sizeof(FLOOR) / sizeof(FLOOR[0]); c++)
+        for (uint64_t seed = 1; seed <= 5; seed++)
+            for (int bidir = 0; bidir <= 1; bidir++) {
+                car_sim_result_t r;
+                carousel_sim_run(seed, FLOOR[c], bidir, LIMIT_MS, &r);
+                snprintf(what, sizeof(what), "seed %llu %s %s: %zu bytes shown as in, undelivered",
+                         (unsigned long long)seed, FLOOR[c], bidir ? "bidir" : "oneway", r.buffer_overclaim);
+                TEST_ASSERT_TRUE_MESSAGE(r.intact && r.done_ms, what);
+                TEST_ASSERT_EQUAL_size_t_MESSAGE(0, r.buffer_overclaim, what);
+                drops += r.buffer_break_drops;
+            }
+    TEST_ASSERT_TRUE_MESSAGE(drops > 0, "no BREAK ever lowered BUFFER at the floor");
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -799,6 +823,7 @@ int main(void)
     RUN_TEST(test_carousel_bidir_completes_intact);
     RUN_TEST(test_carousel_oneway_completes_intact);
     RUN_TEST(test_carousel_floor_control_plane);
+    RUN_TEST(test_carousel_floor_buffer_follows_breaks);
     RUN_TEST(test_carousel_lost_probe_poll);
     RUN_TEST(test_carousel_fading_no_blind_repoll);
     RUN_TEST(test_carousel_floor_handover_not_keyed_over);

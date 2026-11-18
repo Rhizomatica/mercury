@@ -980,6 +980,16 @@ Sent periodically during data transfer.  The value reflects the number of
 application bytes still queued for transmission.  When it reaches `0`, all
 data has been acknowledged by the peer.
 
+Above `0` it can run ahead of the acknowledgements.  At the MFSK floor the
+receiver answers rounds with short patterns and polls only every few rounds,
+so a block's acknowledgement can come minutes after the block is in, or be
+lost.  A BREAK pattern ("the block you are on is in") takes that block's
+bytes off `BUFFER` at once; the poll that acknowledges it comes later.  A
+pattern carries no session, so the block is still held and resent until that
+poll; if the poll says it is not in after all, its bytes go back on `BUFFER`.
+`0` itself is only ever sent once every byte has been acknowledged: while any
+is not, `BUFFER` says at least `1`.
+
 ### IAMALIVE
 
 Sent periodically on the control port as a keepalive to detect broken

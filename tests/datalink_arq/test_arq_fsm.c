@@ -2404,9 +2404,30 @@ void test_disconnect_reply_survives_another_tx_complete(void)
     TEST_ASSERT_EQUAL_INT(0, sess.crc_seed);
 }
 
+/* BUFFER's figure for the carousel's open blocks (arq_buffer_inflight_shown):
+ * the blocks a floor BREAK said are in come off, but 0 -- "all data has been
+ * acknowledged by the peer" -- only once nothing is unconfirmed. */
+void test_buffer_shown_counts_break_stopped_blocks_as_in(void)
+{
+    /* VE4KLM -> K7EK, 15 Nov 2026: blocks of 524 and 229, the first BREAKed */
+    TEST_ASSERT_EQUAL_INT(753, arq_buffer_inflight_shown(753, 753));
+    TEST_ASSERT_EQUAL_INT(229, arq_buffer_inflight_shown(753, 229));
+}
+
+void test_buffer_shown_is_never_zero_while_unconfirmed(void)
+{
+    TEST_ASSERT_EQUAL_INT(1, arq_buffer_inflight_shown(753, 0));    /* every block BREAKed */
+    TEST_ASSERT_EQUAL_INT(0, arq_buffer_inflight_shown(0, 0));      /* a poll retired them */
+    /* never above the exact count, whatever it is handed */
+    TEST_ASSERT_EQUAL_INT(753, arq_buffer_inflight_shown(753, 900));
+    TEST_ASSERT_EQUAL_INT(0, arq_buffer_inflight_shown(-3, -1));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_buffer_shown_counts_break_stopped_blocks_as_in);
+    RUN_TEST(test_buffer_shown_is_never_zero_while_unconfirmed);
     /* Connection lifecycle tests */
     RUN_TEST(test_init_state_disconnected);
     RUN_TEST(test_init_mode_defaults);
