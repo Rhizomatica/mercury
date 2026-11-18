@@ -186,7 +186,7 @@ void tnc_set_intervals(int keepalive_s, int buffer_report_ms)
  * DISCONNECT that comes when the host has written nothing to the data port
  * for at least that long is answered OK and not acted on, as often as it
  * comes.  So is one that comes while a piece of the host's data is held
- * back from a full ARQ queue (#590's backpressure): the data socket is not
+ * back from a full ARQ queue (held_payload, #590): the data socket is not
  * read meanwhile, so Winlink's write returned long before we read it, and
  * its timer runs from then while our idle time runs from our read.  A real
  * B2F end never comes with host data held, it follows the peer's answer.
@@ -221,12 +221,22 @@ static _Atomic bool tnc_disconnect_passed = false;
  * tnc_host_command. */
 static _Atomic bool tnc_host_data_held = false;
 
-/* Is a piece of the host's data held back from a full ARQ queue?  None is
- * yet: until #590 the reactor reads the data socket at once.  With #590:
- * held_payload_len > 0.  Reactor thread only. */
+/* A piece of the data client's stream the ARQ's payload bus had no room for
+ * (arq_submit_tcp_payload: EAGAIN) during a call.  It is held, and the data
+ * socket is not read again until it is queued: the kernel's receive window
+ * then fills and the host's writes wait (TCP flow control).  Dropped instead, as before, a
+ * 30 kB write lost 33 to 104 of its 128-byte pieces whenever the bus was
+ * full, the host was never told, and the session waited for them for ever
+ * (Go harness, CCIR Poor at 20-24 dB, 4 of 18 sessions).  Only the reactor
+ * thread touches it. */
+static uint8_t held_payload[TCP_BLOCK_SIZE];
+static size_t  held_payload_len = 0;
+
+/* Is a piece of the host's data held back from a full ARQ queue (the data
+ * socket unread meanwhile)?  Reactor thread only. */
 static bool host_data_held(void)
 {
-    return false;
+    return held_payload_len > 0;
 }
 
 void tnc_set_absorb_idle_disconnect_s(int seconds)
@@ -1112,16 +1122,7 @@ static void refuse_client(refusals_t *r, int fd, int holder, uint64_t now_ms)
     }
 }
 
-/* A piece of the data client's stream the ARQ's payload bus had no room for
- * (arq_submit_tcp_payload: EAGAIN) during a call.  It is held, and the data
- * socket is not read again until it is queued: the kernel's receive window
- * then fills and the host's writes wait (TCP flow control).  Dropped instead, as before, a
- * 30 kB write lost 33 to 104 of its 128-byte pieces whenever the bus was
- * full, the host was never told, and the session waited for them for ever
- * (Go harness, CCIR Poor at 20-24 dB, 4 of 18 sessions).  Only the reactor
- * thread touches it. */
-static uint8_t held_payload[TCP_BLOCK_SIZE];
-static size_t  held_payload_len = 0;
+/* held_payload, held_payload_len: declared above host_data_held(). */
 
 /* Queue the held piece if the bus takes it now; true when none is held.
  *
