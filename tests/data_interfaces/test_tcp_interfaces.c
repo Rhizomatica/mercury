@@ -1121,6 +1121,21 @@ void test_tnc_send_buffer(void)
     TEST_ASSERT_EQUAL_STRING("BUFFER 1234\r", last_queued_line);
 }
 
+/* A BUFFER query is answered every time, also when the count is the one the
+ * last BUFFER line said; the unsolicited report still does not repeat it
+ * (#584). */
+void test_cmd_buffer_query_always_answers(void)
+{
+    char q1[] = "BUFFER", q2[] = "BUFFER";
+    execute_control_command(q1);
+    execute_control_command(q2);
+    TEST_ASSERT_EQUAL_INT(2, queued_line_count);
+    TEST_ASSERT_EQUAL_STRING("BUFFER 0\r", queued_lines[0]);
+    TEST_ASSERT_EQUAL_STRING("BUFFER 0\r", queued_lines[1]);
+    tnc_send_buffer(0);                  /* a report of the same count */
+    TEST_ASSERT_EQUAL_INT(2, queued_line_count);
+}
+
 /* A VARA client gives up when no BUFFER comes for a minute while its data
  * waits (Pat: "write: buffer timeout"), and a carousel block's bytes are
  * confirmed only when the whole block is through: in a session, with bytes
@@ -2396,6 +2411,7 @@ int main(void)
     RUN_TEST(test_data_client_connect_discards_stale_rx);
     /* Command parser tests */
     RUN_TEST(test_cmd_mycall);
+    RUN_TEST(test_cmd_buffer_query_always_answers);
     RUN_TEST(test_cmd_mycall_registered_follows_ok);
     RUN_TEST(test_cmd_mycall_registers_every_callsign);
     RUN_TEST(test_cmd_mycall_does_not_register_dropped_secondaries);
