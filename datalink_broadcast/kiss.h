@@ -73,7 +73,7 @@ extern "C" {
 #define CMD_RQ_CONFIG 0x03
 #define CMD_RQ_PAYLOAD 0x04 // Reserved/legacy KISS command value; current TCP framing does not use it for RaptorQ payload
 
-#define MAX_PAYLOAD 1213 // largest broadcast frame we can select (QAM16C2)
+#define MAX_PAYLOAD 1184 // largest broadcast frame we can select (DATAC17)
 
 void kiss_reset_state(void);
 

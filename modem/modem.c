@@ -107,7 +107,7 @@ static pthread_mutex_t modem_pool_lock = PTHREAD_MUTEX_INITIALIZER;
 /* One lock per pool slot, indexed the same way the pool array is.  The pool is
  * a generic slot array now (any backend, not just freedv), so the lock a codec
  * belongs to is found by its context pointer rather than by naming the mode. */
-#define MODEM_POOL_MAX 12
+#define MODEM_POOL_MAX 16   /* the BW2300 ladder, control, floors and the 2.0 BW500/BW2750 rungs: 15 */
 static pthread_mutex_t modem_inst_lock[MODEM_POOL_MAX] = {
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
@@ -115,7 +115,11 @@ static pthread_mutex_t modem_inst_lock[MODEM_POOL_MAX] = {
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+    PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+    PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
 };
+_Static_assert(sizeof(modem_inst_lock) / sizeof(modem_inst_lock[0]) == MODEM_POOL_MAX,
+               "one lock per pool slot");
 /* Anything not in the pool (test doubles, a mode opened ad hoc) shares this
  * one: correct, just not parallel. */
 static pthread_mutex_t modem_inst_lock_other = PTHREAD_MUTEX_INITIALIZER;
@@ -616,6 +620,11 @@ static bool is_supported_split_mode(int mode)
            mode == FREEDV_MODE_DATAC16 ||
            mode == FREEDV_MODE_DATAC17 ||
            mode == FREEDV_MODE_QAM16C2 ||
+           mode == FREEDV_MODE_DATAC17W ||
+           mode == FREEDV_MODE_QAM16C2W ||
+           mode == FREEDV_MODE_DATAN1 ||
+           mode == FREEDV_MODE_QAM16N1 ||
+           mode == FREEDV_MODE_QAM16N2 ||
            mode == MERCURY_MODE_MFSK ||
            mode == MERCURY_MODE_MFSK_N32;
 }
@@ -628,6 +637,11 @@ static bool is_payload_split_mode(int mode)
            mode == FREEDV_MODE_DATAC15 ||
            mode == FREEDV_MODE_DATAC17 ||
            mode == FREEDV_MODE_QAM16C2 ||
+           mode == FREEDV_MODE_DATAC17W ||
+           mode == FREEDV_MODE_QAM16C2W ||
+           mode == FREEDV_MODE_DATAN1 ||
+           mode == FREEDV_MODE_QAM16N1 ||
+           mode == FREEDV_MODE_QAM16N2 ||
            mode == MERCURY_MODE_MFSK ||
            mode == MERCURY_MODE_MFSK_N32;
 }
@@ -680,6 +694,9 @@ static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
         FREEDV_MODE_DATAC4,  FREEDV_MODE_DATAC3,  FREEDV_MODE_DATAC1,
         FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2, MERCURY_MODE_MFSK,
         MERCURY_MODE_MFSK_N32,
+        /* the BW2750 and BW500 rungs (car_session_level_mode) */
+        FREEDV_MODE_DATAC17W, FREEDV_MODE_QAM16C2W, FREEDV_MODE_DATAN1,
+        FREEDV_MODE_QAM16N1, FREEDV_MODE_QAM16N2,
     };
     clear_mode_pool_locked();
     for (size_t i = 0; i < sizeof(pool_modes) / sizeof(pool_modes[0]); i++)
@@ -757,6 +774,16 @@ static uint32_t bitrate_level_from_payload_mode(int mode)
         return 17;
     case FREEDV_MODE_QAM16C2:
         return 25;
+    case FREEDV_MODE_DATAC17W:
+        return 26;
+    case FREEDV_MODE_QAM16C2W:
+        return 27;
+    case FREEDV_MODE_DATAN1:
+        return 28;
+    case FREEDV_MODE_QAM16N1:
+        return 29;
+    case FREEDV_MODE_QAM16N2:
+        return 30;
     case MERCURY_MODE_MFSK:
         return 100;
     case MERCURY_MODE_MFSK_N32:
@@ -1122,7 +1149,15 @@ try_shm_connect2:
     arq_modem_set_cut_tx_fn(modem_cut_tx);
     
     int modem_sample_rate = g_modem->codec.be->sample_rate(g_modem->codec.ctx);
-    HLOGI("modem", "Initialized persistent mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2/MFSK/MFSK500), frames per burst: %d", frames_per_burst);
+    {
+        /* Each mode by name (the Go harness looks for them), from the pool. */
+        char names[256] = "";
+        for (int i = 0; i < modem_mode_pool_n; i++)
+            snprintf(names + strlen(names), sizeof(names) - strlen(names), "%s%s",
+                     i ? "/" : "", mode_name_from_enum(modem_mode_pool[i].mode));
+        HLOGI("modem", "Initialized persistent mode pool (%d modes: %s), frames per burst: %d",
+              modem_mode_pool_n, names, frames_per_burst);
+    }
     HLOGI("modem", "Active FreeDV mode at startup: %d (%s), verbosity: %d", mode, mode_name_from_enum(mode), freedv_verbosity);
     HLOGI("modem", "Modem expects sample rate: %d Hz", modem_sample_rate);
     HLOGI("modem", "Modem payload bytes per frame: %zu", payload_bytes_per_modem_frame);

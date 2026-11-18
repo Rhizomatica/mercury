@@ -99,8 +99,8 @@ typedef struct
      * frame itself (RX_CAROUSEL). */
     uint8_t  session_id;
     int      mode;
-    uint8_t  payload[1280];           /* >= largest user payload: QAM16C2
-                                       * carries 1213 - 8 = 1205 bytes      */
+    uint8_t  payload[1280];           /* >= largest user payload: DATAC17
+                                       * carries 1184 - 8 = 1176 bytes      */
     size_t   payload_len;
 
     /* RX_CAROUSEL: the control decoder (DATAC16) produced it; otherwise the

@@ -973,10 +973,21 @@ void test_car_fuzz(void)
  * has BW2300's ladder (no wider rung yet).  The full-band run shows the
  * channel lets the climb happen, so a pass at 500 is the cap, not the
  * channel. */
+/* Frames on the BW2300 modes above DATAC3 (1.7 to 2.25 kHz), on BW2750's
+ * 44-carrier ones, and on BW500's 9-carrier ones. */
 static int wideband_frames(sim_t *s)
 {
     return sim_mode_frames(s, FREEDV_MODE_DATAC1) + sim_mode_frames(s, FREEDV_MODE_DATAC17) +
            sim_mode_frames(s, FREEDV_MODE_QAM16C2);
+}
+static int wide_frames(sim_t *s)
+{
+    return sim_mode_frames(s, FREEDV_MODE_DATAC17W) + sim_mode_frames(s, FREEDV_MODE_QAM16C2W);
+}
+static int narrow_frames(sim_t *s)
+{
+    return sim_mode_frames(s, FREEDV_MODE_DATAN1) + sim_mode_frames(s, FREEDV_MODE_QAM16N1) +
+           sim_mode_frames(s, FREEDV_MODE_QAM16N2);
 }
 
 static sim_t *bw_transfer(int bw_hz, const uint8_t *blob, size_t len)
@@ -1005,15 +1016,18 @@ void test_car_bandwidth_caps_the_rungs(void)
 
     sim_t *s = bw_transfer(ARQ_BANDWIDTH_FULL_HZ, blob, sizeof(blob));
     TEST_ASSERT_TRUE_MESSAGE(wideband_frames(s) > 0, "BW2300 never climbed past DATAC3");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, wide_frames(s) + narrow_frames(s), "BW2300 keyed another ladder's mode");
     sim_destroy(s);
 
     s = bw_transfer(ARQ_BANDWIDTH_TACTICAL_HZ, blob, sizeof(blob));
-    TEST_ASSERT_TRUE_MESSAGE(wideband_frames(s) > 0, "BW2750 never climbed past DATAC3");
+    TEST_ASSERT_TRUE_MESSAGE(wide_frames(s) > 0, "BW2750 never reached its 44-carrier rungs");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, sim_mode_frames(s, FREEDV_MODE_DATAC17) + sim_mode_frames(s, FREEDV_MODE_QAM16C2) +
+                                      narrow_frames(s), "BW2750 keyed another ladder's mode");
     sim_destroy(s);
 
     s = bw_transfer(ARQ_BANDWIDTH_NARROW_HZ, blob, sizeof(blob));
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, wideband_frames(s), "BW500 keyed a wideband mode");
-    TEST_ASSERT_TRUE_MESSAGE(sim_mode_frames(s, FREEDV_MODE_DATAC3) > 0, "BW500 never reached DATAC3");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, wideband_frames(s) + wide_frames(s), "BW500 keyed a wideband mode");
+    TEST_ASSERT_TRUE_MESSAGE(narrow_frames(s) > 0, "BW500 never climbed past DATAC3 onto its 9-carrier rungs");
     sim_destroy(s);
 }
 

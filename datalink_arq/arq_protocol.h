@@ -316,17 +316,27 @@ void arq_protocol_session_calls(bool we_called, const char *remote_call,
 #define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* bench (docs/MODES.md):
                                              * DATAC15/DATAC4 goodput crossover
                                              * ~-7.5 dB MPP / -8.5 dB AWGN     */
-#define ARQ_SNR_MIN_DATAC3_DB        -1.0f
-#define ARQ_SNR_MIN_DATAC1_DB         3.0f
-#define ARQ_SNR_MIN_DATAC17_DB        7.0f  /* bench (docs/MODES.md): goodput
-                                             * crossover vs DATAC1 ~ +6 dB MPP;
-                                             * 89/100 delivery at +8          */
-#define ARQ_SNR_MIN_QAM16C2_DB       11.5f  /* on the refit (clipped) map's
-                                             * scale, which reads ~2 dB below
-                                             * the old one: 13 there; 90 %
-                                             * of frames at 10.2, and the
-                                             * crossover vs DATAC17 ~9.6
-                                             * (utils/rung_sweep)            */
+/* From DATAC3 up, each rung's threshold is the S/N the modem reports where
+ * 90 % of its frames decode on white noise (utils/rung_sweep, 40 bursts a
+ * 0.5 dB point; the reading equals the burst S/N since the maps were refit)
+ * plus about 1.5 dB, the margin DATAC3 (-3.0) and DATAC1 (1.7) keep.
+ * Each lands ~2 dB over its goodput crossover with the rung below on the
+ * same sweep (DATAC1->DATAC17 3.8, DATAC17->QAM16C2 9.6; DATAC3->DATAC1
+ * 0.8 against its 3.0), so a first probe, allowed SNR_GATE_DB/2 under the
+ * threshold, comes just above the crossover.  The
+ * old DATAC17 (7) and QAM16C2 (13) values were set on readings ~2 dB high:
+ * on air the refit maps read ~11 dB where the old read 12.9, and QAM16C2
+ * was never reached (QAM16C2's moved with its map, #575).                                    90 % reads at   */
+#define ARQ_SNR_MIN_DATAC3_DB        -1.0f  /* -3.0 */
+#define ARQ_SNR_MIN_DATAC1_DB         3.0f  /*  1.7 */
+#define ARQ_SNR_MIN_DATAC17_DB        5.5f  /*  3.9 */
+#define ARQ_SNR_MIN_QAM16C2_DB       11.5f  /* 10.2 */
+/* The 2.0 bandwidth ladders' rungs (car_set_bandwidth), by the same rule. */
+#define ARQ_SNR_MIN_DATAC17W_DB       6.5f  /*  4.8 */
+#define ARQ_SNR_MIN_QAM16C2W_DB      13.5f  /* 11.9 */
+#define ARQ_SNR_MIN_DATAN1_DB         0.0f  /* -1.7 */
+#define ARQ_SNR_MIN_QAM16N1_DB        6.0f  /*  4.4 */
+#define ARQ_SNR_MIN_QAM16N2_DB        7.5f  /*  5.9 */
 
 /* Absolute cap on how long an APP_DISCONNECT may stay deferred while the FSM
  * tries to drain the last app bytes.  Once the application has asked to

@@ -61,20 +61,21 @@ static double seq_noise(void *ctx) { return bench_seq_next((bench_seq *)ctx); }
 
 static struct OFDM_CONFIG custom;
 
-/* x[17|q]:<nc>,<np>,<code>[,<nuw>[,<ns>[,<guard ms>]]] into codec2's custom
+/* x[17|q]:<nc>,<np>,<code>[,<nuw>[,<ns>[,<guard ms>[,<edge pilots>]]]] into codec2's custom
  * slot: on DATAC1's settings (x:), DATAC17's (x17:) or QAM16C2's (xq:, 16-QAM,
  * clipped, its estimator).  ns is the symbols from one pilot to the next
  * (5 in every shipped mode); the guard is the cyclic prefix (6 ms, QAM16C2's
- * 4).  Omitted or 0: the base mode's. */
+ * 4); edge pilots 0 or 1 (an extra pilot carrier at each end, as QAM16C2
+ * has).  Omitted (or 0 for ns and guard): the base mode's. */
 static struct freedv *open_candidate(const char *spec) {
   static char code[64];
-  int nc = 0, np = 0, nuw = 0, ns = 0;
+  int nc = 0, np = 0, nuw = 0, ns = 0, edge = -1;
   float guard = 0.0f;
   char *base = "datac1";
   const char *args = spec + 2;
   if (!strncmp(spec, "x17:", 4)) base = "datac17", args = spec + 4;
   else if (!strncmp(spec, "xq:", 3)) base = "qam16c2", args = spec + 3;
-  if (sscanf(args, "%d,%d,%63[^,],%d,%d,%f", &nc, &np, code, &nuw, &ns, &guard) < 3 || nc < 1 || np < 1)
+  if (sscanf(args, "%d,%d,%63[^,],%d,%d,%f,%d", &nc, &np, code, &nuw, &ns, &guard, &edge) < 3 || nc < 1 || np < 1)
     return NULL;
 
   ofdm_init_mode(base, &custom);
@@ -84,6 +85,7 @@ static struct freedv *open_candidate(const char *spec) {
   custom.codename = code;
   if (ns > 1) custom.ns = ns;
   if (guard > 0.0f) custom.tcp = guard / 1000.0f;
+  if (edge == 0 || edge == 1) custom.edge_pilots = edge;
 
   /* What the library would assert on, as a usage error instead: an unknown
    * code, a packet too short for the code's parity and a CRC, or data bits
@@ -133,9 +135,15 @@ static struct freedv *open_candidate(const char *spec) {
   } else if (half <= 900.0) {
     custom.tx_bpf_proto = filtP900S1100;
     custom.tx_bpf_proto_n = 100;
-  } else {
+  } else if (half <= 1100.0) {
     custom.tx_bpf_proto = filtP1100S1300;
     custom.tx_bpf_proto_n = 100;
+  } else if (half <= 1125.0) {
+    custom.tx_bpf_proto = filtP1150S1350;
+    custom.tx_bpf_proto_n = 100;
+  } else {
+    custom.tx_bpf_proto = filtP1400S1600;
+    custom.tx_bpf_proto_n = 240;
   }
 
   struct freedv_advanced adv;
