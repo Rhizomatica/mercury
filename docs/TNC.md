@@ -289,6 +289,31 @@ While that delivery is under way:
   its DISCONNECT goes out, and the new call is placed after it.  A
   `DISCONNECT` before that call is placed cancels the call.
 
+**Winlink Express P2P (opt-in).** Winlink Express sends `DISCONNECT` in a
+P2P session 5 minutes after it last wrote to the data port ("P2P session
+inactivity timeout"), even while the modem is still sending that data.
+`BUFFER`, `PTT` and `SN` lines do not reset its timer, so a message that
+takes longer than 5 minutes to send is lost: the session ends and the
+message stays in the Outbox.  VARA HF behaves the same way (#392).  The
+timer restarts with each write, so every long message brings its own
+`DISCONNECT`, and one that takes over 10 minutes brings one every 300 s.
+
+With `[tnc] absorb_idle_disconnect_s = 240`, a `DISCONNECT` in a session is
+answered `OK` and otherwise ignored when nothing has been written to the
+data port for that long (or since the session came up), as often as it
+comes.  Winlink then carries on.  A real end of session comes seconds
+after the host's last write, never with host data held back, and goes
+through.  A `DISCONNECT` that comes while Mercury is holding the host's
+data back because the TX queue is full is absorbed too.  Winlink's timer
+starts when its write returns, but Mercury reads that data only as the
+queue has room, so its idle time can start minutes later.  A `DISCONNECT`
+within 60 s of the previous one always goes through, so a host or operator
+that means it is heard on the second.  Once one has gone through, none is
+absorbed for the rest of that session, so a `DISCONNECT` during its drain
+still ends the session at once.  `ABORT` ends the session at once as usual.
+The default is 0 (off), which keeps VARA's behaviour.  Accepted values are
+0 or 30–3600 s.
+
 ---
 
 ### ABORT

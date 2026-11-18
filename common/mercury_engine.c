@@ -322,6 +322,7 @@ int mercury_engine_init(const mercury_config *cfg,
     modem_set_spectrum_enabled(ui_enabled && waterfall_enabled);
 
     tnc_set_intervals(cfg->tnc_keepalive_s, cfg->tnc_buffer_report_ms);
+    tnc_set_absorb_idle_disconnect_s(cfg->tnc_absorb_idle_disconnect_s);
 
     /* ---- persistent message store ---- */
     if (cfg->store_enabled)
