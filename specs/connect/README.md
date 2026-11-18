@@ -221,7 +221,8 @@ Results:
 - `Deep`, a caller wider than 500 Hz (the deep floor): a third carrier,
   `"deep"` (the 500 Hz MFSK, `LD` 108 = 27 s, call interval `IvDeep` 150 =
   37.5 s, the floor's decode allowance), joins the rotation after the fast
-  CALLs: floor, deep, fast in turn.  The caller listens on one MFSK carrier
+  CALLs: the floor, then deep twice (in the connect sim the third slot on
+  fast added nothing, and a second deep CALL connected more under fading).  The caller listens on one MFSK carrier
   at a time, the one its last CALL's ACCEPT may come on (`cListen`, now a
   carrier: the payload decoder is one); the callee answers a deep CALL on
   deep, and a fast repeat on the floor unless its last ACCEPT went there.
@@ -229,10 +230,10 @@ Results:
   before) and gives the counts above: the model with `Deep` FALSE is the
   one before.  With `Deep` TRUE:
   - `ConnectCarrier_deep.cfg` (every path "any", `H` 700 so the rotation
-    reaches the deep CALL and its successor): no error, 290648 states;
-    `_deep_sense` (`Sense` "any"), `NoOverlap` holds, 580186; `_deep_f4`
-    (`F` = 4, `R` = 8, `H` 1100), 640565; `_deep_emfsk` (an MFSK-only
-    callee: `FloorOnly` allows either MFSK carrier), 275148.
+    reaches both deep CALLs): no error, 294649 states; `_deep_sense`
+    (`Sense` "any"), `NoOverlap` holds, 588005; `_deep_f4` (`F` = 4, `R` =
+    8, `H` 1100), 623918; `_deep_emfsk` (an MFSK-only callee: `FloorOnly`
+    allows either MFSK carrier), 276863.
   - `_deep_early`: `Early` holds, 23222 (the deep CALL comes after the
     second); `_deep_floor`: `Connects`, 244623 (connected on the floor CALL
     before the deep one comes due).

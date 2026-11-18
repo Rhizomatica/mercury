@@ -433,7 +433,7 @@ int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now);
 
 /** The carrier the next CALL goes out on: the control mode for the first
  *  ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately -- or,
- *  wider than 500 Hz, the floor, the 500 Hz MFSK and the control mode. */
+ *  wider than 500 Hz, the floor and then the 500 Hz MFSK twice. */
 int arq_call_carrier(const arq_session_t *sess);
 /** Whether a pattern can arrive now (the modem's detector runs only then). */
 bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now);

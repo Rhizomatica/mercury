@@ -65,8 +65,8 @@
 (*                                                                         *)
 (* Deep: C is wider than 500 Hz (BW2300/BW2750), so its floor is the 1 kHz *)
 (* MFSK and a third carrier, "deep" (the 500 Hz MFSK, which every listener *)
-(* decodes too: #451), joins the rotation after the fast CALLs: floor,     *)
-(* deep, fast in turn.  C listens on one MFSK carrier at a time (its       *)
+(* decodes too: #451), joins the rotation after the fast CALLs: the floor, *)
+(* then deep twice.  C listens on one MFSK carrier at a time (its       *)
 (* payload decoder, bound to call_answer_carrier): deep after a deep CALL, *)
 (* the floor after a floor CALL or a repeat.  E answers a deep CALL on     *)
 (* deep, and a session connected there runs on that floor.  An end of 500 *)
@@ -143,12 +143,10 @@ Mfsk(car) == car # "fast"
 DecMax(car) == Dec(car) + (IF Mutant = "lateanswer" THEN IvFast ELSE 0)
 
 \* arq_call_carrier: CALLs 1 .. F fast, then the floor and fast in turn --
-\* or, Deep, the floor, deep and fast.
+\* or, Deep, the floor and then deep twice.
 CallCar(i) == IF CM THEN "floor"
               ELSE IF i <= F THEN "fast"
-              ELSE IF Deep THEN (CASE (i - F - 1) % 3 = 0 -> "floor"
-                                   [] (i - F - 1) % 3 = 1 -> "deep"
-                                   [] OTHER -> "fast")
+              ELSE IF Deep THEN (IF (i - F - 1) % 3 = 0 THEN "floor" ELSE "deep")
               ELSE IF (i - F - 1) % 2 = 0 THEN "floor" ELSE "fast"
 \* call_answer_carrier, as send_call_accept binds the payload decoder to it:
 \* the MFSK carrier C listens on after CALL i ("none": it keeps the last).

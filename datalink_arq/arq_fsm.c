@@ -330,8 +330,13 @@ int arq_call_carrier(const arq_session_t *sess)
      * session connected on it keeps it as its floor (session_floor_mode).
      * In the Go harness a BW500 session completed at -15..-17 dB on white
      * noise and -13/-14 dB under CCIR Moderate, where a BW2300 one never
-     * connected. */
-    return n % 3 == 0 ? floor : n % 3 == 1 ? MERCURY_MODE_MFSK_N32 : sess->control_mode;
+     * connected.  Twice for each floor CALL, and no more control-mode
+     * CALLs: in the connect sim (60 seeds) floor, 500 Hz, 500 Hz connected
+     * as often and as fast as floor, 500 Hz, control mode wherever that
+     * did, and more often under fading (-13 dB 59 vs 52, -14 dB 56 vs 43,
+     * -15 dB 49 vs 34 of 60); the control-mode CALL added nothing, and the
+     * 500 Hz CALL first cost every -9..-13 dB connect 27 s. */
+    return n % 3 == 0 ? floor : MERCURY_MODE_MFSK_N32;
 }
 
 /* The carrier an ACCEPT to my last CALL may come back on: the CALL's own, or

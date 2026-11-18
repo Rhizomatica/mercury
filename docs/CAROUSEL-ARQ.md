@@ -79,10 +79,13 @@ the caller listens, and the session then runs at the lower bandwidth, on
 its floor.  A BW500 station still hears a 2300 caller's 1 kHz CALLs only
 through a filter wide enough for them; the narrow CALL passes any filter.
 **The deep floor.**  A caller wider than 500 Hz (BW2300, BW2750) also calls
-on the 500 Hz MFSK: after its fast CALLs its rotation is the floor, the
-500 Hz MFSK and the control mode in turn (`arq_call_carrier`), so at the
-default `RETRIES` its fourth CALL is the narrow one, about 77 s in, and it
-waits that carrier's call interval (37.5 s) for the answer.  Every listener
+on the 500 Hz MFSK: after its fast CALLs its rotation is the floor and then
+the 500 Hz MFSK twice (`arq_call_carrier`), so at the default `RETRIES` its
+fourth and fifth CALLs are the narrow ones, about 77 s and 141 s in, each
+waiting that carrier's call interval (37.5 s) for the answer.  In the
+connect sim (60 seeds) this connected wherever the old rotation did, as fast,
+and under fading also at −13/−14/−15 dB in 59/56/49 runs, against 23/8/3;
+a third control-mode CALL in the rotation added nothing.  Every listener
 decodes it, and the callee answers there.  A session connected on it keeps
 the 500 Hz MFSK as its floor at both ends (the caller from the ACCEPT's
 carrier, the callee from its own: `session_floor_mode`), under its

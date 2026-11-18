@@ -773,13 +773,13 @@ void test_repeat_on_control_mode_is_answered_on_the_floor(void)
 }
 
 /* Wider than 500 Hz, the caller adds the 500 Hz MFSK after its floor CALL:
- * floor, deep, control mode in turn.  At 500 Hz its floor is that MFSK
+ * the floor, then the 500 Hz MFSK twice.  At 500 Hz its floor is that MFSK
  * already, and the rotation is the floor and the control mode. */
 void test_wide_caller_also_calls_on_the_500_hz_mfsk(void)
 {
     static const int wide[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK,
-                                MERCURY_MODE_MFSK_N32, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK,
-                                MERCURY_MODE_MFSK_N32, FREEDV_MODE_DATAC16 };
+                                MERCURY_MODE_MFSK_N32, MERCURY_MODE_MFSK_N32, MERCURY_MODE_MFSK,
+                                MERCURY_MODE_MFSK_N32, MERCURY_MODE_MFSK_N32 };
     static const int narrow[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK_N32,
                                   FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK_N32, FREEDV_MODE_DATAC16 };
     sess.control_mode = FREEDV_MODE_DATAC16;
