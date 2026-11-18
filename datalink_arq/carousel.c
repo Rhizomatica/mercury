@@ -3536,7 +3536,6 @@ void car_rung_seed(car_t *c, const car_rung_hint_t *h, double weight)
             lost *= CAR_RUNG_HINT_CAP / sent;
             sent = CAR_RUNG_HINT_CAP;
         }
-        if (lost > sent) lost = sent * 0.99;      /* decay can tilt it past 1 */
         /* Only the statistics are the hint's.  dead_run, the probe clocks
          * and the backoff stay at their fresh-session zeros: a rung the
          * channel has since closed must earn its way back out from under

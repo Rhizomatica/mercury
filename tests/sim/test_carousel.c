@@ -922,13 +922,15 @@ static void test_rung_hint_seed_weights_and_caps(void)
     car_io_t io = {0};
     car_rung_hint_t h = {0};
     h.sent[6] = 40.0; h.lost[6] = 2.0;     /* far past the cap */
-    h.sent[2] = 3.0;  h.lost[2] = 3.0;     /* nothing delivered: tilt clamp */
+    h.sent[2] = 3.0;  h.lost[2] = 3.0;     /* nothing delivered: the struggle
+                                            * filter seeds nothing (and it makes
+                                            * the old tilt clamp unreachable) */
     car_init(c, &io, 6, 6);
     car_rung_seed(c, &h, 0.5);
     TEST_ASSERT_EQUAL_FLOAT(8.0f, (float)c->rung[6].sent);      /* 40*0.5, held to 8 */
     TEST_ASSERT_EQUAL_FLOAT(0.4f, (float)c->rung[6].lost);      /* scaled with it */
     TEST_ASSERT_EQUAL_FLOAT(0.95f, (float)c->rung[6].p_ok);
-    TEST_ASSERT_EQUAL_FLOAT(1.5f, (float)c->rung[2].sent);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, (float)c->rung[2].sent);  /* filtered, not clamped */
     TEST_ASSERT_EQUAL_INT(0, c->rung[6].dead_run);
     TEST_ASSERT_EQUAL_INT(0, c->rung[6].rounds);
     car_rung_hint_t out;
@@ -984,11 +986,18 @@ static void test_rung_hint_starts_where_the_last_session_topped(void)
     rung_hint_set_path(path);
 
     remove(path);
+    /* awgn, not the fade cell this test used on 237481e7: trunk's buffer-
+     * floor and ladder work (#593, #599, #602) left that seed's cold
+     * session struggling on both rungs it touched (4.59/3.38, 5.85/4.79) --
+     * and by design the struggle filter seeds nothing there, so warm
+     * equals cold and the test would assert against its own filter.  On
+     * awgn the cold session tops out cleanly and the win is -12 %:
+     * 47791 -> 42031 ms, fresh bench, this tree. */
     car_sim_result_t r1, r2;
-    carousel_sim_run(1, "fade:8:0.5", false, LIMIT_MS, &r1);
+    carousel_sim_run(1, "awgn:0.02", false, LIMIT_MS, &r1);
     TEST_ASSERT_TRUE(r1.intact);
     TEST_ASSERT_NOT_EQUAL(0, r1.done_ms);
-    carousel_sim_run(1, "fade:8:0.5", false, LIMIT_MS, &r2);
+    carousel_sim_run(1, "awgn:0.02", false, LIMIT_MS, &r2);
     TEST_ASSERT_TRUE(r2.intact);
     TEST_ASSERT_NOT_EQUAL(0, r2.done_ms);
     char what[96];

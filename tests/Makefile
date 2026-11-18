@@ -263,7 +263,7 @@ test_hermes_log: common/test_hermes_log.c $(UNITY_SRC) ../common/hermes_log.c
 # #579 regression: the TCP reactor never waits on g_sess_lock while the event
 # loop holds it, blocked on a full RX ring.  Includes arq.c for its statics.
 test_arq_reactor_lock: datalink_arq/test_arq_reactor_lock.c $(UNITY_SRC) ../datalink_arq/arq.c \
-                       ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c \
+                       ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../datalink_arq/rung_hint.c \
                        ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c ../datalink_arq/arith.c \
                        ../datalink_arq/arq_channels.c ../datalink_arq/arq_trace.c ../datalink_arq/arq_tnc.c \
                        ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c \
