@@ -308,6 +308,91 @@ void test_car_callee_hangup_acks_last_bytes(void)
     }
 }
 
+/* The mirror case (#585): the callee's last bytes reach the caller, whose
+ * application hangs up on them at once, with nothing of its own left.  The
+ * ack the caller owed waits APP_GRACE_MS for an answer to carry, and its
+ * DISCONNECT, keyed inside that wait, took the ack's place: the callee logged
+ * "20 bytes of ours unconfirmed" with every byte delivered (P2P and a TNC
+ * probe, 2026-11-16).  Now the caller acks first, then ends the session. */
+void test_car_caller_hangup_acks_last_bytes(void)
+{
+    for (uint64_t seed = 1; seed <= 8; seed++) {
+        sim_t *s = idle_session(seed, 10.0);
+        uint8_t last[20] = "B2A-twenty-bytes-yy";
+        static uint8_t rx[64];
+        queue(s, sim_b(s), last, sizeof(last));
+        for (int i = 0; i < 6000 && sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)) < sizeof(last); i++)
+            sim_run_until_idle(s, 100);
+        TEST_ASSERT_EQUAL_size_t(sizeof(last), sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)));
+        arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+        sim_inject(s, sim_a(s), &disc);
+
+        const car_t *car = sim_endpoint_session(sim_b(s))->car;
+        size_t inflight = car_tx_inflight(car);
+        /* ...read as the callee leaves CONNECTED, on the DISCONNECT that took
+         * it out: what it would call unconfirmed */
+        for (int i = 0; i < 6000 && state(sim_b(s)) == ARQ_CONN_CONNECTED; i++) {
+            inflight = car_tx_inflight(car);
+            sim_run_until_idle(s, 100);
+        }
+        sim_run_until_idle(s, 60000);
+
+        TEST_ASSERT_EQUAL_size_t_MESSAGE(0, inflight, "the callee was hung up on with its last bytes unconfirmed");
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_DISCONNECTING, state(sim_a(s)));
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_DISCONNECTING, state(sim_b(s)));
+        TEST_ASSERT_EQUAL_UINT16(0, sim_endpoint_crc_seed(sim_a(s)));
+        TEST_ASSERT_EQUAL_UINT16(0, sim_endpoint_crc_seed(sim_b(s)));
+        TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+        sim_destroy(s);
+    }
+}
+
+/* #585 at the floor: the caller's ack of the callee's last bytes is a
+ * 13.5 s MFSK keydown, and its teardown ends 31 s after the hang-up, past
+ * the 30 s at which a Winlink client forces its own.  Its second DISCONNECT
+ * then finds the drain over (the ack went at 14 s) and the teardown under
+ * way, which it lets carry on: the callee still has its bytes acknowledged. */
+void test_car_caller_hangup_at_floor_survives_second_disconnect(void)
+{
+    for (uint64_t seed = 1; seed <= 4; seed++) {
+        sim_t *s = idle_session(seed, -10.0);
+        uint8_t last[20] = "B2A-twenty-bytes-yy";
+        static uint8_t rx[64];
+        queue(s, sim_b(s), last, sizeof(last));
+        for (int i = 0; i < 12000 && sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)) < sizeof(last); i++)
+            sim_run_until_idle(s, 100);
+        TEST_ASSERT_EQUAL_size_t(sizeof(last), sim_endpoint_delivered(sim_a(s), rx, sizeof(rx)));
+        arq_event_t disc = { .id = ARQ_EV_APP_DISCONNECT };
+        sim_inject(s, sim_a(s), &disc);
+        uint64_t t0 = sim_clock_now();
+
+        const car_t *car = sim_endpoint_session(sim_b(s))->car;
+        size_t inflight = car_tx_inflight(car);
+        while (sim_clock_now() - t0 < 30000) {
+            if (state(sim_b(s)) == ARQ_CONN_CONNECTED) inflight = car_tx_inflight(car);
+            sim_run_until_idle(s, 100);
+        }
+        /* the client's own, 30 s on: the drain is over by then */
+        TEST_ASSERT_NOT_EQUAL_MESSAGE(ARQ_CONN_CONNECTED, state(sim_a(s)), "the caller still drains at 30 s");
+        sim_inject(s, sim_a(s), &disc);
+        for (int i = 0; i < 6000 && state(sim_b(s)) == ARQ_CONN_CONNECTED; i++) {
+            inflight = car_tx_inflight(car);
+            sim_run_until_idle(s, 100);
+        }
+        sim_run_until_idle(s, 120000);
+
+        TEST_ASSERT_EQUAL_size_t_MESSAGE(0, inflight, "the callee was hung up on with its last bytes unconfirmed");
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_DISCONNECTING, state(sim_a(s)));
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
+        TEST_ASSERT_NOT_EQUAL(ARQ_CONN_DISCONNECTING, state(sim_b(s)));
+        TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+        sim_destroy(s);
+    }
+}
+
 /* #392: the Winlink tail.  The RMS (callee) hangs up as its FQ is on the
  * air, and the client's slow app answers the FQ only after its own ack has
  * gone.  Both ends leave the session cleanly, and the RMS's application gets
@@ -1253,6 +1338,8 @@ int main(void)
     RUN_TEST(test_car_disconnect_after_reply_is_prompt);
     RUN_TEST(test_car_winlink_tail_ends_cleanly);
     RUN_TEST(test_car_callee_hangup_acks_last_bytes);
+    RUN_TEST(test_car_caller_hangup_acks_last_bytes);
+    RUN_TEST(test_car_caller_hangup_at_floor_survives_second_disconnect);
     RUN_TEST(test_car_callee_hangup_is_ended_by_the_caller);
     RUN_TEST(test_car_callee_last_word_then_hangup);
     RUN_TEST(test_car_callee_hangup_then_silence_ends_early);
