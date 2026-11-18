@@ -90,6 +90,18 @@ func TestMercuryARQAbortCutsTheFloorRound(t *testing.T) {
 	TestMercuryARQTransfer(t)
 }
 
+// The caller hangs up on the callee's last bytes, with nothing of its own
+// left (a P2P host, a TNC probe): the ack it owed them goes before its
+// DISCONNECT.  Before, the DISCONNECT took the ack's place and the callee
+// logged "20 bytes of ours unconfirmed" with every byte delivered (#585: 7
+// runs in 9 on this channel).
+func TestMercuryARQCallerHangsUpOnCalleesLastBytes(t *testing.T) {
+	t.Setenv("MERCURY_TEST_DISCONNECT_BY", "A")
+	t.Setenv("MERCURY_TEST_REPLY_B", "20")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "20")
+	TestMercuryARQTransfer(t)
+}
+
 func TestMercuryARQTransfer(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
@@ -601,6 +613,37 @@ func TestMercuryARQTransfer(t *testing.T) {
 		failWithLogs("payload mismatch: got %d bytes, want %d", len(rx), len(payload))
 	}
 
+	// MERCURY_TEST_REPLY_B=<n>: B answers with n bytes once it has A's, and
+	// A has them before it hangs up (MERCURY_TEST_DISCONNECT_BY=A) with no
+	// last word of its own: B's last bytes are the session's last, and B
+	// must not log them unconfirmed (#585).
+	replyB := 0
+	if v := os.Getenv("MERCURY_TEST_REPLY_B"); v != "" {
+		if replyB, err = strconv.Atoi(v); err != nil || replyB <= 0 {
+			t.Fatalf("bad MERCURY_TEST_REPLY_B %q", v)
+		}
+		reply := []byte(strings.Repeat("R", replyB))
+		if _, err := dataB.Write(reply); err != nil {
+			failWithLogs("B write reply: %v", err)
+		}
+		var got []byte
+		for end := time.Now().Add(3 * time.Minute); len(got) < replyB && time.Now().Before(end); {
+			_ = dataA.SetReadDeadline(time.Now().Add(15 * time.Second))
+			n, err := dataA.Read(buf)
+			got = append(got, buf[:n]...)
+			if err != nil {
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					continue
+				}
+				break
+			}
+		}
+		if string(got) != string(reply) {
+			failWithLogs("A got %d of B's %d reply bytes", len(got), replyB)
+		}
+		_ = dataA.SetReadDeadline(time.Time{})
+	}
+
 	// The transfer proves the modes on the air; the logs document them.
 	for name, paths := range map[string][2]string{
 		"A": {outA.Name(), errA.Name()},
@@ -644,6 +687,8 @@ func TestMercuryARQTransfer(t *testing.T) {
 		hangCmd := "DISCONNECT"
 		if abort {
 			hangCmd = "ABORT"
+		} else if replyB > 0 {
+			lastWord = nil // hanging up on the peer's last bytes, nothing of its own
 		} else if _, err := hangData.Write(lastWord); err != nil {
 			t.Fatalf("write last word: %v", err)
 		}
@@ -736,6 +781,14 @@ func TestMercuryARQTransfer(t *testing.T) {
 			failWithLogs("%s got %q of %s's last word %q", name, got, by, lastWord)
 		}
 		t.Logf("%s heard %s's DISCONNECT after %.1f s", name, by, time.Since(t0).Seconds())
+		if replyB > 0 {
+			// The async logger writes the warning within a moment of the end.
+			time.Sleep(time.Second)
+			b, _ := os.ReadFile(timingLogs[name])
+			if strings.Contains(string(b), "bytes of ours unconfirmed") {
+				failWithLogs("%s logged its last bytes unconfirmed, though %s had them", name, by)
+			}
+		}
 	}
 	engine := params.Engine
 	if engine == "" {

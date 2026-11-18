@@ -1927,7 +1927,7 @@ static int asked_n(const car_t *c) { return c->poll_n < 0 ? -c->poll_n : c->poll
  * one: both directions in one exchange (the poll names the round's rung and
  * size, so a receiver that decodes only the poll knows when the keydown
  * ends).  Returns the frames of my round. */
-static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
+static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round, bool m_end)
 {
     car_frame_t *fr = c->txbuf;
     msg_t m;
@@ -1936,6 +1936,9 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
     /* ...saying my application has hung up, once I have all of M's: M with
      * all of mine then ends the session (peer_ended) */
     m.ending = !c->master && c->end_req == CAR_END_WISH && peer_direction_done(c);
+    /* ...or, from M, its last ack after its application hung up (#585): no
+     * slot follows it */
+    if (m_end) m.ending = true;
     m.poll_id = id;
     m.level = lv; m.n = n;
     c->poll_id = id;
@@ -1997,7 +2000,7 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
     keydown(c, fr, 1 + nd);
     return nd;
 }
-static void send_poll(car_t *c, int lv, int n, uint8_t id) { send_poll_ex(c, lv, n, id, false); }
+static void send_poll(car_t *c, int lv, int n, uint8_t id) { send_poll_ex(c, lv, n, id, false, false); }
 
 /* A round answered with a pattern: another of the same size comes next. */
 static void send_pattern(car_t *c, int kind)
@@ -2406,14 +2409,26 @@ static void m_key_plan(car_t *c)
         uint32_t d = my_ctl_d(c), dr = d_of_mode(lmode(c, c->tx_level >= 0 ? c->tx_level : 0));
         m_note(c, KD_BOTH, rr, d > dr ? d : dr, 0, 0);
         if (peer_ctl_on_floor(c) && lv > 0) bind_rx(c, 0);
-        if (!send_poll_ex(c, lv, n, id, true))            /* nothing of mine after all */
+        if (!send_poll_ex(c, lv, n, id, true, false))            /* nothing of mine after all */
             m_note(c, KD_POLL, s_round_ms(c, lv, n) > ctl ? s_round_ms(c, lv, n) : ctl, my_ctl_d(c),
                    poll_k(c, lv, n), s_round_ms(c, lv, n));
         break;
     }
     case KD_DONE:
+        /* My application has hung up: the ack says so (M_END), and its slot
+         * is closed as it goes (car_on_tx_done): S's answer has no one left
+         * to read it here.  The DISCONNECT then goes as soon as the ack is
+         * off the air; held for that slot it waited 7-16 s, a hang-up on S's
+         * last bytes taking 18-27 s where Winlink's client forces its own at
+         * 30 (#384, #585).  At the floor the ack itself takes 14 s and the
+         * teardown ends 31 s after the hang-up, past those 30: the client's
+         * second DISCONNECT then finds the ack gone and the teardown under
+         * way, which it lets carry on (fsm_disconnecting; the sim's
+         * test_car_caller_hangup_at_floor_survives_second_disconnect).  An
+         * S before this reads an ordinary ack, and answers only with data
+         * its application wrote after it: then the DISCONNECT's retry. */
         m_note(c, KD_DONE, ctl, my_ctl_d(c), 0, 0);
-        send_poll(c, 0, 0, id);
+        send_poll_ex(c, 0, 0, id, false, c->hung_up);
         break;
     case KD_PATTERN_ACK:
     case KD_PATTERN_BREAK: {
@@ -2844,7 +2859,9 @@ static void m_decide_recv(car_t *c, uint64_t now)
     int lv = 0, n = 0;
     int kind = rx_next(c, now, &lv, &n);
     if (kind == KD_DONE) m_enter(c, PH_IDLE, now);
-    if (kind == KD_DONE && !has_data(c) && c->deliver_seq != c->seq_at_ask && ack_can_carry(c, now)) {
+    /* ...not when it has hung up: nothing more is coming from it (#585) */
+    if (kind == KD_DONE && !has_data(c) && !c->hung_up && c->deliver_seq != c->seq_at_ask &&
+        ack_can_carry(c, now)) {
         car_trace(c, "rx: done -- the ack waits %d ms for my application", APP_GRACE_MS);
         c->plan_not_before = now + APP_GRACE_MS;
     }
@@ -3059,7 +3076,7 @@ static void s_answer_both(car_t *c, uint64_t now)
     if (n && c->ctl_deaf && c->io.pattern) lv = 0;
     c->s_asked_new = n && c->s_prev_lv >= 0 && lv != c->s_prev_lv;
     c->tx_slot = 0; c->tx_pat_anchor = false;
-    send_poll_ex(c, lv, n, c->anc.mk, has_data(c));
+    send_poll_ex(c, lv, n, c->anc.mk, has_data(c), false);
 }
 
 static void s_slot(car_t *c, uint64_t now)
@@ -3171,6 +3188,11 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
             car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
             s_anchor(c, ANC_POLL, (uint8_t)m->poll_id, eh, d, poll_k(c, m->level, m->n),
                      s_round_ms(c, m->level, m->n));
+        } else if (m->ending) {
+            /* M's application has hung up: its ack gives me no slot, and its
+             * DISCONNECT follows (#585).  Nothing of mine has a reader there. */
+            car_trace(c, "the peer's application has hung up -- no slot, its DISCONNECT follows");
+            c->anc.on = false;
         } else {
             s_anchor(c, ANC_DONE, (uint8_t)m->poll_id, eh, d, 0, 0);
         }
@@ -3536,6 +3558,8 @@ void car_on_tx_done(car_t *c, uint64_t now)
         return;
     }
     m_log_add(c, now);
+    /* My last ack after my application hung up opens no slot (M_END, #585) */
+    if (c->m_kind == KD_DONE && c->hung_up) c->mlog[c->nmlog - 1].done = 0xFF;
     c->m_state = MS_WAIT;
     /* Decide when S's response slot is over, or once its answer is heard. */
     arm(c, CAR_T_M, mslot_hi(c, &c->mlog[c->nmlog - 1], 0) + TURN_G_MS);
@@ -3713,15 +3737,27 @@ void car_log_ctl(car_t *c, uint64_t end, uint32_t tg)
 
 void car_wish_end(car_t *c)
 {
-    if (c->master || c->end_req) return;
+    if (c->master) {
+        if (!c->hung_up)
+            car_trace(c, "ending: my application has hung up -- my ack says so, no slot after it");
+        c->hung_up = true;
+        return;
+    }
+    if (c->end_req) return;
     c->end_req = CAR_END_WISH;
     car_trace(c, "ending: my application has hung up -- my polls say so");
 }
 
 bool car_owes_ack(const car_t *c)
 {
-    return !c->master && c->deliver_seq != c->seq_at_ask;
+    /* Every poll records what it acknowledges (send_poll_ex, send_pattern),
+     * the caller's DONE among them.  The caller once had no owed ack here:
+     * its DISCONNECT, keyed inside the DONE's grace, took the DONE's place,
+     * and the callee logged its last bytes unconfirmed, all delivered (#585). */
+    return c->deliver_seq != c->seq_at_ask;
 }
+
+bool car_keyed(const car_t *c) { return c->tx_busy; }
 
 void car_request_end(car_t *c)
 {

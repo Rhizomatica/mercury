@@ -2207,7 +2207,14 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
          * hang-up, and ends the session itself.  Its DISCONNECT keyed at once
          * took that answer's slot, and the caller never heard that its last
          * bytes arrived (KG9NI-K7EK, 2026-11-04: "3 bytes of ours
-         * undelivered" at every end, each FQ delivered). */
+         * undelivered" at every end, each FQ delivered).
+         *
+         * The caller likewise (#585): its application hanging up on the
+         * callee's last bytes, its DONE goes first, then the DISCONNECT
+         * below once nothing is owed.  The DISCONNECT keyed at once took the
+         * DONE's place, and the callee logged its last bytes unconfirmed
+         * with all of them delivered (a P2P host and a TNC probe,
+         * 2026-11-16). */
         else if (!car_drained(sess) || sess->tx_active || car_owes_ack(sess->car))
         {
             /* The configured drain is the least it gets; the carousel's
@@ -2223,7 +2230,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             else
                 HLOGI(LOG_COMP, "DISCONNECT deferred until delivered (up to %llu s)",
                       (unsigned long long)(budget / 1000));
-            car_wish_end(sess->car);      /* the callee's polls say so: M_END */
+            car_wish_end(sess->car);      /* the callee's polls say so: M_END; the caller's last ack too */
             break;
         }
         if (!ev->abort && !repeat)
@@ -2238,9 +2245,13 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     default:
         return false;
     }
-    /* A deferred DISCONNECT goes once everything has been delivered. */
+    /* A deferred DISCONNECT goes once everything has been delivered, and
+     * the last ack is off the air: keyed in this same dispatch, before the
+     * radio's TX_STARTED, the teardown took the ack's TX_COMPLETE for the
+     * DISCONNECT's, and held the DISCONNECT 16 s for a reply slot the ack
+     * never opened (#585). */
     if (sess->teardown == ARQ_TD_DRAINING && car_drained(sess) && !sess->tx_active &&
-        !car_owes_ack(sess->car))
+        !car_owes_ack(sess->car) && !car_keyed(sess->car))
         car_begin_disconnect(sess, now);
     /* The callee's application has hung up (M_END), and everything is
      * delivered both ways: the caller ends the session now, its DISCONNECT

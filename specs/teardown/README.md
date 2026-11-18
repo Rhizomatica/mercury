@@ -72,6 +72,9 @@ Properties:
   application has hung up in it.
 - `NoInherited`: the callee holds a DISCONNECT back only for the session
   whose application hung up.  No teardown step outlives its session.
+- `SConfirmed`: on a lossless channel a callee the caller hung up on never
+  leaves the session with its last word unacknowledged, unless a host had
+  it dropped.  Not when the callee's own application hung up in it.
 - `Confirmed`: on a lossless channel the caller never leaves a session
   with its last word unacknowledged, unless the host had it dropped (a
   second DISCONNECT or a redial while the caller drains).
@@ -125,6 +128,26 @@ guard on `SAppDisc`, and `SDrained` waiting for the ack to be keyed.  An
 M_END that the caller does not act on (the callee still holds a word of
 its own) still acknowledges the caller's word, as the poll does in the
 code.  `Mut_ackless.cfg` has the old rule.
+
+The ack the caller owes (2026-11-17, #585): the mirror case.  The callee's
+last bytes reach the caller, whose application hangs up on them at once
+with nothing of its own left (a P2P host, a TNC probe).  The caller's ack
+of them, the DONE it holds `APP_GRACE_MS` for an answer to carry, was
+replaced by its DISCONNECT, and the callee logged "N bytes of ours
+unconfirmed" with every byte delivered.  Now a caller owing that ack
+(`car_owes_ack` on either end) holds its DISCONNECT as its drain does: the
+DONE goes at once, as an M_END that opens no slot (the callee keeps none,
+and the caller closes the slot it logged), and the DISCONNECT once the
+DONE is off the air.  In the model: `sw` (the callee's last word, read by
+the caller's application: owed, acked, confirmed), `SWord`, `MAck` (which
+opens no slot), the guards on `MAppDisc`, `MHold` and `MDrained`, and
+property `SConfirmed`.  `SAppDisc` and the host's race no longer take a
+callee whose own last word is unconfirmed straight to its DISCONNECT: in
+the code `has_data` counts those blocks, and that is `SWish`'s drain.
+`SConfirmed` leaves out a callee whose own application hung up in the
+session: its drain is its own, and when the caller ends on its M_END the
+caller may not have acked its last bytes (not changed here).
+`Mut_mackless.cfg` has the old rule.
 
 The caller's drain (2026-11-05): the host hangs up, and the caller then holds its
 DISCONNECT to deliver what it has not yet confirmed (`ARQ_TD_DRAINING`), at
@@ -302,25 +325,28 @@ channel.  In the sim the CALL also keyed over the reply: both keyed for
 Results:
 
 - `SessionTeardown.cfg`: the code's rules, lossless, 2 sessions, 2 caller
-  callsigns, with the host's race.  No error, 178 290 distinct states
-  (56 041 before the host's notice, 41 421 before the
+  callsigns, with the host's race.  No error, 669 778 distinct states
+  (178 290 before the caller's owed ack, 56 041 before the host's notice, 41 421 before the
   silence after an M_END, 21 317 before the caller's drain, 10 645 before the callee's owed ack, 4 957 before the
   last word, 2 069 before M_END).
 - `SessionTeardown_lossy.cfg`: the same with any frame lost.  No error,
-  2 568 389 distinct states (1 373 461 before the silence after an M_END,
+  11 077 245 distinct states (2 568 389 before the caller's owed ack,
+  1 373 461 before the silence after an M_END,
   599 881 before the caller's drain, 264 149
   before the owed ack, 124 141 before the last word, 52 041 before M_END).  `Clean` does not apply
   here.
 - `SessionTeardown_abort.cfg`: the code's rules with the host's ABORT,
-  lossless, with the host's race and its notice.  No error, 1 966 726
-  distinct states (1 865 558 before `SAbortKey`, 259 749 before the host's
+  lossless, with the host's race and its notice.  No error, 7 628 010
+  distinct states (1 966 726 before the caller's owed ack, 1 865 558 before `SAbortKey`, 259 749 before the host's
   notice).
   With the ABORT hold (`held`), `HoldInTeardown` and `HoldOwnSession`
-  added: no error, the same 1 966 726 states (`held` is a function of the
+  added: no error, the same 7 628 010 states (`held` is a function of the
   others).
 - `SessionTeardown_abort_lossy.cfg`: the same with any frame lost.  Not
   exhausted: no error through 36.7 M distinct states at depth 48
   (7 workers, 1 h 50 min), with 1.3 M still queued when the run was stopped.
+  With the caller's owed ack: no error through 12.1 M distinct states at
+  depth 25 (6 workers, 40 min), 2.7 M still queued.
   With `SAbortKey` on a clear channel: no error through 7.21 M distinct
   states at depth 28 (4 workers, 25 min), 1.0 M still queued.
 - `Mut_holdlate.cfg`: with loss, the ABORT hold's `CANCELPENDING` a step
@@ -339,7 +365,8 @@ Results:
   DISCONNECT does not take the pattern.  It violates `Clean`: it retries
   and times out.
 - `ForeignPattern.cfg`: the code's rules, lossy, with another station's
-  patterns heard (`FPAT`).  No error, 15 602 153 distinct states (8 403 333
+  patterns heard (`FPAT`).  No error, 65 320 897 distinct states (15 602 153 before the caller's owed
+  ack, 8 403 333
   before the silence after an M_END, 3 621 957 before the caller's drain, 1 655 453 before the owed ack): keyed by the
   session, none is taken.  Safety only: unbounded foreign traffic keeps the
   queue full for ever, and `Mutual` fails on that, not on a rule.
@@ -348,7 +375,8 @@ Results:
   end cleared its seed before the reply went out, and in the harness the
   peer, still in the session, never detected it (3 runs of 3).
 - `ForeignEnd.cfg`: the code's rules, lossy, with another station's M_END
-  frames heard (`FEND`).  No error, 12 686 499 distinct states (6 850 643
+  frames heard (`FEND`).  No error, 54 701 195 distinct states (12 686 499 before the caller's owed
+  ack, 6 850 643
   before the silence after an M_END, 2 956 247 before the caller's drain, 1 370 595 before the owed ack): seeded by its
   session, none is taken.  Safety only, as `ForeignPattern.cfg`.
 - `Mut_unkeyedend.cfg`: the same, with an M_END taken whatever session sent
@@ -360,6 +388,11 @@ Results:
   the ack of the caller's last word, and its DISCONNECT goes in that ack's
   slot (the rule before `car_owes_ack`).  It violates `Confirmed`: the
   caller replies to the DISCONNECT with its word unacknowledged.
+- `Mut_mackless.cfg`: lossless, the caller's application hangs up owing
+  the ack of the callee's last word, and its DISCONNECT goes at once (the
+  rule before `car_owes_ack` covered the caller, #585).  It violates
+  `SConfirmed` in 8 states: the callee replies to the DISCONNECT with its
+  last word unacknowledged.
 - `Mut_rearm.cfg`: lossless, a second DISCONNECT while the caller drains
   re-arms the drain (the rule before 2026-11-05).  It violates
   `Released`.
@@ -375,7 +408,7 @@ Results:
   DISCONNECT goes idle without keying it.  It violates `Clean`: the peer
   retries and times out.
 - `Mut_anypattern.cfg`: a pattern ends an end in any state, not only one
-  whose DISCONNECT is out.  No error, the same 2 568 389 states: as with the
+  whose DISCONNECT is out.  No error, the same 11 077 245 states: as with the
   session-id check below, frames in order and timers longer than an
   exchange mean no pattern reaches an end that is not waiting for one.
   In the code the rule keeps the carousel's own patterns (not modelled
