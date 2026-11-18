@@ -108,6 +108,9 @@ qam16_papr_sweep: qam16_papr_sweep.c bench_common.c chanutil.c ../common/watters
 # A shipped mode, or a candidate rung in codec2's custom slot (carriers, modem
 # frames per packet, LDPC code), as a peak-limited transmitter sends it:
 # delivery and goodput against the S/N of a steady carrier at the same peak.
+psk_sweep: psk_sweep.c bench_common.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/psk/mpsk.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -I../modem/psk -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
 rung_sweep: rung_sweep.c bench_common.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
