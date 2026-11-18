@@ -2419,9 +2419,13 @@ static void m_key_plan(car_t *c)
          * to read it here.  The DISCONNECT then goes as soon as the ack is
          * off the air; held for that slot it waited 7-16 s, a hang-up on S's
          * last bytes taking 18-27 s where Winlink's client forces its own at
-         * 30 (#384, #585).  An S before this reads an ordinary ack, and
-         * answers only with data its application wrote after it: then the
-         * DISCONNECT's retry. */
+         * 30 (#384, #585).  At the floor the ack itself takes 14 s and the
+         * teardown ends 31 s after the hang-up, past those 30: the client's
+         * second DISCONNECT then finds the ack gone and the teardown under
+         * way, which it lets carry on (fsm_disconnecting; the sim's
+         * test_car_caller_hangup_at_floor_survives_second_disconnect).  An
+         * S before this reads an ordinary ack, and answers only with data
+         * its application wrote after it: then the DISCONNECT's retry. */
         m_note(c, KD_DONE, ctl, my_ctl_d(c), 0, 0);
         send_poll_ex(c, 0, 0, id, false, c->hung_up);
         break;
