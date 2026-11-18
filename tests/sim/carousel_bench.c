@@ -40,7 +40,9 @@ int main(int argc, char **argv)
            r.max_kd_ms[0] / 1000.0, r.max_kd_ms[1] / 1000.0,
            r.air_ms[0] / 1000.0, r.air_ms[1] / 1000.0, r.keydowns,
            r.stalled ? " STALLED" : "");
-if (r.ctl_frames && r.data_frames)
+    /* What the delivered frames' estimates read: the control frames' and the
+     * data frames' (CAR_CTL_SNR_OFFSET moves the first). */
+    if (r.ctl_frames && r.data_frames)
         printf("readings: ctl=%.1f dB (%d frames) data=%.1f dB (%d frames)\n",
                r.ctl_snr_db, r.ctl_frames, r.data_snr_db, r.data_frames);
     if (r.msgs) {

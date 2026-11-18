@@ -1,4 +1,5 @@
-awgn,-24,4096,1,pass,64,7.8,64.0
+arm,No,payload,seed,result,wall_s,connect_s,bytes_per_s
+awgn,-24,4096,1,pass,63,7.8,65.02
 awgn,-20,4096,1,pass,81,7.8,50.57
 ccir-poor,-20,4096,1,pass,100,7.8,40.96
 awgn,-20,4096,2,pass,80,7.8,51.2
@@ -8,7 +9,6 @@ ccir-good,-20,4096,2,pass,101,7.8,40.55
 awgn,-20,32768,1,pass,386,7.8,84.89
 ccir-poor,-20,32768,1,pass,483,7.8,67.84
 awgn,-20,32768,2,pass,378,7.8,86.69
-awgn,-24,4096,1,pass,63,7.8,65.02
 awgn,-24,4096,2,pass,63,7.8,65.02
 ccir-good,-20,32768,1,pass,896,7.9,36.57
 awgn,-24,32768,1,pass,278,7.8,117.87
