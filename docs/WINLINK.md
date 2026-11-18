@@ -30,6 +30,8 @@ transport (Pat), with Mercury running in VARA's place.
   Then connect with Pat's VARA HF transport, pointed at Mercury's TNC ports.
 - **DigiPi** searches `PUBLIC` and `MERCURY`, so Mercury gateways appear when
   VARA HF is selected, with no change needed.
+- **Winlink Express** takes several service codes, separated by spaces:
+  `PUBLIC MERCURY` lists `PUBLIC` and Mercury gateways together.
 
 ## Running a gateway with RMS Trimode (Windows)
 
@@ -66,21 +68,34 @@ all of Mercury's files into the VARA folder, rename `VARA.exe` to
   channel, so ARDOP on the same entry is listed under `MERCURY` too, and
   clients that search only `PUBLIC` do not see it.
 
-### Two Trimode instances
+### Several Trimode instances
 
-To list Mercury under `MERCURY` and ARDOP under `PUBLIC`, run two copies of
-Trimode on one radio: one for Mercury, one for ARDOP. Both modems then listen
-at the same time, instead of taking turns. YO4CIL runs it this way (#554).
+To list Mercury under `MERCURY` and ARDOP under `PUBLIC`, run one copy of
+Trimode per mode on one radio. All the modems then listen at the same time,
+instead of taking turns. YO4CIL runs it this way (#554), with three copies on
+the same frequency:
+
+| Copy | Modem                  | Callsign | Service code |
+|------|------------------------|----------|--------------|
+| 1    | xara (VARA-compatible) | YO4CIL-1 | `XARA`       |
+| 2    | Mercury                | YO4CIL-2 | `MERCURY`    |
+| 3    | ARDOP                  | YO4CIL-3 | `PUBLIC`     |
+
+Each copy enables one mode only, and gets its own SSID and service code in
+**Setup Channels to scan**, so the Winlink map shows each mode under its own
+code. Each modem also needs its own TCP ports: Mercury's are 8300/8301, ARDOP's
+8200/8201, and a second VARA-compatible modem must use others (xara uses
+8320/8321 there). All three share the radio's USB audio device.
 
 Mercury opens its PTT serial port when it starts and keeps it open, with
 exclusive access on Windows (`radio_io/serial_ptt.c`), so no other program can
-open that port while Mercury runs. Keying both copies with RTS on the same COM
-port did not work in that test. So:
+open that port while Mercury runs. Keying several copies with RTS on the same
+COM port did not work in YO4CIL's test. So:
 
-- turn off CAT control in both copies and set the radio to the channel by
+- turn off CAT control in every copy and set the radio to the channel by
   hand; and
-- use the radio's DATA VOX, so neither modem needs a port. This is what
-  works: on YO4CIL's radio, with the VOX delay at its minimum, 30 ms.
+- use the radio's DATA VOX, so no modem needs a port. This is what works: on
+  YO4CIL's radio, with the VOX delay at its minimum, 30 ms.
 
 Keying each modem through its own port should also work, but has not been
 tried. Some radios give two virtual COM ports on one USB cable; the FTDX10,

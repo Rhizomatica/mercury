@@ -221,6 +221,9 @@ typedef struct {
                                      * M: CAR_END_WISH, a poll of S's said S's application
                                      * has hung up (M_END), whatever S still holds
                                      * (car_peer_ending); never CAR_END_SLOT */
+    bool     hung_up;               /* M: my application has hung up (car_wish_end): the
+                                     * ack I owe S goes at once, saying so (M_END), and
+                                     * gives S no slot (#585) */
     int      req_lv, req_n;         /* a REQ: M's round I may not have heard */
     uint8_t  req_mk;
     uint8_t  rx_mk;                 /* the M round whose frames I am counting */
@@ -430,13 +433,22 @@ void     car_request_end(car_t *c);
 /* The callee whose application has hung up while its DISCONNECT waits for
  * its data to be acknowledged: car_wish_end() makes its polls say so (type
  * 3, M_END) once it has all of the caller's.  The caller, with all of the
- * callee's, then ends the session itself (car_on_frame returns true). */
+ * callee's, then ends the session itself (car_on_frame returns true).
+ * On the caller, car_wish_end() marks its application hung up (hung_up): the
+ * ack it owes the callee goes at once, as an M_END that opens no slot, and
+ * its DISCONNECT follows (#585). */
 enum { CAR_END_NONE, CAR_END_WISH, CAR_END_SLOT };
 void     car_wish_end(car_t *c);
-/* The callee has delivered data of the caller's that no answer of its own
- * has acknowledged yet: a DISCONNECT keyed now would take that answer's
- * slot, and the caller would never hear that its last bytes arrived. */
+/* This end has delivered data of the peer's that no poll of its own has
+ * acknowledged yet: a DISCONNECT keyed now would take that ack's place, and
+ * the peer would never hear that its last bytes arrived.  Either end: the
+ * callee's ack is its answer (#468), the caller's the DONE it holds
+ * APP_GRACE_MS for its application (#585). */
 bool     car_owes_ack(const car_t *c);
+/* A keydown of mine is on the air (keyed, its TX_COMPLETE not yet seen).
+ * The owed ack is paid when it is keyed, before the radio's TX_STARTED:
+ * a teardown begun then took its TX_COMPLETE for the DISCONNECT's (#585). */
+bool     car_keyed(const car_t *c);
 
 /* How long delivering what is left may take on the rung the session is on:
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds
