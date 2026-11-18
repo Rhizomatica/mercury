@@ -90,6 +90,32 @@ func TestMercuryARQAbortCutsTheFloorRound(t *testing.T) {
 	TestMercuryARQTransfer(t)
 }
 
+// An engine stopped with a session up ends it on the air first: the other
+// station's host hears DISCONNECTED, as it would from a host's ABORT.  On air
+// (N3JXB-KG9NI, 2026-11-15) Mercury closed mid-session said nothing, and the
+// peer held the session until its own watchdog.
+func TestMercuryARQExitSaysGoodbyeCaller(t *testing.T) {
+	t.Setenv("MERCURY_TEST_EXIT_BY", "A")
+	TestMercuryARQTransfer(t)
+}
+
+func TestMercuryARQExitSaysGoodbyeCallee(t *testing.T) {
+	t.Setenv("MERCURY_TEST_EXIT_BY", "B")
+	TestMercuryARQTransfer(t)
+}
+
+// The caller exits over a link whose forward path is below DATAC16: its
+// DISCONNECT goes on the MFSK floor (13.5 s), after the callee's floor slots
+// (#609 review).  By hand: keyed 19.9 s after the SIGTERM, heard by B at
+// 35.8 s; the goodbye ends once it is off the air, the answer not awaited.
+func TestMercuryARQExitSaysGoodbyeCallerFloor(t *testing.T) {
+	t.Setenv("MERCURY_TEST_EXIT_BY", "A")
+	t.Setenv("MERCURY_CH_NO_FWD", "0")
+	t.Setenv("MERCURY_CH_NO_REV", "-24.82")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "64")
+	TestMercuryARQTransfer(t)
+}
+
 // The caller hangs up on the callee's last bytes, with nothing of its own
 // left (a P2P host, a TNC probe): the ack it owed them goes before its
 // DISCONNECT.  Before, the DISCONNECT took the ack's place and the callee
@@ -662,6 +688,45 @@ func TestMercuryARQTransfer(t *testing.T) {
 				failWithLogs("instance %s log has no %s activity", name, mode)
 			}
 		}
+	}
+	// MERCURY_TEST_EXIT_BY=A|B: that side's engine is stopped (SIGTERM) with
+	// the session up, as an operator closing Mercury mid-session: it must end
+	// the session on the air first, and the other's host must hear it, long
+	// before its 240 s lost-peer watchdog.  On air (N3JXB, 2026-11-15) the
+	// engine exited without a word to the peer.
+	if by := os.Getenv("MERCURY_TEST_EXIT_BY"); by == "A" || by == "B" {
+		cmd, proc, other, otherRW, name := cmdA, procA, connB, rwB, "B"
+		if by == "B" {
+			cmd, proc, other, otherRW, name = cmdB, procB, connA, rwA, "A"
+		}
+		t0 := time.Now()
+		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+			t.Fatalf("SIGTERM %s: %v", by, err)
+		}
+		deadline := t0.Add(60 * time.Second)
+		_ = other.SetReadDeadline(deadline)
+		heard := false
+		for time.Now().Before(deadline) && !heard {
+			line, err := otherRW.ReadString('\r')
+			if err != nil {
+				break
+			}
+			heard = strings.HasPrefix(strings.TrimSpace(line), "DISCONNECTED")
+		}
+		if !heard {
+			failWithLogs("%s's host never heard DISCONNECTED within 60 s of %s's exit", name, by)
+		}
+		t.Logf("%s heard %s's DISCONNECT %.1f s after its SIGTERM", name, by, time.Since(t0).Seconds())
+		select {
+		case <-proc.done:
+		case <-time.After(45 * time.Second):
+			failWithLogs("%s still running 45 s after its SIGTERM", by)
+		}
+		if b, _ := os.ReadFile(timingLogs[by]); !strings.Contains(string(b), "Session ended on the air") {
+			failWithLogs("%s's log never said its session ended on the air", by)
+		}
+		t.Logf("%s exited %.1f s after its SIGTERM", by, time.Since(t0).Seconds())
+		return
 	}
 	// MERCURY_TEST_DISCONNECT_BY=A|B: that side hangs up after the transfer,
 	// and the other must hear it (DISCONNECTED on its control port).  Over an

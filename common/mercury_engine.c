@@ -20,6 +20,7 @@
 
 #include "freedv_api.h"
 #include "arq.h"
+#include "arq_events.h"
 #include "arq_protocol.h"
 #include "modem.h"
 #include "broadcast.h"
@@ -417,10 +418,65 @@ static const char *volatile g_shutdown_step;
 
 const char *mercury_engine_shutdown_step(void) { return g_shutdown_step; }
 
+/* How long an exit waits for its session's DISCONNECT to start: the callee
+ * keys it in its next slot or out of turn within ARQ_CAR_ABORT_WAIT_MS
+ * (10.3 s); the caller once the callee's slots are clear, which after a
+ * round can be 16 s (tests/integration, ExitSaysGoodbyeCaller: "DISCONNECT
+ * waits 15897 ms for the peer's slots").  A DATAC16 DISCONNECT is then
+ * 3.7 s on the air, and one on the air at the limit is let finish, up to
+ * ENGINE_GOODBYE_CAP_MS in all (a floor DISCONNECT is 13.5 s).  Against
+ * that, the peer of an exit that says nothing holds the session until its
+ * 240 s lost-peer watchdog. */
+#define ENGINE_GOODBYE_MS     25000
+#define ENGINE_GOODBYE_CAP_MS 40000
+
+/* Not CALLING or ACCEPTING: no session to end yet.  A peer that answers our
+ * CALL just as we exit is left with a connect nobody keeps, until its own
+ * watchdog -- rare, and nothing on the air could prevent it once we are gone. */
+void mercury_engine_say_goodbye(void)
+{
+    if (!g_initialized || mercury_stop || arq_goodbye_progress() == 0)
+        return;
+    arq_cmd_msg_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = ARQ_CMD_ABORT;
+    if (arq_submit_tcp_cmd(&cmd) != 0)
+        return;
+    HLOGI("engine", "Exiting with a session up: ending it on the air first (one DISCONNECT, up to %d s)",
+          ENGINE_GOODBYE_MS / 1000);
+    uint64_t t0 = time_now_ms();
+    bool keyed = false;                 /* our DISCONNECT seen on the air */
+    for (;;)
+    {
+        if (mercury_stop) return;                   /* a forced exit: no more waiting */
+        int p = arq_goodbye_progress();
+        bool on_air = arq_get_trx() == 1;
+        uint64_t waited = time_now_ms() - t0;
+        if (p == 2 && on_air)
+            keyed = true;
+        /* Ended (the callee, or the caller answered), or our DISCONNECT is
+         * off the air: the caller need not wait out the peer's answer. */
+        if (p == 0 || (p == 2 && keyed && !on_air))
+        {
+            HLOGI("engine", "Session ended on the air in %llu ms%s", (unsigned long long)waited,
+                  p ? " (our DISCONNECT is out; its answer not awaited)" : "");
+            return;
+        }
+        if (waited >= ENGINE_GOODBYE_CAP_MS || (waited >= ENGINE_GOODBYE_MS && !on_air))
+        {
+            HLOGW("engine", "The session's DISCONNECT did not get out in %llu ms: exiting anyway",
+                  (unsigned long long)waited);
+            return;
+        }
+        hermes_usleep(50000);
+    }
+}
+
 void mercury_engine_shutdown(void)
 {
     if (!g_initialized) return;
 
+    mercury_engine_say_goodbye();
     HLOGI("engine", "Shutting down");
 
     mercury_stop = true;

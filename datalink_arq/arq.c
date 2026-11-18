@@ -1556,6 +1556,15 @@ bool arq_link_has_peer(void)
     return has_peer;
 }
 
+int arq_goodbye_progress(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    int p = !arq_conn_state_has_peer(g_sess.conn_state) ? 0
+          : (g_sess.conn_state == ARQ_CONN_DISCONNECTING && g_sess.teardown == ARQ_TD_SENT) ? 2 : 1;
+    pthread_mutex_unlock(&g_sess_lock);
+    return p;
+}
+
 bool arq_is_link_connected(void)
 {
     pthread_mutex_lock(&g_sess_lock);

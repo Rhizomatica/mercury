@@ -57,6 +57,12 @@ extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
 static volatile sig_atomic_t g_signal_count = 0;
+/* Once the engine is up, the first signal asks for the stop instead of
+ * setting mercury_stop itself: a session is then ended on the air first
+ * (mercury_engine_say_goodbye), which needs the modem still keying.  Before
+ * that (init), mercury_stop at once, as always. */
+static volatile sig_atomic_t g_engine_up = 0;
+static volatile sig_atomic_t g_stop_requested = 0;
 
 #ifndef _WIN32
 /* A forced exit must never leave the transmitter keyed.
@@ -191,7 +197,10 @@ static void handle_termination_signal(int sig)
     g_signal_count = 1;
     static const char msg[] = "Signal received, shutting down...\n";
     (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
-    mercury_stop = true;
+    if (g_engine_up)
+        g_stop_requested = 1;
+    else
+        mercury_stop = true;
 }
 
 /* SIGINT/SIGTERM -> handle_termination_signal.  On POSIX via sigaction, with
@@ -327,11 +336,17 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    while (!mercury_stop)
+    g_engine_up = 1;
+    while (!mercury_stop && !g_stop_requested)
     {
         radio_io_service();         /* e.g. a PTT OFF lost while rigctld was down */
         msleep(500);
     }
+
+    /* A session up: end it on the air before the watchdog below starts
+     * counting (a second signal still forces the exit). */
+    mercury_engine_say_goodbye();
+    mercury_stop = true;
 
     /* Diagnosis build only: the answerer never disconnects, so its trace would
      * otherwise be lost.  No-op unless ARQ_TRACE_ENABLED. */
