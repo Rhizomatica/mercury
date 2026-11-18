@@ -943,19 +943,23 @@ static void test_carousel_early_slot_release_ends_the_empty_wait(void)
     TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(off_max, on_max, what);
 }
 
-/* ...and where the guards say no, the knob says nothing: below the control
- * mode with the asks unanswered (step:5:-14, the sixth ask over S's poll),
- * the run is the run without it and no slot closes -- carrier sense itself
- * is imperfect here (CAR_CS_DECODABLE). */
+/* ...and where the guards say no, the knob says nothing: a link that sits
+ * below the control mode throughout (cliff:-14; asks go unanswered there,
+ * the sixth ask over S's poll) -- the run is the run without it and no slot
+ * closes, though carrier sense itself is imperfect (CAR_CS_DECODABLE).
+ * Named whole on purpose: a two-parameter step: spelling leaves the step
+ * time at whatever the previous test's parse left, and after trunk's
+ * #538 reset-after-fire that is "never steps" -- clean air, where closing
+ * an empty slot is the knob working as designed. */
 static void test_carousel_early_slot_release_stays_gated_below_the_control_mode(void)
 {
     car_sim_result_t off, on;
     char what[96];
 
     setenv("CAR_CS_DECODABLE", "1", 1);
-    carousel_sim_run(1, "step:5:-14", false, LIMIT_MS, &off);
+    carousel_sim_run(1, "cliff:-14", false, LIMIT_MS, &off);
     setenv("CAR_EARLY", "1", 1);
-    carousel_sim_run(1, "step:5:-14", false, LIMIT_MS, &on);
+    carousel_sim_run(1, "cliff:-14", false, LIMIT_MS, &on);
     unsetenv("CAR_EARLY");
     unsetenv("CAR_CS_DECODABLE");
 
