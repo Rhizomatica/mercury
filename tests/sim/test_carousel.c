@@ -636,6 +636,33 @@ static void test_carousel_floor_buffer_follows_breaks(void)
     TEST_ASSERT_TRUE_MESSAGE(drops > 0, "no BREAK ever lowered BUFFER at the floor");
 }
 
+/* The receiver's "done" at the floor, lost on its way back (#604): two floor
+ * rounds unanswered put the receiver's control on MFSK (CAR_DEAF_LOSS), so
+ * the sender learns the data is in well inside its 240 s lost-peer watchdog.
+ * On air (VE4KLM -> K7EK, 15 Nov 2026) both DATAC16 "done" polls were lost
+ * and the sender went on with floor rounds until its host gave up; before,
+ * here, seed 2 heard nothing of the receiver for 280 s and the tail reached
+ * 252 s. */
+static void test_carousel_floor_lost_done_moves_to_mfsk(void)
+{
+    setenv("CAR_SCRIPT", "A753", 1);
+    setenv("CAR_CONFIRM", "1", 1);
+    char what[128] = "";
+    bool ok = true;
+    for (uint64_t seed = 1; seed <= 10 && ok; seed++) {
+        car_sim_result_t r;
+        carousel_sim_run(seed, "ctlloss:-9:-3:0.85", false, LIMIT_MS, &r);
+        snprintf(what, sizeof(what), "seed %llu: done %llu ms, confirmed %llu ms, sender silent %llu ms",
+                 (unsigned long long)seed, (unsigned long long)r.done_ms, (unsigned long long)r.confirm_ms,
+                 (unsigned long long)r.silent_ms[0]);
+        ok = r.intact && r.done_ms && r.confirm_ms && r.confirm_ms - r.done_ms < 150000 && r.silent_ms[0] < 200000;
+    }
+    /* before the assert, which leaves the test: the runs after it read these */
+    unsetenv("CAR_CONFIRM");
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE_MESSAGE(ok, what);
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -825,6 +852,7 @@ int main(void)
     RUN_TEST(test_carousel_oneway_completes_intact);
     RUN_TEST(test_carousel_floor_control_plane);
     RUN_TEST(test_carousel_floor_buffer_follows_breaks);
+    RUN_TEST(test_carousel_floor_lost_done_moves_to_mfsk);
     RUN_TEST(test_carousel_lost_probe_poll);
     RUN_TEST(test_carousel_fading_no_blind_repoll);
     RUN_TEST(test_carousel_floor_handover_not_keyed_over);
