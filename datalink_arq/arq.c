@@ -2124,6 +2124,13 @@ void arq_set_max_keydown_s(int s)
         HLOGI(LOG_COMP, "Carousel rounds held to %d s of airtime", s);
 }
 
+void arq_set_early_slot_release(bool on)
+{
+    car_set_early_slot(on);
+    if (on)
+        HLOGI(LOG_COMP, "Empty response slots end early (#495 prototype)");
+}
+
 void reset_arq_info(arq_info *conn)
 {
     if (!conn) return;
