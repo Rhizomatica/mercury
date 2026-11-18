@@ -95,6 +95,7 @@ static inline int sock_errno(void) { return WSAGetLastError(); }
 #define SOCK_EWOULDBLOCK WSAEWOULDBLOCK
 #define SOCK_EINTR       WSAEINTR
 #define SOCK_ESHUTDOWN   WSAESHUTDOWN   /* recv() after our own shutdown() */
+#define SOCK_ECONNRESET  WSAECONNRESET  /* the client closed with a reset (10054) */
 
 #ifdef __cplusplus
 extern "C" {
@@ -173,6 +174,7 @@ static inline int sock_errno(void) { return errno; }
 #define SOCK_EWOULDBLOCK EWOULDBLOCK
 #define SOCK_EINTR       EINTR
 #define SOCK_ESHUTDOWN   ESHUTDOWN
+#define SOCK_ECONNRESET  ECONNRESET
 
 #define MUTEX_LOCK(x)   pthread_mutex_lock(x)
 #define MUTEX_UNLOCK(x) pthread_mutex_unlock(x)
