@@ -283,9 +283,13 @@ static void cb_send_keydown(const arq_keydown_t *kd)
     }
 }
 
-/* Received bytes dropped since an application last took any: the ring was
- * full and nothing was reading it.  Event-loop thread only. */
+/* Received bytes this session dropped: the ring was full with nothing
+ * reading it.  Once non-zero, nothing more of the session is delivered (the
+ * stream would have a hole in it), and the session is ended with the host's
+ * ABORT (g_rx_abort_sent once the command bus took it).  Both reset when a
+ * session starts or ends.  Event-loop thread only. */
 static size_t g_rx_dropped;
+static bool   g_rx_abort_sent;
 
 static void rx_dropped_summary(const char *when)
 {
@@ -293,6 +297,26 @@ static void rx_dropped_summary(const char *when)
         HLOGW(LOG_COMP, "%s: %zu received bytes were dropped, no application reading them",
               when, g_rx_dropped);
     g_rx_dropped = 0;
+    g_rx_abort_sent = false;
+}
+
+/* The session can't deliver what it receives any more: end it as the host's
+ * ABORT does, so the peer hears a DISCONNECT and its application reports the
+ * transfer failed, instead of its bytes being acknowledged and thrown away
+ * until it hangs up.  Non-blocking: the command thread takes the session
+ * lock this thread holds.  Retried on the next delivery if the bus is full. */
+static void rx_end_session_for_no_reader(void)
+{
+    if (g_rx_abort_sent)
+        return;
+    arq_cmd_msg_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = ARQ_CMD_ABORT;
+    if (arq_channel_bus_try_send_cmd(&g_bus, &cmd) == 0)
+    {
+        g_rx_abort_sent = true;
+        HLOGW(LOG_COMP, "Ending the session (ABORT): it can't deliver what it receives");
+    }
 }
 
 static void cb_notify_connected(const char *remote_call, const char *local_call,
@@ -438,16 +462,20 @@ static void cb_notify_disconnected(bool to_no_client)
  * waits on this lock (#590).  With nothing reading -- the host closed its
  * data port mid-session, or was dropped for not reading -- nothing ever
  * would, and waiting stopped the event loop for good: no frames decoded, no
- * timers, the link left to die on the peer's watchdog.  So what fits is kept
- * (a client reconnecting mid-session still gets it, arq_discard_stale_rx)
- * and the rest is dropped, with a warning: with no application there the
- * session's data is lost either way. */
+ * timers, the link left to die on the peer's watchdog.
+ *
+ * So what fits is kept and the rest dropped, with a warning.  The dropped
+ * bytes were acknowledged on the air, so from the first one the session's
+ * stream has a hole: nothing more of it is delivered, even to a client
+ * that reconnects (it would get the bytes before the hole, then the ones
+ * after, with nothing marking the gap), and the session is ended with an
+ * ABORT, so the peer learns the transfer failed. */
 static void cb_deliver_rx_data(const uint8_t *data, size_t len)
 {
     if (!data || len == 0 || len > INT_BUFFER_SIZE)
         return;
     size_t put = 0;
-    while (put < len)
+    while (put < len && g_rx_dropped == 0)
     {
         size_t room = circular_buf_free_size(data_rx_buffer_arq);
         size_t n = len - put < room ? len - put : room;
@@ -465,11 +493,10 @@ static void cb_deliver_rx_data(const uint8_t *data, size_t len)
     {
         if (g_rx_dropped == 0)
             HLOGW(LOG_COMP, "No application is reading the session's received data and its buffer is full: "
-                  "dropping what arrives until one does");
+                  "dropping the rest of the session's data");
         g_rx_dropped += len - put;
+        rx_end_session_for_no_reader();
     }
-    else
-        rx_dropped_summary("An application reads again");
 
     char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
     arq_conn_get_calls(my_call, src, dst, CALLSIGN_MAX_SIZE);
