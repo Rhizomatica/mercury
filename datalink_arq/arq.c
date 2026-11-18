@@ -283,6 +283,18 @@ static void cb_send_keydown(const arq_keydown_t *kd)
     }
 }
 
+/* Received bytes dropped since an application last took any: the ring was
+ * full and nothing was reading it.  Event-loop thread only. */
+static size_t g_rx_dropped;
+
+static void rx_dropped_summary(const char *when)
+{
+    if (g_rx_dropped)
+        HLOGW(LOG_COMP, "%s: %zu received bytes were dropped, no application reading them",
+              when, g_rx_dropped);
+    g_rx_dropped = 0;
+}
+
 static void cb_notify_connected(const char *remote_call, const char *local_call,
                                 bool we_called)
 {
@@ -302,6 +314,7 @@ static void cb_notify_connected(const char *remote_call, const char *local_call,
      * of the previous session have time to drain to the TCP socket before
      * the buffer is cleared (clearing on disconnect races with UUCP reads). */
     clear_buffer(data_rx_buffer_arq);
+    rx_dropped_summary("Previous session");
     /* A new session starts with a clean slate: drop any partial chat line left
      * over from the previous session's feed buffer. */
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
@@ -390,6 +403,7 @@ static void cb_notify_disconnected(bool to_no_client)
      * glued onto trailing bytes from this one. */
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
+    rx_dropped_summary("Session ended");
     if (told)
     {
         HLOGI(LOG_COMP, "Disconnected (the host was told at its ABORT)");
@@ -418,11 +432,44 @@ static void cb_notify_disconnected(bool to_no_client)
     }
 }
 
+/* Into data_rx_buffer_arq, under g_sess_lock.  While something reads the
+ * ring (a TCP data client, or the host holding the TNC), a full ring is
+ * waited on, as before: the reader drains it, and the TCP reactor never
+ * waits on this lock (#590).  With nothing reading -- the host closed its
+ * data port mid-session, or was dropped for not reading -- nothing ever
+ * would, and waiting stopped the event loop for good: no frames decoded, no
+ * timers, the link left to die on the peer's watchdog.  So what fits is kept
+ * (a client reconnecting mid-session still gets it, arq_discard_stale_rx)
+ * and the rest is dropped, with a warning: with no application there the
+ * session's data is lost either way. */
 static void cb_deliver_rx_data(const uint8_t *data, size_t len)
 {
     if (!data || len == 0 || len > INT_BUFFER_SIZE)
         return;
-    write_buffer(data_rx_buffer_arq, (uint8_t *)data, len);
+    size_t put = 0;
+    while (put < len)
+    {
+        size_t room = circular_buf_free_size(data_rx_buffer_arq);
+        size_t n = len - put < room ? len - put : room;
+        if (n > 0)
+        {
+            write_buffer(data_rx_buffer_arq, (uint8_t *)data + put, n);  /* the only writer: it fits */
+            put += n;
+            continue;
+        }
+        if (!tnc_rx_reader_attached())
+            break;
+        hermes_usleep(10000);   /* full, and a reader there to drain it */
+    }
+    if (put < len)
+    {
+        if (g_rx_dropped == 0)
+            HLOGW(LOG_COMP, "No application is reading the session's received data and its buffer is full: "
+                  "dropping what arrives until one does");
+        g_rx_dropped += len - put;
+    }
+    else
+        rx_dropped_summary("An application reads again");
 
     char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
     arq_conn_get_calls(my_call, src, dst, CALLSIGN_MAX_SIZE);
