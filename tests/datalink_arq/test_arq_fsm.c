@@ -1494,7 +1494,9 @@ void test_silent_peer_after_hangup_waits_the_callees_drain(void)
 
     /* The silence may have taken the poll a rung down, whose budget can be
      * past the timeout: the wait is then that budget, at most the 120 s cap.
-     * Either way it is at least the configured 110 s. */
+     * Either way it is at least the configured 110 s.  (This mirrors
+     * car_peer_end_wait_ms in arq_fsm.c: the timeout set above, and the
+     * 120 s of ARQ_CAR_PEER_QUIET_MS; if either changes, change it here.) */
     uint64_t end = car_drain_budget_ms(sess.car);
     if (end < 110000) end = 110000;
     if (end > 120000) end = 120000;
