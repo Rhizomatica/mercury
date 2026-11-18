@@ -316,13 +316,18 @@ static void oct27_recv_fallback(void)
 #endif
 }
 
-/* #529: an unconfirmed fall-back onto the floor, the callee stayed on the
- * rung it confirmed: the replay is cliff:-5 bidir with frames 0, 7, 11 lost
- * (the explorer's replay 1 0 7 11).  With the blind-round cap at the old 6
- * the caller sits silent on the floor; at 1 it asks after one round and the
- * session finishes earlier.  Assert the behaviour -- intact both ways, the
- * capped run earlier -- not the milliseconds, so a later scoring change
- * does not break this for the wrong reason. */
+/* #529 canary.  On 237481e7 this replay -- cliff:-5 bidir, frames 0, 7, 11
+ * lost -- put the caller through an unconfirmed fall-back onto the floor
+ * with the callee confirmed on the rung above: 417861 ms with the
+ * blind-round cap at 6, 378231 at 1.  Current trunk delivers this session
+ * in one 25-frame keydown, the fall-back never fires, and ~400 loss sets
+ * at up to 3 lost frames produce no fall-back at all -- so the cap has
+ * nothing to bite on here, and the two runs finish together.  The case
+ * stays as a canary: if a change brings the blind-floor pathology back on
+ * this replay, the two runs split again and this test breaks, pointing at
+ * the one-liner that owns that behaviour.  The on-air case (#529's field
+ * logs: about 2 minutes blind) is the cap's real justification, not this
+ * replay. */
 static void five29fb_floor_blind(void)
 {
 #if CAR_SIM_BYTES == 600
@@ -339,15 +344,19 @@ static void five29fb_floor_blind(void)
     unsetenv("CAR_FB_BLIND");
     carousel_sim_force_losses(NULL, -1);
     snprintf(what, sizeof(what),
-             "six: intact=%d done=%llu, one: intact=%d done=%llu (want both intact, one earlier)",
-             six.intact, (unsigned long long)six.done_ms,
-             one.intact, (unsigned long long)one.done_ms);
-    if (!six.intact || !six.done_ms || !one.intact || !one.done_ms || one.done_ms >= six.done_ms) {
+             "six: intact=%d done=%llu fb=%d, one: intact=%d done=%llu fb=%d",
+             six.intact, (unsigned long long)six.done_ms, six.recv_fallbacks,
+             one.intact, (unsigned long long)one.done_ms, one.recv_fallbacks);
+    if (!six.intact || !six.done_ms || !one.intact || !one.done_ms
+        || six.recv_fallbacks || one.recv_fallbacks
+        || six.done_ms != one.done_ms) {
         failures++;
-        printf("FAIL five29fb: %s\n", what);
-        printf("  If the frame order changed, pick a new set with CAR_EXPLORE_CHAN=cliff:-5\n"
-               "  CAR_TRACE=1 test_car_explore replay 1 <i> <j> <k>: want \"back to\" then one\n"
-               "  silent floor round before the ask.\n");
+        printf("FAIL five29fb: the replay moved: %s\n", what);
+        printf("  Either the fall-back pathology is back (one run earlier than\n"
+               "  the other, recv_fallbacks > 0 -- then re-pin this test to the\n"
+               "  cap's win again), or the session changed shape (then pick a new\n"
+               "  replay with CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 test_car_explore\n"
+               "  replay 1 <i> <j> <k>).\n");
     }
 #endif
 }
