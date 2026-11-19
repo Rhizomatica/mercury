@@ -1122,7 +1122,11 @@ static void abort_hold(uint64_t now)
 #define ARQ_ARRIVAL_MAX_MS   45000
 /* The modem says so on every pass of its loop in which a decoder was locked,
  * and a pass in which the decoder published nothing says nothing: a lock that
- * was seen within ARQ_ARRIVAL_STALE_MS is still there. */
+ * was seen within ARQ_ARRIVAL_STALE_MS is still there.  The loop passes every
+ * 20 ms (RX_DECODE_CHUNK_SAMPLES); an RX loop stalled for longer than this and
+ * the grace together (2.75 s) reads as a lock gone, and the host is released
+ * while the CALL may still be on the air -- as such a stall loses that CALL's
+ * audio anyway. */
 #define ARQ_ARRIVAL_STALE_MS 750
 static _Atomic uint64_t g_call_seen_ms;     /* the last time a CALL decoder was locked; 0: never */
 static uint64_t        g_arrival_ms;       /* the hold's first PENDING; 0: none (g_sess_lock) */
@@ -1130,10 +1134,8 @@ static uint64_t        g_arrival_last_ms;  /* its last PENDING */
 static uint64_t        g_arrival_gone_ms;  /* when the lock was first seen gone; 0: it is there */
 static bool            g_arrival_noise;    /* the lock outlasted any frame: not held again until gone */
 
-void arq_note_call_in_flight(bool on)
+void arq_note_call_in_flight(void)
 {
-    if (!on)
-        return;
     uint64_t now = time_now_ms();
     uint64_t was = atomic_exchange(&g_call_seen_ms, now);
     if (!was || now - was >= ARQ_ARRIVAL_STALE_MS)

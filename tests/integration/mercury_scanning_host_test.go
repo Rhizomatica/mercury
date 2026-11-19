@@ -31,9 +31,11 @@ import (
 // intervals, 60 s).  The audio is paced in real time, as a radio's is.
 //
 // MERCURY_TEST_SCAN_CHANNELS (default 2) and MERCURY_TEST_SCAN_PHASE (seconds,
-// default 0) set the schedule; MERCURY_TEST_SCAN_LIMIT_S (default 90) is how
-// long A may try (without the hold, phase 0 does not connect in 170 s).  MERCURY_TEST_BIN_B runs another build as the gateway: an
-// older Mercury never connects here, which is the point.
+// default 0) set the schedule.  MERCURY_TEST_SCAN_LIMIT_S is how long A may
+// try: 90 s by default, which phase 0 needs 19.4 s of; the 9-phase table in
+// the PR ran with 120, within which phase 0 never connects without the hold.
+// MERCURY_TEST_BIN_B runs another build as the gateway: an older Mercury
+// does not connect here at phase 0, which is the point.
 func TestScanningHostIsHeldByAnArrivingCall(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	binA := locateOrBuildMercury(t, repoRoot)

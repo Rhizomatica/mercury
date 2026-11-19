@@ -783,8 +783,10 @@ repeated every 20 s while the lock lasts, and ends with `CANCELPENDING` two
 seconds after the lock is gone if no CALL for this station followed: a frame
 for another station, or noise, holds the host for its length and that grace.
 A lock that outlasts any frame (45 s) is noise and is released.  The 500 Hz
-MFSK listener is left out of this: on the 40 m band its carrier sense held a
-false lock for a whole 27 s frame twice in 9 minutes.
+MFSK is left out of this, at every bandwidth (the floor a BW500 station
+listens on, the second listener above it): on the 40 m band its carrier
+sense held a false lock for a whole 27 s frame twice in 9 minutes.  A CALL
+on it gets its `PENDING` when it decodes.
 
 Mercury also sends `PENDING\r` when an outgoing `CQFRAME` actually begins
 transmitting so VARA clients can treat CQ send as an in-progress operation.
