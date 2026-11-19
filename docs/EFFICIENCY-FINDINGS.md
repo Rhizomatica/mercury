@@ -23,7 +23,7 @@ one row per (channel, traffic, seed).
 protocol around the data, not the modem.** Concretely:
 
 - **Throughput is ahead of VARA's 2020 published figures at the SNRs that
-  matter on HF, and behind them from ~17 dB up (AWGN).** On all three
+  matter on HF, and behind them from ~21 dB up (AWGN).** On all three
   channels the 32 KB transfer runs 1.2-2.8x VARA's bps at 5-10 dB SNR3k;
   from there up the ladder's 16-QAM rung caps Mercury near 1950 bps on AWGN
   and 1400 on Poor while VARA climbs to 2330-4990, the crossing landing
@@ -32,11 +32,17 @@ protocol around the data, not the modem.** Concretely:
 - **A message-session's airtime is mostly not data.** An 8 KB bulk transfer
   spends 68-89 % of its on-air time on data frames; an exchange of short
   messages on the same channel spends 23-72 %, the rest going to control
-  frames (23-69 %), the floor and patterns (3-10 %), and silence (6-44 %).
+  frames (23-69 %), the floor and patterns (5-10 %), and silence (17-44 %)
+  -- message traffic only; the bulk rows sit at the bottom of each range
+  (floor 3-10 %, silence 6-44 % overall).
 - **The modem is nowhere near the CPU wall.** Listening costs 1.5-3.3 % of
   a core per mode on x86; talking (encode + in-sync decode) 1.1-4.5 % as
-  captured on 2026-11-16, QAM16C2 the expensive one. Scaled conservatively to a Pi 4 core the worst
-  mode is still under a fifth of one core.
+  captured on 2026-11-16, QAM16C2 the expensive one. These are per-mode
+  components, not a whole process: a running engine sums them --
+  acquisition, the pattern detector, the waterfall, audio I/O. Scaled
+  conservatively to a Pi 4 core the worst talking mode is still under a
+  quarter of one core, and a measured whole-process reference on three Pi
+  4 stations reads 25-30 % of one core mostly listening (section 3).
 
 ## 1. Throughput (integration harness, watterson engine)
 
@@ -198,11 +204,18 @@ What it says:
 - **The modem is not the bottleneck on any hardware this project targets.**
   Full-duplex talking is 1.1 % (DATAC3) to 4.5 % (QAM16C2) of one x86 core
   as captured on 2026-11-16 -- the 11-12 box state read ~0.7-2.9 % for the
-  same build; listening 1.5-3.3 %. A Pi 4 core is conservatively 3-5x
-  slower per clock on this kind of DSP, which puts the worst case --
-  QAM16C2 encode plus decode -- under a quarter of one core, with the
-  always-on receive another fifth at most. A Pi runs the whole ladder with
-  room for the UI, the TNC socket work and the audio stack.
+  same build; listening 1.5-3.3 %. These are per-mode components, not a
+  whole process: a running engine sums them -- acquisition, the pattern
+  detector, the waterfall, audio I/O. A Pi 4 core is conservatively 3-5x
+  slower per clock on this kind of DSP, which puts the worst talking case
+  -- QAM16C2 encode plus decode -- under a quarter of one core. For a
+  measured whole-process reference, three Pi 4 HERMES stations read 25-30 %
+  of one core for the whole Mercury process, mostly listening
+  (`/proc/<pid>/stat`, ~10 h average and a 20 s idle window) -- newer
+  builds than this capture, over RTP with the waterfall on, so not this
+  configuration, but it is the number the scaled arithmetic should be read
+  against, and it sits under a third of a core. A Pi runs the whole ladder
+  with room for the UI, the TNC socket work and the audio stack.
 - **QAM16C2's decode is the outlier** (3.8 % against 0.6-1.0 % for every
   other mode): the 1215-byte frame at 3.3 s air is the top rung's rate,
   paid for in decoder work. It is also the rung the ladder reaches least
@@ -224,8 +237,10 @@ What it says:
 - The airtime shares are the simulator's, at 12 dB nominal; a real band's
   noise, QSB and other stations will move the silent share up and the
   ladder's reach down.
-- The CPU numbers are one x86 build, -O2; the Pi 4 statement is scaled
-  arithmetic, not a Pi measurement. The absolutes carry the capture day's
+- The CPU numbers are one x86 build, -O2; the scaled Pi 4 statement is
+  arithmetic, not a Pi measurement -- the quoted 25-30 % whole-process
+  reading is real Pi 4 stations, but newer builds than this capture, over
+  RTP with the waterfall on. The absolutes carry the capture day's
   box state (2026-11-16, ~1.5x the 11-12 state, +-15 % run to run); the
   ratios and the margin conclusion do not.
 - Two of the airtime cells are effectively n=2, not n=10: on awgn:0.02 and
