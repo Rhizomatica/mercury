@@ -97,7 +97,14 @@ static int ctl_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demod_in
         uint8_t frame[CTL_FRAME];
         int k = P->rawdata_rx(h->psk, frame, h->in + off);
         off += step;
-        if (k > 0 && k <= CTL_FRAME) { memcpy(h->held, frame, (size_t)k); h->nheld = k; }
+        if (k > 0 && k <= CTL_FRAME) {
+            memcpy(h->held, frame, (size_t)k);
+            h->nheld = k;
+            /* The control mode's detector may have locked onto the short
+             * frame's middle carrier: drop it, or its sync outlives the
+             * frame and holds the channel for a frame of its own. */
+            F->unsync(h->fdv);
+        }
     }
     if (off) memmove(h->in, h->in + off, sizeof(int16_t) * (size_t)(h->nin - off));
     h->nin -= off;
