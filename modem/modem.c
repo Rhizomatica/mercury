@@ -107,7 +107,9 @@ static pthread_mutex_t modem_pool_lock = PTHREAD_MUTEX_INITIALIZER;
 /* One lock per pool slot, indexed the same way the pool array is.  The pool is
  * a generic slot array now (any backend, not just freedv), so the lock a codec
  * belongs to is found by its context pointer rather than by naming the mode. */
-#define MODEM_POOL_MAX 16   /* the BW2300 ladder, control, floors and the 2.0 BW500/BW2750 rungs: 15 */
+#define MODEM_POOL_MAX 16   /* the BW2300 ladder, control, floors, the 2.0 BW500/BW2750 rungs and
+                             * MFSK2K: 16, full -- the next mode needs this raised (and a lock
+                             * initializer below), or init_mode_pool_locked fails */
 static pthread_mutex_t modem_inst_lock[MODEM_POOL_MAX] = {
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
@@ -2506,6 +2508,18 @@ static void rx_inflight_note(int slot, int mode, const rx_metrics_accum_t *m, ui
         atomic_store(&g_rx_inflight_since_ms[slot], 0);
 }
 
+/* A slot locked onto a frame that can hold a scanning host: any but the
+ * 500 Hz MFSK, whichever slot it sits in (the listen floor at BW500, the
+ * second listener above it).  Its carrier sense held a false lock for a whole
+ * 27 s frame twice in 9 minutes on the real 40 m band (7050 kHz), where the
+ * control plane and the 1 kHz MFSK held none; a CALL on it gets its PENDING
+ * when it decodes. */
+static bool rx_inflight_call(int slot)
+{
+    return atomic_load(&g_rx_inflight_since_ms[slot]) != 0 &&
+           atomic_load(&g_rx_inflight_mode[slot]) != MERCURY_MODE_MFSK_N32;
+}
+
 bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms)
 {
     uint64_t now = monotonic_ms();
@@ -2538,6 +2552,18 @@ static int rx_decoder_bind_own(rx_decoder_state_t *state, modem_codec_t codec, i
     size_t bytes_cap = (size_t)(codec.be->bits_per_frame(codec.ctx) / 8);
     if (max_samples <= 0 || bytes_cap == 0)
         return -1;
+    /* The codec left behind keeps what it holds until this worker binds it
+     * again: an MFSK listener swapping floors at a BW change would come back
+     * to the other floor's half-heard CALL.  Drop it now, whichever of the
+     * swap's flush and this bind runs first. */
+    if (modem_codec_valid(&state->codec) && state->codec.ctx != codec.ctx &&
+        state->codec.be->unsync)
+    {
+        pthread_mutex_t *rl = modem_inst_lock_for(state->codec.ctx);
+        pthread_mutex_lock(rl);
+        state->codec.be->unsync(state->codec.ctx);
+        pthread_mutex_unlock(rl);
+    }
     state->demod_count = 0;
     return rx_decoder_adopt(state, codec, mode, max_samples, bytes_cap);
 }
@@ -2599,7 +2625,11 @@ static void *rx_worker_thread(void *arg)
         if (w->takes_payload_resync &&
             atomic_exchange(&g_payload_resync_req, false))
         {
-            if (modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync)
+            /* Not an MFSK payload decoder: it has no trial sync on DATAC16
+             * to drop, and its window holds whole bursts, so an UNSYNC here
+             * could lose a payload frame already in it. */
+            if (modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync &&
+                !mercury_mode_is_mfsk(w->state.mode))
             {
                 pthread_mutex_t *rl = modem_inst_lock_for(w->state.codec.ctx);
                 pthread_mutex_lock(rl);
@@ -3685,6 +3715,10 @@ void *rx_thread(void *g_modem)
             rx_inflight_note(RX_INFLIGHT_LISTEN, atomic_load(&w_listen.mode), &m_listen, now);
             rx_inflight_note(RX_INFLIGHT_LISTEN_ALT, atomic_load(&w_listen_alt.mode),
                              &m_listen_alt, now);
+            if (arq_policy_ready && (rx_inflight_call(RX_INFLIGHT_CTRL) ||
+                                     rx_inflight_call(RX_INFLIGHT_LISTEN) ||
+                                     rx_inflight_call(RX_INFLIGHT_LISTEN_ALT)))
+                arq_note_call_in_flight();   /* a scanning host is held (#527) */
         }
         {
             /* The monitor decoders are also not a link-quality source: their

@@ -29,7 +29,7 @@ void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
     unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
-    unsetenv("CAR_CTL_SNR_OFFSET");
+    unsetenv("CAR_CTL_SNR_OFFSET"); unsetenv("CAR_NOISE");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -636,6 +636,33 @@ static void test_carousel_floor_buffer_follows_breaks(void)
     TEST_ASSERT_TRUE_MESSAGE(drops > 0, "no BREAK ever lowered BUFFER at the floor");
 }
 
+/* The receiver's "done" at the floor, lost on its way back (#604): two floor
+ * rounds unanswered put the receiver's control on MFSK (CAR_DEAF_LOSS), so
+ * the sender learns the data is in well inside its 240 s lost-peer watchdog.
+ * On air (VE4KLM -> K7EK, 15 Nov 2026) both DATAC16 "done" polls were lost
+ * and the sender went on with floor rounds until its host gave up; before,
+ * here, seed 2 heard nothing of the receiver for 280 s and the tail reached
+ * 252 s. */
+static void test_carousel_floor_lost_done_moves_to_mfsk(void)
+{
+    setenv("CAR_SCRIPT", "A753", 1);
+    setenv("CAR_CONFIRM", "1", 1);
+    char what[128] = "";
+    bool ok = true;
+    for (uint64_t seed = 1; seed <= 10 && ok; seed++) {
+        car_sim_result_t r;
+        carousel_sim_run(seed, "ctlloss:-9:-3:0.85", false, LIMIT_MS, &r);
+        snprintf(what, sizeof(what), "seed %llu: done %llu ms, confirmed %llu ms, sender silent %llu ms",
+                 (unsigned long long)seed, (unsigned long long)r.done_ms, (unsigned long long)r.confirm_ms,
+                 (unsigned long long)r.silent_ms[0]);
+        ok = r.intact && r.done_ms && r.confirm_ms && r.confirm_ms - r.done_ms < 150000 && r.silent_ms[0] < 200000;
+    }
+    /* before the assert, which leaves the test: the runs after it read these */
+    unsetenv("CAR_CONFIRM");
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE_MESSAGE(ok, what);
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -690,10 +717,21 @@ static void test_carousel_bandwidth_max_level(void)
     TEST_ASSERT_EQUAL_INT(3, c->poll_level);
     /* the session's ladder is its bandwidth's: BW2300's until set */
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, car_session_level_mode(c, 0));
-    car_set_bandwidth(c, 500);
+    car_set_bandwidth(c, 500, MERCURY_MODE_MFSK_N32);
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, car_session_level_mode(c, 0));
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, car_session_level_mode(c, 1));
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16N1, car_session_level_mode(c, 5));
+    /* a wider session on the deep floor: the 500 Hz MFSK under its own rungs */
+    car_set_bandwidth(c, 2300, MERCURY_MODE_MFSK_N32);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, car_session_level_mode(c, 0));
+    for (int lv = 1; lv < CAR_NLEVELS; lv++)
+        TEST_ASSERT_EQUAL_INT(car_bw_level_mode(2300, lv), car_session_level_mode(c, lv));
+    car_set_bandwidth(c, 2750, MERCURY_MODE_MFSK_N32);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, car_session_level_mode(c, 0));
+    for (int lv = 1; lv < CAR_NLEVELS; lv++)
+        TEST_ASSERT_EQUAL_INT(car_bw_level_mode(2750, lv), car_session_level_mode(c, lv));
+    car_set_bandwidth(c, 2300, MERCURY_MODE_MFSK);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, car_session_level_mode(c, 0));
     free(c);
 }
 
@@ -818,6 +856,53 @@ void test_carousel_bw500_control_loss_does_not_stall(void)
     }
 }
 
+/* QRM that keeps looking like a frame's start holds the caller's keydown for
+ * at most one keydown's length, then it keys: the peer keys only in its slots,
+ * which the caller keeps clear of anyway.  On air (N3JXB-VE4KLM, 2026-11-16)
+ * the hold had no end: 116 s, and the lost-peer watchdog ended the session.
+ * Here 300 s of it from 20 s on: without the cap these finished only after
+ * it (427 s one way, 495 s both), with it inside it (112 s, 260 s).  Only a
+ * reservation is capped -- a caught preamble, a NAV header -- never a live
+ * sign: a decoder in sync, or the busy detector, holds the caller as long as
+ * it lasts, so it does not key over a station it senses (#607 review). */
+static void test_carousel_noise_does_not_hold_the_caller(void)
+{
+    static const struct { const char *chan; bool bidir; bool timed; } RUNS[] = {
+        { "clean", false, true }, { "clean", true, true },
+        { "fade:8:1.0", true, false }, { "cliff:3", true, false },
+    };
+    static const char *RESERVED[] = { "20000:300000:pre", "20000:300000:nav" };
+    for (size_t n = 0; n < 2; n++) {
+        setenv("CAR_NOISE", RESERVED[n], 1);
+        for (size_t k = 0; k < sizeof(RUNS) / sizeof(RUNS[0]); k++)
+            for (uint64_t seed = 1; seed <= 3; seed++) {
+                car_sim_result_t r;
+                char what[96];
+                check(seed, RUNS[k].chan, RUNS[k].bidir);
+                carousel_sim_run(seed, RUNS[k].chan, RUNS[k].bidir, LIMIT_MS, &r);
+                snprintf(what, sizeof(what), "%s seed %llu %s %s, done at %llu ms", RESERVED[n],
+                         (unsigned long long)seed, RUNS[k].chan, RUNS[k].bidir ? "bidir" : "oneway",
+                         (unsigned long long)r.done_ms);
+                if (RUNS[k].timed) TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(320000, r.done_ms, what);
+            }
+    }
+    /* A live sign is waited out, however long: done only after the noise. */
+    static const char *LIVE[] = { "20000:300000:sync", "20000:300000:busy" };
+    for (size_t n = 0; n < 2; n++) {
+        setenv("CAR_NOISE", LIVE[n], 1);
+        for (int bidir = 0; bidir < 2; bidir++) {
+            car_sim_result_t r;
+            char what[96];
+            check(1, "clean", bidir);
+            carousel_sim_run(1, "clean", bidir, LIMIT_MS, &r);
+            snprintf(what, sizeof(what), "%s clean %s, done at %llu ms", LIVE[n],
+                     bidir ? "bidir" : "oneway", (unsigned long long)r.done_ms);
+            TEST_ASSERT_GREATER_OR_EQUAL_UINT64_MESSAGE(320000, r.done_ms, what);
+        }
+    }
+    unsetenv("CAR_NOISE");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -825,6 +910,7 @@ int main(void)
     RUN_TEST(test_carousel_oneway_completes_intact);
     RUN_TEST(test_carousel_floor_control_plane);
     RUN_TEST(test_carousel_floor_buffer_follows_breaks);
+    RUN_TEST(test_carousel_floor_lost_done_moves_to_mfsk);
     RUN_TEST(test_carousel_lost_probe_poll);
     RUN_TEST(test_carousel_fading_no_blind_repoll);
     RUN_TEST(test_carousel_floor_handover_not_keyed_over);
@@ -853,5 +939,6 @@ int main(void)
     RUN_TEST(test_carousel_drop_below_the_control_mode_stays_at_the_floor);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);
     RUN_TEST(test_carousel_bw500_control_loss_does_not_stall);
+    RUN_TEST(test_carousel_noise_does_not_hold_the_caller);
     return UNITY_END();
 }

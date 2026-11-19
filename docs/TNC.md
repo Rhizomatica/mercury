@@ -142,18 +142,20 @@ BW2750\r
 
 **Response:** `OK\r` on success, `WRONG\r` on error.
 
-- **BW2300** — Full bandwidth: the whole rung ladder, MFSK, DATAC15, DATAC4,
-  DATAC3, DATAC1, DATAC17 and QAM16C2.
-- **BW500** — Narrow bandwidth: MFSK, DATAC15, DATAC4 and DATAC3.  The
-  wideband rungs (DATAC1, DATAC17, QAM16C2, 1.7–2.1 kHz) are not used.
-  DATAC3 occupies 562 Hz and the MFSK floor 1000 Hz; both are kept, the
-  floor for its reach.
+- **BW2300** — Full bandwidth: MFSK, MFSK2K, DATAC4, DATAC3, DATAC1,
+  DATAC17 and QAM16C2.  If the ACCEPT goes on the 500 Hz MFSK (the deep
+  floor), the session keeps MFSK500 as rung 0.
+- **BW500** — Narrow bandwidth: the 500 Hz MFSK floor (MFSK500), DATAC15,
+  DATAC4, DATAC3 and the 9-carrier DATAN1, QAM16N1 and QAM16N2.  The
+  wideband rungs are not used.
 - **BW2750** — Accepted for VARA compatibility, negotiated and reported as
-  `2750`.  No rung is wider than 2.1 kHz yet, so it has the same ladder as
-  **BW2300**.
+  `2750`: the BW2300 ladder, deep floor included, with the 44-carrier
+  DATAC17W and QAM16C2W as rungs 5 and 6.
 
-The cap holds in both directions for the whole session, from the start rung
-the ACCEPT names onward (`car_max_level_for_bw` in `datalink_arq/carousel.c`).
+The per-rung table is in [MODES.md](MODES.md).
+
+Both directions use the negotiated ladder for the whole session
+(`car_set_bandwidth` in `datalink_arq/carousel.c`).
 A `BW` command during a session applies to the next one.
 
 During connection setup, Mercury advertises the local BW token in `CALL` and
@@ -208,6 +210,67 @@ P2P\r
 ```
 
 **Response:** `OK\r` (always).
+
+---
+
+### WINLINK SESSION
+
+No-op for VARA client compatibility.  Pat sends it (or `P2P SESSION`)
+before each `CONNECT`; Mercury runs both kinds of session the same way.
+
+```
+WINLINK SESSION\r
+```
+
+**Response:** `OK\r` (always).
+
+VARA gives it a meaning: connect retries on a 4.0 s cycle, for RMS gateways
+that dwell 4 s on a frequency (`P2P SESSION`: 4.6 s).  Mercury does not act
+on it yet.
+
+---
+
+### CLEANTXBUFFER
+
+Drop the host's bytes not yet sent, and keep the session.
+
+```
+CLEANTXBUFFER\r
+```
+
+**Response:** VARA's lines, not `OK`, with a space as a VARA-compatible
+modem tested against VARA HF 4.9.0 sends them (VARA's command reference
+writes them without one):
+
+- `CLEANTXBUFFER OK\r` when unsent bytes were dropped
+- `CLEANTXBUFFER BUFFEREMPTY\r` when there were none
+- `CLEANTXBUFFER FAILED\r` when the command could not be queued
+
+The reply comes once the clear is done.  Kept are the frames already on the
+air and waiting for an ACK, and what the carousel already took into its open
+block (up to about 2 kB); `ABORT` drops those too.  Bytes the host wrote
+that Mercury has not yet read from the data socket are out of reach and
+are still sent.  BPQ32 sends `CLEANTXBUFFER` right before `DISCONNECT` when
+a session reaches its time limit, so the disconnect does not wait for the
+backlog to be sent.
+
+---
+
+### CWID
+
+Accepted for VARA client compatibility.  Mercury sends no CW ID and no
+periodic ID.  A CALL or CQ carries the sending station's callsign; other
+frames don't.  Identifying the station as your licence requires is up to the
+operator or the host program.
+
+```
+CWID ON\r
+CWID OFF\r
+```
+
+**Response:** `OK\r` for `ON` or `OFF`, `WRONG\r` otherwise.  `CWID ON` logs
+an info line that no CW ID is sent.  Pat sends `CWID ON` at every VARA HF
+start.
 
 ---
 
@@ -409,7 +472,11 @@ Query the number of bytes pending in the ARQ transmit buffer.
 BUFFER\r
 ```
 
-**Response:** `BUFFER <bytes>\r` on the control port.
+**Response:** `BUFFER <bytes>\r` on the control port, to every query, also
+when the count is the one the last `BUFFER` line said.  The unsolicited
+reports ([BUFFER](#buffer-1) below) go only when the count changes, or every
+50 s in a session while bytes wait; an answered query counts as the last
+line for them.
 
 ---
 
@@ -436,7 +503,8 @@ BITRATE\r
 **Response:** `BITRATE (<code>) <bps> BPS\r` on the control port.  `<code>`
 names the mode on the air: 1 DATAC1, 3 DATAC3, 4 DATAC4, 15 DATAC15,
 16 DATAC16 (the control mode, while calling only), 17 DATAC17, 25 QAM16C2,
-100 MFSK, 103 MFSK at 500 Hz.
+26 DATAC17W, 27 QAM16C2W, 28 DATAN1, 29 QAM16N1, 30 QAM16N2, 100 MFSK,
+103 MFSK at 500 Hz (MFSK500), 104 MFSK at 2 kHz (MFSK2K).
 
 Mercury also sends the line unprompted: in a session, for each frame on a
 payload mode keyed or decoded; and while a `CONNECT` is calling, on the
@@ -774,6 +842,20 @@ with `CANCELPENDING`. A repeated CALL is not enough on a weak path: on
 2026-11-12 K7EK decoded 2 of a caller's 13 CALLs, and BPQ32 hopped 66 s after
 the one `PENDING` while the caller went on calling for 2 minutes.
 
+Mercury sends it as soon as a decoder has locked onto a frame while LISTENING,
+about a second into a CALL, not when the CALL has decoded: a scanning host
+that stays 4 s on a frequency (RMS Trimode, with 0.5 s deaf while it changes)
+almost never holds the whole 3.74 s of a control-mode CALL (13.5 s on the MFSK
+floor), and `PENDING` is the only thing that keeps it there (#527).  It is
+repeated every 20 s while the lock lasts, and ends with `CANCELPENDING` two
+seconds after the lock is gone if no CALL for this station followed: a frame
+for another station, or noise, holds the host for its length and that grace.
+A lock that outlasts any frame (45 s) is noise and is released.  The 500 Hz
+MFSK is left out of this, at every bandwidth (the floor a BW500 station
+listens on, the second listener above it): on the 40 m band its carrier
+sense held a false lock for a whole 27 s frame twice in 9 minutes.  A CALL
+on it gets its `PENDING` when it decodes.
+
 Mercury also sends `PENDING\r` when an outgoing `CQFRAME` actually begins
 transmitting so VARA clients can treat CQ send as an in-progress operation.
 
@@ -904,7 +986,10 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
     the DATAC16 decoder's, the payload decoder's and the two MFSK call
     listeners', sync included.  A partly received CALL is dropped even when
     `LISTEN ON` follows a moment later on the same frequency; the caller's
-    next CALL is heard as usual.  Up to 1.9.22 such a CALL could still
+    next CALL is heard as usual.  The same holds for a host that pauses the
+    modem with `LISTEN OFF` and resumes it on the same channel without
+    scanning: a CALL on the air across the pause costs that one CALL, and
+    the caller's retry is answered.  Up to 1.9.22 such a CALL could still
     decode, on the next channel, and was answered there, where the caller
     could not hear it.  BPQ32 then held the wrong channel for about 2 min
     (six scan intervals) while the caller's repeats went unheard:
@@ -914,6 +999,13 @@ scanning, Mercury 1.9.22, 10 incoming sessions, November 2026):
       0.2-4.2 s after it);
     - DATAC16: its decoder was not flushed at all (K7EK, 2026-11-07: two
       calls decoded 1.4 s and 1.9 s after the hop);
+    - MFSK, up to 1.9.24: the flush emptied only the audio queue in front of
+      the listener, which keeps up to two frames of audio of its own, and
+      the next channel's audio completed a CALL cut off near its end (K7EK,
+      2026-11-14 and 15: decoded 1.2 s and 4.2 s after a hop that logged
+      "drops it"; KG9NI, 2026-11-16: decoded 1.1 s after its scanner came
+      back to the channel, 30 s after the CALL, and answered once the caller
+      had given up);
   - a `BW` change between `BW500` and `BW2300`/`BW2750` flushes both too: the
     listeners swap floors, and each swap drops what it holds.
 

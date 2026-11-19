@@ -314,15 +314,30 @@ int arq_call_carrier(const arq_session_t *sess)
 {
     if (!sess) return ARQ_CONTROL_MODE;
     /* A station that can only transmit MFSK calls on MFSK from the first
-     * CALL: its fast DATAC16 slots would never reach the peer. */
-    if (ARQ_TX_MFSK_ONLY)
-        return arq_floor_mode(arq_get_bw());
-    if (sess->call_sends_done < ARQ_CALL_FAST_SLOTS)
+     * CALL: its fast DATAC16 slots would never reach the peer, so its
+     * rotation starts where the others' does after them, without the
+     * control-mode CALLs. */
+    bool mfsk_only = ARQ_TX_MFSK_ONLY;
+    if (!mfsk_only && sess->call_sends_done < ARQ_CALL_FAST_SLOTS)
         return sess->control_mode;
     /* The floor of my own bandwidth: the callee answers min(its own, mine),
      * and a BW500 station listens on the 500 Hz floor. */
-    return ((sess->call_sends_done - ARQ_CALL_FAST_SLOTS) % 2 == 0)
-         ? arq_floor_mode(arq_get_bw()) : sess->control_mode;
+    int floor = arq_floor_mode(arq_get_bw());
+    int n = sess->call_sends_done - (mfsk_only ? 0 : ARQ_CALL_FAST_SLOTS);
+    if (floor == MERCURY_MODE_MFSK_N32)
+        return mfsk_only || n % 2 == 0 ? floor : sess->control_mode;
+    /* Wider than 500 Hz, the 500 Hz MFSK too, after the floor: every
+     * listener decodes it (#451), ~3 dB below the 1 kHz floor, and a
+     * session connected on it keeps it as its floor (session_floor_mode).
+     * In the Go harness a BW500 session completed at -15..-17 dB on white
+     * noise and -13/-14 dB under CCIR Moderate, where a BW2300 one never
+     * connected.  Twice for each floor CALL, and no more control-mode
+     * CALLs: in the connect sim (60 seeds) floor, 500 Hz, 500 Hz connected
+     * as often and as fast as floor, 500 Hz, control mode wherever that
+     * did, and more often under fading (-13 dB 59 vs 52, -14 dB 56 vs 43,
+     * -15 dB 49 vs 34 of 60); the control-mode CALL added nothing, and the
+     * 500 Hz CALL first cost every -9..-13 dB connect 27 s. */
+    return n % 3 == 0 ? floor : MERCURY_MODE_MFSK_N32;
 }
 
 /* The carrier an ACCEPT to my last CALL may come back on: the CALL's own, or
@@ -359,12 +374,15 @@ static float call_interval_s(const arq_session_t *sess)
 static int accept_carrier(const arq_session_t *sess, const arq_event_t *ev)
 {
     int floor = arq_floor_mode(ev->bw_hz);
+    /* (The bandwidth's floor, not sess->floor_mode: an ACCEPT of ours on the
+     * 500 Hz MFSK, to a wider caller's CALL there, made that the session's.) */
     /* Not twice running: the caller's floor CALL after this one gets ours
      * on the floor anyway, and the control mode between is the fast path's
      * second chance.  (It was also there because the caller keyed over a
      * floor ACCEPT its decoders missed; it now waits one out,
      * call_interval_s, and specs/connect's Mut_noalt connects too.) */
-    if (mercury_mode_is_mfsk(ev->mode) || floor != sess->floor_mode || sess->call_rx_mode == floor)
+    if (mercury_mode_is_mfsk(ev->mode) || floor != arq_floor_mode(arq_reported_bandwidth_hz()) ||
+        sess->call_rx_mode == floor)
         return ev->mode;
     return floor;
 }
@@ -510,6 +528,8 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
         {
             if (is_accept)
                 HLOGI(LOG_COMP, "ACCEPT on the MFSK floor");
+            else if (mode == MERCURY_MODE_MFSK_N32 && arq_floor_mode(arq_get_bw()) != mode)
+                HLOGI(LOG_COMP, "CALL on the 500 Hz MFSK (deep floor: the wider CALLs went unanswered)");
             else
                 HLOGI(LOG_COMP, "CALL on the MFSK floor (the fast CALLs went unanswered)");
         }
@@ -652,15 +672,18 @@ bool arq_fsm_notice_owed(const arq_session_t *sess)
 static int decoder_hears_frame(const arq_session_t *sess)
 {
     uint64_t now = time_now_ms();
+    /* A decoder in sync now first: it is a frame on the air, where a caught
+     * preamble or a NAV header only reserves the airtime one announced, and
+     * the carousel ends a reservation nothing live renews (defer_if_busy). */
+    if (sess->last_rx_sync_ms != 0 &&
+        (now < sess->last_rx_sync_ms ||          /* clock went backwards; treat as busy */
+         now - sess->last_rx_sync_ms < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS))
+        return CAR_KEYED_SYNC;
     if (now < sess->rx_frame_busy_until_ms)
         return CAR_KEYED_PREAMBLE;   /* a frame whose preamble was caught: see arq_note_rx_preamble */
     if (now < sess->nav_busy_until_ms)
         return CAR_KEYED_NAV;        /* its NAV header was heard: see arq_note_rx_nav */
-    if (sess->last_rx_sync_ms == 0)
-        return 0;
-    if (now < sess->last_rx_sync_ms)
-        return CAR_KEYED_SYNC;       /* clock went backwards; treat as busy */
-    return (now - sess->last_rx_sync_ms) < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS ? CAR_KEYED_SYNC : 0;
+    return 0;
 }
 
 
@@ -911,6 +934,15 @@ static uint16_t car_seed(const arq_session_t *sess, bool is_caller)
     return seed ? seed : 0x5A5A;
 }
 
+/* The session's floor: its bandwidth's, or the 500 Hz MFSK when the ACCEPT
+ * went on it (call_rx_mode, both ends): a wider caller's CALL there reached
+ * the fringe its own floor did not (arq_call_carrier). */
+static int session_floor_mode(const arq_session_t *sess)
+{
+    return sess->call_rx_mode == MERCURY_MODE_MFSK_N32 ? MERCURY_MODE_MFSK_N32
+                                                       : arq_floor_mode(arq_reported_bandwidth_hz());
+}
+
 /* A session's seed comes once both ends know its bandwidth (the callee from
  * the CALL, the caller from the ACCEPT), and with it the session's floor:
  * its patterns, too, go at that geometry. */
@@ -918,7 +950,7 @@ static void car_set_seed(arq_session_t *sess, uint16_t seed)
 {
     sess->crc_seed = seed;
     if (seed) {
-        sess->floor_mode = arq_floor_mode(arq_reported_bandwidth_hz());
+        sess->floor_mode = session_floor_mode(sess);
         if (g_cbs.set_floor_mode)
             g_cbs.set_floor_mode(sess->floor_mode);
     }
@@ -995,7 +1027,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     sess->nav_busy_until_ms = 0;
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
     car_set_max_level(sess->car, session_max_level());
-    car_set_bandwidth(sess->car, arq_reported_bandwidth_hz());
+    car_set_bandwidth(sess->car, arq_reported_bandwidth_hz(), sess->floor_mode);
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf,
                       ARQ_TX_MFSK_ONLY ? CAR_DEAF_MFSK_TX : sess->car_peer_ctl_deaf);
     car_seed_snr(sess->car, sess->car_my_snr, is_caller ? sess->car_call_snr : 0.0f);
@@ -1440,7 +1472,10 @@ static bool call_over_time(const arq_session_t *sess)
  * one floor frame's airtime and its decode, then we key regardless. */
 static bool call_must_wait(arq_session_t *sess)
 {
-    const arq_mode_timing_t *tm = arq_protocol_mode_timing(arq_floor_mode(arq_get_bw()));
+    /* the floor's frame, or the 500 Hz MFSK's after a CALL there */
+    int longest = call_answer_carrier(sess) == MERCURY_MODE_MFSK_N32 ? MERCURY_MODE_MFSK_N32
+                                                                    : arq_floor_mode(arq_get_bw());
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(longest);
     float frame_ms = (tm ? tm->frame_duration_s : 13.5f) * 1000.0f;
     unsigned cap = (unsigned)((frame_ms + ARQ_CALL_DECODE_WAIT_MS) / ARQ_CHANNEL_DEFER_MS) + 1;
     uint64_t now = time_now_ms();
@@ -1494,6 +1529,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             arq_timing_record_connect(g_timing, sess->control_mode);
         sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_CAROUSEL);
         sess->car_nonce = ev->car_nonce;
+        sess->call_rx_mode = ev->mode;   /* the ACCEPT's carrier: the session's floor */
         car_set_seed(sess, car_seed(sess, true));
         car_start(sess, true, time_now_ms());
         break;
@@ -1968,9 +2004,16 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
     {
     case ARQ_EV_TX_COMPLETE:
         /* The caller's DISCONNECT is out: keep the callee's reply slot clear
-         * of the next one. */
-        if (sess->car_session && car_is_master(sess->car))
-            car_log_ctl(sess->car, now, ARQ_CHANNEL_GUARD_MS);
+         * of the next one.  Before it is (ARQ_TD_SENT), this is a keydown
+         * the teardown found on the air, an ABORT's cut round: the callee
+         * may answer that on the floor, and the DISCONNECT keeps clear of
+         * it (integration TestMercuryARQAbortCutsTheFloorRound). */
+        if (sess->car_session && car_is_master(sess->car)) {
+            if (sess->teardown == ARQ_TD_SENT)
+                car_log_disconnect(sess->car, now, ARQ_CHANNEL_GUARD_MS);
+            else
+                car_log_ctl(sess->car, now, ARQ_CHANNEL_GUARD_MS);
+        }
         break;
 
     case ARQ_EV_APP_CONNECT:
@@ -2207,7 +2250,14 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
          * hang-up, and ends the session itself.  Its DISCONNECT keyed at once
          * took that answer's slot, and the caller never heard that its last
          * bytes arrived (KG9NI-K7EK, 2026-11-04: "3 bytes of ours
-         * undelivered" at every end, each FQ delivered). */
+         * undelivered" at every end, each FQ delivered).
+         *
+         * The caller likewise (#585): its application hanging up on the
+         * callee's last bytes, its DONE goes first, then the DISCONNECT
+         * below once nothing is owed.  The DISCONNECT keyed at once took the
+         * DONE's place, and the callee logged its last bytes unconfirmed
+         * with all of them delivered (a P2P host and a TNC probe,
+         * 2026-11-16). */
         else if (!car_drained(sess) || sess->tx_active || car_owes_ack(sess->car))
         {
             /* The configured drain is the least it gets; the carousel's
@@ -2223,7 +2273,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             else
                 HLOGI(LOG_COMP, "DISCONNECT deferred until delivered (up to %llu s)",
                       (unsigned long long)(budget / 1000));
-            car_wish_end(sess->car);      /* the callee's polls say so: M_END */
+            car_wish_end(sess->car);      /* the callee's polls say so: M_END; the caller's last ack too */
             break;
         }
         if (!ev->abort && !repeat)
@@ -2238,9 +2288,13 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     default:
         return false;
     }
-    /* A deferred DISCONNECT goes once everything has been delivered. */
+    /* A deferred DISCONNECT goes once everything has been delivered, and
+     * the last ack is off the air: keyed in this same dispatch, before the
+     * radio's TX_STARTED, the teardown took the ack's TX_COMPLETE for the
+     * DISCONNECT's, and held the DISCONNECT 16 s for a reply slot the ack
+     * never opened (#585). */
     if (sess->teardown == ARQ_TD_DRAINING && car_drained(sess) && !sess->tx_active &&
-        !car_owes_ack(sess->car))
+        !car_owes_ack(sess->car) && !car_keyed(sess->car))
         car_begin_disconnect(sess, now);
     /* The callee's application has hung up (M_END), and everything is
      * delivered both ways: the caller ends the session now, its DISCONNECT

@@ -221,6 +221,9 @@ typedef struct {
                                      * M: CAR_END_WISH, a poll of S's said S's application
                                      * has hung up (M_END), whatever S still holds
                                      * (car_peer_ending); never CAR_END_SLOT */
+    bool     hung_up;               /* M: my application has hung up (car_wish_end): the
+                                     * ack I owe S goes at once, saying so (M_END), and
+                                     * gives S no slot (#585) */
     int      req_lv, req_n;         /* a REQ: M's round I may not have heard */
     uint8_t  req_mk;
     uint8_t  rx_mk;                 /* the M round whose frames I am counting */
@@ -310,9 +313,11 @@ void car_set_max_level(car_t *c, int lv);
 int  car_max_level_for_bw(int bw_hz);
 /* The session's ladder, its bandwidth's (Hz): BW500's floor is the 500 Hz
  * MFSK and its top rungs the 9-carrier modes, BW2750's top rungs the
- * 44-carrier ones; BW2300's unless set.  Both ends set the same, after
- * car_init. */
-void car_set_bandwidth(car_t *c, int bw_hz);
+ * 44-carrier ones; BW2300's unless set.  floor_mode the session's floor:
+ * MERCURY_MODE_MFSK_N32 on a wider bandwidth puts the 500 Hz MFSK at level 0
+ * (a session connected there, the deep floor).  Both ends set the same,
+ * after car_init. */
+void car_set_bandwidth(car_t *c, int bw_hz, int floor_mode);
 /* A level's mode on a bandwidth's ladder (car_level_mode: BW2300's). */
 int  car_bw_level_mode(int bw_hz, int level);
 /* The latest a frame on this mode decodes after its end, on time: D in
@@ -424,23 +429,35 @@ float car_rung_gate_db(int lv);
 /* The session's own control keydowns (its DISCONNECT) follow the turn rules
  * too.  The caller: car_free_at() is the earliest time from now a keydown of
  * len ms misses every slot the callee could be using; once one has gone out,
- * car_log_ctl() keeps the callee's reply (tg ms after it) clear of the next.
+ * car_log_disconnect() keeps the callee's reply (tg ms after it) clear of the
+ * next; car_log_ctl() does the same for another keydown of mine that ends in
+ * the teardown (one an ABORT cut short).
  * The callee: car_request_end() makes its next slot call io.end instead of
  * answering -- it never keys a DISCONNECT on a timer of its own. */
 bool     car_is_master(const car_t *c);
 uint64_t car_free_at(const car_t *c, uint64_t now, uint64_t len);
 void     car_log_ctl(car_t *c, uint64_t end, uint32_t tg);
+void     car_log_disconnect(car_t *c, uint64_t end, uint32_t tg);
 void     car_request_end(car_t *c);
 /* The callee whose application has hung up while its DISCONNECT waits for
  * its data to be acknowledged: car_wish_end() makes its polls say so (type
  * 3, M_END) once it has all of the caller's.  The caller, with all of the
- * callee's, then ends the session itself (car_on_frame returns true). */
+ * callee's, then ends the session itself (car_on_frame returns true).
+ * On the caller, car_wish_end() marks its application hung up (hung_up): the
+ * ack it owes the callee goes at once, as an M_END that opens no slot, and
+ * its DISCONNECT follows (#585). */
 enum { CAR_END_NONE, CAR_END_WISH, CAR_END_SLOT };
 void     car_wish_end(car_t *c);
-/* The callee has delivered data of the caller's that no answer of its own
- * has acknowledged yet: a DISCONNECT keyed now would take that answer's
- * slot, and the caller would never hear that its last bytes arrived. */
+/* This end has delivered data of the peer's that no poll of its own has
+ * acknowledged yet: a DISCONNECT keyed now would take that ack's place, and
+ * the peer would never hear that its last bytes arrived.  Either end: the
+ * callee's ack is its answer (#468), the caller's the DONE it holds
+ * APP_GRACE_MS for its application (#585). */
 bool     car_owes_ack(const car_t *c);
+/* A keydown of mine is on the air (keyed, its TX_COMPLETE not yet seen).
+ * The owed ack is paid when it is keyed, before the radio's TX_STARTED:
+ * a teardown begun then took its TX_COMPLETE for the DISCONNECT's (#585). */
+bool     car_keyed(const car_t *c);
 
 /* How long delivering what is left may take on the rung the session is on:
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds

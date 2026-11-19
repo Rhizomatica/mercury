@@ -162,6 +162,13 @@ static uint64_t now_ms;
 static bool trace;
 static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
 static bool cs_decodable;              /* CAR_CS_DECODABLE: carrier sense needs a decodable frame */
+/* CAR_NOISE=from_ms:len_ms[:kind]: the caller's carrier sense reads busy all
+ * that while, peer or not, by that sign: pre (default) a caught preamble --
+ * QRM that keeps looking like the start of a frame (on air, N3JXB
+ * 2026-11-16: 116 s held, then link lost) -- nav a NAV header, sync a
+ * decoder in sync, busy the energy detector: another station on the air. */
+static uint64_t noise_from, noise_len;
+static int noise_kind = CAR_KEYED_PREAMBLE;
 static int nav_mode;                   /* CAR_NAV: 0 off, 1 modelled header, 2 always heard */
 static uint32_t nav_air;               /* CAR_NAV_AIR: the header's lead, header + gap */
 /* CAR_SNR_BIAS: the estimate as the bench read it at 10 %: DATAC15, DATAC4 and
@@ -345,9 +352,13 @@ static bool round_marked_out(const station_t *s, int lv)
     while (*p && *p != ' ') p++;
     return p[-1] == 'x';
 }
+static int done_polls, done_heard, floor_continues;
 static void io_trace(void *ctx, const char *line)
 {
     station_t *s = ctx;
+    if (!strcmp(line, "rx -> done")) done_polls++;
+    if (!strncmp(line, "tx polled lv=", 13) && strstr(line, " n=0 ")) done_heard++;
+    if (!strncmp(line, "tx: no answer -- continuing (", 29)) floor_continues++;
     /* the fall-back to ok_lv taken as the turn passes (m_decide_recv, #448) is
      * traced right after "turn: mine"; m_decide_send's is not */
     if (s->turn_mine && !strncmp(line, "tx: no answer on lv=", 20) && strstr(line, "back to")) recv_fallbacks++;
@@ -437,6 +448,8 @@ static void io_pattern(void *ctx, int kind)
 static int io_peer_keyed(void *ctx)
 {
     const station_t *l = ctx, *p = &S[l->id ^ 1];
+    if (l->id == 0 && noise_len && now_ms >= noise_from && now_ms < noise_from + noise_len)
+        return noise_kind;
     /* CAR_CS_DECODABLE: carrier sense is a decoder in sync, so a keydown the
      * listener cannot decode is not sensed (on air: a DATAC1 probe at 4.5 dB,
      * and patterns, which no OFDM decoder syncs on) -- nor the part of it
@@ -705,6 +718,15 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     trace = getenv("CAR_TRACE") != NULL;
     asym = false; step_back = NAN; ctl_step = false;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
+    noise_from = noise_len = 0;
+    noise_kind = CAR_KEYED_PREAMBLE;
+    if (getenv("CAR_NOISE")) {
+        unsigned long long f = 0, l = 0;
+        char kind[8] = "";
+        if (sscanf(getenv("CAR_NOISE"), "%llu:%llu:%7s", &f, &l, kind) >= 2) { noise_from = f; noise_len = l; }
+        noise_kind = !strcmp(kind, "nav") ? CAR_KEYED_NAV : !strcmp(kind, "sync") ? CAR_KEYED_SYNC
+                   : !strcmp(kind, "busy") ? CAR_KEYED_BUSY : CAR_KEYED_PREAMBLE;
+    }
     nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
     nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
     car_set_nav_ms(nav_air);
@@ -727,6 +749,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     collisions = 0;
     buffer_overclaim = 0; buffer_break_drops = 0;
     buffer_unstopped_last[0] = buffer_unstopped_last[1] = 0;
+    done_polls = done_heard = floor_continues = 0;
     recv_fallbacks = 0;
     floor_blind = 0;
     app_wait_says = 0;
@@ -783,11 +806,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         car_seed_ctl_deaf(&s->car, peers ? CAR_DEAF_MFSK_TX : hears < ARQ_SNR_MIN_DATAC15_DB,
                           mine ? CAR_DEAF_MFSK_TX : heard < ARQ_SNR_MIN_DATAC15_DB);
         if (!getenv("CAR_NOHINT")) car_seed_snr(&s->car, (float)hears, (float)heard);   /* as arq_fsm.c's car_start */
-        /* CAR_BW=500 or 2750: that bandwidth's ladder (car_set_bandwidth) */
-        if (getenv("CAR_BW")) {
-            int bw = atoi(getenv("CAR_BW"));
+        /* CAR_BW=500 or 2750: that bandwidth's ladder (car_set_bandwidth);
+         * CAR_DEEP=1: a wider session connected on the 500 Hz MFSK, its floor */
+        if (getenv("CAR_BW") || getenv("CAR_DEEP")) {
+            int bw = getenv("CAR_BW") ? atoi(getenv("CAR_BW")) : 2300;
             car_set_max_level(&s->car, car_max_level_for_bw(bw));
-            car_set_bandwidth(&s->car, bw);
+            car_set_bandwidth(&s->car, bw, getenv("CAR_DEEP") ? MERCURY_MODE_MFSK_N32 : arq_floor_mode(bw));
         }
         s->rx_mode = -1;
     }
@@ -809,7 +833,8 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     car_start_receiver(&S[1].car, 0);
     car_start_sender(&S[0].car, 0);
 
-    uint64_t done_ms = 0;
+    uint64_t done_ms = 0, confirm_ms = 0;
+    bool wait_confirm = getenv("CAR_CONFIRM") != NULL;
     for (;;) {
         uint64_t t = next_event_time();
         for (int i = 0; i < 2; i++) {
@@ -885,9 +910,16 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
          * application ahead of its block's check, and a corrupt piece in a
          * block whose check piece had not come yet passed as a completed
          * transfer. */
-        if (S[1].rx_len >= S[0].tx_len && S[0].rx_len >= S[1].tx_len &&
+        if (!done_ms && S[1].rx_len >= S[0].tx_len && S[0].rx_len >= S[1].tx_len &&
             car_rx_verified(&S[0].car) && car_rx_verified(&S[1].car) &&
-            (!script || sc_done())) { done_ms = now_ms; break; }
+            (!script || sc_done())) {
+            done_ms = now_ms;
+            if (!wait_confirm) break;
+        }
+        /* CAR_CONFIRM: ...and each sender knows it (its blocks retired). */
+        if (done_ms && wait_confirm &&
+            car_tx_inflight(&S[0].car) == 0 && S[0].tx_read == S[0].tx_len &&
+            car_tx_inflight(&S[1].car) == 0 && S[1].tx_read == S[1].tx_len) { confirm_ms = now_ms; break; }
     }
     while (nev) { event_t e; pop(&e); free(e.bytes); }
 
@@ -896,9 +928,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->intact = !memcmp(S[1].rx, S[0].tx, S[1].rx_len < S[0].tx_len ? S[1].rx_len : S[0].tx_len) &&
                   !memcmp(S[0].rx, S[1].tx, S[0].rx_len < S[1].tx_len ? S[0].rx_len : S[1].tx_len);
     res->done_ms = done_ms;
+    res->confirm_ms = confirm_ms;
+    res->done_polls = done_polls; res->done_heard = done_heard;
+    res->floor_continues = floor_continues;
     res->air_ms[0] = S[0].air_ms; res->air_ms[1] = S[1].air_ms;
     res->max_kd_ms[0] = S[0].max_kd_ms; res->max_kd_ms[1] = S[1].max_kd_ms;
-    now_ms = done_ms ? done_ms : limit_ms;              /* ...and the silence still running */
+    now_ms = confirm_ms ? confirm_ms : done_ms ? done_ms : limit_ms;   /* ...and the silence still running */
     for (int i = 0; i < 2; i++) { heard(&S[i]); res->silent_ms[i] = S[i].silent_ms; }
     res->msgs = script ? sc_n : 0;
     for (int k = 0; k < res->msgs; k++)

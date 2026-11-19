@@ -243,6 +243,10 @@ bool arq_session_active(void);
 /** The link to the peer exists: CONNECTED or DISCONNECTING.  What mutes the
  *  busy detector (modem.c): the energy then is the peer, not occupancy. */
 bool arq_link_has_peer(void);
+/** For an exit's goodbye (mercury_engine_say_goodbye): 0 no link to the peer;
+ *  1 a link, our DISCONNECT not keyed yet; 2 our DISCONNECT keyed (queued, on
+ *  the air, or out, the peer's answer awaited). */
+int arq_goodbye_progress(void);
 /** Whether another station is keyed, by the FSM's listen-before-talk test:
  *  what a station message waits on before it keys (modem_beacon_send). */
 bool arq_channel_heard(void);
@@ -371,6 +375,15 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
  */
 void arq_note_rx_preamble(int mode);
 void arq_note_rx_frame_done(void);
+/**
+ * @brief A CALL decoder (the control plane's, or an MFSK call listener) is
+ * locked onto a frame: called on every pass of the modem's RX loop while it
+ * is, and not when it is not (the lock is gone once a call has not come for
+ * ARQ_ARRIVAL_STALE_MS).  While LISTENING the host is told PENDING for as long
+ * as it lasts, so a scanning host that caught the start of a CALL stays for
+ * the rest of it (arrival_hold, #527).
+ */
+void arq_note_call_in_flight(void);
 /**
  * @brief A NAV header that began @p age_ms ago says the peer's keydown ends
  * within @p hold_ms of its start: the channel is busy until then, whether or

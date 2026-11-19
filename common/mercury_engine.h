@@ -49,9 +49,22 @@ int mercury_engine_init(const mercury_config *cfg,
                         int test_mode);
 
 /* ------------------------------------------------------------------ */
+/*  mercury_engine_say_goodbye()                                       */
+/*                                                                     */
+/*  With a session up, ends it on the air before the engine goes: one  */
+/*  DISCONNECT (the host's ABORT path), within ENGINE_GOODBYE_MS, a    */
+/*  keydown already on the air finished.  Call BEFORE setting          */
+/*  mercury_stop: the modem stops keying once it is set.  A no-op      */
+/*  with no session, or once mercury_stop is set (a forced exit).      */
+/*  mercury_engine_shutdown() calls it first.                          */
+/* ------------------------------------------------------------------ */
+void mercury_engine_say_goodbye(void);
+
+/* ------------------------------------------------------------------ */
 /*  mercury_engine_shutdown()                                          */
 /*                                                                     */
-/*  Call AFTER setting mercury_stop = true.                            */
+/*  Ends a session on the air first (mercury_engine_say_goodbye) if    */
+/*  mercury_stop is not yet set, then stops everything.                */
 /* ------------------------------------------------------------------ */
 void mercury_engine_shutdown(void);
 

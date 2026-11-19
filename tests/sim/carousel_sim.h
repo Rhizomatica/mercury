@@ -63,6 +63,16 @@ typedef struct {
      * times a BREAK lowered it ahead of the poll that retires the block. */
     size_t   buffer_overclaim;
     int      buffer_break_drops;
+    /* CAR_CONFIRM=1: the run goes on past done_ms until each sender has had
+     * everything it sent confirmed (car_tx_inflight 0, nothing left to send),
+     * as a sender's host sees it from BUFFER 0 and an application from the
+     * end of the transfer.  confirm_ms: then (0: not within the limit).
+     * done_polls: "done" polls the receivers keyed (rx -> done), and
+     * done_heard those a sender decoded (tx polled ... n=0). */
+    uint64_t confirm_ms;
+    int      done_polls, done_heard;
+    int      floor_continues;     /* "tx: no answer -- continuing": a sender's
+                                     floor round answered by nothing it heard */
 } car_sim_result_t;
 
 /* Exploration: from the next run on, no random loss -- the frames (and

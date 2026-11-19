@@ -811,7 +811,12 @@ static void execute_control_command(char *buffer)
 
     if (!strncmp(buffer, "BUFFER", strlen("BUFFER")))
     {
+        /* A query is always answered, even with the count of the last BUFFER
+         * line: past tnc_send_buffer's "unchanged" filter, which is for the
+         * unsolicited reports (#584).  The value is still recorded, so the
+         * next report does not repeat it. */
         int buffered = arq_buffered_bytes_snapshot();
+        atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
         tnc_send_buffer((uint32_t)buffered);
         return;
     }
@@ -961,6 +966,48 @@ static void execute_control_command(char *buffer)
     {
         /* VARA compatibility: respond with modem identification. */
         tcp_write(CTL_TCP_PORT, (uint8_t *)"VARA version 4.9.0 registered\r", 30);
+        return;
+    }
+
+    /* VARA's CLEANTXBUFFER: BPQ32 sends it before DISCONNECT at a session
+     * time limit.  Answered WRONG, the DISCONNECT after it drained the whole
+     * backlog first. */
+    if (!strcmp(buffer, "CLEANTXBUFFER"))
+    {
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_CLEAN_TX_BUFFER;
+        /* VARA's reply, not OK: the ARQ thread answers once the clear is
+         * done (tnc_send_cleantxbuffer). */
+        if (arq_submit_tcp_cmd(&cmd) != 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"CLEANTXBUFFER FAILED\r", 21);
+        return;
+    }
+
+    /* "WINLINK SESSION": Pat sends it (or P2P SESSION) before each CONNECT.
+     * No-op like P2P: Mercury runs both the same way. */
+    if (!strcmp(buffer, "WINLINK SESSION"))
+    {
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        return;
+    }
+
+    /* CWID ON|OFF: Pat sends CWID ON after PUBLIC ON at every VARA HF
+     * start, without waiting for the answer.  Mercury keys no CW ID and no
+     * periodic ID: only a CALL or CQ carries the sender's callsign, so
+     * identifying the station is up to the operator or the host.  Accepted
+     * so the host's init does not fail, and ON says so in the log. */
+    if (!strncmp(buffer, "CWID", 4) && (buffer[4] == '\0' || buffer[4] == ' '))
+    {
+        char arg[16] = {0};
+        if (sscanf(buffer + 4, " %15s", arg) != 1 ||
+            (strcasecmp(arg, "ON") && strcasecmp(arg, "OFF")))
+        {
+            reply_wrong(received);
+            return;
+        }
+        if (!strcasecmp(arg, "ON"))
+            HLOGI("tcp-ctl", "CWID ON: Mercury sends no CW ID");
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
 
@@ -1224,6 +1271,24 @@ static void refuse_web_client(int *ctl_client_fd)
     close_ctl_socket(ctl_client_fd);
 }
 
+/* Why poll() ended a host's connection, in the words recv() uses: on Linux a
+ * reset ends here (POLLERR, SO_ERROR = ECONNRESET), where Windows reports it
+ * through recv() (WSAECONNRESET), so both systems' logs read the same (#608
+ * review).  Read before the close: SO_ERROR is the socket's. */
+static void log_client_poll_end(const char *tag, const char *who, int fd, short events)
+{
+    int err = 0;
+    socklen_t len = sizeof(err);
+    if (events & POLLNVAL)
+        HLOGW(tag, "%s client socket invalid (POLLNVAL), closing", who);
+    else if (!(events & POLLERR))
+        HLOGI(tag, "%s client closed the connection", who);
+    else if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&err, &len) == 0 && err == SOCK_ECONNRESET)
+        HLOGI(tag, "%s client reset the connection", who);
+    else
+        HLOGW(tag, "%s client socket error (err=%d), closing", who, err);
+}
+
 static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notify_arq)
 {
     if (!ctl_client_fd || *ctl_client_fd < 0)
@@ -1307,6 +1372,15 @@ void tnc_host_release(void)
     pthread_mutex_lock(&host_tnc_lock);
     (void)host_release_tnc();
     pthread_mutex_unlock(&host_tnc_lock);
+}
+
+/* Something takes the session's received bytes off data_rx_buffer_arq: a TCP
+ * data client (arq_reactor_thread), or else the host holding the TNC
+ * (tnc_host_arq_read).  With neither, cb_deliver_rx_data drops what does not
+ * fit rather than wait on a ring nobody drains. */
+bool tnc_rx_reader_attached(void)
+{
+    return net_get_status(DATA_TCP_PORT) == NET_CONNECTED || atomic_load(&host_holds_tnc);
 }
 
 /* The session's received bytes go to the data client when one is attached
@@ -1551,6 +1625,7 @@ void *arq_reactor_thread(void *port)
             short events = pfds[(ctl_client >= 0) ? 3 : 2].revents;
             if (events & (POLLERR | POLLHUP | POLLNVAL))
             {
+                log_client_poll_end("tcp-data", "Data", data_client, events);
                 close_data_client(&data_client);
             }
 
@@ -1579,8 +1654,12 @@ void *arq_reactor_thread(void *port)
                 }
                 else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
                 {
+                    /* A reset is how a Windows host often leaves (Winlink
+                     * Express: err=10054), as ordinary as a close. */
                     if (n == 0)
                         HLOGI("tcp-data", "Data client closed the connection");
+                    else if (sock_errno() == SOCK_ECONNRESET)
+                        HLOGI("tcp-data", "Data client reset the connection");
                     else
                         HLOGW("tcp-data", "Data recv returned %zd (err=%d), closing", n, sock_errno());
                     close_data_client(&data_client);
@@ -1593,6 +1672,7 @@ void *arq_reactor_thread(void *port)
             short events = pfds[2].revents;
             if (events & (POLLERR | POLLHUP | POLLNVAL))
             {
+                log_client_poll_end("tcp-ctl", "Control", ctl_client, events);
                 close_ctl_client(&ctl_client, &data_client, true);
             }
             else if (events & POLLIN)
@@ -1616,8 +1696,12 @@ void *arq_reactor_thread(void *port)
                 }
                 else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
                 {
+                    /* A reset is how a Windows host often leaves (Winlink
+                     * Express: err=10054), as ordinary as a close. */
                     if (n == 0)
                         HLOGI("tcp-ctl", "Control client closed the connection");
+                    else if (sock_errno() == SOCK_ECONNRESET)
+                        HLOGI("tcp-ctl", "Control client reset the connection");
                     else
                         HLOGW("tcp-ctl", "Control recv returned %zd (err=%d), closing", n, sock_errno());
                     close_ctl_client(&ctl_client, &data_client, true);
@@ -2495,6 +2579,13 @@ void tnc_send_buffer(uint32_t bytes)
     }
 }
 
+void tnc_send_cleantxbuffer(bool dropped_any)
+{
+    if (tnc_queue_line_critical(dropped_any ? "CLEANTXBUFFER OK\r"
+                                            : "CLEANTXBUFFER BUFFEREMPTY\r") < 0)
+        HLOGW("tcp-ctl", "Error queuing CLEANTXBUFFER reply");
+}
+
 /* TNC notification callbacks registered into the ARQ layer.  Decouples ARQ
  * from this file: ARQ calls arq_tnc_send_*(), which dispatch here. */
 static const arq_tnc_callbacks_t g_arq_tnc_cbs = {
@@ -2506,6 +2597,7 @@ static const arq_tnc_callbacks_t g_arq_tnc_cbs = {
     .send_buffer        = tnc_send_buffer,
     .send_registered    = tnc_send_registered,
     .send_bitrate       = tnc_send_bitrate_progress,
+    .send_cleantxbuffer = tnc_send_cleantxbuffer,
 };
 
 void tnc_send_sn(float snr)
