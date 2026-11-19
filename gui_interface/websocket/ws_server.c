@@ -114,7 +114,15 @@ struct ws_server {
     pthread_mutex_t qlock;
     struct ws_qmsg *qhead, *qtail;
     size_t qbytes;
+
+    /* Refused cross-origin upgrades: a hostile page can retry in a loop, so
+     * log one, then a count at most every WS_REFUSAL_LOG_MS.  Server thread
+     * only. */
+    uint64_t refusal_logged_ms;
+    unsigned long refusals_unlogged;
 };
+
+#define WS_REFUSAL_LOG_MS 60000
 
 /* ---- small helpers ---- */
 
@@ -678,9 +686,23 @@ static int conn_handle_request(ws_conn_t *c, const char *req, size_t req_len)
             if (!ws_origin_allowed(origin, olen, host, hlen, s->opts.tls_enabled,
                                    s->opts.allowed_origins))
             {
-                HLOGW(WS_LOG_TAG, "refused a cross-origin upgrade (Origin \"%.*s\", Host \"%.*s\")",
-                      (int) (olen > 128 ? 128 : olen), origin ? origin : "",
-                      (int) (hlen > 128 ? 128 : hlen), host ? host : "");
+                uint64_t now = hermes_uptime_ms();
+
+                if (s->refusal_logged_ms == 0 ||
+                    now - s->refusal_logged_ms >= WS_REFUSAL_LOG_MS)
+                {
+                    HLOGW(WS_LOG_TAG, "refused a cross-origin upgrade (Origin \"%.*s\", Host \"%.*s\"); "
+                          "to allow it, list that origin in ui_allowed_origins",
+                          (int) (olen > 128 ? 128 : olen), origin ? origin : "",
+                          (int) (hlen > 128 ? 128 : hlen), host ? host : "");
+                    if (s->refusals_unlogged != 0)
+                        HLOGW(WS_LOG_TAG, "refused %lu more cross-origin upgrades since the last report",
+                              s->refusals_unlogged);
+                    s->refusal_logged_ms = now ? now : 1;
+                    s->refusals_unlogged = 0;
+                }
+                else
+                    s->refusals_unlogged++;
                 http_reply(c, 403, "Forbidden", NULL, "text/plain",
                            "origin not allowed", 18, true);
                 return 0;

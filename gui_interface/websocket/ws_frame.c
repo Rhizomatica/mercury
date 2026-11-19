@@ -177,6 +177,27 @@ static bool is_ipv4_literal(const char *h, size_t n)
     return parts == 4;
 }
 
+/* "[...]" holding only hex digits, ':' and '.' (an embedded IPv4), with at
+ * least one ':'.  Not a full IPv6 parser: enough that a bracketed name such as
+ * "[evil.example]" is not taken for an IP literal. */
+static bool is_bracketed_ipv6(const char *h, size_t n)
+{
+    bool colon = false;
+
+    if (n < 4 || h[0] != '[' || h[n - 1] != ']')
+        return false;
+    for (size_t i = 1; i + 1 < n; i++)
+    {
+        char c = h[i];
+        if (c == ':')
+            colon = true;
+        else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                   (c >= 'A' && c <= 'F') || c == '.'))
+            return false;
+    }
+    return colon;
+}
+
 static bool has_suffix(const char *h, size_t n, const char *sfx)
 {
     size_t k = strlen(sfx);
@@ -188,7 +209,9 @@ static bool host_is_rebind_safe(const char *h, size_t n)
 {
     if (n == 0)
         return false;
-    if (h[0] == '[' || is_ipv4_literal(h, n))           /* IP literal */
+    if (h[0] == '[')
+        return is_bracketed_ipv6(h, n);                 /* IPv6 literal */
+    if (is_ipv4_literal(h, n))                          /* IPv4 literal */
         return true;
     if (n == 9 && ci_eq(h, "localhost", 9))
         return true;

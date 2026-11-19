@@ -35,6 +35,11 @@ ui_protocol = ws
 ; localhost, a single-label name or a .local/.home.arpa/.internal/.lan name;
 ; reaching it by another LAN name over ws needs that origin listed here,
 ; e.g. "http://pi.fritz.box:10000".  Empty allows no other sites.
+; Behind a reverse proxy, or with a web UI served from another port or host
+; (e.g. https://station.example opening wss://station.example:10000), list
+; that page's origin here; the "refused a cross-origin upgrade" log line
+; shows the exact Origin to add.  An entry allows every page on that origin,
+; not just one path.
 ; (default: the hosted web app, https://rhizomatica.github.io)
 ;ui_allowed_origins = "https://rhizomatica.github.io"
 

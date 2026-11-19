@@ -574,6 +574,22 @@ void test_rebindable_hosts_are_refused_over_plain_ws(void)
     TEST_ASSERT_TRUE(origin_ok("https://evil.example", "evil.example", true));
 }
 
+/* A bracketed Host is an IP literal only if it is one: not a browser shape,
+ * but the code should say what the comment says. */
+void test_only_real_ipv6_literals_pass_in_brackets(void)
+{
+    TEST_ASSERT_TRUE(origin_ok("http://[::1]:10000", "[::1]:10000", false));
+    TEST_ASSERT_TRUE(origin_ok("http://[fe80::1]", "[fe80::1]", false));
+    TEST_ASSERT_TRUE(origin_ok("http://[::ffff:192.168.1.2]:10000",
+                               "[::ffff:192.168.1.2]:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://[not-an-ip]", "[not-an-ip]", false));
+    TEST_ASSERT_FALSE(origin_ok("http://[evil.example]:10000",
+                                "[evil.example]:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://[]:10000", "[]:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://[1234]:10000", "[1234]:10000", false));
+    TEST_ASSERT_FALSE(origin_ok("http://[::1", "[::1", false));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -609,6 +625,7 @@ int main(void)
     RUN_TEST(test_same_origin_pages_are_allowed);
     RUN_TEST(test_cross_origin_pages_are_refused);
     RUN_TEST(test_rebindable_hosts_are_refused_over_plain_ws);
+    RUN_TEST(test_only_real_ipv6_literals_pass_in_brackets);
     RUN_TEST(test_listed_origins_are_allowed_exactly);
     RUN_TEST(test_private_zone_names_are_allowed_over_plain_ws);
 
