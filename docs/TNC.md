@@ -256,8 +256,10 @@ backlog to be sent.
 
 ### CWID
 
-Accepted for VARA client compatibility.  Mercury sends no CW ID: the
-callsigns are carried in every frame.
+Accepted for VARA client compatibility.  Mercury sends no CW ID and no
+periodic ID.  A CALL or CQ carries the sending station's callsign; other
+frames don't.  Identifying the station as your licence requires is up to the
+operator or the host program.
 
 ```
 CWID ON\r

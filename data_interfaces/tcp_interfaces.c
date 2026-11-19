@@ -987,9 +987,10 @@ static void execute_control_command(char *buffer)
     }
 
     /* CWID ON|OFF: Pat sends CWID ON after PUBLIC ON at every VARA HF
-     * start, without waiting for the answer.  Mercury keys no CW ID; each
-     * frame carries the callsigns.  Accepted so the host's init does not
-     * fail, and ON says so in the log. */
+     * start, without waiting for the answer.  Mercury keys no CW ID and no
+     * periodic ID: only a CALL or CQ carries the sender's callsign, so
+     * identifying the station is up to the operator or the host.  Accepted
+     * so the host's init does not fail, and ON says so in the log. */
     if (!strncmp(buffer, "CWID", 4) && (buffer[4] == '\0' || buffer[4] == ' '))
     {
         char arg[16] = {0};
@@ -1000,7 +1001,7 @@ static void execute_control_command(char *buffer)
             return;
         }
         if (!strcasecmp(arg, "ON"))
-            HLOGI("tcp-ctl", "CWID ON: Mercury sends no CW ID (callsigns are in every frame)");
+            HLOGI("tcp-ctl", "CWID ON: Mercury sends no CW ID");
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
