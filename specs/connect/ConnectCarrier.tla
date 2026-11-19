@@ -56,7 +56,8 @@
 (*   FloorOnly  an end that transmits only MFSK keys nothing else.         *)
 (*                                                                         *)
 (* MfskTx: which end transmits only MFSK (arq:mfsk_tx_only, an FSK-only    *)
-(* radio).  C then CALLs on the floor only, each the floor's interval      *)
+(* radio).  C then CALLs on MFSK only (Deep: the floor and deep twice, *)
+(* from the first CALL; else the floor), each its carrier's interval      *)
 (* after the last (the first too: arq_fsm.c sets its deadline from its     *)
 (* carrier).  E then answers only where its ACCEPT goes on the floor       *)
 (* (accept_keys): where it would go on fast it keys nothing, and the next  *)
@@ -143,8 +144,10 @@ Mfsk(car) == car # "fast"
 DecMax(car) == Dec(car) + (IF Mutant = "lateanswer" THEN IvFast ELSE 0)
 
 \* arq_call_carrier: CALLs 1 .. F fast, then the floor and fast in turn --
-\* or, Deep, the floor and then deep twice.
-CallCar(i) == IF CM THEN "floor"
+\* or, Deep, the floor and then deep twice.  An MFSK-only caller has no fast
+\* CALLs: the floor every time, or, Deep, the floor and deep twice from the
+\* first.
+CallCar(i) == IF CM THEN (IF Deep /\ (i - 1) % 3 # 0 THEN "deep" ELSE "floor")
               ELSE IF i <= F THEN "fast"
               ELSE IF Deep THEN (IF (i - F - 1) % 3 = 0 THEN "floor" ELSE "deep")
               ELSE IF (i - F - 1) % 2 = 0 THEN "floor" ELSE "fast"
@@ -269,7 +272,7 @@ TypeOK == /\ t \in 0 .. H /\ cSt \in {"calling", "connected", "gaveup"} /\ k \in
 
 NoOverlap == ~(On(cTx) /\ On(eTx))
 FloorOnly == /\ (EM /\ eTx.s >= 0 => Mfsk(eTx.car))
-             /\ (CM /\ cTx.call > 0 => CallCar(cTx.call) = "floor")
+             /\ (CM /\ cTx.call > 0 => Mfsk(CallCar(cTx.call)))
 Early     == k <= 2
 Connects  == t = H => cSt = "connected"
 =============================================================================

@@ -314,17 +314,18 @@ int arq_call_carrier(const arq_session_t *sess)
 {
     if (!sess) return ARQ_CONTROL_MODE;
     /* A station that can only transmit MFSK calls on MFSK from the first
-     * CALL: its fast DATAC16 slots would never reach the peer. */
-    if (ARQ_TX_MFSK_ONLY)
-        return arq_floor_mode(arq_get_bw());
-    if (sess->call_sends_done < ARQ_CALL_FAST_SLOTS)
+     * CALL: its fast DATAC16 slots would never reach the peer, so its
+     * rotation starts where the others' does after them, without the
+     * control-mode CALLs. */
+    bool mfsk_only = ARQ_TX_MFSK_ONLY;
+    if (!mfsk_only && sess->call_sends_done < ARQ_CALL_FAST_SLOTS)
         return sess->control_mode;
     /* The floor of my own bandwidth: the callee answers min(its own, mine),
      * and a BW500 station listens on the 500 Hz floor. */
     int floor = arq_floor_mode(arq_get_bw());
-    int n = sess->call_sends_done - ARQ_CALL_FAST_SLOTS;
+    int n = sess->call_sends_done - (mfsk_only ? 0 : ARQ_CALL_FAST_SLOTS);
     if (floor == MERCURY_MODE_MFSK_N32)
-        return n % 2 == 0 ? floor : sess->control_mode;
+        return mfsk_only || n % 2 == 0 ? floor : sess->control_mode;
     /* Wider than 500 Hz, the 500 Hz MFSK too, after the floor: every
      * listener decodes it (#451), ~3 dB below the 1 kHz floor, and a
      * session connected on it keeps it as its floor (session_floor_mode).

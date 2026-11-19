@@ -242,9 +242,16 @@ Results:
     MFSK reaches.  The earliest horizon it holds from is between 560 and 580
     (140-145 s): the deep CALL is the fourth, keyed at 77 s.  `_deeponly_f4`
     (`H` 820, 205 s), 50583; `_deeponly_emfsk`, 51801.
+  - An MFSK-only caller (`MfskTx` "C") with `Deep`: no fast CALLs, the
+    floor and deep twice from the first.  `ConnectCarrier_deep_cmfsk.cfg`
+    (every path "any"): `NoOverlap` and `FloorOnly` (any MFSK carrier) hold,
+    385439 states; `_deeponly_cmfsk`: `Connects` too, 165715.  Without
+    `Deep` its CALLs are on the floor, as before (`_cmfsk*` unchanged).
   - `Mut_deepfloor.cfg` (the caller keeps listening on the floor after a
     deep CALL): violates `Connects`.  `Mut_deepiv.cfg` (a deep CALL waits
     the floor's interval, `Sense` "any"): violates `NoOverlap`, the next CALL
     keyed over the 27 s ACCEPT a decoder missed.
 
-Give each TLC run its own `-metadir`.
+Give each TLC run its own `-metadir`.  The state counts here are TLC
+2026.10.04 (`tlc2.TLC -h` prints the version); another version can count a
+few hundred states differently with the same results.

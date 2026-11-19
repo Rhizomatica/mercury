@@ -796,6 +796,20 @@ void test_wide_caller_also_calls_on_the_500_hz_mfsk(void)
         sess.call_sends_done = i;
         TEST_ASSERT_EQUAL_INT(narrow[i], arq_call_carrier(&sess));
     }
+    /* A station that transmits only MFSK has no control-mode CALLs: wide,
+     * the floor and the 500 Hz MFSK twice from the first; narrow, its floor. */
+    atomic_store(&arq_tx_mfsk_only, 1);
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+    for (int i = 0; i < 6; i++) {
+        sess.call_sends_done = i;
+        TEST_ASSERT_EQUAL_INT(wide[i + ARQ_CALL_FAST_SLOTS], arq_call_carrier(&sess));
+    }
+    arq_conn.bw = ARQ_BANDWIDTH_NARROW_HZ;
+    for (int i = 0; i < 4; i++) {
+        sess.call_sends_done = i;
+        TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, arq_call_carrier(&sess));
+    }
+    atomic_store(&arq_tx_mfsk_only, 0);
     arq_conn.bw = 0;
 }
 
@@ -829,12 +843,15 @@ void test_connect_on_the_500_hz_mfsk_is_the_deep_floor(void)
                               car_session_level_mode(sess.car, 1));
     }
     arq_fsm_init(&sess);
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;     /* the callee's: answer_mode's CALLs say 2300 */
     arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, answer_mode(MERCURY_MODE_MFSK_N32));
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, sess.floor_mode);
-    /* the caller heard none of it and repeats on the control mode: the
-     * answer goes on the bandwidth's floor, where it listens after a repeat */
+    /* A repeat on the control mode after that answer goes on the bandwidth's
+     * floor, and the floor follows the ACCEPT.  This pins accept_carrier's
+     * code path; a wide caller does not send this sequence (its control-mode
+     * CALLs come before any 500 Hz one). */
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, answer_mode(FREEDV_MODE_DATAC16));
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.floor_mode);
     arq_conn.bw = 0;
