@@ -49,6 +49,7 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_EQUAL_INT(300,  c.busy_on_debounce_ms);
     TEST_ASSERT_EQUAL_INT(1500, c.busy_hang_ms);
     TEST_ASSERT_FALSE(c.busy_reseed_on_hop);   /* opt-in: a trade-off */
+    TEST_ASSERT_FALSE(c.pulse_keepalive);      /* opt-in: costs idle CPU */
     TEST_ASSERT_FALSE(c.verbose);
     TEST_ASSERT_FALSE(c.trace);
     TEST_ASSERT_FALSE(c.log_utc);   /* local time unless asked */
@@ -72,6 +73,7 @@ void test_arq_tunables_roundtrip(void)
     w.busy_on_debounce_ms         = 500;
     w.busy_hang_ms                = 2000;
     w.busy_reseed_on_hop          = true;
+    w.pulse_keepalive             = true;   /* non-default: proves it round-trips */
     snprintf(w.input_device, sizeof(w.input_device), "{0.0.1.00000000}.{c64a8dfa}");
     snprintf(w.input_device_name, sizeof(w.input_device_name), "Microphone (3- USB Audio CODEC )");
     snprintf(w.output_device_name, sizeof(w.output_device_name), "Speakers \"A\" (3- USB Audio CODEC )");
@@ -92,6 +94,7 @@ void test_arq_tunables_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(500,  r.busy_on_debounce_ms);
     TEST_ASSERT_EQUAL_INT(2000, r.busy_hang_ms);
     TEST_ASSERT_TRUE(r.busy_reseed_on_hop);
+    TEST_ASSERT_TRUE(r.pulse_keepalive);
     TEST_ASSERT_EQUAL_STRING("{0.0.1.00000000}.{c64a8dfa}", r.input_device);
     TEST_ASSERT_EQUAL_STRING("Microphone (3- USB Audio CODEC )", r.input_device_name);
     TEST_ASSERT_EQUAL_STRING("Speakers \"A\" (3- USB Audio CODEC )", r.output_device_name);

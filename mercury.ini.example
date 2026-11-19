@@ -169,6 +169,16 @@ tx_gain_db = 0.0
 ; Range: 0 .. 2000 (values outside are clamped).
 tx_delay_ms = 10
 
+; PulseAudio only (-x pulse): keep the playback stream fed with silence
+; between transmissions (default: false).  Turn it on if, after Mercury has
+; been idle for a while, a transmission keys the radio but sends no audio:
+; some USB sound cards on PipeWire do not start their output again after a
+; long idle spell (issue #591).  With it on, the log says "pulse_keepalive:
+; playback is fed with silence between transmissions".  It costs a little
+; CPU while idle, in Mercury and in the PulseAudio server, and keeps the
+; card from suspending.  ALSA and the other sound systems ignore it.
+pulse_keepalive = false
+
 [arq]
 
 ; Older files may still set no_progress_timeout_s, data_retry_slots,

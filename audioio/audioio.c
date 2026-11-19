@@ -131,6 +131,9 @@ static audio_health_t  s_cap_health  = AUDIO_HEALTH_STOPPED;
 static audio_health_t  s_play_health = AUDIO_HEALTH_STOPPED;
 static char            s_health_reason[192];
 
+/* [audio] pulse_keepalive (audioio_set_pulse_keepalive). */
+static _Atomic bool s_pulse_keepalive = false;
+
 static void audio_health_set(bool capture, audio_health_t st, const char *reason)
 {
     pthread_mutex_lock(&s_health_lock);
@@ -1701,16 +1704,28 @@ void *radio_playback_thread(void *device_ptr)
      * card went on working.  VARA, WSJT-X and fldigi, fine on that card,
      * feed their output all the time.  Not for ALSA: a HERMES station plays
      * into a loopback the radio controller reads only when it wants, and a
-     * steady write there would block. */
+     * steady write there would block.
+     *
+     * Opt-in, [audio] pulse_keepalive: a stream that never stops costs idle
+     * CPU in Mercury and in the PulseAudio server, and keeps the card from
+     * suspending (module-suspend-on-idle).  Phones and cards without the
+     * #591 problem should not pay that. */
     bool play_keepalive = false;
 #if defined(AUDIOIO_ALSA_PULSE)
-    play_keepalive = (audio == (ffaudio_interface *) &ffpulse);
+    play_keepalive = (audio == (ffaudio_interface *) &ffpulse) &&
+                     atomic_load(&s_pulse_keepalive);
 #endif
+    if (play_keepalive)
+        HLOGI("audio-play", "pulse_keepalive: playback is fed with silence between transmissions");
     /* Non-blocking writes poll for room: a quarter of the device buffer the
      * open negotiated (7 ms of 30 ms) keeps it from running dry while
      * bounding the wake-ups (#617 review). */
     const uint32_t play_poll_ms = (cfg->buffer_length_msec >= 8)
                                   ? cfg->buffer_length_msec / 4 : 2;
+    /* Writing silence, a burst is not waiting: poll half as often (#625
+     * review).  A burst queued meanwhile still waits at most this. */
+    const uint32_t play_idle_poll_ms = (cfg->buffer_length_msec >= 4)
+                                       ? cfg->buffer_length_msec / 2 : 2;
     /* Silence fed through the resampler since the last real audio, in 8 kHz
      * samples.  Past its whole filter history, the resampler's output is
      * exact zeros, so idle periods skip it and the format expansion: the
@@ -1897,7 +1912,7 @@ void *radio_playback_thread(void *device_ptr)
                 play_write_errors = 0;
                 break;   /* this period's audio goes with the rest */
             }
-            ffthread_sleep(r < 0 ? 20 : play_poll_ms);
+            ffthread_sleep(r < 0 ? 20 : silent_period ? play_idle_poll_ms : play_poll_ms);
         }
         // printf("n = %lld total written = %u\n", n, total_written);
     }
@@ -2823,6 +2838,11 @@ int audioio_device_name(int audio_subsys, int mode, const char *id, char *name, 
  * exactly today's behavior. */
 static char s_capture_saved_name[AUDIO_DEV_STR_MAX];
 static char s_playback_saved_name[AUDIO_DEV_STR_MAX];
+
+void audioio_set_pulse_keepalive(bool on)
+{
+    atomic_store(&s_pulse_keepalive, on);
+}
 
 void audioio_set_saved_device_names(const char *capture_name, const char *playback_name)
 {
