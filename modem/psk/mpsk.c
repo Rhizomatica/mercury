@@ -117,7 +117,6 @@ mpsk_t *mpsk_open(int level)
         if (!strcmp(ldpc_codes[i].name, l->code)) ci = i;
     if (ci < 0) { free(m); return NULL; }
     ldpc_codes_setup(&m->ldpc, (char *)l->code);
-    if (getenv("MPSK_ITER")) m->ldpc.max_iter = atoi(getenv("MPSK_ITER"));
     m->N = m->ldpc.CodeLength;
     m->K = m->N - m->ldpc.NumberParityBits;
     m->nbytes = m->K / 8;
@@ -436,11 +435,10 @@ static int decode_at(mpsk_t *m, long T, uint8_t *frame, float *snr_db)
     if (s2 < 1e-4) s2 = 1e-4;
     if (snr_db) *snr_db = (float)(10.0 * log10(1.0 / s2));
     float *llr = m->llr;
-    double lsc = getenv("MPSK_LSC") ? atof(getenv("MPSK_LSC")) : 1.0;
     /* Soft bits clipped at 5: a few confidently wrong bits (3-5 of 4164)
      * sank frames with 0.5 % raw errors that decode clipped (psk6, AWGN:
      * 35/40 at +11 dB unclipped, 40/40 from +9 clipped; 3-5 alike). */
-    double lclip = getenv("MPSK_CLIP") ? atof(getenv("MPSK_CLIP")) : 5.0;
+    const double lclip = 5.0;
     for (int c = 0; c < l->nc; c++)
         for (int k = 1; k < l->nsym; k++) {
             int j = m->cell[c][k];
@@ -452,7 +450,6 @@ static int decode_at(mpsk_t *m, long T, uint8_t *frame, float *snr_db)
             /* bit b0: v in {0,1} -> 0, {2,3} -> 1; b1: v even -> 0, odd -> 1 */
             double l0 = (fmin(dv[2], dv[3]) - fmin(dv[0], dv[1])) / nvk;
             double l1 = (fmin(dv[1], dv[3]) - fmin(dv[0], dv[2])) / nvk;
-            l0 *= lsc; l1 *= lsc;
             if (l0 > lclip) l0 = lclip; else if (l0 < -lclip) l0 = -lclip;
             if (l1 > lclip) l1 = lclip; else if (l1 < -lclip) l1 = -lclip;
             llr[m->perm[2 * j]] = (float)l0;
@@ -505,7 +502,7 @@ static int rx_step(mpsk_t *m, uint8_t *frame, int *found, float *snr_db)
     if (found) *found = 1;
     m->dbg_t = (int)m->bT; m->dbg_chi = m->best;
     int ok = 0;
-    for (int tryi = 0; !ok && tryi < (getenv("MPSK_NOTREF") ? 1 : 3); tryi++)
+    for (int tryi = 0; !ok && tryi < 3; tryi++)
         ok = decode_at(m, m->bT + (tryi == 1 ? -1 : tryi == 2 ? 1 : 0), frame, snr_db);
     m->nextT = ok ? m->bT + (long)l->nsym * R : m->bT + RX_LAG;
     m->best = -1.0; m->bT = -1;
