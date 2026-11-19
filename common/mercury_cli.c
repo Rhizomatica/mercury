@@ -18,6 +18,7 @@
 #include "mercury_version.h"
 #include "freedv_api.h"
 #include "modem_mfsk.h"
+#include "modem_psk.h"
 #include "ldpc_codes.h"
 #include "audioio/audioio.h"
 #include "radio_io.h"
@@ -588,10 +589,10 @@ static void list_modulation_modes(int freedv_verbosity, bool verbose)
         printf("Mode index: %d\n", i);
         printf("Opening mode %s (%d)\n", freedv_mode_names[i], freedv_modes[i]);
 
-        if (mercury_mode_is_mfsk(freedv_modes[i]))
+        if (mercury_mode_is_mfsk(freedv_modes[i]) || mercury_mode_is_psk(freedv_modes[i]))
         {
             /* Non-FreeDV backend: ask it the same questions directly. */
-            const modem_backend_t *be = &modem_backend_mfsk;
+            const modem_backend_t *be = mercury_mode_is_psk(freedv_modes[i]) ? &modem_backend_psk : &modem_backend_mfsk;
             void *ctx = be->open(freedv_modes[i]);
             if (ctx == NULL) { printf("Failed to open mode %d\n", freedv_modes[i]); continue; }
             int bits = be->bits_per_frame(ctx);
@@ -605,7 +606,7 @@ static void list_modulation_modes(int freedv_verbosity, bool verbose)
                 printf("payload bitrate: %.0f bit/s\n",
                        (bits / 8 - 2) * 8.0 / ((double)nsam / fs));
             if (be->bandwidth_hz)
-                printf("occupied bandwidth: %d Hz (tone span)\n", be->bandwidth_hz(ctx));
+                printf("occupied bandwidth: %d Hz\n", be->bandwidth_hz(ctx));
             printf("\n");
             be->close(ctx);
             continue;
