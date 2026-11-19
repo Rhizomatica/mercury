@@ -36,11 +36,13 @@ can reach them and send commands without credentials is expected, not a
 vulnerability on its own.  Memory-safety bugs in how they parse input, or
 a way around a restriction Mercury does enforce, are worth reporting.
 
-You should get an acknowledgement within two weeks.  If you don't, please
-send a reminder.
+This is a volunteer-run project: reports are handled on a best-effort
+basis, and no response time or fix timeline is promised.  Please report
+privately and give us reasonable time before publishing details.
 
-Please give us 90 days to release a fix before you publish details.  If
-a fix is released sooner, we will agree a publication date with you.
+Anyone with specific security requirements (guaranteed response times,
+coordinated disclosure, audits) can contact Rhizomatica about a support
+contract.
 
 ## Supported versions
 
