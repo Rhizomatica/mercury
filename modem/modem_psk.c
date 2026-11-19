@@ -19,7 +19,6 @@
 typedef struct {
     mpsk_t *m;
     int mode;
-    int sync;          /* a frame was found in the last call (decoded or not) */
     float snr;         /* the last frame's S/N, the burst's in 3 kHz */
 } psk_modem_t;
 
@@ -98,15 +97,19 @@ static int psk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demod
     int found = 0;
     float raw = 0.0f;
     int ok = mpsk_rx(h->m, demod_in, PSK_NIN, bytes_out, &found, &raw);
-    h->sync = found;
     if (found) h->snr = burst_snr(raw);
     return ok ? mpsk_frame_bytes(h->m) : 0;
 }
 
+/* Never in sync: a frame is found only once it has ended, so the found
+ * flag says nothing about what is on the air now, and the modem takes a
+ * sync that rises without a frame for a preamble caught -- a hold of a
+ * whole frame's airtime on a channel that was already clear (on the
+ * control plane, 2 s of a probe's answer slot lost, Go harness). */
 static void psk_be_get_stats(void *ctx, int *sync, float *snr)
 {
     psk_modem_t *h = ctx;
-    if (sync) *sync = h->sync;
+    if (sync) *sync = 0;
     if (snr) *snr = h->snr;
 }
 
