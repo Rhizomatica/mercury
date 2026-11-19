@@ -51,6 +51,11 @@ int     mpsk_tx_samples(const mpsk_t *m);      /* one frame on the air       */
 /* One frame (mpsk_frame_bytes(): the payload and room for its CRC, which is
  * written here) into out[mpsk_tx_samples()], scaled to |peak|. */
 int  mpsk_modulate(mpsk_t *m, uint8_t *frame, int16_t *out, double peak);
+/* The same with frame[] as it is (its last two bytes already the CRC, as
+ * the modem layer writes it, seeded or not). */
+int  mpsk_modulate_raw(mpsk_t *m, const uint8_t *frame, int16_t *out, double peak);
+/* The level index of a name (mpsk_levels[]), or -1. */
+int  mpsk_level_index(const char *name);
 
 /* Find the strongest frame in in[n] and decode it.  1 with frame[] filled
  * and its CRC good; 0 otherwise.  *found: a detection was made; *snr_db: a

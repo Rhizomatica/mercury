@@ -218,6 +218,11 @@ void mpsk_close(mpsk_t *m)
 }
 
 const mpsk_level_t *mpsk_level(const mpsk_t *m) { return m->lv; }
+int mpsk_level_index(const char *name)
+{
+    for (int i = 0; i < mpsk_nlevels; i++) if (!strcmp(mpsk_levels[i].name, name)) return i;
+    return -1;
+}
 int mpsk_frame_bytes(const mpsk_t *m) { return m->nbytes; }
 
 int mpsk_tx_samples(const mpsk_t *m)
@@ -270,10 +275,15 @@ static void tx_clip(const mpsk_level_t *l, double *x, int n)
 
 int mpsk_modulate(mpsk_t *m, uint8_t *frame, int16_t *out, double peak)
 {
-    const mpsk_level_t *l = m->lv;
     uint16_t crc = crc16(frame, m->nbytes - 2);
     frame[m->nbytes - 2] = (uint8_t)(crc >> 8);
     frame[m->nbytes - 1] = (uint8_t)crc;
+    return mpsk_modulate_raw(m, frame, out, peak);
+}
+
+int mpsk_modulate_raw(mpsk_t *m, const uint8_t *frame, int16_t *out, double peak)
+{
+    const mpsk_level_t *l = m->lv;
     unsigned char *ib = malloc((size_t)m->K), *pb = malloc((size_t)(m->N - m->K)), *cw = malloc((size_t)m->N);
     for (int i = 0; i < m->K; i++) ib[i] = (frame[i >> 3] >> (7 - (i & 7))) & 1;
     encode(&m->ldpc, ib, pb);

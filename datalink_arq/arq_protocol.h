@@ -315,6 +315,11 @@ void arq_protocol_session_calls(bool we_called, const char *remote_call,
  * (MFSK reads the burst's SNR3k, constant-envelope: the carrier axis), plus
  * the ~1.5 dB the OFDM rungs keep; -5 under CCIR Moderate/Poor. */
 #define ARQ_SNR_MIN_MFSK_W2_DB       -6.5f
+/* The PSK rung (BW2300/BW2750 rung 2), by the rule below: 90 % reads at
+ * -4.5 dB on white noise (utils/psk_sweep, 80 frames a point; the reading
+ * is the burst's S/N), plus 1.5 dB.  Faded it needs ~5 dB more (CCIR
+ * Moderate/Poor 90 % at +1.6/+1.8 dB carrier, 0.2/0.4 dB burst). */
+#define ARQ_SNR_MIN_PSK3_DB          -3.0f
 #define ARQ_SNR_MIN_DATAC15_DB       -7.0f  /* its cliff (sim, bench): below
                                              * it the carousel's MFSK rung wins */
 #define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* bench (docs/MODES.md):
