@@ -717,10 +717,21 @@ static void test_carousel_bandwidth_max_level(void)
     TEST_ASSERT_EQUAL_INT(3, c->poll_level);
     /* the session's ladder is its bandwidth's: BW2300's until set */
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, car_session_level_mode(c, 0));
-    car_set_bandwidth(c, 500);
+    car_set_bandwidth(c, 500, MERCURY_MODE_MFSK_N32);
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, car_session_level_mode(c, 0));
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, car_session_level_mode(c, 1));
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16N1, car_session_level_mode(c, 5));
+    /* a wider session on the deep floor: the 500 Hz MFSK under its own rungs */
+    car_set_bandwidth(c, 2300, MERCURY_MODE_MFSK_N32);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, car_session_level_mode(c, 0));
+    for (int lv = 1; lv < CAR_NLEVELS; lv++)
+        TEST_ASSERT_EQUAL_INT(car_bw_level_mode(2300, lv), car_session_level_mode(c, lv));
+    car_set_bandwidth(c, 2750, MERCURY_MODE_MFSK_N32);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, car_session_level_mode(c, 0));
+    for (int lv = 1; lv < CAR_NLEVELS; lv++)
+        TEST_ASSERT_EQUAL_INT(car_bw_level_mode(2750, lv), car_session_level_mode(c, lv));
+    car_set_bandwidth(c, 2300, MERCURY_MODE_MFSK);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, car_session_level_mode(c, 0));
     free(c);
 }
 
