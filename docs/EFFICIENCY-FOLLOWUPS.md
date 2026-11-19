@@ -12,9 +12,7 @@ faster geometry -- 5.90 s / 1184 B and 3.30 s / 1183 B in `arq_mode_table`
 -- and a ladder per bandwidth, BW2750's topped by QAM16C2W) and #602 (rung 1
 of BW2300 and BW2750 is a 2 kHz MFSK; DATAC15 stays rung 1 of BW500 only).
 The measurements here and in FINDINGS are of the earlier build; where a
-figure moved, the text says so. Candidate A is prototyped and measured against trunk in the carousel sim (6 channels
-x 5 seeds, bulk one-way, 1 h bench cap, every run intact; warm = the same
-seed after a cold run wrote its hint):
+figure moved, the text says so.
 
 ## The residue, decomposed
 
@@ -23,13 +21,16 @@ was about 2.6 kbps on the build that run measured (`arq_mode_table`: 1213 B
 payload in 3.70 s, minus frame and segment headers), so the session achieved
 **~75 % of the top rung** then. On current `mercuryv2` QAM16C2's slot is
 1183 B in 3.30 s, about 2.87 kbps, and 1954 bps is **~68 %** of it (the
-shape of the decomposition below does not change). (A frame-time note: FINDINGS §3's probe frames are the bare
-freedv burst, measured at `237481e7` -- QAM16C2 1215 B in 3.30 s, DATAC16
-16 B in 3.30 s. Since #599 QAM16C2's table slot has the same 3.30 s, with
-the geometry's 1183 B; DATAC16's slot still differs on purpose, 14 B in
-3.74 s, payload minus headers with preamble and margin counted.) The
-missing quarter -- about a third against today's table -- is, in the order
-the efficiency report priced it:
+shape of the decomposition below does not change). (A frame-time note:
+FINDINGS §3 lists the bare freedv bursts, measured at `237481e7` -- QAM16C2
+1215 B in 3.30 s, DATAC16 16 B in 3.30 s -- while this doc quotes
+`arq_mode_table`'s session slot, which is the burst plus a ~0.45 s margin,
+with the payload minus headers. Both differ on purpose, DATAC16's slot at 14
+B in 3.74 s and QAM16C2's at 1183 B in 3.30 s. #599 shortened QAM16C2's
+burst to about 2.85 s (36 carriers, 1185 B), so today's 3.30 s slot shares
+its number with §3's old burst by coincidence, not because the frame time
+held.) The missing quarter -- about a third against today's table -- is, in
+the order the efficiency report priced it:
 
 - **the connect** (7.8–7.9 s of DATAC16 in every run, §1);
 - **the climb** — the receiver starts every session cold, its per-level
@@ -82,21 +83,20 @@ seed run again after its cold run wrote the hint (the prototype branch,
 | fade:8:0.5 | 199.0 | 199.0 | 0 | -16, 0, 0, 0, -4 |
 | nvis | 1482.8 | 1646.5 | **+3.2 %** | +3, +18, +3, +10, 0 |
 
-The wins are where a rung clearly delivers and the cold session spends
-early rounds failing on the one above it; the fade seeds split — three of
-ten win by 12–17 %, one by 4 %, one loses 2 %. The costs are deterministic, and they
-are the design's real edge: on cliff:8, where the cold session never
-leaves DATAC17, the hint buys nothing but re-aligns the poll schedule
-(+6 %, all five seeds); on nvis, where nothing delivers above ~0.7, the
-hint steers early rounds into re-measuring mid rungs and every seed pays
-(all five slower or even). Seeding only what delivered (a rung that lost
-half its frames seeds nothing) was needed even to get that far: the first
-cut seeded DATAC1's 89 % loss into the next session's probe and it probed
-that rung four times. The one -55 % fade win of the first, cap-limited
-grid did not reproduce on the re-run; the table is the bounded result.
-And the original estimate — "a stale hint costs one probe frame" — was
-too kind: on a channel that moved, the cost is a few rounds of
-re-measuring.
+The wins are where a rung clearly delivers and the cold session spends early
+rounds failing on the one above it; the fade seeds split — three of ten win
+by 12–17 %, one by 4 %, one loses 2 %. The costs are deterministic, and they
+are the design's real edge: on cliff:8, where the cold session never leaves
+DATAC17, the hint buys nothing but re-aligns the poll schedule (+6 %, all
+five seeds); on nvis, where nothing delivers above ~0.7, the hint steers
+early rounds into re-measuring mid rungs and every seed pays (all five
+slower or even). Seeding only what delivered (a rung that lost half its
+frames seeds nothing) was needed even to get that far: the first cut seeded
+DATAC1's 89 % loss into the next session's probe and it probed that rung
+four times. The one -55 % fade win of the first, cap-limited grid did not
+reproduce on the re-run; the table is the bounded result. And the original
+estimate — "a stale hint costs one probe frame" — was too kind: on a channel
+that moved, the cost is a few rounds of re-measuring.
 
 That is why the branch ships **off by default**: `MERCURY_RUNG_MEMORY=1`
 turns it on. Where the hint has something solid to say it buys a tenth of
@@ -110,20 +110,20 @@ costs cliff:8 and nvis nothing, at the price of one more piece of state.
 
 The link adaptation is the best-measured part of the protocol — per-level
 delivery estimated from frame counts, dead levels verdict-ed, probes priced
-one frame (`level_rate`, `level_goodput` and the probe rules in `carousel.c`) — and it is reset to zero by every session
-end. What it learned about a peer on a channel that changes over hours, not
-minutes, is thrown away. Persisting it (keyed by peer callsign, decayed,
-written at teardown, read at session start) seeds the estimator so a session
-between the same two stations on the same band starts where the last one
-topped out.
+one frame (`level_rate`, `level_goodput` and the probe rules in
+`carousel.c`) — and it is reset to zero by every session end. What it
+learned about a peer on a channel that changes over hours, not minutes, is
+thrown away. Persisting it (keyed by peer callsign, decayed, written at
+teardown, read at session start) seeds the estimator so a session between
+the same two stations on the same band starts where the last one topped out.
 
 Two properties make this safe. The receiver chooses the rung in this
-protocol (CAROUSEL-TURNS §4), so the hint never crosses the wire — a
-Mercury with memory interoperates with one without, in both directions. And
-the existing gates still apply: a hint above what the current SNR estimate
-supports is filtered by `level_allowed()` before it can cost anything, and
-a stale hint that does get through costs a few rounds of re-measuring
-(the grid above), never a wrong verdict. #545 improved what a session learns from
+protocol (CAROUSEL-TURNS §4), so the hint never crosses the wire — a Mercury
+with memory interoperates with one without, in both directions. And the
+existing gates still apply: a hint above what the current SNR estimate
+supports is filtered by `level_allowed()` before it can cost anything, and a
+stale hint that does get through costs a few rounds of re-measuring (the
+grid above), never a wrong verdict. #545 improved what a session learns from
 data frames' readings; this is the same idea one session earlier.
 
 ### B. HARQ in the carousel's retransmission path
