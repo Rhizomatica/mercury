@@ -382,10 +382,12 @@ Query the modem identification string.
 VERSION\r
 ```
 
-**Response:** A VARA-compatible version string on the control port.
+**Response:** `VERSION 4.9.0\r` on the control port.
 
 This command exists for VARA-compatible clients that check the modem version
-at startup.
+at startup.  The reply starts with `VERSION`: Pat's VARA transport waits for
+the first control line that starts with `VERSION` (or `WRONG`) and has no
+timeout, so any other reply leaves it waiting before it sends `CONNECT`.
 
 ---
 

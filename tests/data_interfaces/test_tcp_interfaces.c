@@ -1290,9 +1290,12 @@ void test_cmd_version(void)
     char cmd[] = "VERSION";
     execute_control_command(cmd);
 
+    /* Pat's VARA transport takes the first control line starting with
+     * "VERSION" (or "WRONG") as the answer, and waits for it forever (#627). */
     TEST_ASSERT_EQUAL(1, tcp_write_call_count);
-    TEST_ASSERT_EQUAL_STRING_LEN("VARA version 4.9.0 registered\r",
-                                 (char *)last_tcp_write_buf, 30);
+    TEST_ASSERT_EQUAL_size_t(14, last_tcp_write_len);
+    TEST_ASSERT_EQUAL_STRING_LEN("VERSION 4.9.0\r",
+                                 (char *)last_tcp_write_buf, 14);
     /* VERSION must not submit any ARQ command */
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }

@@ -959,8 +959,8 @@ static void execute_control_command(char *buffer)
 
     if (!strncmp(buffer, "VERSION", strlen("VERSION")))
     {
-        /* VARA compatibility: respond with modem identification. */
-        tcp_write(CTL_TCP_PORT, (uint8_t *)"VARA version 4.9.0 registered\r", 30);
+        /* VARA compatibility.  Pat waits for a reply that starts with "VERSION" (#627). */
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"VERSION 4.9.0\r", 14);
         return;
     }
 
