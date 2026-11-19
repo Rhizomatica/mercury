@@ -369,7 +369,7 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
     if (p->car)
     {
         arq_session_t *rs = sim_endpoint_session(p->target);
-        bool control = p->mode == ARQ_CONTROL_MODE;
+        bool control = ARQ_MODE_IS_CONTROL(p->mode);
         if (p->seed != sim_endpoint_crc_seed(p->target) || p->seed == 0)
             return;
         if (!control && p->mode != rs->peer_tx_mode)

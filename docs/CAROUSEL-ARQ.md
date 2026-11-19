@@ -39,6 +39,16 @@ side that sees what arrives.  Per direction:
 - every frame says how many follow, so the receiver knows when the round ends
   and polls again.  No sequence numbers, no per-frame ACKs.
 
+**The short control frame.**  A control frame (POLL, HANDOVER, STATUS) goes
+on the short control frame (`PSKC`, 1.42 s, the same 14 bytes) instead of
+DATAC16 (3.30 s) when the peer says it hears me at
+`ARQ_SNR_MIN_CTL_FAST_DB` (3 dB) or more (`ctl_mode`, as the floor's choice
+in `ctl_on_floor`).  The control decoder hears both (`modem_ctl.c`), so
+nothing on the air says which comes, and the peer's slots stay sized for
+DATAC16.  The connect stays on DATAC16.  In the sim matrix this was 0.94 of
+the session time, faster on good links (12-17 % at 10-20 dB, 18-23 % on
+NVIS) and unchanged at the weak end, where control stays on DATAC16.
+
 **Only the receiver keeps a round timer.**  It polls again when the round's
 window closes, or when the sender's carrier drops if it heard the carrier.
 A round that brought nothing is repeated once unscored, keeping its poll id,

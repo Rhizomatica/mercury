@@ -127,3 +127,9 @@ M_END (poll type 3, `car_wish_end`) is S's ordinary poll with its type
 changed: it goes in the same slots, with the same length, so the slot
 rules here cover it as they cover any poll of S's.  Which end may end the
 session on it, and when, is `specs/teardown` (`NoUnasked`, `NoLostWord`).
+
+The short control frame (`PSKC`, 1.42 s, `carousel.c` `ctl_mode`) needs no
+change here: M's keydowns may have any length in `ML`, and an S keydown is
+at most the length M allowed, which the peer's slots still size for the
+control mode (DATAC16); a shorter control keydown is one of the lengths the
+model already covers.
