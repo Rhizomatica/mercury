@@ -112,7 +112,8 @@ test_hl2_wire: audioio/test_hl2_wire.c $(UNITY_SRC)
 test_cap_recover: audioio/test_cap_recover.c $(UNITY_SRC) ../audioio/cap_recover.c
 	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
-test_play_recover: audioio/test_play_recover.c $(UNITY_SRC) ../audioio/play_recover.c
+test_play_recover: audioio/test_play_recover.c $(UNITY_SRC) ../audioio/play_recover.c \
+                   ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c
 	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 test_pcm24: audioio/test_pcm24.c $(UNITY_SRC)

@@ -1312,11 +1312,21 @@ static void *rtp_transport_thread(void *unused)
 /* Close the playback device and open it again as it was negotiated (got):
  * the resampler and the sample layout were built for that rate, format and
  * channel count, and a device that comes back with others would transmit
- * off-frequency or garbage.  Retries with a backoff until it opens or a
- * shutdown is asked for; NULL then.  Each attempt is one reopen to pr. */
+ * off-frequency or garbage.  It is also why the caller's frame_size and
+ * scratch buffers, sized from the first negotiation, still fit the reopened
+ * device.  Retries with a backoff until it opens or a shutdown is asked for;
+ * NULL then.  Each attempt is one reopen to pr.  Between attempts it drops
+ * what the modem queues (scratch), so the modem never blocks on a full ring
+ * with PTT keyed (play_backoff_wait). */
+static bool play_should_stop(void)
+{
+    return mercury_stop || audio_shutdown_;
+}
+
 static ffaudio_buf *play_reopen(ffaudio_interface *audio, ffaudio_buf *b,
                                 ffaudio_conf *cfg, ffuint flags,
-                                const ffaudio_conf *got, play_recover_t *pr)
+                                const ffaudio_conf *got, play_recover_t *pr,
+                                uint8_t *scratch, size_t scratch_len)
 {
     audio->free(b);
     b = NULL;
@@ -1365,10 +1375,8 @@ static ffaudio_buf *play_reopen(ffaudio_interface *audio, ffaudio_buf *b,
             audio->free(b);
             b = NULL;
         }
-        /* Short steps, so a shutdown during the backoff is still prompt. */
-        for (unsigned slept = 0; slept < delay_ms && !mercury_stop && !audio_shutdown_;
-             slept += 100)
-            ffthread_sleep(100);
+        play_backoff_wait(playback_buffer, scratch, scratch_len, delay_ms,
+                          play_should_stop);
         delay_ms = (delay_ms < 2500) ? delay_ms * 2 : 5000;
     }
     return NULL;
@@ -1698,9 +1706,11 @@ void *radio_playback_thread(void *device_ptr)
 #if defined(AUDIOIO_ALSA_PULSE)
     play_keepalive = (audio == (ffaudio_interface *) &ffpulse);
 #endif
-    /* Non-blocking writes poll for room; a few ms is well inside the
-     * 30 ms device buffer. */
-    const uint32_t play_poll_ms = (period_ms >= 4) ? period_ms / 2 : 2;
+    /* Non-blocking writes poll for room: a quarter of the device buffer the
+     * open negotiated (7 ms of 30 ms) keeps it from running dry while
+     * bounding the wake-ups (#617 review). */
+    const uint32_t play_poll_ms = (cfg->buffer_length_msec >= 8)
+                                  ? cfg->buffer_length_msec / 4 : 2;
     /* Silence fed through the resampler since the last real audio, in 8 kHz
      * samples.  Past its whole filter history, the resampler's output is
      * exact zeros, so idle periods skip it and the format expansion: the
@@ -1867,20 +1877,16 @@ play_write:
                     HLOGW("audio-play", "playback took no audio for %llu ms, reopening "
                           "device (reopen #%u)",
                           (unsigned long long)(now - play_rec.stuck_ms), play_reopens);
-                b = play_reopen(audio, b, cfg, conf.flags, &play_got, &play_rec);
+                b = play_reopen(audio, b, cfg, conf.flags, &play_got, &play_rec,
+                                (uint8_t *) input_buffer, period_scratch_bytes);
                 if (b == NULL)   /* shutdown asked for mid-reopen */
                     goto cleanup_play;
                 /* What queued up meanwhile is late: played now it would run
                  * past the PTT the modem keyed for it, and push every later
                  * burst out of its key-up.  The burst it was part of is lost
                  * either way. */
-                size_t late = size_buffer(playback_buffer);
-                while (late > 0)
-                {
-                    size_t k = late < period_scratch_bytes ? late : period_scratch_bytes;
-                    read_buffer(playback_buffer, (uint8_t *) input_buffer, k);
-                    late -= k;
-                }
+                play_drop_queued(playback_buffer, (uint8_t *) input_buffer,
+                                 period_scratch_bytes);
                 if (rat_up) resamp_rat_reset(rat_up); else resamp_up_reset(&up_rs);
                 play_write_errors = 0;
                 break;   /* this period's audio goes with the rest */

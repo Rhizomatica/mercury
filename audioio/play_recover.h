@@ -32,7 +32,9 @@
 #define PLAY_RECOVER_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+#include "ring_buffer_posix.h"
 
 /* How long a device may take none of the audio offered before it is reopened.
  * The device buffer is tens of ms, so a healthy one takes something every
@@ -64,5 +66,20 @@ bool play_recover_on_stuck(play_recover_t *r, uint64_t now_ms);
 /* A reopen was made, whether the device opened or not.  True, once, when
  * playback is to be reported dead. */
 bool play_recover_on_reopen(play_recover_t *r);
+
+/* Drop everything queued in ring, through scratch.  Returns the bytes
+ * dropped.  The playback thread is the ring's only reader. */
+size_t play_drop_queued(cbuf_handle_t ring, uint8_t *scratch, size_t scratch_len);
+
+/* The wait between two reopen attempts: ms in short steps, dropping what the
+ * modem queues meanwhile, and returning early when stop() says so.
+ *
+ * The modem keys PTT and then write_buffer()s the burst, which blocks while
+ * the ring has no room.  A device that never comes back (a USB codec gone
+ * for good) leaves nothing reading the ring, and once its ~384 s filled, the
+ * modem's TX thread blocked with PTT keyed (#617 review).  Audio queued
+ * while there is no device is late anyway. */
+void play_backoff_wait(cbuf_handle_t ring, uint8_t *scratch, size_t scratch_len,
+                       unsigned ms, bool (*stop)(void));
 
 #endif

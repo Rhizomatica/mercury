@@ -15,6 +15,7 @@
  */
 
 #include "play_recover.h"
+#include "os_interop.h"
 
 int play_recover_on_write(play_recover_t *r)
 {
@@ -49,4 +50,33 @@ bool play_recover_on_reopen(play_recover_t *r)
         return false;
     r->dead = true;
     return true;
+}
+
+size_t play_drop_queued(cbuf_handle_t ring, uint8_t *scratch, size_t scratch_len)
+{
+    size_t dropped = 0;
+    size_t late = size_buffer(ring);
+    while (late > 0)
+    {
+        size_t k = late < scratch_len ? late : scratch_len;
+        read_buffer(ring, scratch, k);
+        late -= k;
+        dropped += k;
+    }
+    return dropped;
+}
+
+/* Short enough that the modem is never kept waiting on a full ring for
+ * long, and a shutdown during the backoff is still prompt. */
+#define PLAY_BACKOFF_STEP_MS 100
+
+void play_backoff_wait(cbuf_handle_t ring, uint8_t *scratch, size_t scratch_len,
+                       unsigned ms, bool (*stop)(void))
+{
+    for (unsigned slept = 0; slept < ms && !stop(); slept += PLAY_BACKOFF_STEP_MS)
+    {
+        play_drop_queued(ring, scratch, scratch_len);
+        hermes_usleep(PLAY_BACKOFF_STEP_MS * 1000);
+    }
+    play_drop_queued(ring, scratch, scratch_len);
 }
