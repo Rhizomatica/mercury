@@ -382,10 +382,11 @@ void modem_tune_stop(void)
 /* The modulators leave half the int16 range unused: the OFDM modes clip
  * their peaks at 16384 (-6 dBFS) and MFSK peaks at -6.5 dBFS.  On a radio
  * whose power setting is reached only by a full-scale signal (the sBitx
- * through radiod) that cost a quarter of the power.  5 dB more puts the
- * peaks at about -1 dBFS, with 1 dB left for a sound card's resampler.
- * tx_gain_db trims around this level; TUNE does not go through it. */
-#define TX_BASE_GAIN 1.7783f   /* +5 dB */
+ * through radiod) that cost a quarter of the power.  4 dB more puts the
+ * peaks at about -2 dBFS: a resampler on the way (radiod's upsampler) was
+ * seen to add 1 dB to an MFSK peak.  tx_gain_db trims around this level;
+ * TUNE does not go through it. */
+#define TX_BASE_GAIN 1.5849f   /* +4 dB */
 
 static inline int32_t tx_sample_with_gain(int16_t sample, float gain, float *peak_fs)
 {
