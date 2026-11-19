@@ -36,7 +36,8 @@
  * RS_DIAG=1 adds, per point, how the receiver found the bursts: preamble
  * detections, postamble detections, and unique-word failures.  A burst never
  * detected at all is a detector miss; one detected and then dropped is the
- * unique word.
+ * unique word; one detected, past the unique word (no failure counted) and
+ * still not delivered was lost in the decode (a fade over its data symbols).
  *
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later

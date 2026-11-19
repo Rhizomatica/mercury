@@ -125,8 +125,10 @@ QAM16C2W, QAM16N1, QAM16N2) kept codec2's default preamble-detector
 threshold, 0.30, where DATAC1, DATAC3 and DATAC17 use 0.10.  Under CCIR Poor
 a fade over both the preamble and the postamble then lost the frame at any
 S/N: QAM16C2 found 33 of 40 bursts from +18 to +28 dB (37 of 40 on
-Moderate), QAM16C2W 30-34, and the unique word never failed
-(`RS_DIAG=1 utils/rung_sweep`).  At 0.10 every burst is found.
+Moderate), QAM16C2W 30-34 of 40 (found, not delivered: the table below
+counts delivered frames), and the unique word never failed
+(`RS_DIAG=1 utils/rung_sweep`).  At 0.10 every burst is found; what is
+still lost was found, passed the unique word and failed in the decode.
 
 | Delivered (40 bursts) | +18/+20 dB | +23/+24 dB | +28 dB |
 |---|---|---|---|
