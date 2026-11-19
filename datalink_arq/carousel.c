@@ -44,6 +44,7 @@
 #include "freedv_api.h"
 #include "modem_mfsk.h"            /* MERCURY_MODE_MFSK */
 #include "modem_psk.h"             /* MERCURY_MODE_PSK3 */
+_Static_assert(ARQ_CONTROL_MODE_FAST == MERCURY_MODE_PSKC, "the short control frame is one mode");
 
 #include <math.h>
 #include <stdarg.h>
@@ -432,6 +433,17 @@ static bool ctl_on_floor(const car_t *c)
     return !(db >= CTL_DEAF_OFF_DB);
 }
 static bool peer_ctl_on_floor(const car_t *c) { return c->io.pattern && c->ctl_deaf; }
+/* The mode of my control frames off the floor: the short control frame to a
+ * peer that hears me well, the control mode otherwise.  As ctl_on_floor, by
+ * how the peer says it hears me, moved by how I hear it since; a reading not
+ * yet moved counts as it was said.  The peer decodes both on its control
+ * plane, so nothing tells it which comes. */
+static int ctl_mode(const car_t *c)
+{
+    float db = peer_hears_me_db(c);
+    if (isnan(db) && c->peer_snr_ms) db = c->peer_snr_db;
+    return db >= ARQ_SNR_MIN_CTL_FAST_DB ? ARQ_CONTROL_MODE_FAST : ARQ_CONTROL_MODE;
+}
 /* The session's piece size (car_t.piece): CAR_PIECE, or CAR_PIECE_FLOOR
  * for a session that starts on the floor (car_start_sender / _receiver).
  * Arrays keep CAR_PIECE-byte rows; a piece uses the first piece_of(c). */
@@ -556,7 +568,7 @@ static void put_ctl(const car_t *c, car_frame_t *f, const msg_t *m)
         f->mode = lmode(c, 0); f->len = room;
     } else {
         encode_ctl(m, f->bytes);
-        f->mode = ARQ_CONTROL_MODE; f->len = CAR_POLL_BYTES;
+        f->mode = ctl_mode(c); f->len = CAR_POLL_BYTES;
     }
 }
 
@@ -1306,7 +1318,7 @@ static int behind_ctl_n(const car_t *c, int lv, int n)
 {
     if (!capped(c) || n <= 0) return n;
     int64_t room = (int64_t)c->io.max_keydown_ms - (int64_t)kd_frame_extra(c) -
-                   (int64_t)(ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) - CHAIN_GAP_MS;
+                   (int64_t)(ctl_on_floor(c) ? level_air(c, 0) : mode_air(ctl_mode(c))) - CHAIN_GAP_MS;
     while (n > 0 && (int64_t)round_air(c, lv, n) > room) n--;
     return n;
 }
@@ -2417,12 +2429,12 @@ static uint64_t kind_len(const car_t *c, int kind)
     case KD_ROUND:         return head + round_air(c, c->tx_level, round_n(c)) + TAIL_MS;
     case KD_BOTH:          if (inline_poll(c))
                                return head + round_air(c, c->tx_level, round_n(c)) + TAIL_MS;
-                           return head + (ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) +
+                           return head + (ctl_on_floor(c) ? level_air(c, 0) : mode_air(ctl_mode(c))) +
                                   CHAIN_GAP_MS + round_air(c, c->tx_level, behind_ctl_n(c, c->tx_level, round_n(c))) +
                                   TAIL_MS;
     case KD_PATTERN_ACK:
     case KD_PATTERN_BREAK: return 110 + PATTERN_AIR_MS + TAIL_MS;
-    default:               return head + (ctl_on_floor(c) ? level_air(c, 0) : mode_air(ARQ_CONTROL_MODE)) + TAIL_MS;
+    default:               return head + (ctl_on_floor(c) ? level_air(c, 0) : mode_air(ctl_mode(c))) + TAIL_MS;
     }
 }
 static uint64_t plan_len(const car_t *c) { return kind_len(c, c->plan); }

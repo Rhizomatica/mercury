@@ -44,7 +44,9 @@ int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        /* the 2 kHz MFSK rung */
                        MERCURY_MODE_MFSK_W2,
                        /* the three-carrier PSK rung */
-                       MERCURY_MODE_PSK3 };
+                       MERCURY_MODE_PSK3,
+                       /* the short control frame */
+                       MERCURY_MODE_PSKC };
 
 char *freedv_mode_names[] = { "DATAC1",
                               "DATAC3",
@@ -65,7 +67,8 @@ char *freedv_mode_names[] = { "DATAC1",
                               "QAM16N1",
                               "QAM16N2",
                               "MFSK2K",
-                              "PSK3" };
+                              "PSK3",
+                              "PSKC" };
 
 int mercury_cli_mode_count(void)
 {

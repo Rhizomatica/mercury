@@ -47,6 +47,7 @@
 #include "modem_freedv.h"
 #include "modem_mfsk.h"
 #include "modem_psk.h"
+#include "modem_ctl.h"
 #include "mfsk/mfsk.h"          /* NAV header classes */
 #include "fsk.h"
 #include "ldpc_codes.h"
@@ -108,9 +109,10 @@ static pthread_mutex_t modem_pool_lock = PTHREAD_MUTEX_INITIALIZER;
 /* One lock per pool slot, indexed the same way the pool array is.  The pool is
  * a generic slot array now (any backend, not just freedv), so the lock a codec
  * belongs to is found by its context pointer rather than by naming the mode. */
-#define MODEM_POOL_MAX 17   /* the BW2300 ladder, control, floors, the 2.0 BW500/BW2750 rungs,
-                             * MFSK2K and PSK3: 17, full -- the next mode needs this raised (and a
-                             * lock initializer below), or init_mode_pool_locked fails */
+#define MODEM_POOL_MAX 18   /* the BW2300 ladder, control, floors, the 2.0 BW500/BW2750 rungs,
+                             * MFSK2K, PSK3 and the short control frame: 18, full -- the next mode
+                             * needs this raised (and a lock initializer below), or
+                             * init_mode_pool_locked fails */
 static pthread_mutex_t modem_inst_lock[MODEM_POOL_MAX] = {
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
@@ -120,7 +122,7 @@ static pthread_mutex_t modem_inst_lock[MODEM_POOL_MAX] = {
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
-    PTHREAD_MUTEX_INITIALIZER,
+    PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
 };
 _Static_assert(sizeof(modem_inst_lock) / sizeof(modem_inst_lock[0]) == MODEM_POOL_MAX,
                "one lock per pool slot");
@@ -673,6 +675,9 @@ static const modem_backend_t *backend_for_mode(int mode)
         return &modem_backend_mfsk;
     if (mercury_mode_is_psk(mode))
         return &modem_backend_psk;
+    /* The control mode's decoder hears the short control frame too. */
+    if (mode == FREEDV_MODE_DATAC16)
+        return &modem_backend_ctl;
     return &modem_backend_freedv;
 }
 
@@ -718,6 +723,8 @@ static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
         FREEDV_MODE_QAM16N1, FREEDV_MODE_QAM16N2,
         MERCURY_MODE_MFSK_W2,          /* BW2300/BW2750 rung 1 */
         MERCURY_MODE_PSK3,             /* BW2300/BW2750 rung 2 */
+        MERCURY_MODE_PSKC,             /* the short control frame (transmit; the control
+                                        * mode's decoder hears it) */
     };
     clear_mode_pool_locked();
     for (size_t i = 0; i < sizeof(pool_modes) / sizeof(pool_modes[0]); i++)

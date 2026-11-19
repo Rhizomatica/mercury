@@ -90,6 +90,9 @@ const arq_mode_timing_t arq_mode_table[] = {
     /* The three-carrier PSK rung: a 3.86 s frame of 133 payload bytes,
      * no preamble, and the same ~0.45 s margin. */
     {  MERCURY_MODE_PSK3,      4.30f,    12.0f,          133  },
+    /* The short control frame: 1.42 s, the control mode's 14 bytes, and the
+     * same ~0.45 s margin. */
+    {  ARQ_CONTROL_MODE_FAST,  1.86f,    8.0f,           14   },
 };
 
 const int arq_mode_table_count =
