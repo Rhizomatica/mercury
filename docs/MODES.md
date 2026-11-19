@@ -22,7 +22,7 @@ that index.
 | Index | Mode | Payload B | Occupied Hz | In Mercury |
 |---|---|---|---|---|
 | 0 | DATAC1 | 510 | 1687 | ARQ rung 4 |
-| 1 | DATAC3 | 126 | 562 | ARQ rung 3 (top rung at BW500); default `-m` |
+| 1 | DATAC3 | 126 | 562 | ARQ rung 3; default `-m` |
 | 2 | DATAC0 | 14 | 562 | broadcast and tests only |
 | 3 | DATAC4 | 54 | 250 | ARQ rung 2 |
 | 4 | DATAC13 | 14 | 187 | broadcast and monitor; no longer an ARQ mode |
@@ -33,7 +33,7 @@ that index.
 | 9 | DATAC17 | 1184 | 2250 | ARQ rung 5 (BW2300) |
 | 10 | QAM16C2 | 1183 | 2250 | ARQ rung 6 (BW2300) |
 | 11 | MFSK | 98 | 1000 | ARQ rung 0 (the floor); CALLs, control and tone patterns at the floor |
-| 12 | MFSK500 | 98 | 500 | ARQ rung 0 of a BW500 session; its CALLs, control and patterns at the floor |
+| 12 | MFSK500 | 98 | 500 | ARQ rung 0 of a BW500 session, and of a wider one connected on it (the deep floor); its CALLs, control and patterns at the floor |
 | 13 | DATAC17W | 1170 | 2750 | ARQ rung 5 (BW2750) |
 | 14 | QAM16C2W | 1169 | 2750 | ARQ rung 6 (BW2750) |
 | 15 | DATAN1 | 243 | 562 | ARQ rung 4 (BW500) |
@@ -49,7 +49,7 @@ has its own floor and top, and BW2300/BW2750 their own rung 1:
 
 | Rung | BW500 | BW2300 | BW2750 |
 |---|---|---|---|
-| 0 | MFSK500 | MFSK | MFSK |
+| 0 | MFSK500 | MFSK (MFSK500 on the deep floor) | MFSK (the same) |
 | 1 | DATAC15 | MFSK2K | MFSK2K |
 | 2-3 | DATAC4, DATAC3 | same | same |
 | 4 | DATAN1 | DATAC1 | DATAC1 |
@@ -58,7 +58,11 @@ has its own floor and top, and BW2300/BW2750 their own rung 1:
 
 BW2300's top rungs fit 375-2562 Hz, inside the 300-2700 Hz transmit passband
 of radios like the IC-7100; BW2750's span 94-2844 Hz for radios that pass
-3 kHz; BW500's 9-carrier rungs fit behind a 500 Hz filter.
+3 kHz; BW500's 9-carrier rungs fit behind a 500 Hz filter.  A BW2300 or
+BW2750 session that connected on a CALL on MFSK500 (the caller's fourth and fifth
+at the default `RETRIES`, after its 1 kHz CALLs went unanswered) runs on the
+deep floor: MFSK500 at rung 0, its bandwidth's modes above
+([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md), "The deep floor").
 
 ## Mode summary
 
@@ -118,8 +122,31 @@ same on 44 carriers (94-2844 Hz, +20 % and +19 %), BW500's DATAN1, QAM16N1
 and QAM16N2 9-carrier modes on repeat-accumulate codes built by
 `utils/ldpc_ira_peg.py`.  The DVB-S2 short codes of rates 2/5 to 4/5
 (`utils/ldpc_dvbs2_gen.py`) are in the code table; rates 3/4 and up floor
-under fading and are not used.  The history below describes the
-1.9.x modes.
+under fading and are not used.
+
+**16-QAM under fading: the preamble detector.**  The 16-QAM rungs (QAM16C2,
+QAM16C2W, QAM16N1, QAM16N2) kept codec2's default preamble-detector
+threshold, 0.30, where DATAC1, DATAC3 and DATAC17 use 0.10.  Under CCIR Poor
+a fade over both the preamble and the postamble then lost the frame at any
+S/N: QAM16C2 found 33 of 40 bursts from +18 to +28 dB (37 of 40 on
+Moderate), QAM16C2W 30-34 of 40 (found, not delivered: the table below
+counts delivered frames), and the unique word never failed
+(`RS_DIAG=1 utils/rung_sweep`).  At 0.10 every burst is found; what is
+still lost was found, passed the unique word and failed in the decode.
+
+| Delivered (40 bursts) | +18/+20 dB | +23/+24 dB | +28 dB |
+|---|---|---|---|
+| QAM16C2, Poor (0.30 -> 0.10) | 19 -> 20 | 31 -> 36 | 32 -> 37 |
+| QAM16C2, Moderate | -- | 37 -> 40 | 37 -> 40 |
+| QAM16C2W, Moderate | 25 -> 32 | 32 -> 37 | 32 -> 38 |
+| QAM16C2W, Poor | 20 -> 20 | 25 -> 30 | 29 -> 37 |
+
+QAM16N1 and QAM16N2 under Poor, 160 bursts: equal or better at every point
+(QAM16N2 113/125/126 -> 117/125/128 at +20/+24/+28 dB).  White noise is
+unchanged, and no trigger came from 600 s of white noise or from DATAC1, 3,
+4, 16 and 17 frames.
+
+The history below describes the 1.9.x modes.
 
 Goodput, not raw bps, picks the ladder order.  Under the old stop-and-wait ARQ,
 where every frame paid a ~5.3 s ACK cycle, that was DATAC1 ≈ 50 B/s, DATAC17

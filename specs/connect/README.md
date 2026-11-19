@@ -218,5 +218,59 @@ Results:
   `Connects` failed on a tie with the caller giving up, in the old code too:
   the reason for 0.25 s.  The floor call interval is safe from 21 s up (the
   code's is 24 s).
+- `Deep`, a caller wider than 500 Hz (the deep floor): a third carrier,
+  `"deep"` (the 500 Hz MFSK, `LD` 108 = 27 s, call interval `IvDeep` 150 =
+  37.5 s, the floor's decode allowance), joins the rotation after the fast
+  CALLs: the floor, then deep twice (in the connect sim the third slot on
+  fast added nothing, and a second deep CALL connected more under fading).  The caller listens on one MFSK carrier
+  at a time, the one its last CALL's ACCEPT may come on (`cListen`, now a
+  carrier: the payload decoder is one); the callee answers a deep CALL on
+  deep, and a fast repeat on the floor unless its last ACCEPT went there.
+  Every config above has `Deep` FALSE (a 500 Hz caller, or the rotation
+  before) and gives the counts above: the model with `Deep` FALSE is the
+  one before.  With `Deep` TRUE:
+  - `ConnectCarrier_deep.cfg` (every path "any", `H` 700 so the rotation
+    reaches both deep CALLs): no error, 294649 states; `_deep_sense`
+    (`Sense` "any"), `NoOverlap` holds, 588005; `_deep_f4` (`F` = 4, `R` =
+    8, `H` 1100), 623918; `_deep_emfsk` (an MFSK-only callee: `FloorOnly`
+    allows either MFSK carrier), 276863.
+  - `_deep_early`: `Early` holds, 23222 (the deep CALL comes after the
+    second); `_deep_floor`: `Connects`, 244623 (connected on the floor CALL
+    before the deep one comes due).
+  - `ConnectCarrier_deeponly.cfg` (only the deep paths deliver, `Sense`
+    "any", `H` 600): `Connects` holds, 51801: the fringe only the 500 Hz
+    MFSK reaches.  The earliest horizon it holds from is between 560 and 580
+    (140-145 s): the deep CALL is the fourth, keyed at 77 s.  `_deeponly_f4`
+    (`H` 820, 205 s), 50583; `_deeponly_emfsk`, 51801.
+  - An MFSK-only caller (`MfskTx` "C") with `Deep`: no fast CALLs, the
+    floor and deep twice from the first.  `ConnectCarrier_deep_cmfsk.cfg`
+    (every path "any"): `NoOverlap` and `FloorOnly` (any MFSK carrier) hold,
+    385439 states; `_deeponly_cmfsk`: `Connects` too, 165715.  Without
+    `Deep` its CALLs are on the floor, as before (`_cmfsk*` unchanged).
+  - `Mut_deepfloor.cfg` (the caller keeps listening on the floor after a
+    deep CALL): violates `Connects`.  `Mut_deepiv.cfg` (a deep CALL waits
+    the floor's interval, `Sense` "any"): violates `NoOverlap`, the next CALL
+    keyed over the 27 s ACCEPT a decoder missed.
 
-Give each TLC run its own `-metadir`.
+Give each TLC run its own `-metadir`.  The state counts here are TLC
+2026.10.04 (`tlc2.TLC -h` prints the version); another version can count a
+few hundred states differently with the same results.
+
+## The notice that holds a scanning host while a CALL arrives (`arrival_hold`, #527)
+
+Not modelled: it adds no state to the connect.  LISTENING says `PENDING` when
+a CALL decoder (the control plane's, or the 1 kHz MFSK listener's) has locked
+onto a frame, again every `ARQ_PENDING_HOLD_MS` while the lock lasts, and
+`CANCELPENDING` `ARQ_ARRIVAL_GRACE_MS` after it is gone when the FSM has not
+taken a CALL out of it.  Where the FSM does (a CALL for this station decoded),
+the CALL's own `PENDING` (`cb_notify_pending`) follows in the same pass and the
+hold lets go without a `CANCELPENDING`: the session's notices take over, so the
+host sees one unbroken `PENDING` from the lock to `CONNECTED`, `CANCELPENDING`
+or `DISCONNECTED`.  The hold is a function of the decoder's lock, the
+connection state and the clock (statics in `arq.c`, nothing in the session),
+and is silent while a session exists or the radio is keyed.  Measured in the Go
+harness with a scanning host (4 s dwell, 0.5 s deaf, 2 channels, nine phases of
+the scan cycle): connects at 7 of 9 phases within 120 s, against 5 of 9 before.
+The two it misses, phases 4 and 5, are those where the caller's CALL repeats
+land outside the dwell each time (its cadence has locked to the scan cycle).
+
