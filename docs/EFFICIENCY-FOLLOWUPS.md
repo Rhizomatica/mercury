@@ -31,7 +31,8 @@ missing quarter is, in the order the efficiency report priced it:
 - **control frames between rounds** — the share the airtime table puts at
   6.7–24 % even for bulk;
 - **the gaps the turns rules require** — Tg, D, and slot waits, the report's
-  6–31 % silent share; the hold-for-response part is #495's (§G).
+  17–44 % silent share on message traffic (6–44 % with the bulk rows in);
+  the hold-for-response part is #495's (§G).
 
 And two ceilings protocol work cannot move:
 
@@ -49,9 +50,9 @@ And two ceilings protocol work cannot move:
 | B | HARQ in the carousel's retx path | modem + protocol glue | large at low SNR and under fading | medium: hook exists, integration open |
 | C | clipped QAM16C2 (2.0/1.0) | modem config, TX-only | fading crossover vs DATAC17 ~3 dB earlier | one line, held for the OTA bench (#464) |
 | D | trim the connect handshake | protocol | ~4 s a session | small, touches the connect FSM |
-| E | a short control burst | upstream codec2 | much of the 19–50 % control share on message traffic | large: a new waveform |
+| E | a short control burst | upstream codec2 | much of the 23–69 % control share on message traffic | large: a new waveform |
 | F | rungs above QAM16C2 | upstream codec2 | closes the >13 dB VARA gap | large: a new waveform |
-| G | the empty response slot after each keydown | protocol, turns timing | the largest single silence item on air: ~7 s per keydown (#495) | in flight: Pedro's `proto/early-slot-release` branch |
+| G | the empty response slot after each keydown | protocol, turns timing | the largest single silence item on air: ~7 s per keydown (#495) | in flight: #603 (Pedro's `proto/early-slot-release` prototype) |
 
 ### A. Per-peer rung memory
 
@@ -155,12 +156,13 @@ tables as the case, is worth more than any local patch.
 #495 measured it on air (N3JXB to K7EK, 2026-11-07, both stations' logs
 aligned to a few milliseconds): after each keydown the caller waits out an
 empty response slot, ~7 s above the floor, before keying host data — the
-largest single piece of the report's 6–31 % silent share on message
-traffic. It is already being worked: Pedro's `proto/early-slot-release`
-branch takes the slot as over once the peer's keydown, had it come, would
-have been sensed. The branch's own commit flags the price: it gives up the
-turns spec's never-on-the-air-together guarantee, so it is a design
-decision, not a drop-in (off by default, `car_set_early_slot`). The
+largest single piece of the report's 17–44 % silent share on message
+traffic. It is already being worked: #603 takes the slot as over once the
+peer's keydown, had it come, would have been sensed (the prototype is
+Pedro's `proto/early-slot-release` branch). The prototype's own commit
+flags the price: it gives up the turns spec's never-on-the-air-together
+guarantee, so it is a design decision, not a drop-in (off by default,
+`car_set_early_slot`). The
 complementary lever needs no such trade: the #495 logs carry per-station
 key-to-key latency, and the guards are compile-time constants
 (`arq_protocol.h`: 700 ms channel guard, 900 ms post-ACK guard) sized for
@@ -173,23 +175,35 @@ config removed-keys list), so no operator knobs return.
 Two candidates the report's numbers point at that this doc does not
 develop, because both live above the protocol layer it measures:
 
-- **Payload compression at the byte pipe.** The traffic this network
-  carries — NNCP packets, Winlink B2F, plain text — compresses 2–4x. No
-  modem gain in the table is worth more than a 2x multiplier on real
-  message bytes, and VARA has no compression: this is a differentiator the
-  bps tables cannot see. A first cut is up as #562 (#506's proposal on
-  #410's CALL2 negotiation, every knob off by default): the offer rides the
-  CALL minor field, and the open wire question is that one minor value
-  cannot carry both the encryption and the compression offer — the
-  capability vector needs the ACCEPT's zero-checked bytes 10–13 back by a
-  rule change of its own. It is not costed here because it changes what
-  the tables measure — bytes per message, not bps.
+- **Payload compression at the byte pipe.** Only part of the traffic this
+  network carries compresses at the pipe: plain text does (2–4x), but NNCP
+  packets are end-to-end encrypted — NNCP compresses before it encrypts,
+  when it does at all — and Winlink B2F messages are already
+  LZHUF-compressed, so a second pass gains neither. What the pipe can buy
+  is a plain-text multiplier only, not a 2x on all real message bytes, and
+  VARA has no compression, so whatever the measured ratio turns out to be,
+  it is a differentiator the bps tables cannot see. Sizing it — the ratio
+  on captured session payloads — is the prerequisite for ranking this
+  against the modem gains in the table. A first cut is up as #562 (#506's
+  proposal on #410's CALL2 negotiation, every knob off by default): the
+  offer rides the CALL minor field, and the open wire question is that one
+  minor value cannot carry both the encryption and the compression offer —
+  the capability vector needs the ACCEPT's zero-checked bytes 10–13 back
+  by a rule change of its own. It is not costed here because it changes
+  what the tables measure — bytes per message, not bps.
 - **Session reuse across queued messages.** The 4 KB rows run at 40–75 %
   of the 32 KB rows' bps because connect and climb amortize badly over
-  short payloads, and real traffic is a queue of short messages, not one
-  bulk transfer. Holding a session open across queued messages compounds
-  D and A directly. Fairness, the lost-peer watchdog and the turns model
-  all have a say, so it stays unranked until someone designs it.
+  short payloads. But the application layer already reuses sessions where
+  it can: uucico moves every queued job in one session, and a B2F exchange
+  carries all of its proposals in one session — for those hosts the fixed
+  cost is paid once per session, not once per message, and the candidate's
+  gain shrinks to whatever is left between their sessions. The gain that
+  remains is for hosts that open a session per message; which hosts do
+  that, and how much of the real traffic they carry, is the sizing
+  question, and it needs data before this can rank. Where it does apply,
+  holding a session open compounds D and A directly. Fairness, the
+  lost-peer watchdog and the turns model all have a say, so it stays
+  unranked until someone designs it.
 
 ## What this does not say
 
@@ -212,6 +226,6 @@ start, write at teardown, off by default — `MERCURY_RUNG_MEMORY=1` is the
 switch, sim A/B via `MERCURY_RUNG_HINTS`); D is a connect-FSM change I can
 measure the same way; B needs a design pass with Rafael and Pedro before
 code; C is Rafael's OTA run on the sBitx pair (#464), where help with the
-A/B protocol or the bench scripts is on offer; G is already Pedro's branch
+A/B protocol or the bench scripts is on offer; G is #603, Pedro's to carry
 — bench time or a review pass is on offer there; E and F are letters to
 write, and the efficiency tables are the case to attach.
