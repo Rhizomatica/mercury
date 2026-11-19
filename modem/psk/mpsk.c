@@ -13,6 +13,7 @@
 
 #include "ldpc_codes.h"
 #include "mpdecode_core.h"
+#include "kiss_fftr.h"
 
 /* Three layouts (carriers, symbols, markers, pulse) at 100 baud: 3 wide
  * carriers with the one-symbol pulse, 6 and 8 narrower ones with the RRC.  Codes: rate ~1/2, sized to the data
@@ -254,23 +255,37 @@ static void tx_clip(const mpsk_level_t *l, double *x, int n)
         h[i] = w * (t == 0 ? 2.0 * (f2 - f1)
                            : (sin(2.0 * M_PI * f2 * t) - sin(2.0 * M_PI * f1 * t)) / (M_PI * t));
     }
-    double *y = malloc(sizeof(double) * (size_t)n);
+    /* The filter runs as a product of spectra: one FFT each way a round
+     * against 129 multiplies a sample (8x less work), on a length that
+     * holds the whole convolution, so nothing wraps. */
+    int N = 1;
+    while (N < n + CLIP_TAPS) N <<= 1;
+    kiss_fftr_cfg fw = kiss_fftr_alloc(N, 0, NULL, NULL), bw = kiss_fftr_alloc(N, 1, NULL, NULL);
+    float *t = calloc((size_t)N, sizeof(float));
+    kiss_fft_cpx *X = malloc(sizeof(kiss_fft_cpx) * (size_t)(N / 2 + 1)), *H = malloc(sizeof(kiss_fft_cpx) * (size_t)(N / 2 + 1));
+    if (!fw || !bw || !t || !X || !H) goto out;
+    for (int i = 0; i < CLIP_TAPS; i++) t[i] = (float)(h[i] / N);   /* 1/N: the inverse is unscaled */
+    kiss_fftr(fw, t, H);
     const double over = pow(10.0, CLIP_DB / 20.0);
     for (int r = 0; r < CLIP_ROUNDS; r++) {
         double pk = 0.0;
         for (int i = 0; i < n; i++) if (fabs(x[i]) > pk) pk = fabs(x[i]);
         if (pk <= 0.0) break;
         double lim = pk / over;                    /* the peak, CLIP_DB down */
-        for (int i = 0; i < n; i++) x[i] = x[i] > lim ? lim : x[i] < -lim ? -lim : x[i];
-        for (int i = 0; i < n; i++) {
-            double a = 0.0;
-            int k0 = i + hc - (n - 1) > 0 ? i + hc - (n - 1) : 0, k1 = i + hc < CLIP_TAPS - 1 ? i + hc : CLIP_TAPS - 1;
-            for (int k = k0; k <= k1; k++) a += h[k] * x[i + hc - k];
-            y[i] = a;
+        for (int i = 0; i < n; i++) t[i] = (float)(x[i] > lim ? lim : x[i] < -lim ? -lim : x[i]);
+        for (int i = n; i < N; i++) t[i] = 0.0f;
+        kiss_fftr(fw, t, X);
+        for (int k = 0; k <= N / 2; k++) {
+            kiss_fft_cpx a = X[k], b = H[k];
+            X[k].r = a.r * b.r - a.i * b.i;
+            X[k].i = a.r * b.i + a.i * b.r;
         }
-        memcpy(x, y, sizeof(double) * (size_t)n);
+        kiss_fftri(bw, X, t);
+        for (int i = 0; i < n; i++) x[i] = t[i + hc];       /* the filter's delay */
     }
-    free(y);
+out:
+    free(t); free(X); free(H);
+    kiss_fftr_free(fw); kiss_fftr_free(bw);
 }
 
 int mpsk_modulate(mpsk_t *m, uint8_t *frame, int16_t *out, double peak)
