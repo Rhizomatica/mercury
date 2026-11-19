@@ -28,8 +28,11 @@ Please include:
   anything else you don't want to share.
 
 The TCP TNC ports and the UI WebSocket have no authentication by design:
-they are meant for this machine or a trusted network.  That a client can
-reach them and send commands without credentials is expected, not a
+they are meant for this machine or a trusted network.  The UI WebSocket
+also accepts connections from any web origin, because the web app connects
+cross-origin.  If a station's ports are reachable from untrusted networks,
+restrict them with a host firewall (for example nftables).  That a client
+can reach them and send commands without credentials is expected, not a
 vulnerability on its own.  Memory-safety bugs in how they parse input, or
 a way around a restriction Mercury does enforce, are worth reporting.
 
