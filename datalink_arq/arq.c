@@ -711,6 +711,10 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
                 wait_payload_written();
         }
         HLOGI(LOG_COMP, "CLEANTXBUFFER: dropped %zu unsent bytes", dropped);
+        /* The message store took those bytes when they were queued: a
+         * partly sent chat line must not be glued onto the next message. */
+        if (dropped > 0)
+            msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
         arq_tnc_send_cleantxbuffer(dropped > 0);
         return;
     }
