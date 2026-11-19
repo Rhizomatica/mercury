@@ -143,18 +143,19 @@ BW2750\r
 **Response:** `OK\r` on success, `WRONG\r` on error.
 
 - **BW2300** — Full bandwidth: MFSK, MFSK2K, DATAC4, DATAC3, DATAC1,
-  DATAC17 and QAM16C2.
+  DATAC17 and QAM16C2.  A session that connected on the 500 Hz MFSK (the
+  deep floor) keeps MFSK500 as rung 0.
 - **BW500** — Narrow bandwidth: the 500 Hz MFSK floor (MFSK500), DATAC15,
   DATAC4, DATAC3 and the 9-carrier DATAN1, QAM16N1 and QAM16N2.  The
   wideband rungs are not used.
 - **BW2750** — Accepted for VARA compatibility, negotiated and reported as
-  `2750`: the BW2300 ladder with the 44-carrier DATAC17W and QAM16C2W as
-  rungs 5 and 6.
+  `2750`: the BW2300 ladder, deep floor included, with the 44-carrier
+  DATAC17W and QAM16C2W as rungs 5 and 6.
 
 The per-rung table is in [MODES.md](MODES.md).
 
-The cap holds in both directions for the whole session, from the start rung
-the ACCEPT names onward (`car_max_level_for_bw` in `datalink_arq/carousel.c`).
+The ladder holds in both directions for the whole session, from the start
+rung the ACCEPT names onward (`car_set_bandwidth` in `datalink_arq/carousel.c`).
 A `BW` command during a session applies to the next one.
 
 During connection setup, Mercury advertises the local BW token in `CALL` and
@@ -437,7 +438,8 @@ BITRATE\r
 **Response:** `BITRATE (<code>) <bps> BPS\r` on the control port.  `<code>`
 names the mode on the air: 1 DATAC1, 3 DATAC3, 4 DATAC4, 15 DATAC15,
 16 DATAC16 (the control mode, while calling only), 17 DATAC17, 25 QAM16C2,
-100 MFSK, 103 MFSK at 500 Hz.
+26 DATAC17W, 27 QAM16C2W, 28 DATAN1, 29 QAM16N1, 30 QAM16N2, 100 MFSK,
+103 MFSK at 500 Hz (MFSK500), 104 MFSK at 2 kHz (MFSK2K).
 
 Mercury also sends the line unprompted: in a session, for each frame on a
 payload mode keyed or decoded; and while a `CONNECT` is calling, on the

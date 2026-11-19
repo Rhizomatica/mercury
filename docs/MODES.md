@@ -22,7 +22,7 @@ that index.
 | Index | Mode | Payload B | Occupied Hz | In Mercury |
 |---|---|---|---|---|
 | 0 | DATAC1 | 510 | 1687 | ARQ rung 4 |
-| 1 | DATAC3 | 126 | 562 | ARQ rung 3 (top rung at BW500); default `-m` |
+| 1 | DATAC3 | 126 | 562 | ARQ rung 3; default `-m` |
 | 2 | DATAC0 | 14 | 562 | broadcast and tests only |
 | 3 | DATAC4 | 54 | 250 | ARQ rung 2 |
 | 4 | DATAC13 | 14 | 187 | broadcast and monitor; no longer an ARQ mode |

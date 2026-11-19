@@ -116,8 +116,8 @@ Mode behavior notes:
   9 DATAC17, 10 QAM16C2, 11 MFSK, 12 MFSK500, 13 DATAC17W, 14 QAM16C2W,
   15 DATAN1, 16 QAM16N1, 17 QAM16N2, 18 MFSK2K.
 - During an ARQ session, control frames normally use DATAC16, and each direction's
-  payload runs on the rungs of the session's bandwidth: at BW2300 MFSK,
-  MFSK2K, DATAC4, DATAC3, DATAC1, DATAC17, QAM16C2; the BW500 and BW2750
+  payload runs on the rungs of the session's bandwidth: at BW2300 MFSK
+  (MFSK500 on the deep floor), MFSK2K, DATAC4, DATAC3, DATAC1, DATAC17, QAM16C2; the BW500 and BW2750
   ladders are in [docs/MODES.md](docs/MODES.md).  The start rung comes from
   the SNR measured on the connect; see [docs/CAROUSEL-ARQ.md](docs/CAROUSEL-ARQ.md).
 - VARA `BW500` keeps the link narrow.  The negotiated bandwidth selects one
@@ -642,15 +642,20 @@ and contributors, and **extends them with waveforms and link-layer techniques
 developed by Rhizomatica** for the conditions HERMES actually operates in:
 long NVIS and regional paths, marginal signal levels, and fading.
 
-Five of the modes Mercury uses are ours, not upstream:
+These modes Mercury uses are ours, not upstream (all modes, with FEC, airtime and
+measured thresholds: [docs/MODES.md](docs/MODES.md)):
 
 | Mode | Bandwidth | Payload | What it is for |
 |---|---|---|---|
 | **DATAC15** | 200 Hz | 30 B | Fringe data. Rate-1/3 LDPC, 3 carriers — reaches below the floor of any stock data mode |
 | **DATAC16** | 200 Hz | 14 B | Control and ACK at the fringe; the mode the whole session depends on |
-| **DATAC17** | 2100 Hz | 1180 B | Intermediate SNR, roughly 2× the goodput of DATAC1 |
-| **QAM16C2** | 2100 Hz | 1213 B | Good channels, roughly 2.9× DATAC1 |
+| **DATAC17** | 2250 Hz | 1184 B | Intermediate SNR, roughly 2× the goodput of DATAC1 |
+| **QAM16C2** | 2250 Hz | 1183 B | Good channels, roughly 2.9× DATAC1 |
+| **DATAC17W**, **QAM16C2W** | 2750 Hz | 1170 B, 1169 B | BW2750's rungs 5 and 6: DATAC17 and QAM16C2 on 44 carriers |
+| **DATAN1**, **QAM16N1**, **QAM16N2** | 560 Hz | 243 B, 179 B, 242 B | BW500's rungs 4-6, on 9 carriers |
 | **MFSK** | 1000 Hz | 98 B | The deepest fringe: non-coherent 32-tone MFSK (50 % frame loss at −11.2 dB on AWGN, DATAC15 −10.3 dB; [measured](docs/MFSK-PORT.md)); the carousel's floor rung, and the carrier of CALLs and tone-pattern ACKs there |
+| **MFSK500** | 500 Hz | 98 B | The same frame in half the bandwidth (~26.2 s): the floor of a BW500 session, and of a wider one that connected on it (the deep floor) |
+| **MFSK2K** | 2000 Hz | 98 B | Twice the floor's rate (~6.56 s a frame): rung 1 of BW2300 and BW2750 |
 
 Beyond the waveforms, the link layer adds:
 
