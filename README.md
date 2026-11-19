@@ -654,8 +654,8 @@ measured thresholds: [docs/MODES.md](docs/MODES.md)):
 | **DATAC17W**, **QAM16C2W** | 2750 Hz | 1170 B, 1169 B | BW2750's rungs 5 and 6: DATAC17 and QAM16C2 on 44 carriers |
 | **DATAN1**, **QAM16N1**, **QAM16N2** | 560 Hz | 243 B, 179 B, 242 B | BW500's rungs 4-6, on 9 carriers |
 | **MFSK** | 1000 Hz | 98 B | The deepest fringe: non-coherent 32-tone MFSK (50 % frame loss at −11.2 dB on AWGN, DATAC15 −10.3 dB; [measured](docs/MFSK-PORT.md)); the carousel's floor rung, and the carrier of CALLs and tone-pattern ACKs there |
-| **MFSK500** | 500 Hz | 98 B | The same frame in half the bandwidth (~26.2 s): the floor of a BW500 session, and of a wider one that connected on it (the deep floor) |
-| **MFSK2K** | 2000 Hz | 98 B | Twice the floor's rate (~6.56 s a frame): rung 1 of BW2300 and BW2750 |
+| **MFSK500** | 500 Hz | 98 B | The same frame in half the bandwidth (~26.2 s): the floor of a BW500 session, and of a wider one whose ACCEPT went on it (the deep floor) |
+| **MFSK2K** | 2000 Hz | 98 B | Twice the 1 kHz floor's rate (~6.56 s a frame): rung 1 of BW2300 and BW2750 |
 
 Beyond the waveforms, the link layer adds:
 

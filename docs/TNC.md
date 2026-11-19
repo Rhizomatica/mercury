@@ -143,8 +143,8 @@ BW2750\r
 **Response:** `OK\r` on success, `WRONG\r` on error.
 
 - **BW2300** — Full bandwidth: MFSK, MFSK2K, DATAC4, DATAC3, DATAC1,
-  DATAC17 and QAM16C2.  A session that connected on the 500 Hz MFSK (the
-  deep floor) keeps MFSK500 as rung 0.
+  DATAC17 and QAM16C2.  If the ACCEPT goes on the 500 Hz MFSK (the deep
+  floor), the session keeps MFSK500 as rung 0.
 - **BW500** — Narrow bandwidth: the 500 Hz MFSK floor (MFSK500), DATAC15,
   DATAC4, DATAC3 and the 9-carrier DATAN1, QAM16N1 and QAM16N2.  The
   wideband rungs are not used.
@@ -154,8 +154,8 @@ BW2750\r
 
 The per-rung table is in [MODES.md](MODES.md).
 
-The ladder holds in both directions for the whole session, from the start
-rung the ACCEPT names onward (`car_set_bandwidth` in `datalink_arq/carousel.c`).
+Both directions use the negotiated ladder for the whole session
+(`car_set_bandwidth` in `datalink_arq/carousel.c`).
 A `BW` command during a session applies to the next one.
 
 During connection setup, Mercury advertises the local BW token in `CALL` and
