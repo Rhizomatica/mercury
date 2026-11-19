@@ -592,6 +592,34 @@ running as root.
 `pkg-config` detection is deliberately skipped for the Windows cross-build: it
 would find the *host* hidapi and link something that cannot run on the target.
 
+### Restricting network access
+
+Mercury's TCP ports listen on every interface, by design: the remote UI, BPQ32
+or Pat on another host, and the hosted web app all connect over the network.
+None of them is authenticated, and the ARQ control port can key the
+transmitter, so on a network you don't trust, limit who can reach them with a
+host firewall rather than in Mercury's configuration.
+
+The ports, with their defaults: ARQ control 8300 and data 8301 (`-p`,
+`arq_tcp_base_port`), broadcast 8100 (`-b`) and the UI WebSocket 10000 (`-U`,
+`ui_port`).  This nftables table lets them be reached only from this machine
+and one LAN; change `192.168.1.0/24` to yours:
+
+```
+table inet mercury {
+    chain input {
+        type filter hook input priority filter; policy accept;
+        tcp dport { 8100, 8300, 8301, 10000 } ip saddr { 127.0.0.0/8, 192.168.1.0/24 } accept
+        tcp dport { 8100, 8300, 8301, 10000 } drop
+    }
+}
+```
+
+Its own table and `policy accept` leave every other rule alone.  Load it with
+`sudo nft -f mercury.nft`; to keep it across reboots, add it to
+`/etc/nftables.conf` and `sudo systemctl enable nftables`.  If you change a
+port, change it here too.
+
 ## Documentation
 
 **[docs/](docs/README.md)** — the full index, sorted into reference (how Mercury

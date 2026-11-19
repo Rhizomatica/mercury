@@ -376,8 +376,9 @@ static int open_listener_socket(int port, int port_type, const char *tag)
     if (bind(fd, (struct sockaddr *)&local_addr, sizeof(local_addr)) < 0)
     {
         char ip[INET_ADDRSTRLEN] = "?";
+        int e = sock_errno();   /* WSAGetLastError() on Windows */
         inet_ntop(AF_INET, &local_addr.sin_addr, ip, sizeof(ip));
-        HLOGE(tag, "bind %s:%d failed: %s", ip, port, strerror(errno));
+        HLOGE(tag, "bind %s:%d failed: %s (%d)", ip, port, strerror(e), e);
         SOCK_CLOSE(fd);
         return -1;
     }
