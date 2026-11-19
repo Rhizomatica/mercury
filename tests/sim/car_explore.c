@@ -361,11 +361,48 @@ static void five29fb_floor_blind(void)
 #endif
 }
 
+/* #529: the cap's own behaviour, and the shipped default.  cliff:-5 bidir
+ * with frames 2 to 9 lost (one block, deeper than the explorer's k<=3)
+ * still takes the caller through an unconfirmed fall-back onto the floor
+ * on current trunk: with the cap at 6 it keeps going on one more silent
+ * floor round than at 1.  The run with CAR_FB_BLIND unset must match the
+ * cap-1 run, so this breaks if the daemon's default moves.  It counts the
+ * blind rounds, not the time: these runs finish together. */
+static void five29fb_default(void)
+{
+#if CAR_SIM_BYTES == 600
+    static const int idx[] = { 2, 3, 4, 5, 6, 7, 8, 9 };
+    car_sim_result_t six, one, dflt;
+    carousel_sim_force_losses(idx, 8);
+    setenv("CAR_FB_BLIND", "6", 1);
+    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &six);
+    runs++;
+    setenv("CAR_FB_BLIND", "1", 1);
+    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &one);
+    runs++;
+    unsetenv("CAR_FB_BLIND");
+    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &dflt);   /* the daemon's default */
+    runs++;
+    carousel_sim_force_losses(NULL, -1);
+    if (!six.intact || !one.intact || !dflt.intact
+        || six.floor_blind <= one.floor_blind || dflt.floor_blind != one.floor_blind) {
+        failures++;
+        printf("FAIL five29fb default: intact %d/%d/%d, blind floor rounds six=%d one=%d default=%d\n"
+               "  (want all intact, six > one, default == one)\n",
+               six.intact, one.intact, dflt.intact, six.floor_blind, one.floor_blind, dflt.floor_blind);
+        printf("  If six == one, the replay no longer reaches the cap: pick another\n"
+               "  block with CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 CAR_FB_BLIND=6\n"
+               "  test_car_explore replay 1 <frames...> (look for \"continuing\").\n");
+    }
+#endif
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 1) {
         oct27_recv_fallback();
         five29fb_floor_blind();
+        five29fb_default();
         explore_losses(-1, 3);
         explore_sensing(3);
         explore_spurious(1);
@@ -407,6 +444,7 @@ int main(int argc, char **argv)
     }
     if (!strcmp(argv[1], "five29fb")) {
         five29fb_floor_blind();
+        five29fb_default();
         printf("%s\n", failures ? "FAILED" : "ok");
         return failures != 0;
     }

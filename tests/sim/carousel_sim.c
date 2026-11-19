@@ -325,6 +325,7 @@ static void io_bind_rx(void *ctx, int mode)
     if (mode != s->rx_mode) { s->rx_mode = mode; s->bound_at = now_ms; }
 }
 static int recv_fallbacks;
+static int floor_blind;
 static int app_wait_says;              /* "tx: my application's data waits for" lines */
 static int gated_probes;
 static int dark_polls;
@@ -350,6 +351,7 @@ static void io_trace(void *ctx, const char *line)
     /* the fall-back to ok_lv taken as the turn passes (m_decide_recv, #448) is
      * traced right after "turn: mine"; m_decide_send's is not */
     if (s->turn_mine && !strncmp(line, "tx: no answer on lv=", 20) && strstr(line, "back to")) recv_fallbacks++;
+    if (!strncmp(line, "tx: no answer -- continuing", 27)) floor_blind++;   /* #529 */
     /* A poll naming a rung the last round left out and the SNR gates: a
      * re-probe the SNR forbids (on air 2026-11-05: DATAC3 at -4.2 dB). */
     if (!strncmp(line, "rx round lv=", 12)) {
@@ -707,7 +709,13 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
     car_set_nav_ms(nav_air);
     car_set_short_rung(!(getenv("CAR_SHORT") && !strcmp(getenv("CAR_SHORT"), "0")));   /* A/B */
-    car_set_fallback_blind(getenv("CAR_FB_BLIND") ? (unsigned)atoi(getenv("CAR_FB_BLIND")) : 1);   /* A/B */
+    /* A/B (#529).  Unset, back to the daemon's default: the setting is
+     * process-wide, so a run must not inherit the last run's cap.  A
+     * negative value is taken as 0, not wrapped into "never ask". */
+    {
+        int fb = getenv("CAR_FB_BLIND") ? atoi(getenv("CAR_FB_BLIND")) : CAR_FB_BLIND_DEFAULT;
+        car_set_fallback_blind((unsigned)(fb < 0 ? 0 : fb));
+    }
     car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
     car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
     snr_biased = getenv("CAR_SNR_BIAS") != NULL;
@@ -720,6 +728,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     buffer_overclaim = 0; buffer_break_drops = 0;
     buffer_unstopped_last[0] = buffer_unstopped_last[1] = 0;
     recv_fallbacks = 0;
+    floor_blind = 0;
     app_wait_says = 0;
     gated_probes = 0;
     dark_polls = 0;
@@ -902,6 +911,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->keydowns = keydown_no;
     res->kd_overlaps = kd_overlaps;
     res->recv_fallbacks = recv_fallbacks;
+    res->floor_blind = floor_blind;
     res->app_wait_says = app_wait_says;
     res->gated_probes = gated_probes;
     res->dark_polls = dark_polls;
