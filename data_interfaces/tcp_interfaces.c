@@ -811,7 +811,12 @@ static void execute_control_command(char *buffer)
 
     if (!strncmp(buffer, "BUFFER", strlen("BUFFER")))
     {
+        /* A query is always answered, even with the count of the last BUFFER
+         * line: past tnc_send_buffer's "unchanged" filter, which is for the
+         * unsolicited reports (#584).  The value is still recorded, so the
+         * next report does not repeat it. */
         int buffered = arq_buffered_bytes_snapshot();
+        atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
         tnc_send_buffer((uint32_t)buffered);
         return;
     }

@@ -470,7 +470,11 @@ Query the number of bytes pending in the ARQ transmit buffer.
 BUFFER\r
 ```
 
-**Response:** `BUFFER <bytes>\r` on the control port.
+**Response:** `BUFFER <bytes>\r` on the control port, to every query, also
+when the count is the one the last `BUFFER` line said.  The unsolicited
+reports ([BUFFER](#buffer-1) below) go only when the count changes, or every
+50 s in a session while bytes wait; an answered query counts as the last
+line for them.
 
 ---
 
