@@ -106,19 +106,6 @@ void car_set_nav_ms(uint32_t ms) { g_nav_ms = ms; }
  * older peer leaves zero: it is never asked to do anything new. */
 static bool g_short_rung = true;
 void car_set_short_rung(bool on) { g_short_rung = on; }
-/* #529: blind floor rounds allowed while a fall-back onto the floor is
- * unconfirmed.  The default (CAR_FB_BLIND_DEFAULT) is 1, per the field logs
- * (VE4KLM-K7EK 2026-11-08): after M falls back to the floor and S confirmed
- * the rung it stayed on, six silent rounds go out before the ask that would
- * tell M where S listens.  tests/sim/car_explore.c's five29fb_default pins
- * the cap and this default.
- * floor_silent is cumulative -- it resets only on an answered round -- so
- * the cap covers every silent floor round since the last answer, not only
- * those after the fall-back; the field-log walk-through read it both ways
- * (#529).  0 asks after the first silent round; the sim A/B knob is
- * CAR_FB_BLIND. */
-static unsigned g_fb_blind = CAR_FB_BLIND_DEFAULT;
-void car_set_fallback_blind(unsigned n) { g_fb_blind = n; }
 enum { BL_NONE, BL_SMALL, BL_MEDIUM, BL_LARGE };
 #define BL_SMALL_BYTES  90    /* one DATAC3 frame's pieces, with the check and a margin */
 #define BL_MEDIUM_BYTES 460   /* ...one DATAC1 frame's */
@@ -158,6 +145,17 @@ static uint32_t nav_lead(const car_t *c) { (void)c; return 0; }
 #define FLOOR_DEEP_DB          3.0f
 #define FLOOR_POLL_EVERY_DEEP 12
 #define FLOOR_SILENT_MAX  6
+/* After an unconfirmed fall-back onto the floor (fell_back): S may have
+ * confirmed the rung above and stayed there, deaf to my floor rounds, so
+ * after this many silent ones I ask instead (#529; specs/rungs
+ * FloorFallback: at most FLOOR_SILENT_FB + 1 rounds sent where S does not
+ * listen, against up to 7 at FLOOR_SILENT_MAX).  floor_silent counts every
+ * silent floor round since I last heard S, so at 1 a floor that was
+ * already silent once means I ask right after the fall-back.  The sim
+ * A/B: make -B carousel_bench CC="gcc -DFLOOR_SILENT_FB=6". */
+#ifndef FLOOR_SILENT_FB
+#define FLOOR_SILENT_FB   1
+#endif
 #define FLOOR_LATE_MS     9000
 #define PATTERN_AIR_MS    640
 /* After a pattern above the floor the sender keys later than after a poll:
@@ -2866,12 +2864,9 @@ static void m_decide_send(car_t *c, uint64_t now)
          * the floor (fell_back) the blind rounds are the slow part: S
          * confirmed the rung and stayed on it, so each silent round is one
          * more before the ask that would say where S listens (#529) -- the
-         * cap there is g_fb_blind, not FLOOR_SILENT_MAX.  Because the count
-         * is cumulative, a silent round already made before the fall-back
-         * uses the allowance: at 1, the first unanswered round after it is
-         * the ask. */
+         * cap there is FLOOR_SILENT_FB, not FLOOR_SILENT_MAX. */
         if (c->m_kind == KD_ROUND && c->last_lv == 0 && c->io.pattern &&
-            ++c->floor_silent <= (c->fell_back ? (int)g_fb_blind : FLOOR_SILENT_MAX)) {
+            ++c->floor_silent <= (c->fell_back ? FLOOR_SILENT_FB : FLOOR_SILENT_MAX)) {
             car_trace(c, "tx: no answer -- continuing (%d)", c->floor_silent);
             ctl_deaf_on_floor_silence(c, now);
             m_plan(c, KD_ROUND, 0, 0);

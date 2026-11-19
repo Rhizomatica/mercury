@@ -731,13 +731,6 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
     car_set_nav_ms(nav_air);
     car_set_short_rung(!(getenv("CAR_SHORT") && !strcmp(getenv("CAR_SHORT"), "0")));   /* A/B */
-    /* A/B (#529).  Unset, back to the daemon's default: the setting is
-     * process-wide, so a run must not inherit the last run's cap.  A
-     * negative value is taken as 0, not wrapped into "never ask". */
-    {
-        int fb = getenv("CAR_FB_BLIND") ? atoi(getenv("CAR_FB_BLIND")) : CAR_FB_BLIND_DEFAULT;
-        car_set_fallback_blind((unsigned)(fb < 0 ? 0 : fb));
-    }
     car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
     car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
     snr_biased = getenv("CAR_SNR_BIAS") != NULL;

@@ -316,83 +316,29 @@ static void oct27_recv_fallback(void)
 #endif
 }
 
-/* #529 canary.  On 237481e7 this replay -- cliff:-5 bidir, frames 0, 7, 11
- * lost -- put the caller through an unconfirmed fall-back onto the floor
- * with the callee confirmed on the rung above: 417861 ms with the
- * blind-round cap at 6, 378231 at 1.  Current trunk delivers this session
- * in one 25-frame keydown, the fall-back never fires, and ~400 loss sets
- * at up to 3 lost frames produce no fall-back at all -- so the cap has
- * nothing to bite on here, and the two runs finish together.  The case
- * stays as a canary: if a change brings the blind-floor pathology back on
- * this replay, the two runs split again and this test breaks, pointing at
- * the one-liner that owns that behaviour.  The on-air case (#529's field
- * logs: about 2 minutes blind) is the cap's real justification, not this
- * replay. */
-static void five29fb_floor_blind(void)
+/* #529: the cap on blind floor rounds after an unconfirmed fall-back
+ * (FLOOR_SILENT_FB).  cliff:-5 bidir with frames 2 to 9 lost (one block,
+ * deeper than the explorer's k<=3) takes the caller through an unconfirmed
+ * fall-back onto the floor: at FLOOR_SILENT_FB 1 it keeps going on one
+ * silent floor round, then asks; built with -DFLOOR_SILENT_FB=6 it keeps
+ * going on two and does not ask (same finish, 435.1 s).  So this pins the
+ * shipped cap.  It counts the blind rounds, not the time.  If the session
+ * changes shape, pick another block that reaches the cap with
+ * CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 test_car_explore replay 1 <frames...>
+ * (look for "continuing" then "asking"), built both ways. */
+static void five29fb_cap(void)
 {
 #if CAR_SIM_BYTES == 600
-    static const int idx[] = { 0, 7, 11 };   /* kept by carousel_sim_force_losses */
-    car_sim_result_t six, one;
-    char what[160];
-    carousel_sim_force_losses(idx, 3);
-    setenv("CAR_FB_BLIND", "6", 1);
-    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &six);
-    runs++;
-    setenv("CAR_FB_BLIND", "1", 1);
-    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &one);
-    runs++;
-    unsetenv("CAR_FB_BLIND");
-    carousel_sim_force_losses(NULL, -1);
-    snprintf(what, sizeof(what),
-             "six: intact=%d done=%llu fb=%d, one: intact=%d done=%llu fb=%d",
-             six.intact, (unsigned long long)six.done_ms, six.recv_fallbacks,
-             one.intact, (unsigned long long)one.done_ms, one.recv_fallbacks);
-    if (!six.intact || !six.done_ms || !one.intact || !one.done_ms
-        || six.recv_fallbacks || one.recv_fallbacks
-        || six.done_ms != one.done_ms) {
-        failures++;
-        printf("FAIL five29fb: the replay moved: %s\n", what);
-        printf("  Either the fall-back pathology is back (one run earlier than\n"
-               "  the other, recv_fallbacks > 0 -- then re-pin this test to the\n"
-               "  cap's win again), or the session changed shape (then pick a new\n"
-               "  replay with CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 test_car_explore\n"
-               "  replay 1 <i> <j> <k>).\n");
-    }
-#endif
-}
-
-/* #529: the cap's own behaviour, and the shipped default.  cliff:-5 bidir
- * with frames 2 to 9 lost (one block, deeper than the explorer's k<=3)
- * still takes the caller through an unconfirmed fall-back onto the floor
- * on current trunk: with the cap at 6 it keeps going on one more silent
- * floor round than at 1.  The run with CAR_FB_BLIND unset must match the
- * cap-1 run, so this breaks if the daemon's default moves.  It counts the
- * blind rounds, not the time: these runs finish together. */
-static void five29fb_default(void)
-{
-#if CAR_SIM_BYTES == 600
-    static const int idx[] = { 2, 3, 4, 5, 6, 7, 8, 9 };
-    car_sim_result_t six, one, dflt;
+    static const int idx[] = { 2, 3, 4, 5, 6, 7, 8, 9 };   /* kept by carousel_sim_force_losses */
+    car_sim_result_t r;
     carousel_sim_force_losses(idx, 8);
-    setenv("CAR_FB_BLIND", "6", 1);
-    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &six);
-    runs++;
-    setenv("CAR_FB_BLIND", "1", 1);
-    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &one);
-    runs++;
-    unsetenv("CAR_FB_BLIND");
-    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &dflt);   /* the daemon's default */
-    runs++;
+    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &r);
     carousel_sim_force_losses(NULL, -1);
-    if (!six.intact || !one.intact || !dflt.intact
-        || six.floor_blind <= one.floor_blind || dflt.floor_blind != one.floor_blind) {
+    runs++;
+    if (!r.intact || !r.done_ms || r.floor_blind != 1) {
         failures++;
-        printf("FAIL five29fb default: intact %d/%d/%d, blind floor rounds six=%d one=%d default=%d\n"
-               "  (want all intact, six > one, default == one)\n",
-               six.intact, one.intact, dflt.intact, six.floor_blind, one.floor_blind, dflt.floor_blind);
-        printf("  If six == one, the replay no longer reaches the cap: pick another\n"
-               "  block with CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 CAR_FB_BLIND=6\n"
-               "  test_car_explore replay 1 <frames...> (look for \"continuing\").\n");
+        printf("FAIL five29fb: intact=%d done=%llu, blind floor rounds %d (want intact, 1)\n",
+               r.intact, (unsigned long long)r.done_ms, r.floor_blind);
     }
 #endif
 }
@@ -401,8 +347,7 @@ int main(int argc, char **argv)
 {
     if (argc == 1) {
         oct27_recv_fallback();
-        five29fb_floor_blind();
-        five29fb_default();
+        five29fb_cap();
         explore_losses(-1, 3);
         explore_sensing(3);
         explore_spurious(1);
@@ -443,8 +388,7 @@ int main(int argc, char **argv)
         return failures != 0;
     }
     if (!strcmp(argv[1], "five29fb")) {
-        five29fb_floor_blind();
-        five29fb_default();
+        five29fb_cap();
         printf("%s\n", failures ? "FAILED" : "ok");
         return failures != 0;
     }
