@@ -162,8 +162,7 @@ peer's keydown, had it come, would have been sensed (the prototype is
 Pedro's `proto/early-slot-release` branch). The prototype's own commit
 flags the price: it gives up the turns spec's never-on-the-air-together
 guarantee, so it is a design decision, not a drop-in (off by default,
-`car_set_early_slot`). The
-complementary lever needs no such trade: the #495 logs carry per-station
+`car_set_early_slot`). The complementary lever needs no such trade: the #495 logs carry per-station
 key-to-key latency, and the guards are compile-time constants
 (`arq_protocol.h`: 700 ms channel guard, 900 ms post-ACK guard) sized for
 one radio's switching latency — a guard derived from the measured peer is
@@ -226,6 +225,7 @@ start, write at teardown, off by default — `MERCURY_RUNG_MEMORY=1` is the
 switch, sim A/B via `MERCURY_RUNG_HINTS`); D is a connect-FSM change I can
 measure the same way; B needs a design pass with Rafael and Pedro before
 code; C is Rafael's OTA run on the sBitx pair (#464), where help with the
-A/B protocol or the bench scripts is on offer; G is #603, Pedro's to carry
-— bench time or a review pass is on offer there; E and F are letters to
+A/B protocol or the bench scripts is on offer; G is #603 (from Pedro's
+`proto/early-slot-release` prototype) — bench time or a review pass is on
+offer there; E and F are letters to
 write, and the efficiency tables are the case to attach.
