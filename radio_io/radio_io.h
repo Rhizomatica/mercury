@@ -35,7 +35,8 @@ typedef enum {
     PTT_METHOD_HAMLIB,
     PTT_METHOD_SERIAL,      /* modem-control lines on a serial port */
     PTT_METHOD_HERMES_SHM,
-    PTT_METHOD_CM108        /* GPIO on a CM108-class USB sound chip */
+    PTT_METHOD_CM108,       /* GPIO on a CM108-class USB sound chip */
+    PTT_METHOD_GPIO         /* Raspberry Pi GPIO via libgpiod */
 } ptt_method_t;
 
 /* Which modem-control line(s) key the transmitter.
@@ -65,6 +66,11 @@ typedef struct {
     /* cm108: GPIO pin 1..4.  GPIO3 is the de-facto standard and the default. */
     int cm108_gpio;
 
+    /* Raspberry Pi GPIO via libgpiod */
+    char gpio_chip[PTT_DEVICE_PATH_MAX];
+    unsigned int gpio_line; /* BCM GPIO number, not physical header pin */
+    bool gpio_invert;       /* active-low when true */
+
     /* hamlib */
     int hamlib_model;
     int hamlib_serial_speed; /* 0 = use Hamlib model default */
@@ -73,6 +79,8 @@ typedef struct {
 } ptt_config_t;
 
 #define PTT_CM108_GPIO_DEFAULT 3
+#define PTT_GPIO_CHIP_DEFAULT "/dev/gpiochip0"
+#define PTT_GPIO_LINE_DEFAULT 17
 
 /* Initialize the selected PTT backend.
  * Returns 0 on success, -1 on failure. */

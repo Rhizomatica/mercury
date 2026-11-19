@@ -287,6 +287,10 @@ func readRadioList() (RadioListEvent, bool) {
 	// the websocket path sends before the UI sorts it.
 	sortRadioItems(items)
 
+	gpioChip := make([]C.char, 512)
+	var gpioLine, gpioInvert C.int
+	C.mercury_ui_get_gpio_ptt(&gpioChip[0], C.int(len(gpioChip)), &gpioLine, &gpioInvert)
+
 	serial := ""
 	if speed > 0 {
 		serial = fmt.Sprintf("%d", int(speed))
@@ -300,6 +304,9 @@ func readRadioList() (RadioListEvent, bool) {
 		PTTLine:     C.GoString(&line[0]),
 		PTTInvert:   C.GoString(&invert[0]),
 		CM108GPIO:   fmt.Sprintf("%d", int(gpio)),
+		GPIOChip:    C.GoString(&gpioChip[0]),
+		GPIOLine:    fmt.Sprintf("%d", int(gpioLine)),
+		GPIOInvert:  fmt.Sprintf("%t", gpioInvert != 0),
 	}, true
 }
 

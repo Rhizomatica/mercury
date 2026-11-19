@@ -11,7 +11,7 @@ import (
 )
 
 func TestPTTMethodOptions(t *testing.T) {
-	want := []string{"None", "Hamlib", "Serial (RTS/DTR)", "CM108 GPIO", "HERMES SHM"}
+	want := []string{"None", "Hamlib", "Serial (RTS/DTR)", "CM108 GPIO", "HERMES SHM", "GPIO (Raspberry Pi)"}
 	if got := pttMethodOptions(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("pttMethodOptions() = %v, want %v", got, want)
 	}
@@ -334,5 +334,22 @@ func TestHistoryTimestamp(t *testing.T) {
 	want := formatChatTimestamp(time.Unix(sec, int64(ms)*int64(time.Millisecond)))
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// The gpio method's chip, BCM line and polarity come through radio_list.
+func TestRadioListGPIOPTTSettings(t *testing.T) {
+	payload := []byte(`{"type":"radio_list","selected":"","device_path":"/dev/ttyUSB0","serial_speed":0,"ptt_method":"gpio","ptt_line":"rts","ptt_invert":"none","cm108_gpio":3,"gpio_chip":"/dev/gpiochip4","gpio_line":27,"gpio_invert":true,"list":[]}`)
+	events := decodeWSMessage(1, payload)
+	if len(events) != 1 {
+		t.Fatalf("decodeWSMessage returned %d events, want 1", len(events))
+	}
+	event, ok := events[0].(RadioListEvent)
+	if !ok {
+		t.Fatalf("event has type %T, want RadioListEvent", events[0])
+	}
+	if event.PTTMethod != "gpio" || event.GPIOChip != "/dev/gpiochip4" ||
+		event.GPIOLine != "27" || event.GPIOInvert != "true" || event.DevicePath != "/dev/ttyUSB0" {
+		t.Fatalf("gpio PTT settings = %+v", event)
 	}
 }

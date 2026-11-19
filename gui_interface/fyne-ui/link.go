@@ -95,6 +95,9 @@ type RadioListEvent struct {
 	PTTLine     string
 	PTTInvert   string
 	CM108GPIO   string
+	GPIOChip    string // gpio: chip path, BCM line, "true" when active-low
+	GPIOLine    string
+	GPIOInvert  string
 }
 
 // AudioSystemEvent reports the engine's current audio subsystem and the

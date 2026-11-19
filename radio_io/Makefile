@@ -65,9 +65,9 @@ ifeq ($(HAVE_HERMES_SHM),1)
 HERMES_SHM_CFLAGS_LOCAL = -DHAVE_HERMES_SHM
 endif
 
-CFLAGS = $(COMMON_CFLAGS) $(HAMLIB_CFLAGS_LOCAL) $(HERMES_SHM_CFLAGS_LOCAL)
+CFLAGS = $(COMMON_CFLAGS) $(HAMLIB_CFLAGS_LOCAL) $(HERMES_SHM_CFLAGS_LOCAL) $(LIBGPIOD_CFLAGS)
 
-OBJS = radio_io.o serial_ptt.o cm108_ptt.o
+OBJS = radio_io.o serial_ptt.o cm108_ptt.o gpio_ptt.o
 
 ifeq ($(HAVE_HERMES_SHM),1)
 OBJS += sbitx_io.o shm_utils.o
@@ -79,8 +79,11 @@ endif
 
 all: $(OBJS)
 
-radio_io.o: radio_io.c radio_io.h serial_ptt.h cm108_ptt.h sbitx_io.h radio_cmds.h shm_utils.h rigctl_parse.h
+radio_io.o: radio_io.c radio_io.h serial_ptt.h cm108_ptt.h gpio_ptt.h sbitx_io.h radio_cmds.h shm_utils.h rigctl_parse.h
 	$(CC) $(CFLAGS) -c radio_io.c
+
+gpio_ptt.o: gpio_ptt.c gpio_ptt.h radio_io.h
+	$(CC) $(CFLAGS) -c gpio_ptt.c
 
 serial_ptt.o: serial_ptt.c serial_ptt.h radio_io.h
 	$(CC) $(CFLAGS) -c serial_ptt.c

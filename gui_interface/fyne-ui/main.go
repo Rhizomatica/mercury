@@ -78,9 +78,10 @@ var pttMethodLabels = map[string]string{
 	"serial":     "Serial (RTS/DTR)",
 	"cm108":      "CM108 GPIO",
 	"hermes_shm": "HERMES SHM",
+	"gpio":       "GPIO (Raspberry Pi)",
 }
 
-var pttMethodOrder = []string{"none", "hamlib", "serial", "cm108", "hermes_shm"}
+var pttMethodOrder = []string{"none", "hamlib", "serial", "cm108", "hermes_shm", "gpio"}
 
 func pttMethodOptions() []string {
 	options := make([]string, 0, len(pttMethodOrder))
@@ -186,6 +187,9 @@ type uiBindings struct {
 	pttLineSelect    *widget.Select
 	pttInvertSelect  *widget.Select
 	cm108GPIOSelect  *widget.Select
+	gpioChipEntry    *widget.Entry
+	gpioLineEntry    *widget.Entry
+	gpioInvertCheck  *widget.Check
 	txGainLabel      *widget.Label
 	txPeakLabel      *widget.Label
 	bitrateLabel     *widget.Label
@@ -608,6 +612,13 @@ func main() {
 	cm108GPIOSelect := widget.NewSelect([]string{"1", "2", "3", "4"}, func(string) {})
 	cm108GPIOSelect.SetSelected("3")
 	bindings.cm108GPIOSelect = cm108GPIOSelect
+	gpioChipEntry := widget.NewEntry()
+	gpioChipEntry.SetText("/dev/gpiochip0")
+	bindings.gpioChipEntry = gpioChipEntry
+	gpioLineEntry := widget.NewEntry()
+	gpioLineEntry.SetText("17")
+	bindings.gpioLineEntry = gpioLineEntry
+	bindings.gpioInvertCheck = widget.NewCheck("Active low", nil)
 
 	txGainSlider := widget.NewSlider(-20.0, 20.0)
 	txGainSlider.Step = 0.5
@@ -1157,6 +1168,13 @@ func main() {
 						bindings.pttLineSelect.SetSelected(e.PTTLine)
 						bindings.pttInvertSelect.SetSelected(e.PTTInvert)
 						bindings.cm108GPIOSelect.SetSelected(e.CM108GPIO)
+						if e.GPIOChip != "" {
+							bindings.gpioChipEntry.SetText(e.GPIOChip)
+						}
+						if e.GPIOLine != "" {
+							bindings.gpioLineEntry.SetText(e.GPIOLine)
+						}
+						bindings.gpioInvertCheck.SetChecked(e.GPIOInvert == "true")
 					})
 					refreshSelect(bindings.radioSelect, e.Items, e.Selected, false)
 
@@ -1550,6 +1568,18 @@ func main() {
 			pttLine := bindings.pttLineSelect.Selected
 			pttInvert := bindings.pttInvertSelect.Selected
 			cm108GPIO := bindings.cm108GPIOSelect.Selected
+			if method == "gpio" {
+				// The chip rides in value2, active-low in value6, the BCM
+				// line in value7; the serial/Hamlib device stays as saved.
+				chip := strings.TrimSpace(bindings.gpioChipEntry.Text)
+				line := strings.TrimSpace(bindings.gpioLineEntry.Text)
+				if n, err := strconv.Atoi(line); chip == "" || err != nil || n < 0 {
+					appendLog("Enter the GPIO chip and its BCM line number (17 is header pin 11).\n")
+					return
+				}
+				devPath, pttLine, cm108GPIO = chip, "", line
+				pttInvert = fmt.Sprintf("%t", bindings.gpioInvertCheck.Checked)
+			}
 			if err := sendWSCommand("set_ptt_config", method, devPath, modelID, serialSpeed,
 				pttLine, pttInvert, cm108GPIO); err != nil {
 				appendLog(fmt.Sprintf("Failed to send PTT config: %v\n", err))
@@ -1571,6 +1601,10 @@ func main() {
 			widget.NewLabel("Invert Line"), bindings.pttInvertSelect)
 		gpioRow := container.NewGridWithColumns(2,
 			widget.NewLabel("CM108 GPIO"), bindings.cm108GPIOSelect)
+		piGPIORow := container.NewGridWithColumns(2,
+			widget.NewLabel("GPIO Chip"), bindings.gpioChipEntry,
+			widget.NewLabel("GPIO Line (BCM)"), bindings.gpioLineEntry,
+			layout.NewSpacer(), bindings.gpioInvertCheck)
 		previousMethod := pttMethodID(bindings.pttMethodSelect.Selected)
 		// Android: open the radio's USB chip for Hamlib (usb_android.go)
 		usbBox := container.NewVBox()
@@ -1586,6 +1620,7 @@ func main() {
 			lineRow.Hide()
 			invertRow.Hide()
 			gpioRow.Hide()
+			piGPIORow.Hide()
 			usbBox.Hide()
 			switch method {
 			case "hamlib":
@@ -1606,6 +1641,11 @@ func main() {
 				modelRow.Hide()
 				baudRow.Hide()
 				gpioRow.Show()
+			case "gpio":
+				deviceRow.Hide()
+				modelRow.Hide()
+				baudRow.Hide()
+				piGPIORow.Show()
 			default:
 				deviceRow.Hide()
 				modelRow.Hide()
@@ -1624,6 +1664,7 @@ func main() {
 			lineRow,
 			invertRow,
 			gpioRow,
+			piGPIORow,
 			container.NewHBox(layout.NewSpacer(), applyBtn, layout.NewSpacer()),
 		)
 		updateMethodFields(bindings.pttMethodSelect.Selected)

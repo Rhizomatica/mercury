@@ -11,6 +11,11 @@ ifeq ($(HAVE_HERMES_SHM),1)
 CLI_SHM_CFLAGS = -DHAVE_HERMES_SHM
 endif
 
+# -P gpio needs libgpiod (HAVE_LIBGPIOD, exported by the root Makefile).
+ifeq ($(HAVE_LIBGPIOD),1)
+CLI_GPIO_CFLAGS = -DHAVE_LIBGPIOD
+endif
+
 # Shared engine + CLI parser need the sibling module headers.
 ENGINE_CFLAGS = $(CFG_CFLAGS) -I.. -I../modem -I../modem/freedv -I../datalink_broadcast -I../data_interfaces -I../datalink_arq -I../audioio -I../radio_io
 
@@ -63,7 +68,7 @@ mercury_engine.o: mercury_engine.c mercury_engine.h ../.git_hash_stamp
 # be rebuilt when the hash changes -- the root Makefile refreshes .git_hash_stamp
 # before this sub-make runs (see internal_deps).
 mercury_cli.o: mercury_cli.c mercury_cli.h ../.git_hash_stamp
-	$(CC) $(ENGINE_CFLAGS) $(CLI_SHM_CFLAGS) -c mercury_cli.c
+	$(CC) $(ENGINE_CFLAGS) $(CLI_SHM_CFLAGS) $(CLI_GPIO_CFLAGS) -c mercury_cli.c
 
 mercury_modes.o: mercury_modes.c mercury_cli.h
 	$(CC) $(ENGINE_CFLAGS) -c mercury_modes.c

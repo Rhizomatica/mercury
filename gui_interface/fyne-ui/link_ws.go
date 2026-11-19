@@ -219,6 +219,9 @@ func decodeWSMessage(msgType int, payload []byte) []Event {
 				PTTLine:     stringValue(raw, "ptt_line", "rts"),
 				PTTInvert:   stringValue(raw, "ptt_invert", "none"),
 				CM108GPIO:   stringValue(raw, "cm108_gpio", "3"),
+				GPIOChip:    stringValue(raw, "gpio_chip", "/dev/gpiochip0"),
+				GPIOLine:    stringValue(raw, "gpio_line", "17"),
+				GPIOInvert:  stringValue(raw, "gpio_invert", "false"),
 			}}
 
 		case "history":
