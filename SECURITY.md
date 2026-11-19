@@ -27,6 +27,12 @@ Please include:
   <path>` writes a full log to a file).  Remove callsigns, addresses or
   anything else you don't want to share.
 
+The TCP TNC ports and the UI WebSocket have no authentication by design:
+they are meant for this machine or a trusted network.  That a client can
+reach them and send commands without credentials is expected, not a
+vulnerability on its own.  Memory-safety bugs in how they parse input, or
+a way around a restriction Mercury does enforce, are worth reporting.
+
 You should get an acknowledgement within two weeks.  If you don't, please
 send a reminder.
 
