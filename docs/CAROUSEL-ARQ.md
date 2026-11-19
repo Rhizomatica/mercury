@@ -78,6 +78,27 @@ on a DATAC16 CALL 217 s in).  The callee answers on the CALL's floor, where
 the caller listens, and the session then runs at the lower bandwidth, on
 its floor.  A BW500 station still hears a 2300 caller's 1 kHz CALLs only
 through a filter wide enough for them; the narrow CALL passes any filter.
+**The deep floor.**  A caller wider than 500 Hz (BW2300, BW2750) also calls
+on the 500 Hz MFSK: after its fast CALLs its rotation is the floor and then
+the 500 Hz MFSK twice (`arq_call_carrier`), so at the default `RETRIES` its
+fourth and fifth CALLs are the narrow ones, about 77 s and 141 s in, each
+waiting that carrier's call interval (37.5 s) for the answer.  In the
+connect sim (60 seeds) this connected wherever the old rotation did, as fast,
+and under fading also at −13/−14/−15 dB in 59/56/49 runs, against 23/8/3;
+a third control-mode CALL in the rotation added nothing.  Every listener
+decodes it, and the callee answers there.  A session connected on it keeps
+the 500 Hz MFSK as its floor at both ends (the caller from the ACCEPT's
+carrier, the callee from its own: `session_floor_mode`), under its
+bandwidth's other rungs: only rung 0 changes, so the wire, the rung modes
+and the piece sizes are those of its bandwidth (`car_set_bandwidth`).  This
+is the fringe the 1 kHz floor does not reach: in the Go harness (256 B) a
+BW2300 session never connected at −15 dB on white noise or −13 dB under
+CCIR Moderate, a BW500 one completed down to −17 and −14 dB.  The callee
+answers a later repeat on the control mode on its bandwidth's floor, as
+before (`accept_carrier`).  A station at 500 Hz has that floor already.  An
+MFSK-only station (`arq:mfsk_tx_only`) has no control-mode CALLs: a wide
+one calls on the floor and the 500 Hz MFSK twice from its first CALL (it is
+the station the deep floor is for), a 500 Hz one on its floor.
 A floor keydown holds one frame (`MAX_KEYDOWN_MS` 30 s).  The narrow floor's
 decoder searches at 2 kHz and reads the payload at 8 kHz, so it costs less
 than the 1 kHz one (0.34 % against 0.5-0.6 % of an x86 core; a listening
