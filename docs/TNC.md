@@ -142,15 +142,16 @@ BW2750\r
 
 **Response:** `OK\r` on success, `WRONG\r` on error.
 
-- **BW2300** — Full bandwidth: the whole rung ladder, MFSK, DATAC15, DATAC4,
-  DATAC3, DATAC1, DATAC17 and QAM16C2.
-- **BW500** — Narrow bandwidth: MFSK, DATAC15, DATAC4 and DATAC3.  The
-  wideband rungs (DATAC1, DATAC17, QAM16C2, 1.7–2.1 kHz) are not used.
-  DATAC3 occupies 562 Hz and the MFSK floor 1000 Hz; both are kept, the
-  floor for its reach.
+- **BW2300** — Full bandwidth: MFSK, MFSK2K, DATAC4, DATAC3, DATAC1,
+  DATAC17 and QAM16C2.
+- **BW500** — Narrow bandwidth: the 500 Hz MFSK floor (MFSK500), DATAC15,
+  DATAC4, DATAC3 and the 9-carrier DATAN1, QAM16N1 and QAM16N2.  The
+  wideband rungs are not used.
 - **BW2750** — Accepted for VARA compatibility, negotiated and reported as
-  `2750`.  No rung is wider than 2.1 kHz yet, so it has the same ladder as
-  **BW2300**.
+  `2750`: the BW2300 ladder with the 44-carrier DATAC17W and QAM16C2W as
+  rungs 5 and 6.
+
+The per-rung table is in [MODES.md](MODES.md).
 
 The cap holds in both directions for the whole session, from the start rung
 the ACCEPT names onward (`car_max_level_for_bw` in `datalink_arq/carousel.c`).

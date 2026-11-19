@@ -30,7 +30,7 @@ waveform, the error correction, the retransmissions and the radio keying, and
 presents the result to your application as an ordinary TCP connection.
 
 - **ARQ data link for point-to-point sessions** — a connect/accept handshake, an erasure-coded "carousel" that the receiver drives (Reed-Solomon blocks, so a lost frame is replaced by any other frame of the block rather than resent), and a controlled disconnect, so a file either arrives intact or you are told it did not.
-- **Adaptive speed** — each direction runs on one of seven rungs, from the 32-tone MFSK floor through DATAC15, DATAC4, DATAC3, DATAC1 and DATAC17 up to QAM16C2. It starts on the rung the connect's SNR supports and moves on measured delivery. Control frames ride DATAC16 (and MFSK, or tone patterns, at the floor), so signalling survives when payload cannot.
+- **Adaptive speed** — each direction runs on one of seven rungs of its bandwidth's ladder; at BW2300, from the 32-tone MFSK floor through MFSK2K, DATAC4, DATAC3, DATAC1 and DATAC17 up to QAM16C2 (BW500 and BW2750 ladders: [docs/MODES.md](docs/MODES.md)). It starts on the rung the connect's SNR supports and moves on measured delivery. Control frames ride DATAC16 (and MFSK, or tone patterns, at the floor), so signalling survives when payload cannot.
 - **Broadcast mode** alongside ARQ, with its own framing and TCP ingress port — used for one-to-many traffic and for [Reticulum](#reticulum) mesh networking.
 - **VARA-style TCP TNC interface** on two sockets (control on the base port, data on base+1), speaking `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, `BITRATE`, `TUNE` (a 1 kHz ATU tuning carrier with a hard 60 s unkey timer) and `MONITOR` (a passive VARA-style monitor that decodes every mode). Existing VARA-aware software can generally talk to Mercury unchanged.
 - **Runs on the audio hardware you have** — `alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, `rtp` (to hermes-radio-daemon), `hl2` (a [Hermes-Lite 2](docs/HERMES-LITE-2.md) on the network, with no sound card or CAT), plus `shm`, `null`, `fifo` and `sock` for embedded and test use.
@@ -113,13 +113,15 @@ Mode behavior notes:
   what the payload decoder listens on while no ARQ session is up.  It does not
   affect an ARQ session.  `mercury -l` lists the indices: 0 DATAC1, 1 DATAC3,
   2 DATAC0, 3 DATAC4, 4 DATAC13, 5 DATAC14, 6 FSK_LDPC, 7 DATAC15, 8 DATAC16,
-  9 DATAC17, 10 QAM16C2, 11 MFSK.
-- During an ARQ session, control frames use DATAC16, and each direction's
-  payload runs on the carousel's rungs: MFSK, DATAC15, DATAC4, DATAC3, DATAC1,
-  DATAC17, QAM16C2.  The start rung comes from the SNR measured on the
-  connect; see [docs/CAROUSEL-ARQ.md](docs/CAROUSEL-ARQ.md).
-- VARA `BW500` keeps the link narrow; `BW2300` and `BW2750` allow the full
-  Mercury payload-mode ladder.
+  9 DATAC17, 10 QAM16C2, 11 MFSK, 12 MFSK500, 13 DATAC17W, 14 QAM16C2W,
+  15 DATAN1, 16 QAM16N1, 17 QAM16N2, 18 MFSK2K.
+- During an ARQ session, control frames normally use DATAC16, and each direction's
+  payload runs on the rungs of the session's bandwidth: at BW2300 MFSK,
+  MFSK2K, DATAC4, DATAC3, DATAC1, DATAC17, QAM16C2; the BW500 and BW2750
+  ladders are in [docs/MODES.md](docs/MODES.md).  The start rung comes from
+  the SNR measured on the connect; see [docs/CAROUSEL-ARQ.md](docs/CAROUSEL-ARQ.md).
+- VARA `BW500` keeps the link narrow.  The negotiated bandwidth selects one
+  of the three seven-rung payload ladders.
 - `CALL` advertises the local BW token and `ACCEPT` returns the negotiated
   session token. If either side uses `BW500`, the link stays narrow; `BW2750`
   is preserved in `CONNECTED ... BW` only when both peers advertise it.
