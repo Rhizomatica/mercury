@@ -1122,6 +1122,114 @@ static void abort_hold(uint64_t now)
     g_abort_hold_last = now;
 }
 
+/* A CALL on its way: PENDING as soon as a decoder has locked onto a frame,
+ * not when the CALL has decoded.
+ *
+ * A scanning host leaves the channel on its own schedule -- RMS Trimode stays
+ * on a frequency for 4 s and is deaf for 0.5 s while it changes -- and it
+ * stops only on PENDING, which it takes for "a connect request has been
+ * detected".  Ours came when the CALL had decoded: a 3.74 s frame (13.5 s on
+ * the MFSK floor) that falls whole inside one 4 s stay on about one visit in
+ * twenty-five (#527).  A decoder's lock comes about a second into the frame
+ * (the modem keeps it: modem_rx_frame_in_flight), so a stay that catches the
+ * frame's start holds the channel for the rest of it.
+ *
+ * So, while LISTENING and not keyed: PENDING when a lock begins, again every
+ * ARQ_PENDING_HOLD_MS while it lasts (a floor frame at BW500 is 27 s), and
+ * CANCELPENDING once it is gone and the FSM has not taken a CALL out of it.
+ * That last wait is ARQ_ARRIVAL_GRACE_MS: a CALL for us decodes as the lock
+ * ends and the FSM answers it a pass later, with the PENDING of the call
+ * (cb_notify_pending), and a CANCELPENDING in between would let the host go.
+ * A frame that is not a CALL for us -- another session's, a station calling
+ * someone else -- holds the host for its length and the grace, no more.
+ * A lock that outlasts any frame (ARQ_ARRIVAL_MAX_MS) is noise: released, and
+ * not held again until it has gone.
+ *
+ * No state beyond these statics: nothing is added to the session, and the
+ * hold is a function of the lock, the connection state and the clock. */
+#define ARQ_ARRIVAL_GRACE_MS 2000
+#define ARQ_ARRIVAL_MAX_MS   45000
+/* The modem says so on every pass of its loop in which a decoder was locked,
+ * and a pass in which the decoder published nothing says nothing: a lock that
+ * was seen within ARQ_ARRIVAL_STALE_MS is still there.  The loop passes every
+ * 20 ms (RX_DECODE_CHUNK_SAMPLES); an RX loop stalled for longer than this and
+ * the grace together (2.75 s) reads as a lock gone, and the host is released
+ * while the CALL may still be on the air -- as such a stall loses that CALL's
+ * audio anyway. */
+#define ARQ_ARRIVAL_STALE_MS 750
+static _Atomic uint64_t g_call_seen_ms;     /* the last time a CALL decoder was locked; 0: never */
+static uint64_t        g_arrival_ms;       /* the hold's first PENDING; 0: none (g_sess_lock) */
+static uint64_t        g_arrival_last_ms;  /* its last PENDING */
+static uint64_t        g_arrival_gone_ms;  /* when the lock was first seen gone; 0: it is there */
+static bool            g_arrival_noise;    /* the lock outlasted any frame: not held again until gone */
+
+void arq_note_call_in_flight(void)
+{
+    uint64_t now = time_now_ms();
+    uint64_t was = atomic_exchange(&g_call_seen_ms, now);
+    if (!was || now - was >= ARQ_ARRIVAL_STALE_MS)
+    {
+        /* Wake the event loop: its timeout is 500 ms and the host's stay is 4 s. */
+        pthread_mutex_lock(&g_evq_lock);
+        pthread_cond_signal(&g_evq_cond);
+        pthread_mutex_unlock(&g_evq_lock);
+    }
+}
+
+static void arrival_hold(uint64_t now)
+{
+    uint64_t seen = atomic_load(&g_call_seen_ms);
+    bool on = seen && now - seen < ARQ_ARRIVAL_STALE_MS;
+    bool idle = g_sess.conn_state == ARQ_CONN_LISTENING && !g_sess.tx_active;
+
+    if (!on)
+        g_arrival_noise = false;
+    if (!idle)
+    {
+        /* A session has taken over (its own notices follow), or we are keyed,
+         * or the host has asked for the radio back: nothing of this hold left
+         * to say. */
+        g_arrival_ms = g_arrival_gone_ms = 0;
+        return;
+    }
+    if (on)
+    {
+        g_arrival_gone_ms = 0;
+        if (g_arrival_noise)
+            return;
+        if (!g_arrival_ms)
+        {
+            arq_tnc_send_pending();
+            g_arrival_ms = g_arrival_last_ms = now;
+            HLOGI(LOG_COMP, "A CALL is arriving: holding a scanning host (PENDING)");
+        }
+        else if (now - g_arrival_ms >= ARQ_ARRIVAL_MAX_MS)
+        {
+            arq_tnc_send_cancelpending();
+            HLOGI(LOG_COMP, "A lock that outlasts any frame: noise, the scanner released");
+            g_arrival_ms = 0;
+            g_arrival_noise = true;
+        }
+        else if (now - g_arrival_last_ms >= ARQ_PENDING_HOLD_MS)
+        {
+            arq_tnc_send_pending();
+            g_arrival_last_ms = now;
+        }
+        return;
+    }
+    if (!g_arrival_ms)
+        return;
+    if (!g_arrival_gone_ms)
+        g_arrival_gone_ms = now;
+    if (now - g_arrival_gone_ms >= ARQ_ARRIVAL_GRACE_MS)
+    {
+        arq_tnc_send_cancelpending();
+        HLOGI(LOG_COMP, "The frame was no CALL for us: the scanner released (%llu s held)",
+              (unsigned long long)((now - g_arrival_ms) / 1000));
+        g_arrival_ms = g_arrival_gone_ms = 0;
+    }
+}
+
 static void *arq_event_loop_worker(void *arg)
 {
     (void)arg;
@@ -1172,6 +1280,7 @@ static void *arq_event_loop_worker(void *arg)
         pending_hold(now);
         abort_hold(now);
         rx_abort_tick();
+        arrival_hold(now);
         pthread_mutex_unlock(&g_sess_lock);
     }
 

@@ -2508,6 +2508,18 @@ static void rx_inflight_note(int slot, int mode, const rx_metrics_accum_t *m, ui
         atomic_store(&g_rx_inflight_since_ms[slot], 0);
 }
 
+/* A slot locked onto a frame that can hold a scanning host: any but the
+ * 500 Hz MFSK, whichever slot it sits in (the listen floor at BW500, the
+ * second listener above it).  Its carrier sense held a false lock for a whole
+ * 27 s frame twice in 9 minutes on the real 40 m band (7050 kHz), where the
+ * control plane and the 1 kHz MFSK held none; a CALL on it gets its PENDING
+ * when it decodes. */
+static bool rx_inflight_call(int slot)
+{
+    return atomic_load(&g_rx_inflight_since_ms[slot]) != 0 &&
+           atomic_load(&g_rx_inflight_mode[slot]) != MERCURY_MODE_MFSK_N32;
+}
+
 bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms)
 {
     uint64_t now = monotonic_ms();
@@ -3703,6 +3715,10 @@ void *rx_thread(void *g_modem)
             rx_inflight_note(RX_INFLIGHT_LISTEN, atomic_load(&w_listen.mode), &m_listen, now);
             rx_inflight_note(RX_INFLIGHT_LISTEN_ALT, atomic_load(&w_listen_alt.mode),
                              &m_listen_alt, now);
+            if (arq_policy_ready && (rx_inflight_call(RX_INFLIGHT_CTRL) ||
+                                     rx_inflight_call(RX_INFLIGHT_LISTEN) ||
+                                     rx_inflight_call(RX_INFLIGHT_LISTEN_ALT)))
+                arq_note_call_in_flight();   /* a scanning host is held (#527) */
         }
         {
             /* The monitor decoders are also not a link-quality source: their

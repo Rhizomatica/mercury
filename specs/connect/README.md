@@ -255,3 +255,22 @@ Results:
 Give each TLC run its own `-metadir`.  The state counts here are TLC
 2026.10.04 (`tlc2.TLC -h` prints the version); another version can count a
 few hundred states differently with the same results.
+
+## The notice that holds a scanning host while a CALL arrives (`arrival_hold`, #527)
+
+Not modelled: it adds no state to the connect.  LISTENING says `PENDING` when
+a CALL decoder (the control plane's, or the 1 kHz MFSK listener's) has locked
+onto a frame, again every `ARQ_PENDING_HOLD_MS` while the lock lasts, and
+`CANCELPENDING` `ARQ_ARRIVAL_GRACE_MS` after it is gone when the FSM has not
+taken a CALL out of it.  Where the FSM does (a CALL for this station decoded),
+the CALL's own `PENDING` (`cb_notify_pending`) follows in the same pass and the
+hold lets go without a `CANCELPENDING`: the session's notices take over, so the
+host sees one unbroken `PENDING` from the lock to `CONNECTED`, `CANCELPENDING`
+or `DISCONNECTED`.  The hold is a function of the decoder's lock, the
+connection state and the clock (statics in `arq.c`, nothing in the session),
+and is silent while a session exists or the radio is keyed.  Measured in the Go
+harness with a scanning host (4 s dwell, 0.5 s deaf, 2 channels, nine phases of
+the scan cycle): connects at 7 of 9 phases within 120 s, against 5 of 9 before.
+The two it misses, phases 4 and 5, are those where the caller's CALL repeats
+land outside the dwell each time (its cadence has locked to the scan cycle).
+
