@@ -12,8 +12,10 @@
 (*                                                                         *)
 (*   E, the callee, hearing a CALL while listening, picks a nonce and      *)
 (*   measures the start rung, and ACCEPTs.  Every repeat of that session's *)
-(*   CALL gets the same ACCEPT (spec R25); another session's CALL is       *)
-(*   ignored.  Out of ACCEPT retries it listens again, keeping the seed    *)
+(*   CALL gets the same ACCEPT (spec R25).  C's CALL of another session   *)
+(*   (it CONNECTed again: an id per CONNECT) means C has left the one E   *)
+(*   answers: E answers the new one, fresh (fsm_accepting).  Out of      *)
+(*   ACCEPT retries it listens again, keeping the seed                    *)
 (*   (accept_fallback): a later CALL of the same session gets the same     *)
 (*   ACCEPT, another session's a fresh one.  It is connected when it       *)
 (*   decodes C's first frame: on the rung it named, and only with the     *)
@@ -51,7 +53,7 @@
 (*   NoHalfConnect  E connected means C connected, same session, nonce   *)
 (*                  -- or C left that session (its watchdog);             *)
 (*   NoDeafRedial   no CALL of C's heard goes unanswered for a session C *)
-(*                  has left;                                             *)
+(*                  has left (E connected in it, or answering it);       *)
 (*   Settles        it ends with both connected, or both idle;            *)
 (*   Agree          E connected: both ends took the session to be         *)
 (*                  encrypted, or both clear (else one waits for a        *)
@@ -83,6 +85,9 @@ CONSTANTS Sids,     \* session ids C may pick
                     \*   "anyaccept": C takes an ACCEPT that took an offer this
                     \*                CONNECT did not make (one of an earlier
                     \*                CONNECT of the same id)
+                    \*   "ignorenewer": E answering ignores C's CALL of another
+                    \*                session (the code before 2026-11-19): C's
+                    \*                redial waits out E's ACCEPTs
 
 VARIABLES
     cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw,
@@ -148,7 +153,10 @@ Call ==
         \* E connected hears C calling: C has left E's session (it stops
         \* calling before its first frame, the one that connects E), so E
         \* ends it and answers
-        LET busy == (eSt = "connected" /\ Mutant = "ignorecall") \/ (eSt = "accepting" /\ eSid # cSid)
+        \* E answering, hearing C CALL another session: C has left E's (it
+        \* CONNECTed again), so E answers the new one (fsm_accepting)
+        LET busy == \/ eSt = "connected" /\ Mutant = "ignorecall"
+                    \/ eSt = "accepting" /\ eSid # cSid /\ Mutant = "ignorenewer"
             \* a required E answers only a CALL it takes; silence is the
             \* refusal (arq_handle_incoming_connect_frame)
             refused == EReq /\ ~(cOffer /\ take) /\ ~(EHolds /\ eSid = cSid)
@@ -156,7 +164,7 @@ Call ==
         IF ~heard \/ busy \/ refused
         THEN \* lost, or E is busy with another session: no ACCEPT
              /\ UNCHANGED <<eSt, eSid, eNonce, eLevel, eBw, sent, eLeft, eOffer, eTake>>
-             /\ deaf' = (deaf \/ (heard /\ eLeft /\ ~refused))
+             /\ deaf' = (deaf \/ (heard /\ (eLeft \/ (eSt = "accepting" /\ eSid # cSid)) /\ ~refused))
         ELSE /\ EAnswer(cSid, nonce, level, take)
              \* ACCEPTs of E's current session only: an older one's left the air
              /\ sent' = (IF EHolds /\ eSid = cSid THEN sent ELSE {})

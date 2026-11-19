@@ -16,7 +16,10 @@ What it models:
   out: spec R25).
 - The callee answers a new session with a fresh nonce, a measured start
   rung and the CALL's bandwidth; every repeat of the session's CALL gets the
-  same ACCEPT; another session's CALL, or another station's, is ignored.  Out
+  same ACCEPT; another station's CALL is ignored.  The caller's CALL of
+  another session (it CONNECTed again: a session id per CONNECT) means it
+  has left the one being answered, and the callee answers the new one,
+  fresh (`fsm_accepting`).  Out
   of ACCEPT retries it keeps the seed (`accept_fallback`) until it lapses.
 - The callee connects on the caller's first frame only on the rung it named
   and with its nonce (the CRC is seeded).  A caller that gave up and hears an
@@ -33,7 +36,13 @@ What it models:
 
 Not modelled: the carrier (DATAC16 or MFSK: a frame is lost or not;
 ConnectCarrier below has it), the session once up (its turns, rungs and
-blocks are the other specs'), its teardown.
+blocks are the other specs'), its teardown.  A CALL is heard as it is
+keyed: one of an earlier session decoded long after (on air, 2026-11-17
+21:19, a CALL of K7EK's previous CONNECT on another band) is not modelled.
+The code answers it as a CALL of another session, leaving the one the
+caller is in, and the caller's next CALL brings the callee back; a
+connected callee ends its session on such a CALL the same way
+(`fsm_connected`).
 
 Properties:
 
@@ -42,9 +51,12 @@ Properties:
   cap, MFSK floor).
 - `NoHalfConnect`: a connected callee means a connected caller, same session
   -- or a caller that has left it on its lost-peer watchdog.
-- `NoDeafRedial`: a connected callee never leaves a CALL of its caller's
-  unanswered.  The caller stops calling before its first frame, the one that
-  connects the callee, so a CALL heard there means the caller has left.
+- `NoDeafRedial`: a callee connected in, or answering, a session its caller
+  has left never leaves the caller's CALL unanswered.  The caller stops
+  calling before its first frame, the one that connects the callee, so a
+  CALL heard there means the caller has left; and it calls only for its
+  current session, so a CALL of another session means it has left the one
+  being answered.
 - `Settles`: every attempt ends with both connected, or both idle.
 - `Agree`: a connected callee and its caller both took the session to be
   encrypted, or both clear.  Otherwise one end waits for a handshake the
@@ -71,6 +83,14 @@ Results:
   did before 2026-10-18.  Violates `NoDeafRedial`: the caller, its watchdog
   first, redials, and the callee answers only once its own watchdog fires
   (sim, nvis seed 28: 104 s later).
+- `Mut_ignorenewer.cfg`: a callee answering a session ignores its caller's
+  CALL of another session, as the code did before 2026-11-19.  Violates
+  `NoDeafRedial`: the caller re-CONNECTs, and its new session's CALLs go
+  unanswered until the callee's ACCEPTs for the old one run out (on air:
+  K7EK answering N3JXB, 2026-11-18 06:06, 3 min; KG9NI answering an old
+  CALL of K7EK's decoded late, 2026-11-17 21:19, the attempt failed).
+  The base configs' state counts are unchanged: answering the new session
+  from ACCEPTING reaches states the fallback already reached.
 - `Mut_renonce.cfg`: a repeated CALL gets a fresh nonce.  Violates `NoDoom`.
 - `Mut_remeasure.cfg`: a repeated CALL gets a re-measured start rung (as
   before spec R25).  Violates `NoDoom`.
