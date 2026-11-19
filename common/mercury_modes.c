@@ -14,6 +14,7 @@
 #include "freedv_api.h"
 #include "mercury_cli.h"
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
+#include "../modem/modem_psk.h"    /* MERCURY_MODE_PSK3 */
 
 int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        FREEDV_MODE_DATAC3,
@@ -41,7 +42,9 @@ int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        FREEDV_MODE_QAM16N1,
                        FREEDV_MODE_QAM16N2,
                        /* the 2 kHz MFSK rung */
-                       MERCURY_MODE_MFSK_W2 };
+                       MERCURY_MODE_MFSK_W2,
+                       /* the three-carrier PSK rung */
+                       MERCURY_MODE_PSK3 };
 
 char *freedv_mode_names[] = { "DATAC1",
                               "DATAC3",
@@ -61,7 +64,8 @@ char *freedv_mode_names[] = { "DATAC1",
                               "DATAN1",
                               "QAM16N1",
                               "QAM16N2",
-                              "MFSK2K" };
+                              "MFSK2K",
+                              "PSK3" };
 
 int mercury_cli_mode_count(void)
 {

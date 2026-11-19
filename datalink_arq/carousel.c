@@ -43,6 +43,7 @@
 #include "arq_protocol.h"
 #include "freedv_api.h"
 #include "modem_mfsk.h"            /* MERCURY_MODE_MFSK */
+#include "modem_psk.h"             /* MERCURY_MODE_PSK3 */
 
 #include <math.h>
 #include <stdarg.h>
@@ -197,7 +198,7 @@ enum { M_DATA, M_POLL, M_REQ, M_STATUS };
  * level, each end maps it to its session's mode. */
 static const int LADDER[CAR_NLEVELS] = {
     MERCURY_MODE_MFSK,
-    MERCURY_MODE_MFSK_W2, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
+    MERCURY_MODE_MFSK_W2, MERCURY_MODE_PSK3, FREEDV_MODE_DATAC3,
     FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
 };
 static const int LADDER_500[CAR_NLEVELS] = {
@@ -207,7 +208,7 @@ static const int LADDER_500[CAR_NLEVELS] = {
 };
 static const int LADDER_2750[CAR_NLEVELS] = {
     MERCURY_MODE_MFSK,
-    MERCURY_MODE_MFSK_W2, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
+    MERCURY_MODE_MFSK_W2, MERCURY_MODE_PSK3, FREEDV_MODE_DATAC3,
     FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17W, FREEDV_MODE_QAM16C2W,
 };
 /* A wider session connected on the 500 Hz MFSK (arq_call_carrier: the
@@ -1149,6 +1150,7 @@ static float level_min_db(const car_t *c, int lv)
     case FREEDV_MODE_DATAC4:  return ARQ_SNR_MIN_DATAC4_DB;
     case FREEDV_MODE_DATAC15: return ARQ_SNR_MIN_DATAC15_DB;
     case MERCURY_MODE_MFSK_W2: return ARQ_SNR_MIN_MFSK_W2_DB;
+    case MERCURY_MODE_PSK3:    return ARQ_SNR_MIN_PSK3_DB;
     default:                  return -99.0f;          /* the MFSK floor */
     }
 }
