@@ -65,7 +65,8 @@ check: all
 	@fail=0; \
 	for t in $(FUZZ_BINS); do \
 	  echo "--- smoke-fuzzing $$t ($(CHECK_RUNS) runs) ---"; \
-	  ./$$t -runs=$(CHECK_RUNS) corpus/$$t || fail=1; \
+	  mkdir -p .check-corpus/$$t; \
+	  ./$$t -runs=$(CHECK_RUNS) .check-corpus/$$t corpus/$$t || fail=1; \
 	  if [ -n "$$(ls -A regressions/$$t 2>/dev/null | grep -v '^.gitkeep$$')" ]; then \
 	    echo "--- replaying saved regressions for $$t ---"; \
 	    for f in regressions/$$t/*; do \
@@ -79,7 +80,7 @@ check: all
 
 clean:
 	rm -f $(FUZZ_BINS) .preflight.c .preflight.bin crash-* leak-* oom-* timeout-*
-	rm -rf out
+	rm -rf out merged .check-corpus
 
 fuzz_arq_hdr: fuzz_arq_hdr.c ../../datalink_arq/arq_protocol.c \
               ../../datalink_arq/arith.c ../../modem/framer.c \

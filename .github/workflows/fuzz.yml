@@ -6,7 +6,9 @@
 # and `make -C tests/fuzz check` replays it from then on.
 #
 # The corpus each campaign grows is cached between runs, so campaigns build
-# on each other; the committed corpus/ stays the minimal seed set.
+# on each other; the committed corpus/ stays the minimal seed set.  Before it
+# is saved, each target's corpus is minimised with -merge=1, so the cache (and
+# the replay time of the check step) stays bounded.
 
 name: Fuzz
 
@@ -21,6 +23,11 @@ on:
         type: string
         default: '600'
 
+# Nothing here writes to the repository: checkout, actions/cache and
+# upload-artifact all work with a read-only token.
+permissions:
+  contents: read
+
 jobs:
   fuzz:
     runs-on: ubuntu-latest
@@ -30,6 +37,9 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      # Caches unused for 7 days are evicted and the cron is exactly weekly, so
+      # a delayed run may find none and start again from the committed seeds.
+      # That costs only coverage, not correctness.
       - name: Restore grown corpus
         uses: actions/cache/restore@v4
         with:
@@ -55,6 +65,22 @@ jobs:
             echo "::endgroup::"
           done
           exit $fail
+      - name: Minimise grown corpus
+        if: always()
+        timeout-minutes: 10
+        run: |
+          cd tests/fuzz
+          for t in $(make -s -f Makefile print-bins); do
+            [ -x "./$t" ] && [ -d "corpus/$t" ] || continue
+            rm -rf "merged/$t" && mkdir -p "merged/$t"
+            # Keep the old corpus if the merge fails for any reason.
+            if ./$t -merge=1 "merged/$t" "corpus/$t" > "merged/$t.log" 2>&1; then
+              echo "$t: $(ls "corpus/$t" | wc -l) -> $(ls "merged/$t" | wc -l) units"
+              rm -rf "corpus/$t" && mv "merged/$t" "corpus/$t"
+            else
+              echo "$t: merge failed, corpus kept"; tail -5 "merged/$t.log"
+            fi
+          done
       - name: Save grown corpus
         if: always()
         uses: actions/cache/save@v4
