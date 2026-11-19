@@ -5,29 +5,38 @@ its numbers leave open: which of the losses it measured can a protocol change
 buy back, and which are waveform ceilings no protocol change touches. Desk
 analysis, 2026-11-14, on `mercuryv2` at `274bd5c9`; the candidate-A grid
 measured 2026-11-15 against the same tree. Every claim below cites a row in
-the efficiency tables, a findings doc, or a line of `carousel.c`. Candidate
-A is prototyped and measured against trunk in the carousel sim (6 channels
+the efficiency tables, a findings doc, or a function of `carousel.c`.
+**Since `274bd5c9`, `mercuryv2` has moved the rungs this doc reasons about:**
+#575 (clipped QAM16C2, candidate C, merged), #599 (DATAC17 and QAM16C2 on a
+faster geometry -- 5.90 s / 1184 B and 3.30 s / 1183 B in `arq_mode_table`
+-- and a ladder per bandwidth, BW2750's topped by QAM16C2W) and #602 (rung 1
+of BW2300 and BW2750 is a 2 kHz MFSK; DATAC15 stays rung 1 of BW500 only).
+The measurements here and in FINDINGS are of the earlier build; where a
+figure moved, the text says so. Candidate A is prototyped and measured against trunk in the carousel sim (6 channels
 x 5 seeds, bulk one-way, 1 h bench cap, every run intact; warm = the same
 seed after a cold run wrote its hint):
 
 ## The residue, decomposed
 
 The 32 KB transfer at 25 dB AWGN measures 1954 bps. QAM16C2's raw piece rate
-is about 2.6 kbps (`arq_mode_table`: 1213 B payload in 3.70 s, minus frame
-and segment headers), so the session achieves **~75 % of the top rung**.
-(A frame-time note, since the two docs disagree on purpose: FINDINGS §3's
-probe frames are the bare freedv burst -- 1215 B in 3.30 s, DATAC16 16 B in
-3.30 s -- while this doc quotes `arq_mode_table`'s session slot: payload
-minus headers, preamble and margin counted -- 1213 B in 3.70 s, DATAC16
-14 B in 3.74 s.) The
-missing quarter is, in the order the efficiency report priced it:
+was about 2.6 kbps on the build that run measured (`arq_mode_table`: 1213 B
+payload in 3.70 s, minus frame and segment headers), so the session achieved
+**~75 % of the top rung** then. On current `mercuryv2` QAM16C2's slot is
+1183 B in 3.30 s, about 2.87 kbps, and 1954 bps is **~68 %** of it (the
+shape of the decomposition below does not change). (A frame-time note: FINDINGS §3's probe frames are the bare
+freedv burst, measured at `237481e7` -- QAM16C2 1215 B in 3.30 s, DATAC16
+16 B in 3.30 s. Since #599 QAM16C2's table slot has the same 3.30 s, with
+the geometry's 1183 B; DATAC16's slot still differs on purpose, 14 B in
+3.74 s, payload minus headers with preamble and margin counted.) The
+missing quarter -- about a third against today's table -- is, in the order
+the efficiency report priced it:
 
 - **the connect** (7.8–7.9 s of DATAC16 in every run, §1);
 - **the climb** — the receiver starts every session cold, its per-level
   goodput table empty (`carousel.c`'s `rung[lv].sent/lost` die with the
   session), so early rounds run on low rungs until the probe economics
-  (carousel.c:919–925: "a probe costs one frame, a wrong climb costs a
-  round") carry it up;
+  (the link-adaptation comment above `PROBE_UP_DELIVERY` in `carousel.c`:
+  "a probe costs one frame, a wrong climb costs a round") carry it up;
 - **control frames between rounds** — the share the airtime table puts at
   6.7–24 % even for bulk;
 - **the gaps the turns rules require** — Tg, D, and slot waits, the report's
@@ -38,9 +47,13 @@ And two ceilings protocol work cannot move:
 
 - **the control waveform**: DATAC16 carries 14 B in 3.74 s, ~30 bps, and
   prices every CALL, ACCEPT, status and non-inline poll at one frame;
-- **the top rung**: nothing above QAM16C2 exists in the codec2 set, which is
-  why Mercury caps at ~1950 bps where VARA reaches 2330–4990 above ~13 dB
-  (EFFICIENCY-FINDINGS §1).
+- **the top rung**: nothing above 16-QAM exists in the codec2 set. #599's
+  BW2750 ladder tops out at QAM16C2W (1169 B in 2.85 s, about 3.3 kbps raw
+  against QAM16C2's ~2.9) -- a wider geometry, not a higher order -- so the
+  ceiling moved up on BW2750 but is still 16-QAM. That is why Mercury
+  capped near 1950 bps on BW2300 at `237481e7` (before #599) where VARA
+  reaches 2330–4990, pulling ahead from ~21 dB on AWGN (on the CCIR grids
+  the two sit near 1 from 13 dB up; EFFICIENCY-FINDINGS §1).
 
 ## Candidates, ranked
 
@@ -48,10 +61,10 @@ And two ceilings protocol work cannot move:
 |---|---|---|---|---|
 | A | per-peer rung memory | protocol, receiver-only, no wire change | measured below: -11 % clean, three of ten fade seeds to -17 %; +6 % cliff:8, +3..+18 % nvis — off by default | small: a state file + seeding the estimator |
 | B | HARQ in the carousel's retx path | modem + protocol glue | large at low SNR and under fading | medium: hook exists, integration open |
-| C | clipped QAM16C2 (2.0/1.0) | modem config, TX-only | fading crossover vs DATAC17 ~3 dB earlier | one line, held for the OTA bench (#464) |
+| C | clipped QAM16C2 (2.0/1.0) | modem config, TX-only | fading crossover vs DATAC17 ~3 dB earlier | done: #575, merged 2026-11-17 (on air, 58 of 64 frames against none) |
 | D | trim the connect handshake | protocol | ~4 s a session | small, touches the connect FSM |
 | E | a short control burst | upstream codec2 | much of the 23–69 % control share on message traffic | large: a new waveform |
-| F | rungs above QAM16C2 | upstream codec2 | closes the >13 dB VARA gap | large: a new waveform |
+| F | rungs above 16-QAM | upstream codec2 | closes the VARA gap above ~21 dB (AWGN) | large: a new waveform; #599's QAM16C2W raised the 16-QAM ceiling on BW2750, not the order |
 | G | the empty response slot after each keydown | protocol, turns timing | the largest single silence item on air: ~7 s per keydown (#495) | in flight: #603 (Pedro's `proto/early-slot-release` prototype) |
 
 ### A. Per-peer rung memory
@@ -97,7 +110,7 @@ costs cliff:8 and nvis nothing, at the price of one more piece of state.
 
 The link adaptation is the best-measured part of the protocol — per-level
 delivery estimated from frame counts, dead levels verdict-ed, probes priced
-one frame (carousel.c:916–955) — and it is reset to zero by every session
+one frame (`level_rate`, `level_goodput` and the probe rules in `carousel.c`) — and it is reset to zero by every session
 end. What it learned about a peer on a channel that changes over hours, not
 minutes, is thrown away. Persisting it (keyed by peer callsign, decayed,
 written at teardown, read at session start) seeds the estimator so a session
@@ -123,13 +136,15 @@ mark a retransmission as a retx of the same codeword, reset the soft buffer
 on new payloads, hold one frame's LLRs. The carousel already knows exactly
 this — a block's pieces are re-sent until received — so the map from
 carousel retx to combining opportunity is one-to-one. This is the lever at
-the low-SNR fringe, where the MFSK floor and DATAC15 live.
+the low-SNR fringe, where the MFSK floor lives (and DATAC15 at BW500; since
+#602 rung 1 of BW2300 and BW2750 is the 2 kHz MFSK, which has its own
+combining question).
 
 ### C. Clipped QAM16C2
 
-Done and documented (CLIPPED-QAM16C2-FINDINGS): TX-side only, interoperates
-with stock, fading goodput crossover vs DATAC17 ~3 dB earlier. Rafael has
-taken the OTA A/B onto the sBitx pair (#464 thread).
+Done: #575 merged on 2026-11-17 (CLIPPED-QAM16C2-FINDINGS has the
+simulation; on air, 58 of 64 frames delivered against none). TX-side only,
+interoperates with stock, fading goodput crossover vs DATAC17 ~3 dB earlier.
 
 ### D. Trim the connect
 
@@ -148,6 +163,8 @@ already took the cheap half of it (inline polls: two keydowns per
 request/response exchange instead of four, 16–32 % faster in the sim; the
 0.64 s pattern ACK replacing the 3.7 s DISCONNECT frame). F, anything above
 16-QAM at this code rate, is the only route to VARA's 4990 bps at 25 dB.
+What is already in is a wider geometry (#599: QAM16C2W on BW2750, ~3.3 kbps
+raw); what is still missing is a higher modulation order.
 Both are codec2-scale projects; raising them upstream, with the efficiency
 tables as the case, is worth more than any local patch.
 
@@ -224,8 +241,7 @@ Happy to take any of these as far as wanted: A is prototyped on the branch
 start, write at teardown, off by default — `MERCURY_RUNG_MEMORY=1` is the
 switch, sim A/B via `MERCURY_RUNG_HINTS`); D is a connect-FSM change I can
 measure the same way; B needs a design pass with Rafael and Pedro before
-code; C is Rafael's OTA run on the sBitx pair (#464), where help with the
-A/B protocol or the bench scripts is on offer; G is #603 (from Pedro's
+code; C is done (#575); G is #603 (from Pedro's
 `proto/early-slot-release` prototype) — bench time or a review pass is on
 offer there; E and F are letters to
 write, and the efficiency tables are the case to attach.
