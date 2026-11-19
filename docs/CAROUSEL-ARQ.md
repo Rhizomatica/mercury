@@ -53,11 +53,12 @@ SNR threshold, or once two rounds in a row brought nothing of the peer at all),
 re-probed after 60 s, doubling to 8 min.  A direction starts on the rung the connect's SNR
 supports (`ARQ_SNR_MIN_*`), as a one-frame probe.  Each bandwidth has its own
 ladder, in both directions (`car_set_bandwidth`; the rung on the wire maps to
-the session's mode): rungs 2-3 (DATAC4, DATAC3) are shared; BW500 has the
-500 Hz MFSK floor, DATAC15 and 9-carrier top rungs (DATAN1, QAM16N1,
-QAM16N2), BW2300 the 2 kHz MFSK (MFSK2K) as rung 1 and DATAC1, DATAC17 and
+the session's mode): rung 3 (DATAC3) is shared; BW500 has the
+500 Hz MFSK floor, DATAC15, DATAC4 and 9-carrier top rungs (DATAN1, QAM16N1,
+QAM16N2), BW2300 the 2 kHz MFSK (MFSK2K) as rung 1, the three-carrier
+differential QPSK (PSK3) as rung 2 and DATAC1, DATAC17 and
 QAM16C2 on 36 carriers (inside a 300-2700 Hz transmit passband), BW2750 the
-same rung 1, DATAC1 and 44-carrier DATAC17W and QAM16C2W
+same rungs 1 and 2, DATAC1 and 44-carrier DATAC17W and QAM16C2W
 ([MODES.md](MODES.md)).
 
 **The BW500 floor.**  A BW500 session's rung 0 is the 500 Hz MFSK (`MFSK500`,
