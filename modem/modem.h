@@ -92,6 +92,11 @@ bool modem_channel_busy(void);
 void  modem_set_tx_gain(float linear);
 float modem_get_tx_gain(void);
 
+/* Host DRIVELEVEL (VARA): MODEM_DRIVE_MIN_DB..0 dB of attenuation applied on
+ * top of the TX gain.  Returns -1 (and changes nothing) out of range. */
+#define MODEM_DRIVE_MIN_DB (-30.0f)
+int   modem_set_drive_db(float db);
+
 /* TX keying delay (ms, clamped 0..2000) waited after PTT ON before audio is
  * written to the playback device. Default 10ms covers the local radio
  * relay's switch time; raise it for a slower external PTT path. */
@@ -159,6 +164,9 @@ void  modem_tune_stop(void);
 bool  modem_tune_active(void);
 // Most recently requested tuning level in dBFS (what "TUNE ?" reports).
 float modem_tune_level_dbfs(void);
+// Set the tuning level without keying (host DRIVELEVEL).  A carrier already
+// on follows it.  -1 when dbfs is outside what TUNE accepts.
+int   modem_tune_set_level_dbfs(float dbfs);
 
 // Monitor mode: decode EVERY Mercury mode in parallel and report each decoded
 // frame to the host as a "MONITOR ..." line on the control port.  Passive by

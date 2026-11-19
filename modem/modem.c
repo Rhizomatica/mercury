@@ -174,6 +174,23 @@ float modem_get_tx_gain(void)
     return atomic_load(&g_tx_gain);
 }
 
+/* Host DRIVELEVEL: attenuation on top of the operator's TX gain, so a host
+ * can lower the drive but never raise it past what the operator set. */
+static _Atomic float g_drive_linear = 1.0f;
+
+int modem_set_drive_db(float db)
+{
+    if (!isfinite(db) || db < MODEM_DRIVE_MIN_DB || db > 0.0f)
+        return -1;
+    atomic_store(&g_drive_linear, powf(10.0f, db / 20.0f));
+    return 0;
+}
+
+static float tx_gain_now(void)
+{
+    return atomic_load(&g_tx_gain) * atomic_load(&g_drive_linear);
+}
+
 /* --- TX keying delay (ms), waited after PTT ON before audio is handed to
  * the playback device. Covers the local radio relay's switch time and,
  * beyond that, gives a slow external PTT (host app driving a serial/CAT
@@ -245,6 +262,18 @@ bool modem_tune_active(void)
 float modem_tune_level_dbfs(void)
 {
     return (float)atomic_load(&g_tune_dbfs_milli) / 1000.0f;
+}
+
+/* Host DRIVELEVEL: the level only, no key.  tune_thread reads the level for
+ * every chunk, so a carrier already on changes level within ~100 ms, and its
+ * safety deadline is left alone. */
+int modem_tune_set_level_dbfs(float dbfs)
+{
+    if (!isfinite(dbfs) || dbfs < MODEM_TUNE_MIN_DBFS || dbfs > MODEM_TUNE_MAX_DBFS)
+        return -1;
+    atomic_store(&g_tune_dbfs_milli, (int)lrintf(dbfs * 1000.0f));
+    HLOGI("tune", "drive level set to %.1f dBFS", (double)dbfs);
+    return 0;
 }
 
 static void *tune_thread(void *unused)
@@ -1672,7 +1701,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     }
 
     size_t total_samples = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;  /* pre-saturation peak magnitude across this burst */
 
     for (int i = 0; i < samples_head; i++)
@@ -1758,7 +1787,7 @@ static int send_modulated_keydown(generic_modem_t *g_modem, const arq_keydown_t 
     }
 
     size_t total = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;
     for (int i = 0; i < FREEDV_FS_8000 * TX_HEAD_SILENCE_MS / 1000; i++)
         tx_buffer[total++] = 0;
@@ -1886,7 +1915,7 @@ static int send_pattern_ack(generic_modem_t *g_modem, int mode, int pattern_kind
     }
 
     size_t k = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;
     for (int i = 0; i < samples_head; i++) tx_buffer[k++] = 0;
     /* MFSK generator emits int16 passband; scale up to int32 with tx_gain. */

@@ -85,6 +85,7 @@ void tnc_send_connected();
 void tnc_send_cqframe(const char *source_call, int bw_hz);
 void tnc_send_disconnected();
 void tnc_send_buffer(uint32_t bytes);
+void tnc_send_cleantxbuffer(bool dropped_any);
 /* A broadcast chat message from the host program, at the listen mode's frame
  * size: 0, -1 with no broadcast frame size yet, -2 too long for one frame. */
 int broadcast_send_message(const uint8_t *msg, size_t len);

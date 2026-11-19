@@ -56,3 +56,8 @@ void arq_tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
 {
     if (g_tnc && g_tnc->send_bitrate) g_tnc->send_bitrate(speed_level, bps);
 }
+
+void arq_tnc_send_cleantxbuffer(bool dropped_any)
+{
+    if (g_tnc && g_tnc->send_cleantxbuffer) g_tnc->send_cleantxbuffer(dropped_any);
+}
