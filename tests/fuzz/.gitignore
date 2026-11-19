@@ -10,6 +10,8 @@
 /leak-*
 /oom-*
 /timeout-*
+# Per-target reproducer dirs written by the CI fuzz loop (-artifact_prefix)
+/out/
 *.profraw
 # macOS debug symbol bundles
 *.dSYM/

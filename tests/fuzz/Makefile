@@ -79,6 +79,7 @@ check: all
 
 clean:
 	rm -f $(FUZZ_BINS) .preflight.c .preflight.bin crash-* leak-* oom-* timeout-*
+	rm -rf out
 
 fuzz_arq_hdr: fuzz_arq_hdr.c ../../datalink_arq/arq_protocol.c \
               ../../datalink_arq/arith.c ../../modem/framer.c \

@@ -2,7 +2,11 @@
 #
 # Non-blocking: runs weekly and on manual dispatch, never on PRs, so it adds
 # nothing to the required gates. Any crash/leak/timeout reproducer is uploaded
-# as an artifact; copy it into tests/fuzz/regressions/<target>/ when fixing.
+# as an artifact; copy it into tests/fuzz/regressions/<target>/ when fixing,
+# and `make -C tests/fuzz check` replays it from then on.
+#
+# The corpus each campaign grows is cached between runs, so campaigns build
+# on each other; the committed corpus/ stays the minimal seed set.
 
 name: Fuzz
 
@@ -20,12 +24,22 @@ on:
 jobs:
   fuzz:
     runs-on: ubuntu-latest
+    # Outer bound only.  The Fuzz step has its own, shorter limit: a step
+    # timeout counts as a failure, so the reproducer upload still runs,
+    # while a job timeout cancels the job and skips it.
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - name: Restore grown corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: tests/fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
       - name: Build targets, smoke run, replay saved regressions
         run: make -C tests/fuzz check
       - name: Fuzz
+        timeout-minutes: 110
         env:
           SECS: ${{ inputs.seconds || '600' }}
         run: |
@@ -34,14 +48,29 @@ jobs:
           for t in $(make -s -f Makefile print-bins); do
             echo "::group::$t"
             mkdir -p "out/$t"
-            ./$t -max_total_time="$SECS" -artifact_prefix="out/$t/" \
+            # -timeout: report an input slower than 25 s as a timeout-*
+            # reproducer (libFuzzer's default is 1200 s per input).
+            ./$t -max_total_time="$SECS" -timeout=25 -artifact_prefix="out/$t/" \
                  -print_final_stats=1 "corpus/$t" || fail=1
             echo "::endgroup::"
           done
           exit $fail
+      - name: Save grown corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: tests/fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
       - name: Upload reproducers
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-reproducers
-          path: tests/fuzz/out/
+          # The check step's smoke run has no -artifact_prefix, so its finds
+          # land in tests/fuzz/ itself rather than out/.
+          path: |
+            tests/fuzz/out/
+            tests/fuzz/crash-*
+            tests/fuzz/leak-*
+            tests/fuzz/timeout-*
+            tests/fuzz/oom-*
