@@ -1,17 +1,22 @@
 # Efficiency and performance: throughput, airtime, and CPU on `mercuryv2` at `237481e7`
 
 Measured 2026-11-12/13 on `mercuryv2` at `237481e7`, bench and simulation
-only, no radio. **Freshness note (2026-11-14): trunk has moved 62 commits
-and one release since (v1.9.24), including #545, which changes the rung
-estimate to prefer data frames' readings (#501's fix), #548, and #538 --
-the very machinery these rows exercise. Since then #575 (clipped
-QAM16C2), #599 (DATAC17 and QAM16C2 on a faster geometry, now 5.90 s /
-1184 B and 3.30 s / 1183 B in `arq_mode_table`, and a ladder per
-bandwidth) and #602 (rung 1 of BW2300 and BW2750 is a 2 kHz MFSK) have
-changed the rungs themselves, so the §3 DATAC17 and QAM16C2 rows and the
-~1950 bps cap describe modes that have moved. The tables below describe
-`237481e7`; re-running the grid on current trunk is a rerun of the same
-drivers, not a rewrite.** Three instruments: the integration harness
+only, no radio. **Freshness note (2026-11-14, extended 2026-11-19): trunk
+has moved 62 commits and one release since (v1.9.24), including #545, which
+changes the rung estimate to prefer data frames' readings (#501's fix),
+#548, and #538 -- the very machinery these rows exercise. Since then #575
+(clipped QAM16C2), #599 (DATAC17 and QAM16C2 on a faster 36-carrier
+geometry, a ladder per bandwidth, and the start-rung thresholds moved --
+DATAC17 7.0 -> 5.5 dB), #602 (rung 1 of BW2300 and BW2750 is a 2 kHz MFSK,
+so DATAC15 is a BW500-only rung) and #621 (the 16-QAM preamble threshold
+0.30 -> 0.10, which moves CCIR-fading figures such as the 1400 bps on Poor)
+have changed the rungs themselves: §1's low-S/N rows, §3's DATAC17, QAM16C2
+and DATAC15 rows and the ~1950 bps cap describe modes that have moved. §3
+lists the bare freedv bursts, where QAM16C2 was 3.30 s / 1215 B and is now
+about 2.85 s / 1185 B; `arq_mode_table`'s session slot (5.90 s / 1184 B for
+DATAC17, 3.30 s / 1183 B for QAM16C2) is that burst plus a ~0.45 s margin,
+not the same quantity. The tables below describe `237481e7`; re-running the
+grid on current trunk is a rerun of the same drivers, not a rewrite.** Three instruments: the integration harness
 (`TestMercuryARQTransfer`, `MERCURY_CH_ENGINE=watterson`, fixed seeds), the
 carousel simulator (`carousel_bench` with `SIM_STATS=1` and a new per-station
 air/keydown line), and two CPU probes (`utils/modem_cpu_probe`, new, next to
