@@ -4,7 +4,12 @@ Measured 2026-11-12/13 on `mercuryv2` at `237481e7`, bench and simulation
 only, no radio. **Freshness note (2026-11-14): trunk has moved 62 commits
 and one release since (v1.9.24), including #545, which changes the rung
 estimate to prefer data frames' readings (#501's fix), #548, and #538 --
-the very machinery these rows exercise. The tables below describe
+the very machinery these rows exercise. Since then #575 (clipped
+QAM16C2), #599 (DATAC17 and QAM16C2 on a faster geometry, now 5.90 s /
+1184 B and 3.30 s / 1183 B in `arq_mode_table`, and a ladder per
+bandwidth) and #602 (rung 1 of BW2300 and BW2750 is a 2 kHz MFSK) have
+changed the rungs themselves, so the §3 DATAC17 and QAM16C2 rows and the
+~1950 bps cap describe modes that have moved. The tables below describe
 `237481e7`; re-running the grid on current trunk is a rerun of the same
 drivers, not a rewrite.** Three instruments: the integration harness
 (`TestMercuryARQTransfer`, `MERCURY_CH_ENGINE=watterson`, fixed seeds), the
@@ -223,7 +228,7 @@ What it says:
 - **Idle cost is flat across modes** (~1.5-3.3 %): the acquisition search,
   not the payload demodulator, is what listening spends. That is why
   #455/#470's acquisition knobs traded whole idle percents -- and why the
-  wider +-150 Hz search (2.5x idle CPU, ACQ-TUNING-FINDINGS) remains the
+  wider +-150 Hz search (2.5x idle CPU, OFFSET-ACQUISITION-FINDINGS) remains the
   largest CPU number in the project, still under a tenth of a core.
 
 ## What this does not say
