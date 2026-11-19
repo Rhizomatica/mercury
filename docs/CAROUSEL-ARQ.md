@@ -45,9 +45,10 @@ DATAC16 (3.30 s) when the peer says it hears me at
 `ARQ_SNR_MIN_CTL_FAST_DB` (3 dB) or more (`ctl_mode`, as the floor's choice
 in `ctl_on_floor`).  The control decoder hears both (`modem_ctl.c`), so
 nothing on the air says which comes, and the peer's slots stay sized for
-DATAC16.  The connect stays on DATAC16.  In the sim matrix this was 0.94 of
-the session time, faster on good links (12-17 % at 10-20 dB, 18-23 % on
-NVIS) and unchanged at the weak end, where control stays on DATAC16.
+DATAC16.  The connect stays on DATAC16.  In the Go harness (8 kB, white
+noise and CCIR Moderate at 5/10/15 dB, 3 seeds) sessions took 0.865 of the
+time, 17 of 18 faster; in the sim matrix 0.952, faster from 5 dB up and on
+NVIS, unchanged at the weak end, where control stays on DATAC16.
 
 **Only the receiver keeps a round timer.**  It polls again when the round's
 window closes, or when the sender's carrier drops if it heard the carrier.
