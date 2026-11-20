@@ -70,6 +70,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->tnc_absorb_idle_disconnect_s = 0;
     cfg->tx_gain_db            = 0.0f;
     cfg->tx_delay_ms           = 10;
+    cfg->pulse_keepalive       = false;
     cfg->retry_stagger_ms            = ARQ_RETRY_STAGGER_MS_DEFAULT;
     cfg->silence_fallback_s          = ARQ_SILENCE_FALLBACK_S_DEFAULT;
     cfg->call_max_s                  = ARQ_CALL_MAX_S_DEFAULT;
@@ -479,6 +480,8 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
 
     i = iniparser_getint(ini, CFG_KEY_TX_DELAY_MS, cfg->tx_delay_ms);
     if (i >= 0 && i <= 2000) cfg->tx_delay_ms = i;
+    cfg->pulse_keepalive = (bool) iniparser_getboolean(ini, CFG_KEY_PULSE_KEEPALIVE,
+                                                       cfg->pulse_keepalive ? 1 : 0);
 
     cfg->store_enabled = (bool) iniparser_getboolean(ini, CFG_KEY_STORE_ENABLED,
                                                      cfg->store_enabled ? 1 : 0);
@@ -630,6 +633,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "\n[audio]\n");
     fprintf(f, "tx_gain_db = %.2f\n", cfg->tx_gain_db);
     fprintf(f, "tx_delay_ms = %d\n", cfg->tx_delay_ms);
+    fprintf(f, "pulse_keepalive = %s\n", cfg->pulse_keepalive ? "true" : "false");
 
     fprintf(f, "\n[tnc]\n");
     fprintf(f, "keepalive_s = %d\n", cfg->tnc_keepalive_s);

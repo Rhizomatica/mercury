@@ -131,6 +131,9 @@ static audio_health_t  s_cap_health  = AUDIO_HEALTH_STOPPED;
 static audio_health_t  s_play_health = AUDIO_HEALTH_STOPPED;
 static char            s_health_reason[192];
 
+/* [audio] pulse_keepalive (audioio_set_pulse_keepalive). */
+static _Atomic bool s_pulse_keepalive = false;
+
 static void audio_health_set(bool capture, audio_health_t st, const char *reason)
 {
     pthread_mutex_lock(&s_health_lock);
@@ -1693,11 +1696,44 @@ void *radio_playback_thread(void *device_ptr)
     uint32_t play_write_errors = 0;
     uint32_t play_reopens = 0;
 
+    /* Keep PulseAudio playback fed with silence between transmissions
+     * (#591).  Writing only while keyed lets the stream run dry for minutes
+     * between bursts, and on PipeWire with a USB codec (a Sound Blaster
+     * Play) the output did not start again after 12 min idle: a fresh
+     * stream took one buffer and never played it, while capture on the same
+     * card went on working.  VARA, WSJT-X and fldigi, fine on that card,
+     * feed their output all the time.  Not for ALSA: a HERMES station plays
+     * into a loopback the radio controller reads only when it wants, and a
+     * steady write there would block.
+     *
+     * Opt-in, [audio] pulse_keepalive: a stream that never stops costs idle
+     * CPU in Mercury and in the PulseAudio server, and keeps the card from
+     * suspending (module-suspend-on-idle).  Phones and cards without the
+     * #591 problem should not pay that. */
+    bool play_keepalive = false;
+#if defined(AUDIOIO_ALSA_PULSE)
+    play_keepalive = (audio == (ffaudio_interface *) &ffpulse) &&
+                     atomic_load(&s_pulse_keepalive);
+#endif
+    if (play_keepalive)
+        HLOGI("audio-play", "pulse_keepalive: playback is fed with silence between transmissions");
     /* Non-blocking writes poll for room: a quarter of the device buffer the
      * open negotiated (7 ms of 30 ms) keeps it from running dry while
      * bounding the wake-ups (#617 review). */
     const uint32_t play_poll_ms = (cfg->buffer_length_msec >= 8)
                                   ? cfg->buffer_length_msec / 4 : 2;
+    /* Writing silence, a burst is not waiting: poll half as often (#625
+     * review).  A burst queued meanwhile still waits at most this. */
+    const uint32_t play_idle_poll_ms = (cfg->buffer_length_msec >= 4)
+                                       ? cfg->buffer_length_msec / 2 : 2;
+    /* Silence fed through the resampler since the last real audio, in 8 kHz
+     * samples.  Past its whole filter history, the resampler's output is
+     * exact zeros, so idle periods skip it and the format expansion: the
+     * keepalive runs all the time, and filtering zeros is wasted work.  The
+     * first periods of silence still go through it, so the tail of a burst
+     * is played out, not cut. */
+    const uint32_t play_flush_8k = 2 * RESAMP_NTAPS_MAX;
+    uint32_t play_quiet_8k = 0;
 
     /* Reached only after the device, rate, format and channel checks above:
      * the playback path is fully validated and about to stream. */
@@ -1707,19 +1743,31 @@ void *radio_playback_thread(void *device_ptr)
     {
         ffssize n;
         size_t buffer_size = size_buffer(playback_buffer);
-        if (buffer_size == 0)
+        bool silent_period = false;
+        if (buffer_size == 0 && play_keepalive)
+        {
+            /* A period of silence; the write below waits for room, which
+             * paces this at the device's rate.  A burst queued meanwhile
+             * waits behind at most this period and the ~30 ms device buffer;
+             * a dry stream cost about the buffer to restart anyway, so it
+             * starts ~10 ms later, well inside the modem's TAIL_TIME_US. */
+            memset(input_buffer, 0, period_bytes_8k);
+            n = period_bytes_8k;
+            silent_period = true;
+        }
+        else if (buffer_size == 0)
         {
             ffthread_sleep(period_ms ? period_ms : 5);
             continue;
         }
-        if (buffer_size >= period_bytes_8k)
+        else if (buffer_size >= period_bytes_8k)
         {
             read_buffer(playback_buffer, (uint8_t *) input_buffer, period_bytes_8k);
             n = period_bytes_8k;
         }
         else
         {
-            // we just play zeros if there is nothing to play
+            /* The last, partial period of a burst. */
             memset(input_buffer, 0, period_bytes_8k);
             if (buffer_size > 0)
                 read_buffer(playback_buffer, (uint8_t *) input_buffer, buffer_size);
@@ -1730,14 +1778,25 @@ void *radio_playback_thread(void *device_ptr)
 
         int samples_read_8k = n / sizeof(int32_t);
 
+        /* The resampler holds only zeros: its output is silence, written
+         * below without filtering it (samples_upsampled stays 0, so the
+         * expansion loop does nothing). */
+        bool flushed_silence = silent_period && play_quiet_8k >= play_flush_8k;
+        if (silent_period && !flushed_silence)
+            play_quiet_8k += (uint32_t) samples_read_8k;
+        else if (!silent_period)
+            play_quiet_8k = 0;
+
         /* Upsample 8 kHz -> the device rate through the polyphase anti-imaging
          * FIR: integer ratio where the rate allows it, rational L/M otherwise
          * (the 44.1 kHz family). */
-        int samples_upsampled =
-            rat_up ? resamp_rat_process(rat_up, input_buffer, samples_read_8k,
-                                        buffer_upsampled)
-                   : resamp_up_process(&up_rs, input_buffer, samples_read_8k,
-                                       buffer_upsampled);
+        int samples_upsampled = 0;
+        if (!flushed_silence)
+            samples_upsampled =
+                rat_up ? resamp_rat_process(rat_up, input_buffer, samples_read_8k,
+                                            buffer_upsampled)
+                       : resamp_up_process(&up_rs, input_buffer, samples_read_8k,
+                                           buffer_upsampled);
 
         /* Expand the upsampled mono modem signal into the device's negotiated
          * channel/format layout.  cfg->channels is 1 or 2; cfg->format is what
@@ -1785,7 +1844,14 @@ void *radio_playback_thread(void *device_ptr)
             }
         }
 
-        n = samples_upsampled * frame_size;
+        if (flushed_silence)
+        {
+            size_t frames = (size_t) samples_read_8k * cfg->sample_rate / 8000u;
+            memset(buffer_output_stereo, 0, frames * frame_size);
+            n = (ffssize) (frames * frame_size);
+        }
+        else
+            n = samples_upsampled * frame_size;
 
         while (n >= frame_size)
         {
@@ -1846,7 +1912,7 @@ void *radio_playback_thread(void *device_ptr)
                 play_write_errors = 0;
                 break;   /* this period's audio goes with the rest */
             }
-            ffthread_sleep(r < 0 ? 20 : play_poll_ms);
+            ffthread_sleep(r < 0 ? 20 : silent_period ? play_idle_poll_ms : play_poll_ms);
         }
         // printf("n = %lld total written = %u\n", n, total_written);
     }
@@ -2772,6 +2838,11 @@ int audioio_device_name(int audio_subsys, int mode, const char *id, char *name, 
  * exactly today's behavior. */
 static char s_capture_saved_name[AUDIO_DEV_STR_MAX];
 static char s_playback_saved_name[AUDIO_DEV_STR_MAX];
+
+void audioio_set_pulse_keepalive(bool on)
+{
+    atomic_store(&s_pulse_keepalive, on);
+}
 
 void audioio_set_saved_device_names(const char *capture_name, const char *playback_name)
 {

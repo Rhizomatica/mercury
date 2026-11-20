@@ -397,6 +397,7 @@ arq:call_max_s	300	Longest a station calls, whatever RETRIES says (0 = no cap, m
 arq:max_keydown_s	0	Longest transmission, s (0: the protocol's 30 s; else 5\-30); 16 for vARIM before 1.13, which aborts after about 20 s keyed (1.13 and later allow 35 s)
 audio:tx_gain_db	0.0	Modulator gain, dB; at 0 every mode peaks at about \-2 dBFS (\-4 keeps the pre\-1.9.25 level)
 audio:tx_delay_ms	10	Delay from PTT on to audio
+audio:pulse_keepalive	false	PulseAudio: feed playback with silence between transmissions, for cards whose output does not restart after a long idle spell (costs idle CPU)
 channel:busy_detect	false	Channel-busy (BUSY ON/OFF) detector
 channel:busy_reseed_on_hop	false	Busy detector takes a new noise floor at each scan hop (LISTEN OFF)
 .TE
