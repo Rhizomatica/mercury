@@ -19,8 +19,15 @@ What it models:
   same ACCEPT; another station's CALL is ignored.  The caller's CALL of
   another session (it CONNECTed again: a session id per CONNECT) means it
   has left the one being answered, and the callee answers the new one,
-  fresh (`fsm_accepting`).  Out
+  fresh (`fsm_accepting`) -- except while its ACCEPT of the one it answers
+  could still be answered (the caller's first frames may be on their way),
+  and never one decoded too late: a stale frame is not a redial.  Out
   of ACCEPT retries it keeps the seed (`accept_fallback`) until it lapses.
+- A CALL the caller keyed for a session it has left may surface at the
+  callee late (a decoder backlog; on air, KG9NI <- K7EK, 2026-11-17
+  21:19): `StaleCall`.  The callee, answering, ignores it; `Mut_staletake`
+  answers it (the switch before the age check), which violates
+  `NoDeadAnswer`.
 - The callee connects on the caller's first frame only on the rung it named
   and with its nonce (the CRC is seeded).  A caller that gave up and hears an
   ACCEPT sends a DISCONNECT; a connected caller whose callee never answers
@@ -37,12 +44,10 @@ What it models:
 Not modelled: the carrier (DATAC16 or MFSK: a frame is lost or not;
 ConnectCarrier below has it), the session once up (its turns, rungs and
 blocks are the other specs'), its teardown.  A CALL is heard as it is
-keyed: one of an earlier session decoded long after (on air, 2026-11-17
-21:19, a CALL of K7EK's previous CONNECT on another band) is not modelled.
-The code answers it as a CALL of another session, leaving the one the
-caller is in, and the caller's next CALL brings the callee back; a
-connected callee ends its session on such a CALL the same way
-(`fsm_connected`).
+keyed; a stale one surfaces only as `StaleCall`, at the callee, and only
+while it is answering.  The caller's next CALL, heard on time, brings the
+callee back, as with a connected callee (`fsm_connected` ends its session
+on such a CALL the same way).
 
 Properties:
 
@@ -57,6 +62,11 @@ Properties:
   CALL heard there means the caller has left; and it calls only for its
   current session, so a CALL of another session means it has left the one
   being answered.
+- `NoDeadAnswer`: a callee never answers a session other than the one its
+  connected caller is in.  A stale CALL, answered, drops the live session's
+  seed; the caller's frames fail it and the session ends on its lost-peer
+  watchdog.  `Settles` cannot see that (a lost-peer failure still ends with
+  both idle), so the stale-CALL mutant is checked against this.
 - `Settles`: every attempt ends with both connected, or both idle.
 - `Agree`: a connected callee and its caller both took the session to be
   encrypted, or both clear.  Otherwise one end waits for a handshake the
@@ -65,12 +75,13 @@ Properties:
 
 Results:
 
-- `ConnectHandshake.cfg`: the code's rules.  No error, 9473 distinct
-  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 34177.
-  (1857 and 6421 before encryption; 1425 and 4813 before the caller's
-  watchdog could fire first.)
+- `ConnectHandshake.cfg`: the code's rules.  No error, 10609 distinct
+  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 52649.
+  (9473 and 34177 before the stale CALL; 1857 and 6421 before encryption;
+  1425 and 4813 before the caller's watchdog could fire first.)
 - `ConnectHandshake_creq.cfg`, `ConnectHandshake_ereq.cfg`: the caller, or
-  the callee, required.  No error: 3009 and 2913 distinct states.
+  the callee, required.  No error: 4833 and 3313 distinct states (3009 and
+  2913 before the stale CALL).
 - `Mut_reanswer.cfg`: a repeated CALL gets a fresh answer to its offer (the
   first port of #306 to 2.0 did this: the callee in its ACCEPT fallback
   answered a repeat anew).  Violates `Agree`: the caller re-CONNECTs with
@@ -89,8 +100,13 @@ Results:
   unanswered until the callee's ACCEPTs for the old one run out (on air:
   K7EK answering N3JXB, 2026-11-18 06:06, 3 min; KG9NI answering an old
   CALL of K7EK's decoded late, 2026-11-17 21:19, the attempt failed).
-  The base configs' state counts are unchanged: answering the new session
-  from ACCEPTING reaches states the fallback already reached.
+- `Mut_staletake.cfg`: a callee answering answers a stale CALL, one of a
+  session the caller keyed earlier and left (the switch before the age
+  check).  Violates `NoDeadAnswer`: the caller has taken the live
+  session's ACCEPT, and the callee drops it for the dead one, whose seed
+  fails the caller's frames.  `NoHalfConnect` and `Settles` hold -- the
+  session still ends with both idle, on the caller's lost-peer watchdog --
+  which is why the model needs `NoDeadAnswer` for this mutant.
 - `Mut_renonce.cfg`: a repeated CALL gets a fresh nonce.  Violates `NoDoom`.
 - `Mut_remeasure.cfg`: a repeated CALL gets a re-measured start rung (as
   before spec R25).  Violates `NoDoom`.

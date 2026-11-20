@@ -14,7 +14,9 @@
 (*   measures the start rung, and ACCEPTs.  Every repeat of that session's *)
 (*   CALL gets the same ACCEPT (spec R25).  C's CALL of another session   *)
 (*   (it CONNECTed again: an id per CONNECT) means C has left the one E   *)
-(*   answers: E answers the new one, fresh (fsm_accepting).  Out of      *)
+(*   answers: E answers the new one, fresh (fsm_accepting) -- except      *)
+(*   while E's ACCEPT of the one it answers could still be answered, and  *)
+(*   never one decoded too late: a stale frame is not a redial.  Out of   *)
 (*   ACCEPT retries it listens again, keeping the seed                    *)
 (*   (accept_fallback): a later CALL of the same session gets the same     *)
 (*   ACCEPT, another session's a fresh one.  It is connected when it       *)
@@ -30,6 +32,11 @@
 (*   E earlier than E heard it): C is idle, E still connected until its   *)
 (*   own fires.  E connected, hearing C CALL another session, ends its    *)
 (*   own -- C has left it -- and answers (fsm_connected, RX_CALL).        *)
+(*                                                                         *)
+(*   A CALL C keyed for a session it has left may surface at E late       *)
+(*   (a decoder backlog; on air, KG9NI <- K7EK, 2026-11-17 21:19).  E,   *)
+(*   answering, ignores it (StaleCall): too old, and C is not calling     *)
+(*   that session.                                                         *)
 (*                                                                         *)
 (* An exchange (a keydown and the answer to it) is one step; the turn     *)
 (* rules keep keydowns apart (specs/turns).  Any frame may be lost.  Not  *)
@@ -54,7 +61,10 @@
 (*                  -- or C left that session (its watchdog);             *)
 (*   NoDeafRedial   no CALL of C's heard goes unanswered for a session C *)
 (*                  has left (E connected in it, or answering it);       *)
-(*   Settles        it ends with both connected, or both idle;            *)
+(*   NoDeadAnswer   E never answers a session other than the one its    *)
+(*                  connected caller is in (a stale CALL's: answering   *)
+(*                  it drops the live session's frames);                 *)
+(*   Settles        it ends with both connected, or both idle;           *)
 (*   Agree          E connected: both ends took the session to be         *)
 (*                  encrypted, or both clear (else one waits for a        *)
 (*                  handshake the other never sends, and the session      *)
@@ -88,6 +98,9 @@ CONSTANTS Sids,     \* session ids C may pick
                     \*   "ignorenewer": E answering ignores C's CALL of another
                     \*                session (the code before 2026-11-19): C's
                     \*                redial waits out E's ACCEPTs
+                    \*   "staletake": E answering answers a stale CALL, one of
+                    \*                a session C keyed earlier and left (the
+                    \*                switch before the age check, 2026-11-20)
 
 VARIABLES
     cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw,
@@ -96,13 +109,14 @@ VARIABLES
               \* (one in flight while its next CALL already went out: R25)
     eLeft,    \* ghost: E is connected in a session C has left
     deaf,     \* ghost: a CALL of C's heard by such an E went unanswered
+    cPast,    \* session ids C has keyed CALLs for and left
     cOffer,   \* this CONNECT's CALLs offer encryption
     cEnc,     \* C connected: the session is encrypted (offer and its ACCEPT's bit)
     eOffer,   \* the offer of the CALL E took for its session
     eTake     \* E's answer to it, in every ACCEPT of the session
 
 vars == <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSt, eSid, eNonce, eLevel, eBw, sent, eLeft, deaf,
-          cOffer, cEnc, eOffer, eTake>>
+          cPast, cOffer, cEnc, eOffer, eTake>>
 cryptoVars == <<cOffer, cEnc, eOffer, eTake>>
 cVars == <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw>>
 
@@ -110,6 +124,7 @@ Init ==
     /\ cSt = "idle" /\ cSid = 0 /\ cCalls = 0 /\ cNonce = 0 /\ cLevel = 0 /\ cSessions = 0 /\ cBw = 0
     /\ eSt = "listening" /\ eSid = 0 /\ eNonce = 0 /\ eLevel = 0 /\ eBw = 0
     /\ sent = {} /\ eLeft = FALSE /\ deaf = FALSE
+    /\ cPast = {}
     /\ cOffer = FALSE /\ cEnc = FALSE /\ eOffer = FALSE /\ eTake = FALSE
 
 \* E holds a session's seed: answering its CALLs, or keeping it after them.
@@ -125,7 +140,7 @@ AppConnect ==
     /\ \E o \in BOOLEAN : /\ cOffer' = o /\ (CReq => o)
     /\ cEnc' = FALSE
     /\ UNCHANGED <<eSt, eSid, eNonce, eLevel, eBw, sent>>
-    /\ UNCHANGED <<eLeft, deaf, eOffer, eTake>>
+    /\ UNCHANGED <<eLeft, deaf, cPast, eOffer, eTake>>
 
 \* E's answer to a CALL of session s: the ACCEPT it would send, and its state.
 \* Fresh: a new nonce and a new measurement.  The same session: the same
@@ -164,12 +179,14 @@ Call ==
         IF ~heard \/ busy \/ refused
         THEN \* lost, or E is busy with another session: no ACCEPT
              /\ UNCHANGED <<eSt, eSid, eNonce, eLevel, eBw, sent, eLeft, eOffer, eTake>>
+             /\ cPast' = cPast
              /\ deaf' = (deaf \/ (heard /\ (eLeft \/ (eSt = "accepting" /\ eSid # cSid)) /\ ~refused))
         ELSE /\ EAnswer(cSid, nonce, level, take)
              \* ACCEPTs of E's current session only: an older one's left the air
              /\ sent' = (IF EHolds /\ eSid = cSid THEN sent ELSE {})
                         \cup {[sid |-> cSid, nonce |-> eNonce', level |-> eLevel', bw |-> eBw', crypto |-> eTake']}
              /\ eLeft' = FALSE /\ deaf' = deaf
+             /\ cPast' = cPast
 
 \* C, still calling, decodes an ACCEPT of its session: any E keyed.
 \* One that takes an offer C did not make is not for this CONNECT: ignored.
@@ -184,12 +201,13 @@ HearAccept ==
            ELSE /\ cSt' = "connected" /\ cNonce' = a.nonce /\ cLevel' = a.level /\ cBw' = a.bw
                 /\ cEnc' = (cOffer /\ a.crypto)
     /\ UNCHANGED <<cSid, cCalls, cSessions, eSt, eSid, eNonce, eLevel, eBw, sent>>
-    /\ UNCHANGED <<eLeft, deaf, cOffer, eOffer, eTake>>
+    /\ UNCHANGED <<eLeft, deaf, cPast, cOffer, eOffer, eTake>>
 
 \* Out of CALLs: C gives up.
 CallGiveUp ==
     /\ cSt = "calling" /\ cCalls = 0
     /\ cSt' = "idle"
+    /\ cPast' = cPast \cup {cSid}
     /\ UNCHANGED <<cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSt, eSid, eNonce, eLevel, eBw, sent>>
     /\ UNCHANGED <<eLeft, deaf>> /\ UNCHANGED cryptoVars
 
@@ -198,7 +216,7 @@ EFallback ==
     /\ eSt = "accepting"
     /\ eSt' = "fallback"
     /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw, sent>>
-    /\ UNCHANGED <<eLeft, deaf>> /\ UNCHANGED cryptoVars
+    /\ UNCHANGED <<eLeft, deaf, cPast>> /\ UNCHANGED cryptoVars
 
 \* The kept seed lapses (ARQ_CAR_PEER_LOST_MS) -- with no caller connected on
 \* it; one that is gives up at the same time (PeerLost).
@@ -206,14 +224,14 @@ EExpire ==
     /\ eSt = "fallback" /\ ~(cSt = "connected" /\ cSid = eSid)
     /\ eSt' = "listening"
     /\ sent' = {} /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw>>
-    /\ UNCHANGED <<eLeft, deaf>> /\ UNCHANGED cryptoVars
+    /\ UNCHANGED <<eLeft, deaf, cPast>> /\ UNCHANGED cryptoVars
 
 \* An ACCEPT of C's session reaches a C that gave up: it sends a DISCONNECT.
 StaleAccept ==
     /\ cSt = "idle" /\ eSt = "accepting" /\ eSid = cSid
     /\ eSt' = "listening"
     /\ sent' = {} /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw>>
-    /\ UNCHANGED <<eLeft, deaf>> /\ UNCHANGED cryptoVars
+    /\ UNCHANGED <<eLeft, deaf, cPast>> /\ UNCHANGED cryptoVars
 
 \* Another station's CALL for E while E answers C's: ignored -- but with the
 \* bandwidth leak, it set the session bandwidth E's next ACCEPT says.
@@ -222,7 +240,7 @@ ForeignCall ==
     /\ \E b \in Bws : eBw' = (IF Mutant = "bwleak" THEN b ELSE eBw)
     /\ sent' = {[a EXCEPT !.bw = eBw'] : a \in sent}
     /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSt, eSid, eNonce, eLevel>>
-    /\ UNCHANGED <<eLeft, deaf>> /\ UNCHANGED cryptoVars
+    /\ UNCHANGED <<eLeft, deaf, cPast>> /\ UNCHANGED cryptoVars
 
 \* C's first round reaches E: on the rung E named, with E's nonce in its CRC.
 \* (On another bandwidth the ends cap their rungs and pick their floor apart:
@@ -232,12 +250,13 @@ FirstFrame ==
     /\ cNonce = eNonce /\ cLevel = eLevel
     /\ eSt' = "connected"
     /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw, sent>>
-    /\ UNCHANGED <<eLeft, deaf>> /\ UNCHANGED cryptoVars
+    /\ UNCHANGED <<eLeft, deaf, cPast>> /\ UNCHANGED cryptoVars
 
 \* C connected, E never: both give up (ARQ_CAR_PEER_LOST_MS each).
 PeerLost ==
     /\ cSt = "connected" /\ eSt # "connected"
     /\ cSt' = "idle"
+    /\ cPast' = cPast \cup {cSid}
     /\ eSt' = (IF eSt = "fallback" /\ eSid = cSid THEN "listening" ELSE eSt)
     /\ sent' = (IF eSt' = "listening" THEN {} ELSE sent)
     /\ UNCHANGED <<cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw>>
@@ -248,6 +267,7 @@ PeerLost ==
 CLinkLost ==
     /\ cSt = "connected" /\ eSt = "connected" /\ eSid = cSid /\ ~eLeft
     /\ cSt' = "idle" /\ eLeft' = TRUE
+    /\ cPast' = cPast \cup {cSid}
     /\ UNCHANGED <<cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSt, eSid, eNonce, eLevel, eBw, sent, deaf>>
     /\ UNCHANGED cryptoVars
 
@@ -255,8 +275,24 @@ CLinkLost ==
 ELinkLost ==
     /\ eSt = "connected" /\ eLeft
     /\ eSt' = "listening" /\ eLeft' = FALSE /\ sent' = {}
-    /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw, deaf>>
+    /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw, deaf, cPast>>
     /\ UNCHANGED cryptoVars
+
+\* A CALL C keyed for a session it has since left surfaces at E (a decoder
+\* backlog).  E, answering, ignores it: it is too old to answer, and C is
+\* not calling that session -- answering it (Mutant "staletake": the switch
+\* before the age check) leaves the session being answered, whose ACCEPT C
+\* may have taken, and answers a dead one.
+StaleCall ==
+    /\ eSt = "accepting"
+    /\ \E s \in cPast \ {cSid}, nonce \in Nonces, level \in Levels, take \in BOOLEAN :
+        IF Mutant = "staletake"
+        THEN /\ EAnswer(s, nonce, level, take)
+             /\ sent' = {[sid |-> s, nonce |-> eNonce', level |-> eLevel', bw |-> eBw', crypto |-> eTake']}
+             /\ eLeft' = FALSE
+        ELSE UNCHANGED <<eSt, eSid, eNonce, eLevel, eBw, sent, eLeft, eOffer, eTake>>
+    /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, deaf, cPast>>
+    /\ UNCHANGED <<cOffer, cEnc>>
 
 \* Over: both connected, or both idle with the application done connecting.
 Done == /\ \/ cSt = "connected" /\ eSt = "connected"
@@ -264,7 +300,7 @@ Done == /\ \/ cSt = "connected" /\ eSt = "connected"
         /\ UNCHANGED vars
 
 Next == AppConnect \/ Call \/ HearAccept \/ CallGiveUp \/ EFallback \/ EExpire \/ StaleAccept
-        \/ ForeignCall \/ FirstFrame \/ PeerLost \/ CLinkLost \/ ELinkLost \/ Done
+        \/ ForeignCall \/ FirstFrame \/ PeerLost \/ CLinkLost \/ ELinkLost \/ StaleCall \/ Done
 
 \* Timers run out and the channel is not an adversary for ever: C's first
 \* round, possible again and again, gets through at last.
@@ -281,13 +317,18 @@ TypeOK ==
     /\ cNonce \in Nonces \cup {0} /\ cLevel \in Levels \cup {0}
     /\ eSt \in {"listening", "accepting", "fallback", "connected"} /\ eSid \in Sids \cup {0}
     /\ eNonce \in Nonces \cup {0} /\ eLevel \in Levels \cup {0}
-    /\ eLeft \in BOOLEAN /\ deaf \in BOOLEAN
+    /\ eLeft \in BOOLEAN /\ deaf \in BOOLEAN /\ cPast \subseteq Sids
     /\ cOffer \in BOOLEAN /\ cEnc \in BOOLEAN /\ eOffer \in BOOLEAN /\ eTake \in BOOLEAN
 
 NoDoom == (cSt = "connected" /\ (EHolds \/ eSt = "connected") /\ eSid = cSid) =>
               (cNonce = eNonce /\ cLevel = eLevel /\ cBw = eBw)
 NoHalfConnect == eSt = "connected" /\ ~eLeft => (cSt = "connected" /\ cSid = eSid /\ cNonce = eNonce /\ cLevel = eLevel)
 NoDeafRedial == ~deaf
+\* E answering (or holding the seed of) a session its connected caller is
+\* not in: the caller's frames fail the seed, and the session dies.  The
+\* stale-CALL switch ("staletake") reaches this state; Settles cannot see
+\* it -- a lost-peer failure still ends with both idle.
+NoDeadAnswer == ~(cSt = "connected" /\ EHolds /\ eSid # cSid)
 Settles == <>[]((cSt = "connected" /\ eSt = "connected") \/ (cSt = "idle" /\ ~EHolds))
 Agree == eSt = "connected" /\ ~eLeft => cEnc = (eOffer /\ eTake)
 ReqGate == /\ (CReq /\ cSt = "connected") => cEnc
