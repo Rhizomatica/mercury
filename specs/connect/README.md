@@ -50,6 +50,14 @@ Properties:
   encrypted, or both clear.  Otherwise one end waits for a handshake the
   other never sends, and the session fails closed.
 - `ReqGate`: a required end that is connected is encrypted.
+- `SameLadder`: a connected caller maps the ladder's levels to the same modes
+  as its callee: both of protocol minor `MinMinor` (2, 1.9.25) or later, or
+  both older.  The wire carries a rung's level, not its mode, and minor 2
+  changed what the levels mean (BW2300 rung 1 the 2 kHz MFSK, the BW500 and
+  BW2750 ladders, the deep floor).  A station of minor 2 takes a CALL or
+  ACCEPT only from minor 2 up (`arq_protocol_connect_compatible`); an older
+  one (1.9.20-1.9.24) reads any minor, so it still answers a 1.9.25 CALL,
+  and the 1.9.25 caller ignores that ACCEPT.
 
 Results:
 
@@ -59,6 +67,14 @@ Results:
   watchdog could fire first.)
 - `ConnectHandshake_creq.cfg`, `ConnectHandshake_ereq.cfg`: the caller, or
   the callee, required.  No error: 3009 and 2913 distinct states.
+  (Every configuration above is of two minor-2 stations; the counts are
+  unchanged by the minors.)
+- `ConnectHandshake_oldE.cfg` (a 1.9.25 caller, a 1.9.24 callee) and
+  `ConnectHandshake_oldC.cfg` (the reverse): no error, `Settles` included,
+  5105 and 65 distinct states.  They never connect: the old callee answers
+  and the caller gives up, or the new callee never answers.
+- `Mut_mixed.cfg`: a 1.9.25 station takes any minor.  Violates
+  `SameLadder`: the 1.9.25 caller connects on the 1.9.24 callee's ACCEPT.
 - `Mut_reanswer.cfg`: a repeated CALL gets a fresh answer to its offer (the
   first port of #306 to 2.0 did this: the callee in its ACCEPT fallback
   answered a repeat anew).  Violates `Agree`: the caller re-CONNECTs with
