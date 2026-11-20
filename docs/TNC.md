@@ -445,10 +445,25 @@ Query the modem identification string.
 VERSION\r
 ```
 
-**Response:** A VARA-compatible version string on the control port.
+**Response:** two lines on the control port:
+
+```
+VARA version 4.9.0 registered\r
+VERSION VARA HF v4.9.0\r
+```
 
 This command exists for VARA-compatible clients that check the modem version
-at startup.
+at startup, and two of them want different lines:
+
+- VarAC needs `VARA version 4.9.0 registered` exactly. It comes first and
+  is unchanged.
+- Pat waits, with no timeout, for a line starting with `VERSION` (or
+  `WRONG`), and ignores any other. Before the second line was added, Pat's
+  VARA HF start-up got past the wait only while `CWID ON` was answered
+  `WRONG`.
+- The second line has real VARA's form, `VERSION VARA HF v<n>`. VarAC
+  parses it as well, and a shorter `VERSION 4.9.0` made it log "Failed to
+  read VARA version".
 
 ---
 
