@@ -979,9 +979,10 @@ static void execute_control_command(char *buffer)
          * with "VERSION" or equal to "WRONG"; any other line it ignores.  The
          * VarAC line alone matched neither: Pat's start-up hung with the
          * connection open, and its next attempt was refused as a second host
-         * (#591).  That went unnoticed while CWID ON was answered WRONG,
-         * which the wait took for its answer; once CWID was accepted, nothing
-         * ended it.  The second line ends it.
+         * (#627, #591).  While CWID ON was answered WRONG, that WRONG usually
+         * ended the wait, though not when Pat read it before the wait began
+         * (#627); once CWID was accepted, nothing ended it.  The second line
+         * ends it.
          *
          * It has VARA's own form, "VERSION VARA HF v<n>" (VarAC logs real
          * VARA's as "VARA version: VARA HF v4.8.0"): VarAC parses a VERSION

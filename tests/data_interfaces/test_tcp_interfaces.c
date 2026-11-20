@@ -1368,7 +1368,7 @@ void test_cmd_version(void)
     TEST_ASSERT_EQUAL(1, tcp_write_call_count);
     /* VarAC's line first and unchanged; then the one Pat waits for: a line
      * starting with "VERSION" (or WRONG), without which its start-up hangs
-     * (#591). */
+     * (#627, #591). */
     TEST_ASSERT_EQUAL_STRING("VARA version 4.9.0 registered\r"
                              "VERSION VARA HF v4.9.0\r",
                              (char *)last_tcp_write_buf);
