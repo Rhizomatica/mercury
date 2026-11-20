@@ -90,9 +90,9 @@ whose frames changed.
   connect within 120 s, against 5 of 9.
 - **BPQ32 and Pat commands** (#561): `CLEANTXBUFFER`, `WINLINK SESSION` and
   `CWID ON|OFF` are accepted. CWID sends no CW ID. `VERSION` now answers
-  `VERSION VARA version 4.9.0 registered` (#591): Pat waits for a reply
-  starting with `VERSION`, and with `CWID ON` accepted its VARA HF start-up
-  hung on the old `VARA version ...`.
+  a second line, `VERSION VARA HF v4.9.0`, after VarAC's unchanged
+  `VARA version 4.9.0 registered` (#591): Pat waits for a line starting with
+  `VERSION`, and with `CWID ON` accepted its VARA HF start-up hung without it.
 - **A `BUFFER` query always gets an answer** (#620), also when the count
   has not changed.
 - **A playback device that stops taking audio is reopened** (#617), and
