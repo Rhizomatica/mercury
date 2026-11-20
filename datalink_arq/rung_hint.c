@@ -15,6 +15,7 @@
 #include "rung_hint.h"
 
 #if defined(_WIN32)
+#include <direct.h>   /* _mkdir */
 #define strtok_r(s, d, p) strtok_s(s, d, p)
 #endif
 
