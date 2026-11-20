@@ -370,18 +370,27 @@ void modem_tune_stop(void)
 }
 
 /* Convert a 16-bit modulator sample to a 32-bit playback sample with gain
- * and saturation.  At gain == 1.0 this matches the historical behavior of
- * mapping int16 into the upper bits of int32 — but via a multiply by 65536,
- * not a left shift: shifting a negative int32 is undefined in C.  Saturates
+ * and saturation: int16 into the upper bits of int32, raised by TX_BASE_GAIN,
+ * via a multiply, not a left shift: shifting a negative int32 is undefined
+ * in C.  Saturates
  * against INT32 limits using a >= / <= compare because the literal
  * 2147483647.0f rounds up to 2^31 in float, so a strict > would let the
  * boundary case fall through to an undefined int cast.  *peak_fs, if
  * non-NULL, is raised to the pre-saturation magnitude |fs| so the UI meter
  * reflects the true post-gain level (it can read above full-scale, i.e. the
  * amount of clipping) rather than the clamped sample. */
+/* The modulators leave half the int16 range unused: the OFDM modes clip
+ * their peaks at 16384 (-6 dBFS) and MFSK peaks at -6.5 dBFS.  On a radio
+ * whose power setting is reached only by a full-scale signal (the sBitx
+ * through radiod) that cost a quarter of the power.  4 dB more puts the
+ * peaks at about -2 dBFS: a resampler on the way (radiod's upsampler) was
+ * seen to add 1 dB to an MFSK peak.  tx_gain_db trims around this level;
+ * TUNE does not go through it. */
+#define TX_BASE_GAIN 1.5849f   /* +4 dB */
+
 static inline int32_t tx_sample_with_gain(int16_t sample, float gain, float *peak_fs)
 {
-    float fs = (float)sample * 65536.0f * gain;
+    float fs = (float)sample * (65536.0f * TX_BASE_GAIN) * gain;
     if (peak_fs)
     {
         float mag = fabsf(fs);
