@@ -11,6 +11,7 @@
 #include "arq_protocol.h"
 #include "arq_timing.h"
 #include "arq.h"
+#include "rung_hint.h"
 
 #include <limits.h>
 #include <stdatomic.h>
@@ -1031,6 +1032,23 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf,
                       ARQ_TX_MFSK_ONLY ? CAR_DEAF_MFSK_TX : sess->car_peer_ctl_deaf);
     car_seed_snr(sess->car, sess->car_my_snr, is_caller ? sess->car_call_snr : 0.0f);
+    /* What this peer's rungs delivered last session seeds the estimator:
+     * the session does not re-climb from where the connect's SNR starts it
+     * (docs/EFFICIENCY-FOLLOWUPS.md, A).  The hint is history -- weighted
+     * at half, capped small, and only what delivered -- and the SNR gate
+     * and the dead-run verdict still apply on top of it.  Off by default:
+     * the sim grid pays for it on clean and fading channels (-11 % on
+     * awgn, up to -17 % on fades) but it costs on channels where nothing
+     * delivers well (cliff:8 +5.9 %, nvis up to +18 %), where the hint
+     * steers early rounds into re-measuring.  MERCURY_RUNG_MEMORY=1 turns
+     * it on; the on-air A/B decides the default. */
+    const char *rmem_env = getenv("MERCURY_RUNG_MEMORY");
+    if (rmem_env && !strcmp(rmem_env, "1") && sess->remote_call[0])
+    {
+        car_rung_hint_t hint;
+        if (rung_hint_load(sess->remote_call, &hint))
+            car_rung_seed(sess->car, &hint, 0.5);
+    }
     sess->ctl_floor_at_stop = false;
     sess->car_active = true;
     sess->car_session = true;
@@ -1045,6 +1063,17 @@ static void car_stop(arq_session_t *sess)
 {
     sess->car_active = false;
     sess->car_session = false;
+    /* What this peer's rungs delivered this session is the next session's
+     * seed (car_start).  The session is over, so the measurement is final;
+     * the peer's callsign is still held.  Same knob as the seed: off (the
+     * default), the file is never touched. */
+    const char *rmem_env = getenv("MERCURY_RUNG_MEMORY");
+    if (rmem_env && !strcmp(rmem_env, "1") && sess->remote_call[0])
+    {
+        car_rung_hint_t hint;
+        car_rung_export(sess->car, &hint);
+        rung_hint_store(sess->remote_call, &hint);
+    }
     /* The reply to the peer's DISCONNECT is an ACK pattern, and patterns are
      * the session's (the seed keys them: modem_apply_crc_seed): the seed
      * stays until it has gone out.  Cleared first, the reply went out on the

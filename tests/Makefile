@@ -140,7 +140,7 @@ test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \
 
 # ARQ FSM tests (state transitions, callback invocations)
 test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
-              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c ../datalink_arq/rung_hint.c \
               ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
               ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
@@ -172,6 +172,7 @@ test_rs_erasure: sim/test_rs_erasure.c ../datalink_arq/rs_erasure.c ../datalink_
 # The carousel data plane on the sim's channel (not run by `make test`; a
 # bench, like ab_bench):  ./carousel_bench <seed> <channel> [bidir]
 CAROUSEL_SIM_SRC = sim/carousel_sim.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c \
+                   ../datalink_arq/rung_hint.c \
                    sim/sim_channel.c $(ARQ_STUBS) \
                    ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c ../common/virtual_clock.c
 # Every loss and sensing-failure pattern up to k on a short transfer
@@ -206,14 +207,14 @@ test_carousel: sim/test_carousel.c $(CAROUSEL_SIM_SRC) $(UNITY_SRC)
 SIM_SRC = sim/sim_clock.c sim/sim_channel.c sim/sim_endpoint.c \
           sim/sim_translate.c sim/sim_core.c sim/sim_props.c
 test_arq_sim: sim/test_arq_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
-              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c ../datalink_arq/rung_hint.c \
               ../datalink_arq/arq_protocol.c \
               ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # The carousel data plane through the real FSM on the two-FSM sim
 test_carousel_sim: sim/test_carousel_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
-              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c ../datalink_arq/rung_hint.c \
               ../datalink_arq/arq_protocol.c \
               ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
@@ -221,7 +222,7 @@ test_carousel_sim: sim/test_carousel_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) 
 # Deterministic A/B bench (not part of `make test`):
 #   SIM_CS=400 ./ab_bench <seed> <channel> [bidir]
 ab_bench: sim/ab_bench.c $(ARQ_STUBS) $(SIM_SRC) \
-          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c ../datalink_arq/rung_hint.c \
           ../datalink_arq/arq_protocol.c \
           ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
@@ -229,7 +230,7 @@ ab_bench: sim/ab_bench.c $(ARQ_STUBS) $(SIM_SRC) \
 # Connect/disconnect times over the two-FSM sim (not part of `make test`):
 #   ./conn_bench <seed> <channel> [callee]
 conn_bench: sim/conn_bench.c $(ARQ_STUBS) $(SIM_SRC) \
-          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c ../datalink_arq/rung_hint.c \
           ../datalink_arq/arq_protocol.c \
           ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
@@ -238,7 +239,7 @@ conn_bench: sim/conn_bench.c $(ARQ_STUBS) $(SIM_SRC) \
 # while frames are lost (a bench, not run by `make test`):
 #   ./idle_drop <snr_db> <per> <seeds> <idle_s> [fade_hz]
 idle_drop: sim/idle_drop.c $(ARQ_STUBS) $(SIM_SRC) \
-          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c ../datalink_arq/rung_hint.c \
           ../datalink_arq/arq_protocol.c \
           ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
@@ -262,7 +263,7 @@ test_hermes_log: common/test_hermes_log.c $(UNITY_SRC) ../common/hermes_log.c
 # #579 regression: the TCP reactor never waits on g_sess_lock while the event
 # loop holds it, blocked on a full RX ring.  Includes arq.c for its statics.
 test_arq_reactor_lock: datalink_arq/test_arq_reactor_lock.c $(UNITY_SRC) ../datalink_arq/arq.c \
-                       ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c \
+                       ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../datalink_arq/rung_hint.c \
                        ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c ../datalink_arq/arith.c \
                        ../datalink_arq/arq_channels.c ../datalink_arq/arq_trace.c ../datalink_arq/arq_tnc.c \
                        ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c \
