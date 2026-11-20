@@ -16,8 +16,18 @@ What it models:
   out: spec R25).
 - The callee answers a new session with a fresh nonce, a measured start
   rung and the CALL's bandwidth; every repeat of the session's CALL gets the
-  same ACCEPT; another session's CALL, or another station's, is ignored.  Out
+  same ACCEPT; another station's CALL is ignored.  The caller's CALL of
+  another session (it CONNECTed again: a session id per CONNECT) means it
+  has left the one being answered, and the callee answers the new one,
+  fresh (`fsm_accepting`) -- except while its ACCEPT of the one it answers
+  could still be answered (the caller's first frames may be on their way),
+  and never one decoded too late: a stale frame is not a redial.  Out
   of ACCEPT retries it keeps the seed (`accept_fallback`) until it lapses.
+- A CALL the caller keyed for a session it has left may surface at the
+  callee late (a decoder backlog; on air, KG9NI <- K7EK, 2026-11-17
+  21:19): `StaleCall`.  The callee, answering, ignores it; `Mut_staletake`
+  answers it (the switch before the age check), which violates
+  `NoDeadAnswer`.
 - The callee connects on the caller's first frame only on the rung it named
   and with its nonce (the CRC is seeded).  A caller that gave up and hears an
   ACCEPT sends a DISCONNECT; a connected caller whose callee never answers
@@ -33,7 +43,11 @@ What it models:
 
 Not modelled: the carrier (DATAC16 or MFSK: a frame is lost or not;
 ConnectCarrier below has it), the session once up (its turns, rungs and
-blocks are the other specs'), its teardown.
+blocks are the other specs'), its teardown.  A CALL is heard as it is
+keyed; a stale one surfaces only as `StaleCall`, at the callee, and only
+while it is answering.  The caller's next CALL, heard on time, brings the
+callee back, as with a connected callee (`fsm_connected` ends its session
+on such a CALL the same way).
 
 Properties:
 
@@ -42,9 +56,17 @@ Properties:
   cap, MFSK floor).
 - `NoHalfConnect`: a connected callee means a connected caller, same session
   -- or a caller that has left it on its lost-peer watchdog.
-- `NoDeafRedial`: a connected callee never leaves a CALL of its caller's
-  unanswered.  The caller stops calling before its first frame, the one that
-  connects the callee, so a CALL heard there means the caller has left.
+- `NoDeafRedial`: a callee connected in, or answering, a session its caller
+  has left never leaves the caller's CALL unanswered.  The caller stops
+  calling before its first frame, the one that connects the callee, so a
+  CALL heard there means the caller has left; and it calls only for its
+  current session, so a CALL of another session means it has left the one
+  being answered.
+- `NoDeadAnswer`: a callee never answers a session other than the one its
+  connected caller is in.  A stale CALL, answered, drops the live session's
+  seed; the caller's frames fail it and the session ends on its lost-peer
+  watchdog.  `Settles` cannot see that (a lost-peer failure still ends with
+  both idle), so the stale-CALL mutant is checked against this.
 - `Settles`: every attempt ends with both connected, or both idle.
 - `Agree`: a connected callee and its caller both took the session to be
   encrypted, or both clear.  Otherwise one end waits for a handshake the
@@ -61,18 +83,20 @@ Properties:
 
 Results:
 
-- `ConnectHandshake.cfg`: the code's rules.  No error, 9473 distinct
-  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 34177.
-  (1857 and 6421 before encryption; 1425 and 4813 before the caller's
-  watchdog could fire first.)
+- `ConnectHandshake.cfg`: the code's rules.  No error, 10609 distinct
+  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 52649.
+  (9473 and 34177 before the stale CALL; 1857 and 6421 before encryption;
+  1425 and 4813 before the caller's watchdog could fire first.)
 - `ConnectHandshake_creq.cfg`, `ConnectHandshake_ereq.cfg`: the caller, or
-  the callee, required.  No error: 3009 and 2913 distinct states.
+  the callee, required.  No error: 4833 and 3313 distinct states (3009 and
+  2913 before the stale CALL).
   (Every configuration above is of two minor-2 stations; the counts are
   unchanged by the minors.)
 - `ConnectHandshake_oldE.cfg` (a 1.9.25 caller, a 1.9.24 callee) and
   `ConnectHandshake_oldC.cfg` (the reverse): no error, `Settles` included,
-  5105 and 65 distinct states.  They never connect: the old callee answers
-  and the caller gives up, or the new callee never answers.
+  5569 and 97 distinct states (5105 and 65 before the stale CALL).  They
+  never connect: the old callee answers and the caller gives up, or the
+  new callee never answers.
 - `Mut_mixed.cfg`: a 1.9.25 station takes any minor.  Violates
   `SameLadder`: the 1.9.25 caller connects on the 1.9.24 callee's ACCEPT.
 - `Mut_reanswer.cfg`: a repeated CALL gets a fresh answer to its offer (the
@@ -87,6 +111,19 @@ Results:
   did before 2026-10-18.  Violates `NoDeafRedial`: the caller, its watchdog
   first, redials, and the callee answers only once its own watchdog fires
   (sim, nvis seed 28: 104 s later).
+- `Mut_ignorenewer.cfg`: a callee answering a session ignores its caller's
+  CALL of another session, as the code did before 2026-11-19.  Violates
+  `NoDeafRedial`: the caller re-CONNECTs, and its new session's CALLs go
+  unanswered until the callee's ACCEPTs for the old one run out (on air:
+  K7EK answering N3JXB, 2026-11-18 06:06, 3 min; KG9NI answering an old
+  CALL of K7EK's decoded late, 2026-11-17 21:19, the attempt failed).
+- `Mut_staletake.cfg`: a callee answering answers a stale CALL, one of a
+  session the caller keyed earlier and left (the switch before the age
+  check).  Violates `NoDeadAnswer`: the caller has taken the live
+  session's ACCEPT, and the callee drops it for the dead one, whose seed
+  fails the caller's frames.  `NoHalfConnect` and `Settles` hold -- the
+  session still ends with both idle, on the caller's lost-peer watchdog --
+  which is why the model needs `NoDeadAnswer` for this mutant.
 - `Mut_renonce.cfg`: a repeated CALL gets a fresh nonce.  Violates `NoDoom`.
 - `Mut_remeasure.cfg`: a repeated CALL gets a re-measured start rung (as
   before spec R25).  Violates `NoDoom`.

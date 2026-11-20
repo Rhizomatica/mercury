@@ -482,6 +482,133 @@ static int accepts_after_guard(void)
     return sent;
 }
 
+/* Our caller CALLing in another session (its application CONNECTed again:
+ * a session id is picked per CONNECT) has left the one we answer.  That CALL
+ * is answered, fresh -- its id, a PENDING -- and an ACCEPT goes one guard on,
+ * instead of the dead session's ACCEPTs running out first (on air: K7EK <-
+ * N3JXB, 2026-11-18 06:06, three CALLs ignored for 3 min).  Another
+ * station's CALL is still ignored.  After our ACCEPT's answer window has
+ * closed (its TIMER_RETRY fired), not inside it: there the caller's first
+ * frames could be on their way
+ * (test_accepting_new_session_call_in_accept_window_is_ignored). */
+void test_accepting_same_caller_new_session_is_answered(void)
+{
+    enter_accepting();
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());      /* the old session's ACCEPT */
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+    int pendings = fake_notify_pending_fake.call_count;
+
+    arq_event_t other = make_event(ARQ_EV_RX_CALL);
+    other.session_id = 0x45;
+    strncpy(other.remote_call, "OTHER1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &other);
+    TEST_ASSERT_EQUAL_UINT8(0x42, sess.session_id);       /* another station: ignored */
+    TEST_ASSERT_EQUAL_INT(pendings, fake_notify_pending_fake.call_count);
+
+    /* The ACCEPT's answer window closes (its TIMER_RETRY): the caller did
+     * not take it.  A new session's CALL now is the caller CONNECTing again,
+     * not a stale frame, and is answered. */
+    arq_event_t window = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &window);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    arq_event_t again = make_event(ARQ_EV_RX_CALL);
+    again.session_id = 0x44;
+    strncpy(again.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &again);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x44, sess.session_id);
+    TEST_ASSERT_FALSE(sess.accept_fallback);
+    TEST_ASSERT_EQUAL_INT(0, sess.crc_seed);               /* the old seed dropped */
+    TEST_ASSERT_EQUAL_INT(pendings + 1, fake_notify_pending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());      /* the new session's ACCEPT */
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+}
+
+/* A CALL of another session while our ACCEPT's answer window is open is a
+ * stale frame, not a redial: the caller may have taken that ACCEPT and its
+ * first frames could be on their way, which a switch would drop (the seed).
+ * Ignored; the caller's next CALL, outside the window, is answered. */
+void test_accepting_new_session_call_in_accept_window_is_ignored(void)
+{
+    enter_accepting();
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());      /* ACCEPT out, window open */
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+    int pendings = fake_notify_pending_fake.call_count;
+
+    arq_event_t again = make_event(ARQ_EV_RX_CALL);
+    again.session_id = 0x44;
+    strncpy(again.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &again);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x42, sess.session_id);       /* not taken for a redial */
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);              /* the seed survives */
+    TEST_ASSERT_EQUAL_INT(pendings, fake_notify_pending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
+
+    /* The window closes; the next CALL of the new session is answered. */
+    arq_event_t window = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &window);
+    arq_fsm_dispatch(&sess, &again);
+    TEST_ASSERT_EQUAL_UINT8(0x44, sess.session_id);
+    TEST_ASSERT_EQUAL_INT(0, sess.crc_seed);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());      /* the new session's ACCEPT */
+}
+
+/* The same, decoded late: the age check runs before the switch, so a CALL
+ * past its decode bound is never taken as "the caller CONNECTed again". */
+void test_accepting_new_session_call_decoded_too_late_is_ignored(void)
+{
+    enter_accepting();
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+    int again = fake_notify_pending_again_fake.call_count;
+
+    arq_event_t stale = call_ev(FREEDV_MODE_DATAC16, 4000);   /* past DATAC16's 1 s */
+    stale.session_id = 0x44;
+    arq_fsm_dispatch(&sess, &stale);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x42, sess.session_id);       /* the live session kept */
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+    TEST_ASSERT_EQUAL_INT(again + 1, fake_notify_pending_again_fake.call_count);
+
+    /* The caller's next CALL, decoded on time, gets the switch. */
+    arq_event_t fresh = call_ev(FREEDV_MODE_DATAC16, 0);
+    fresh.session_id = 0x44;
+    arq_fsm_dispatch(&sess, &fresh);
+    TEST_ASSERT_EQUAL_UINT8(0x44, sess.session_id);
+    TEST_ASSERT_EQUAL_INT(0, sess.crc_seed);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
+}
+
+/* ...but not while the host's LISTEN OFF waits out the grace period: the host
+ * wants the radio back, and the CALL is left for the next listener. */
+void test_accepting_new_session_waits_for_deferred_listen_off(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    mock_set_uptime_ms(1010);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LISTEN_OFF, sess.teardown);
+    int pendings = fake_notify_pending_fake.call_count;
+
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x44;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x42, sess.session_id);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LISTEN_OFF, sess.teardown);
+    TEST_ASSERT_EQUAL_INT(pendings, fake_notify_pending_fake.call_count);
+}
+
+
 void test_accepting_call_decoded_while_keyed_is_not_answered(void)
 {
     arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
@@ -2609,6 +2736,10 @@ int main(void)
     RUN_TEST(test_ended_session_is_not_resurrected_by_a_late_frame);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
     RUN_TEST(test_accepting_repeat_call_sends_pending_again);
+    RUN_TEST(test_accepting_same_caller_new_session_is_answered);
+    RUN_TEST(test_accepting_new_session_call_in_accept_window_is_ignored);
+    RUN_TEST(test_accepting_new_session_call_decoded_too_late_is_ignored);
+    RUN_TEST(test_accepting_new_session_waits_for_deferred_listen_off);
     RUN_TEST(test_accepting_call_decoded_while_keyed_is_not_answered);
     RUN_TEST(test_accepting_call_decoded_too_late_is_not_answered);
     RUN_TEST(test_accepting_call_within_the_decode_bound_is_answered);

@@ -1642,23 +1642,66 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_RX_CALL:
-        /* Another station's CALL, or another session's: we are answering this
-         * one, so it goes unanswered. */
-        if (ev->session_id != sess->session_id ||
-            strcasecmp(ev->remote_call, sess->remote_call) != 0)
+        /* Another station's CALL: we are answering this one, so it goes
+         * unanswered. */
+        if (strcasecmp(ev->remote_call, sess->remote_call) != 0)
         {
             HLOGI(LOG_COMP, "CALL from %s while answering %s: ignored", ev->remote_call, sess->remote_call);
             break;
         }
         /* Too old to answer (call_too_late): the caller is there, so the
          * window stays open and the scanner held, but no ACCEPT, and the
-         * carrier the next one goes on is left as it was. */
+         * carrier the next one goes on is left as it was.  Checked before
+         * the another-session switch below: a CALL of an earlier session
+         * decoded late is a stale frame, not a redial, and is never taken
+         * as "the caller CONNECTed again" (on air, KG9NI <- K7EK,
+         * 2026-11-17 21:19: an old session's CALL surfaced after the new
+         * CONNECT; answering it cost the attempt).  A late CALL of another
+         * session re-arms this answer's budget like a repeat does: harmless,
+         * the caller is evidently there, and its next CALL, decoded on
+         * time, gets the switch. */
         if (call_too_late(sess, ev))
         {
             sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
             if (g_cbs.notify_pending_again)
                 g_cbs.notify_pending_again(sess->remote_call);
             break;
+        }
+        /* Our caller in another session: its application has CONNECTed again
+         * (a session id is picked per CONNECT), so it has left the one we
+         * answer, and only the new one can complete.  Answer it, fresh, as
+         * fsm_connected does a peer that calls again.  Ignored, the callee
+         * answered the dead session until its ACCEPTs ran out and never the
+         * live one (on air: K7EK <- N3JXB, 2026-11-18 06:06, three CALLs
+         * ignored, 3 min).  Not while the host's LISTEN OFF waits out the
+         * grace period: it wants the radio back.  Nor while the ACCEPT we
+         * keyed for the session we answer could still be answered: the
+         * caller may have taken it, and its first frames could be on their
+         * way -- a CALL of another session then is a stale frame, and
+         * dropping the seed would drop those frames too (the caller's next
+         * CALL, outside the window, still gets the switch). */
+        if (ev->session_id != sess->session_id)
+        {
+            if (sess->teardown == ARQ_TD_LISTEN_OFF)
+            {
+                HLOGI(LOG_COMP, "CALL from %s in another session while the host's LISTEN OFF waits: ignored",
+                      ev->remote_call);
+                break;
+            }
+            if (sess->crc_seed != 0 && !sess->accept_tx_pending &&
+                sess->tx_retries_left == ARQ_ACCEPT_RETRY_SLOTS - 1)
+            {
+                HLOGI(LOG_COMP, "CALL from %s in another session while our ACCEPT could still be answered: ignored",
+                      ev->remote_call);
+                break;
+            }
+            HLOGI(LOG_COMP, "CALL from %s in another session: it left the one we answer -- answering this one",
+                  ev->remote_call);
+            car_set_seed(sess, 0);
+            sess_enter(sess, ARQ_CONN_LISTENING, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            sess->accept_fallback = false;
+            arq_fsm_dispatch(sess, ev);   /* the CALL, now in LISTENING */
+            return;
         }
         /* Caller is still retrying CALL (our previous ACCEPT was lost). Reset
          * the retry counter so the ACCEPTING window stays open long enough for
