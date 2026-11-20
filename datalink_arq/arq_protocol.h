@@ -486,7 +486,15 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  *              below the control mode (bit 3), 4 bits zero
  *           9: the SNR the callee read the CALL at, dB + 128 (0: unknown)
  *           10-13: zero */
-#define ARQ_CONNECT_MINOR             1
+#define ARQ_CONNECT_MINOR             2
+/* The lowest minor this station connects to.  Minor 2 (1.9.25) gave each
+ * bandwidth its own ladder (BW2300 rung 1 the 2 kHz MFSK, the BW500 and
+ * BW2750 ladders, the 500 Hz deep floor) and changed the QAM16C2 and DATAC17
+ * frames.  The wire carries a rung's level, not its mode, so a pair that maps
+ * a level to different modes would lose every round there: the versions do
+ * not connect.  1.9.20-1.9.24 (minors 0 and 1) read any minor and still
+ * ACCEPT our CALL; we ignore their ACCEPT and do not answer their CALL. */
+#define ARQ_CONNECT_MINOR_MIN         2
 #define ARQ_CONNECT_EXT_BW_MASK       0x03
 #define ARQ_CONNECT_EXT_MINOR_SHIFT   2
 #define ARQ_CONNECT_EXT_MINOR_MASK    0x0C
@@ -523,6 +531,8 @@ bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len);
 
 /** The 2.x minor revision of a CALL or ACCEPT (version_ok already checked). */
 int arq_protocol_connect_minor(const uint8_t *buf);
+/** Does this station connect to the sender of buf (minor >= ARQ_CONNECT_MINOR_MIN)? */
+bool arq_protocol_connect_compatible(const uint8_t *buf);
 
 /** Is a CALL or ACCEPT addressed to callsign (bytes 2-3, all 16 bits)?
  *  Requires at least ARQ_CONNECT_PAYLOAD_IDX + 2 bytes in @p buf. */

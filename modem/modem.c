@@ -370,18 +370,27 @@ void modem_tune_stop(void)
 }
 
 /* Convert a 16-bit modulator sample to a 32-bit playback sample with gain
- * and saturation.  At gain == 1.0 this matches the historical behavior of
- * mapping int16 into the upper bits of int32 — but via a multiply by 65536,
- * not a left shift: shifting a negative int32 is undefined in C.  Saturates
+ * and saturation: int16 into the upper bits of int32, raised by TX_BASE_GAIN,
+ * via a multiply, not a left shift: shifting a negative int32 is undefined
+ * in C.  Saturates
  * against INT32 limits using a >= / <= compare because the literal
  * 2147483647.0f rounds up to 2^31 in float, so a strict > would let the
  * boundary case fall through to an undefined int cast.  *peak_fs, if
  * non-NULL, is raised to the pre-saturation magnitude |fs| so the UI meter
  * reflects the true post-gain level (it can read above full-scale, i.e. the
  * amount of clipping) rather than the clamped sample. */
+/* The modulators leave half the int16 range unused: the OFDM modes clip
+ * their peaks at 16384 (-6 dBFS) and MFSK peaks at -6.5 dBFS.  On a radio
+ * whose power setting is reached only by a full-scale signal (the sBitx
+ * through radiod) that cost a quarter of the power.  4 dB more puts the
+ * peaks at about -2 dBFS: a resampler on the way (radiod's upsampler) was
+ * seen to add 1 dB to an MFSK peak.  tx_gain_db trims around this level;
+ * TUNE does not go through it. */
+#define TX_BASE_GAIN 1.5849f   /* +4 dB */
+
 static inline int32_t tx_sample_with_gain(int16_t sample, float gain, float *peak_fs)
 {
-    float fs = (float)sample * 65536.0f * gain;
+    float fs = (float)sample * (65536.0f * TX_BASE_GAIN) * gain;
     if (peak_fs)
     {
         float mag = fabsf(fs);
@@ -2508,6 +2517,18 @@ static void rx_inflight_note(int slot, int mode, const rx_metrics_accum_t *m, ui
         atomic_store(&g_rx_inflight_since_ms[slot], 0);
 }
 
+/* A slot locked onto a frame that can hold a scanning host: any but the
+ * 500 Hz MFSK, whichever slot it sits in (the listen floor at BW500, the
+ * second listener above it).  Its carrier sense held a false lock for a whole
+ * 27 s frame twice in 9 minutes on the real 40 m band (7050 kHz), where the
+ * control plane and the 1 kHz MFSK held none; a CALL on it gets its PENDING
+ * when it decodes. */
+static bool rx_inflight_call(int slot)
+{
+    return atomic_load(&g_rx_inflight_since_ms[slot]) != 0 &&
+           atomic_load(&g_rx_inflight_mode[slot]) != MERCURY_MODE_MFSK_N32;
+}
+
 bool modem_rx_frame_in_flight(const char **mode_name, uint64_t *for_ms)
 {
     uint64_t now = monotonic_ms();
@@ -3703,6 +3724,10 @@ void *rx_thread(void *g_modem)
             rx_inflight_note(RX_INFLIGHT_LISTEN, atomic_load(&w_listen.mode), &m_listen, now);
             rx_inflight_note(RX_INFLIGHT_LISTEN_ALT, atomic_load(&w_listen_alt.mode),
                              &m_listen_alt, now);
+            if (arq_policy_ready && (rx_inflight_call(RX_INFLIGHT_CTRL) ||
+                                     rx_inflight_call(RX_INFLIGHT_LISTEN) ||
+                                     rx_inflight_call(RX_INFLIGHT_LISTEN_ALT)))
+                arq_note_call_in_flight();   /* a scanning host is held (#527) */
         }
         {
             /* The monitor decoders are also not a link-quality source: their

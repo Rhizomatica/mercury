@@ -261,7 +261,7 @@ order is a stable wire format — do not reorder.
 | `bytes_transmitted` / `bytes_received` | Counters |
 | `tx_gain_db` / `tx_peak_dbfs` | TX gain and peak level |
 | `waterfall` | Spectrum feed enabled |
-| `audio_ok` / `audio_error` | Audio health and reason string.  `false` also while a capture device that opened delivers no audio (`capture: the capture device delivers no audio (still trying it)`); back to `true` when samples return |
+| `audio_ok` / `audio_error` | Audio health and reason string.  `false` also while a capture device that opened delivers no audio (`capture: the capture device delivers no audio (still trying it)`); back to `true` when samples return.  Likewise while the playback device takes no audio: after three reopens in a row that bring nothing (`playback: the playback device takes no audio (still trying it)`); back to `true` when the device takes audio again.  With `[audio] pulse_keepalive` on, this can also happen while idle |
 | `arq_tx_mode` / `arq_rx_mode` | Payload modes; see `WEBSOCKET_STATUS.md` |
 | `radio_frequency_hz` / `radio_frequency_age_ms` | Cached Hamlib frequency, or `null` |
 | `peer_snr` / `peer_snr_valid` | Kept for compatibility (`-99.9` / `false`) |

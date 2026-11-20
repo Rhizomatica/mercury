@@ -10,6 +10,11 @@
 /leak-*
 /oom-*
 /timeout-*
+# Per-target reproducer dirs written by the CI fuzz loop (-artifact_prefix)
+/out/
+# Smoke-run finds (make check) and the CI corpus merge: kept out of corpus/
+/.check-corpus/
+/merged/
 *.profraw
 # macOS debug symbol bundles
 *.dSYM/

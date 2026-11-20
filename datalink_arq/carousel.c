@@ -145,6 +145,17 @@ static uint32_t nav_lead(const car_t *c) { (void)c; return 0; }
 #define FLOOR_DEEP_DB          3.0f
 #define FLOOR_POLL_EVERY_DEEP 12
 #define FLOOR_SILENT_MAX  6
+/* After an unconfirmed fall-back onto the floor (fell_back): S may have
+ * confirmed the rung above and stayed there, deaf to my floor rounds, so
+ * after this many silent ones I ask instead (#529; specs/rungs
+ * FloorFallback: at most FLOOR_SILENT_FB + 1 rounds sent where S does not
+ * listen, against up to 7 at FLOOR_SILENT_MAX).  floor_silent counts every
+ * silent floor round since I last heard S, so at 1 a floor that was
+ * already silent once means I ask right after the fall-back.  The sim
+ * A/B: make -B carousel_bench CC="gcc -DFLOOR_SILENT_FB=6". */
+#ifndef FLOOR_SILENT_FB
+#define FLOOR_SILENT_FB   1
+#endif
 #define FLOOR_LATE_MS     9000
 #define PATTERN_AIR_MS    640
 /* After a pattern above the floor the sender keys later than after a poll:
@@ -2849,8 +2860,13 @@ static void m_decide_send(car_t *c, uint64_t now)
     if (!has_data(c)) { m_decide_idle(c, now); return; }
     if (!answered) {
         /* At the floor silence means "keep going"; above it, or after too
-         * many, ask the receiver where it stands. */
-        if (c->m_kind == KD_ROUND && c->last_lv == 0 && c->io.pattern && ++c->floor_silent <= FLOOR_SILENT_MAX) {
+         * many, ask the receiver where it stands.  After a fall-back onto
+         * the floor (fell_back) the blind rounds are the slow part: S
+         * confirmed the rung and stayed on it, so each silent round is one
+         * more before the ask that would say where S listens (#529) -- the
+         * cap there is FLOOR_SILENT_FB, not FLOOR_SILENT_MAX. */
+        if (c->m_kind == KD_ROUND && c->last_lv == 0 && c->io.pattern &&
+            ++c->floor_silent <= (c->fell_back ? FLOOR_SILENT_FB : FLOOR_SILENT_MAX)) {
             car_trace(c, "tx: no answer -- continuing (%d)", c->floor_silent);
             ctl_deaf_on_floor_silence(c, now);
             m_plan(c, KD_ROUND, 0, 0);

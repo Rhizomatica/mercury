@@ -320,7 +320,10 @@ docs/CAROUSEL-ARQ.md, "Wire formats".
   transmits only MFSK" (1 bit, minor 1). A frame of another type is dropped
   (`arq_protocol_connect_version_ok`); a 1.9.x CALL addressed to this
   station is logged, not answered. 1.9.x therefore does not connect to
-  this one.
+  this one.  **[1.9.25]** Minor 2: a CALL or ACCEPT of minor 0 or 1
+  (1.9.20-1.9.24) is logged and ignored too (`arq_protocol_connect_compatible`),
+  since minor 2 maps the ladder's levels to other modes (§ the per-bandwidth
+  ladders); specs/connect `SameLadder`.
 - CALL: session id, CRC16 of the called callsign, the caller's callsign
   (arithmetic-coded). No marker.
 - ACCEPT (callee → caller) **is the first POLL**: session id, CRC16 of the

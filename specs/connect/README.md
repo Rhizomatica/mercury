@@ -72,6 +72,14 @@ Properties:
   encrypted, or both clear.  Otherwise one end waits for a handshake the
   other never sends, and the session fails closed.
 - `ReqGate`: a required end that is connected is encrypted.
+- `SameLadder`: a connected caller maps the ladder's levels to the same modes
+  as its callee: both of protocol minor `MinMinor` (2, 1.9.25) or later, or
+  both older.  The wire carries a rung's level, not its mode, and minor 2
+  changed what the levels mean (BW2300 rung 1 the 2 kHz MFSK, the BW500 and
+  BW2750 ladders, the deep floor).  A station of minor 2 takes a CALL or
+  ACCEPT only from minor 2 up (`arq_protocol_connect_compatible`); an older
+  one (1.9.20-1.9.24) reads any minor, so it still answers a 1.9.25 CALL,
+  and the 1.9.25 caller ignores that ACCEPT.
 
 Results:
 
@@ -82,6 +90,15 @@ Results:
 - `ConnectHandshake_creq.cfg`, `ConnectHandshake_ereq.cfg`: the caller, or
   the callee, required.  No error: 4833 and 3313 distinct states (3009 and
   2913 before the stale CALL).
+  (Every configuration above is of two minor-2 stations; the counts are
+  unchanged by the minors.)
+- `ConnectHandshake_oldE.cfg` (a 1.9.25 caller, a 1.9.24 callee) and
+  `ConnectHandshake_oldC.cfg` (the reverse): no error, `Settles` included,
+  5569 and 97 distinct states (5105 and 65 before the stale CALL).  They
+  never connect: the old callee answers and the caller gives up, or the
+  new callee never answers.
+- `Mut_mixed.cfg`: a 1.9.25 station takes any minor.  Violates
+  `SameLadder`: the 1.9.25 caller connects on the 1.9.24 callee's ACCEPT.
 - `Mut_reanswer.cfg`: a repeated CALL gets a fresh answer to its offer (the
   first port of #306 to 2.0 did this: the callee in its ACCEPT fallback
   answered a repeat anew).  Violates `Agree`: the caller re-CONNECTs with
@@ -291,3 +308,22 @@ Results:
 Give each TLC run its own `-metadir`.  The state counts here are TLC
 2026.10.04 (`tlc2.TLC -h` prints the version); another version can count a
 few hundred states differently with the same results.
+
+## The notice that holds a scanning host while a CALL arrives (`arrival_hold`, #527)
+
+Not modelled: it adds no state to the connect.  LISTENING says `PENDING` when
+a CALL decoder (the control plane's, or the 1 kHz MFSK listener's) has locked
+onto a frame, again every `ARQ_PENDING_HOLD_MS` while the lock lasts, and
+`CANCELPENDING` `ARQ_ARRIVAL_GRACE_MS` after it is gone when the FSM has not
+taken a CALL out of it.  Where the FSM does (a CALL for this station decoded),
+the CALL's own `PENDING` (`cb_notify_pending`) follows in the same pass and the
+hold lets go without a `CANCELPENDING`: the session's notices take over, so the
+host sees one unbroken `PENDING` from the lock to `CONNECTED`, `CANCELPENDING`
+or `DISCONNECTED`.  The hold is a function of the decoder's lock, the
+connection state and the clock (statics in `arq.c`, nothing in the session),
+and is silent while a session exists or the radio is keyed.  Measured in the Go
+harness with a scanning host (4 s dwell, 0.5 s deaf, 2 channels, nine phases of
+the scan cycle): connects at 7 of 9 phases within 120 s, against 5 of 9 before.
+The two it misses, phases 4 and 5, are those where the caller's CALL repeats
+land outside the dwell each time (its cadence has locked to the scan cycle).
+

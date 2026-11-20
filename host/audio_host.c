@@ -224,6 +224,11 @@ void audioio_set_saved_device_names(const char *capture_name, const char *playba
     (void) capture_name; (void) playback_name;   /* the host's devices */
 }
 
+void audioio_set_pulse_keepalive(bool on)
+{
+    (void) on;                      /* the host's playback feed */
+}
+
 int audioio_device_name(int audio_subsys, int mode, const char *id, char *name, size_t len)
 {
     (void) audio_subsys; (void) mode; (void) id;

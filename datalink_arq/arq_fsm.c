@@ -1656,7 +1656,10 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * decoded late is a stale frame, not a redial, and is never taken
          * as "the caller CONNECTed again" (on air, KG9NI <- K7EK,
          * 2026-11-17 21:19: an old session's CALL surfaced after the new
-         * CONNECT; answering it cost the attempt). */
+         * CONNECT; answering it cost the attempt).  A late CALL of another
+         * session re-arms this answer's budget like a repeat does: harmless,
+         * the caller is evidently there, and its next CALL, decoded on
+         * time, gets the switch. */
         if (call_too_late(sess, ev))
         {
             sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;

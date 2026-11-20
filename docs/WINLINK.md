@@ -105,15 +105,14 @@ for example, gives "Enhanced" and "Standard".
 
 - **Calls missed by a scanning gateway**: see above and #527.
 - **`WRONG Last cmd=PUBLIC ON` in Trimode's log**: Mercury supports
-  `PUBLIC ON`, so the `WRONG` is the answer to a different command, most
+  `PUBLIC ON`, so the `WRONG` was the answer to a different command, most
   likely `CWID ON`. Pat sends `CWID ON` right after `PUBLIC ON` at every VARA
-  HF start, without waiting for the answer, and Mercury answers it `WRONG`
-  until #561 is merged. If Trimode does the same, that is the command, and
-  the `WRONG` goes away with #561. Mercury logs every command
-  it rejects as `Command rejected (WRONG): <command>`; that line shows which
-  one. The Mercury window writes it to `mercury_engine.log`, in the `logs`
-  folder next to `mercury-ui.exe` on Windows (see also
-  [Logging](ARQ.md#logging)).
+  HF start, without waiting for the answer. Mercury now accepts `CWID ON` and
+  `CWID OFF` (it sends no CW ID; see [TNC.md](TNC.md#cwid)). If the `WRONG`
+  still shows, Mercury logs every command it rejects as
+  `Command rejected (WRONG): <command>`, which names the cause. The Mercury
+  window writes it to `mercury_engine.log`, in the `logs` folder next to
+  `mercury-ui.exe` on Windows (see also [Logging](ARQ.md#logging)).
 
 ## Scanning BBS software (BPQ32, LinBPQ)
 
