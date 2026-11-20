@@ -495,6 +495,11 @@ int arq_protocol_connect_minor(const uint8_t *buf)
     return (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_MINOR_MASK) >> ARQ_CONNECT_EXT_MINOR_SHIFT;
 }
 
+bool arq_protocol_connect_compatible(const uint8_t *buf)
+{
+    return arq_protocol_connect_minor(buf) >= ARQ_CONNECT_MINOR_MIN;
+}
+
 static bool connect_tx_mfsk(const uint8_t *buf)
 {
     return (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_TXMFSK) != 0;

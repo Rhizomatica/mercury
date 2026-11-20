@@ -198,7 +198,7 @@ frame on MFSK.
 
 | byte | CALL | ACCEPT |
 |---|---|---|
-| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 1), the sender transmits only MFSK (1) | the same |
+| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 2), the sender transmits only MFSK (1) | the same |
 | 1 | 0, session id (7) | 1, session id (7) |
 | 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
 | 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |
@@ -207,8 +207,9 @@ frame on MFSK.
 | 9 | | the SNR the callee read the CALL at, dB + 128 (0: unknown) |
 | 10-13 | | zero |
 
-- A station takes a CALL or ACCEPT only of type CALL2, any 2.x minor
-  revision; every 1.9.x release drops the type.  The versions do not
+- A station takes a CALL or ACCEPT only of type CALL2, of minor 2 or later
+  (`ARQ_CONNECT_MINOR_MIN`, `arq_protocol_connect_compatible`); every 1.9.x
+  release drops the type.  The versions do not
   connect to each other.  A 1.9.x CALL (type CALL) for this station is
   logged ("another protocol version (Mercury 1.9.x?)") and not answered.
   Checked 2026-10-18 with the Go harness (`TestMercuryARQTransfer`,
@@ -227,6 +228,17 @@ frame on MFSK.
   the floor (`accept_keys`): silent to a first CALL on DATAC16, it answers
   the repeat, which the caller listens for on the floor
   (specs/connect/ConnectCarrier.tla, `MfskTx`).
+- Minor 2 (1.9.25) gave each bandwidth its own ladder: BW2300 rung 1 is the
+  2 kHz MFSK (DATAC15 before), BW500 and BW2750 have ladders of their own,
+  and an MFSK-only or deep-floor session starts on the 500 Hz MFSK; the
+  QAM16C2 and DATAC17 frames changed too.  The wire carries a rung's level,
+  not its mode, so a pair of minors 1 and 2 would lose every round on the
+  levels they map apart.  A station of minor 2 ignores the CALLs and ACCEPTs
+  of minors 0 and 1 and logs them ("from Mercury 1.9.24 or older ... the
+  versions do not connect").  1.9.20-1.9.24 read any minor, so one still
+  answers a 1.9.25 CALL; the 1.9.25 caller ignores that ACCEPT and gives up
+  as with no answer.  This drops the minor-1 TX-MFSK-only rule above (minor
+  0 is no longer connected at all).  specs/connect `SameLadder`.
 - 1.9.x carried a 2-bit protocol version in type CALL's extension: 1 was
   1.9.18 (MFSK at 1531-2500 Hz), 2 was 1.9.19 (MFSK centred on 1500 Hz), 3
   gave a BW500 session its own floor; 3 was the last value it held.

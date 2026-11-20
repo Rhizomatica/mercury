@@ -111,6 +111,31 @@ void test_translate_disconnect_only(void)
     TEST_ASSERT_FALSE(sim_translate_frame(frame, ARQ_FRAME_HDR_SIZE, 3.0f, "B0BBB", &ev));
 }
 
+/* A CALL or ACCEPT of an older 2.x minor (1.9.20-1.9.24) is for us but is
+ * not taken: those releases map the ladder's levels to other modes
+ * (ARQ_CONNECT_MINOR_MIN).  The current minor is. */
+void test_translate_older_minor_not_connected(void)
+{
+    uint8_t frame[1280];
+    arq_event_t ev = {0};
+    int fs = arq_protocol_build_call(frame, sizeof(frame), 0x21, "B0AAA", "B0BBB", 2300, false);
+    TEST_ASSERT_TRUE(fs > 0);
+    TEST_ASSERT_TRUE(sim_translate_frame(frame, (size_t)fs, 3.0f, "B0BBB", &ev));
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_CALL, ev.id);
+    for (unsigned minor = 0; minor < ARQ_CONNECT_MINOR_MIN; minor++) {
+        write_frame_header(frame, PACKET_TYPE_ARQ_CALL2,
+                           (uint8_t)(ARQ_BW_TOKEN_2300 | minor << ARQ_CONNECT_EXT_MINOR_SHIFT));
+        TEST_ASSERT_FALSE(sim_translate_frame(frame, (size_t)fs, 3.0f, "B0BBB", &ev));
+    }
+    fs = arq_protocol_build_accept(frame, sizeof(frame), 0x21, "B0BBB", "B0AAA", 2300, 3, false, NAN, 0x42, false);
+    TEST_ASSERT_TRUE(fs > 0);
+    TEST_ASSERT_TRUE(sim_translate_frame(frame, (size_t)fs, 3.0f, "B0AAA", &ev));
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_ACCEPT, ev.id);
+    write_frame_header(frame, PACKET_TYPE_ARQ_CALL2,
+                       (uint8_t)(ARQ_BW_TOKEN_2300 | 1u << ARQ_CONNECT_EXT_MINOR_SHIFT));
+    TEST_ASSERT_FALSE(sim_translate_frame(frame, (size_t)fs, 3.0f, "B0AAA", &ev));
+}
+
 /* ======================================================================
  * Task 5: Connect handshake
  * ====================================================================== */
@@ -641,6 +666,7 @@ int main(void)
 
     /* Task 4: frame translation */
     RUN_TEST(test_translate_disconnect_only);
+    RUN_TEST(test_translate_older_minor_not_connected);
 
     /* Task 5: connect handshake */
     RUN_TEST(test_sim_connect_handshake);

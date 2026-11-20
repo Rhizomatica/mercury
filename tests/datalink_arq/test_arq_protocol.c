@@ -510,6 +510,9 @@ void test_connect_other_version_refused(void)
                            (uint8_t)(ARQ_BW_TOKEN_2300 | minor << ARQ_CONNECT_EXT_MINOR_SHIFT));
         TEST_ASSERT_TRUE(arq_protocol_connect_version_ok(any, ARQ_CONTROL_FRAME_SIZE));
         TEST_ASSERT_EQUAL_INT((int)minor, arq_protocol_connect_minor(any));
+        /* the layout reads at every minor; a station connects only from
+         * ARQ_CONNECT_MINOR_MIN, the ladder 1.9.25 introduced */
+        TEST_ASSERT_EQUAL(minor >= ARQ_CONNECT_MINOR_MIN, arq_protocol_connect_compatible(any));
     }
 }
 
@@ -542,10 +545,11 @@ void test_connect_tx_mfsk_flag(void)
         TEST_ASSERT_EQUAL_INT(2300, bw);
         TEST_ASSERT_EQUAL_INT(tx, got);
         TEST_ASSERT_EQUAL_INT(ARQ_CONNECT_MINOR, arq_protocol_connect_minor(frame));
-        /* 1.9.20's reading: its type, its bandwidth token, minor 1 or 5 */
+        /* 1.9.20's reading: its type, its bandwidth token, the minor and
+         * the flag as one 3-bit minor */
         TEST_ASSERT_EQUAL_INT(PACKET_TYPE_ARQ_CALL2, frame_header_packet_type(frame[0]));
         TEST_ASSERT_EQUAL_INT(ARQ_BW_TOKEN_2300, frame_header_extension(frame[0]) & 0x03);
-        TEST_ASSERT_EQUAL_INT(tx ? 5 : 1, (frame_header_extension(frame[0]) & 0x1C) >> 2);
+        TEST_ASSERT_EQUAL_INT(ARQ_CONNECT_MINOR | (tx ? 4 : 0), (frame_header_extension(frame[0]) & 0x1C) >> 2);
 
         TEST_ASSERT_EQUAL_INT(ARQ_CONTROL_FRAME_SIZE,
             arq_protocol_build_accept(frame, sizeof(frame), 0x7F,
