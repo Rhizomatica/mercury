@@ -80,6 +80,7 @@
 #define CFG_KEY_ARQ_CALL_MAX_S                "arq:call_max_s"
 #define CFG_KEY_ARQ_MFSK_TX_ONLY              "arq:mfsk_tx_only"
 #define CFG_KEY_ARQ_MAX_KEYDOWN_S             "arq:max_keydown_s"
+#define CFG_KEY_ARQ_EARLY_SLOT_RELEASE        "arq:early_slot_release"
 #define CFG_KEY_BUSY_DETECT                   "channel:busy_detect"
 #define CFG_KEY_BUSY_THRESHOLD_DB             "channel:busy_threshold_db"
 #define CFG_KEY_BUSY_HYSTERESIS_DB            "channel:busy_hysteresis_db"
@@ -139,6 +140,8 @@ typedef struct {
     int      call_max_s;                /* ARQ: the longest a station calls,
                                          * seconds, whatever RETRIES says.
                                          * Default 300, 0 = no cap, max 3600. */
+    bool     early_slot_release;        /* ARQ: end an empty response slot early
+                                        * (#495 prototype, off by default) */
     bool     mfsk_tx_only;              /* ARQ: transmit MFSK only (FSK-only
                                          * radios).  Default false.          */
     int      max_keydown_s;             /* ARQ: longest carousel round asked

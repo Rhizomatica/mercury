@@ -345,6 +345,10 @@ connect; one run each, so indicative):
 
 ## Tests
 
+The `[arq]` key `early_slot_release` (off by default, #495 prototype) ends
+an empty response slot early; its trade, model and sim evidence are in
+`specs/turns/README.md` (EarlySlot).
+
 - `tests/test_carousel`: the carousel alone, 150 sessions over 10 channels --
   every session completes, delivers exactly what was sent, never keys over
   the peer.

@@ -462,6 +462,12 @@ void arq_set_tx_mfsk_only(bool on);
  * after about 20 s keyed (#445). */
 void arq_set_max_keydown_s(int s);
 
+/* #495 prototype, off by default: M takes an empty response slot as over
+ * once the answer it expects -- one opening with a control frame -- would
+ * have been sensed.  The trade (a rare keyed-over collision, Pedro's 100-seed
+ * sim runs: 1-2 per 1000 sessions on deep fades) is pending on #495. */
+void arq_set_early_slot_release(bool on);
+
 /**
  * @brief Trigger outgoing call attempt using current ARQ addresses.
  */

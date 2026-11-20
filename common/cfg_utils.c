@@ -75,6 +75,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->silence_fallback_s          = ARQ_SILENCE_FALLBACK_S_DEFAULT;
     cfg->call_max_s                  = ARQ_CALL_MAX_S_DEFAULT;
     cfg->removed_keys                = 0;
+    cfg->early_slot_release          = false;
     cfg->mfsk_tx_only                = false;
     cfg->max_keydown_s               = 0;
     cfg->busy_detect                 = false;
@@ -448,6 +449,8 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (i >= 0 && i <= ARQ_CALL_MAX_S_MAX)
         cfg->call_max_s = i;
 
+    cfg->early_slot_release = (bool) iniparser_getboolean(ini, CFG_KEY_ARQ_EARLY_SLOT_RELEASE,
+                                                          cfg->early_slot_release ? 1 : 0);
     cfg->mfsk_tx_only = (bool) iniparser_getboolean(ini, CFG_KEY_ARQ_MFSK_TX_ONLY,
                                                     cfg->mfsk_tx_only ? 1 : 0);
 
@@ -619,6 +622,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "retry_stagger_ms = %d\n", cfg->retry_stagger_ms);
     fprintf(f, "silence_fallback_s = %d\n", cfg->silence_fallback_s);
     fprintf(f, "call_max_s = %d\n", cfg->call_max_s);
+    fprintf(f, "early_slot_release = %s\n", cfg->early_slot_release ? "true" : "false");
     fprintf(f, "mfsk_tx_only = %s\n", cfg->mfsk_tx_only ? "true" : "false");
     fprintf(f, "max_keydown_s = %d\n", cfg->max_keydown_s);
 

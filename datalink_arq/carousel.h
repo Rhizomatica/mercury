@@ -145,6 +145,10 @@ typedef struct {
     uint8_t  done;                  /* slots I heard S's keydown in, end to end */
     uint8_t  mk;                    /* its id */
     bool     pat;                   /* a pattern: S's answers name no id */
+    bool     early;                 /* car_set_early_slot: the response slot may be
+                                     * taken as over early -- the time is the log's
+                                     * own d + LEAD_MAX_MS + EARLY_SENSE_MS after the
+                                     * slot opens (m_early_at); done bit 0 marks it taken */
 } car_mlog_t;
 
 typedef struct {
@@ -407,6 +411,7 @@ bool car_slot_reserved(const car_t *m, uint64_t start, uint64_t end);
  * car_wants_nav() says the peer may not sense it otherwise (car_set_nav_below_db). */
 void car_set_nav_ms(uint32_t ms);
 void car_set_short_rung(bool on);   /* small backlogs on the shortest rung (default on) */
+void car_set_early_slot(bool on);   /* PROTOTYPE (#495): end an empty response slot early (default off) */
 /* The longest keydown this station keys, in ms (0: the protocol's 30 s
  * round); rounds it accepts stay at 30 s (arq:max_keydown_s, #445).  A
  * session takes it at car_init unless its car_io_t sets one. */

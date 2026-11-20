@@ -19,6 +19,7 @@ typedef struct {
     bool     intact;              /* what was delivered is a prefix of what was sent */
     uint64_t done_ms;             /* both complete (0: not within the limit) */
     int      collisions;
+    int      early_closes;        /* #495 prototype: response slots M took as empty */
     int      bad_frames;   /* keydown frames the modem would refuse (length != mode payload) */
     int      overruns;            /* keydowns the turn rules forbid: M's longer than its slot check
                                      allowed (car_overruns), S's outside a slot M's log holds */

@@ -240,6 +240,16 @@ call_max_s = 300
 ; Stations without it keep talking to 1.9.20.
 mfsk_tx_only = false
 
+; #495 prototype, off by default and pending an on/off decision: end an
+; empty response slot early.  After a keydown whose answer opens with a
+; control frame (an ack, a REQ, or a round the peer has a poll for), the
+; caller normally waits out the peer's whole response slot (~7 s above the
+; floor) before keying again; with this on, the slot is taken as over once
+; that answer, had it come, would have been sensed -- a host write that
+; lands just after a keydown goes out up to ~4 s sooner.  The trade: if the
+; peer's keydown is missed by carrier sense, it is keyed over -- the sim
+; puts that at 1-2 sessions in 1000 on deep fades (specs/turns, EarlySlot).
+
 ; The longest transmission of this station, in seconds (default 0: the
 ; protocol's 30 s round; else 5..30).  For TCP clients that abort when PTT
 ; stays on too long.  vARIM 1.13 and later allow 35 s keyed and need no

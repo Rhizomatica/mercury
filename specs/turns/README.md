@@ -113,6 +113,61 @@ response slot, and `CarouselTurns.cfg` with the rule added gives a
   continuation before it keys.  In the sim, with `CAR_CS_DECODABLE=1`
   (carrier sense only on decodable frames), the benches had no collisions.
 
+## Empty response slots end early (`EarlySlot`, #495 prototype)
+
+M's keydowns whose answer would open with a control frame -- an ack or a
+REQ, or a round where S has a poll to answer with -- take S's response slot
+as over once S's keydown, had it come, would have been sensed: `d +
+LEAD_MAX_MS + EARLY_SENSE_MS` after the slot opens (`m_early_ms` /
+`m_early_close` in `datalink_arq/carousel.c`), against the full `hi +
+TURN_G_MS` otherwise.  On air this is the 6.5-10.8 s a host write waits
+when it arrives just after M's ack (#495, N3JXB-K7EK: `since_tx_end` 6.95 s
+on every such turn).  **Off by default** (`car_set_early_slot`); nothing in
+the daemon turns it on.  The trade itself is pending the decision on #495.
+
+In the model, `EARLY = TRUE` adds `MEarly`: a keydown with no continuation
+slots (`m_early_ms` returns 0 when `m_kd.k` is set), not a DISCONNECT, has
+its response slot closed at `SLo + D + ES` if nothing of S's was sensed
+since the slot opened.  Carrier sense is ideal but needs S on the air for
+`ES` (`EARLY_SENSE_MS`); `sBeg`, S's latest start, is tracked only with
+`EARLY`, so the other configurations' state spaces are unchanged.
+
+- `CarouselTurns_early.cfg`: `CarouselTurns_watch.cfg` with one-frame
+  keydowns (`ONE`) and `EARLY`, so the early close runs next to `MWatch`.
+  No error, 10.48 M distinct states, depth 46 (24 min 40 s, 6 workers).
+- `Mut_csmiss_early.cfg`: M's carrier sense misses S's answer, and the
+  early close takes the slot as empty.  `K = 0`, so `MWatch` has nothing to
+  watch and the violation is `EARLY`'s; the same configuration with
+  `Mutant = "none"` has no error (2.30 M distinct states, 1 min 11 s).
+  Violates `NoOverlap`: S answers `D` late, M closes at `SLo + D + ES`
+  without having sensed it and keys over it.  This is the residual risk of
+  #495, next to `Mut_csmiss`'s and `FalsePattern`'s.
+- `Mut_earlynod.cfg`: the early time forgets S's decode delay (`SLo + ES`).
+  Violates `NoOverlap`: S, keying in its slot `D` late, is keyed over before
+  it can be sensed.  It is why the code's early time is `d + LEAD_MAX_MS +
+  EARLY_SENSE_MS`, and why `EARLY_SENSE_MS` must cover the real decoders'
+  sync time on air.
+
+What keeps it safe is what it waits for: S's answer in these cases opens
+with a DATAC16 control frame, and the control decoder always runs, so the
+sensing `EarlySlot` relies on is the one decoder that cannot miss it -- not
+the payload-decoder-in-sync of `Mut_csmiss`.  Not released: after a poll
+(S answers with its round alone, on a rung M's payload decoder may not be
+on), both ways (S's poll may ride inline in a data frame), at the floor or
+below the control mode (`ctl_deaf`), and while M's asks go unanswered
+(`reqs > 0`: step:5:-14, the sixth ask over S's poll).  What is left is the
+keydown M sensed nothing of because it was not there, or came late: it
+costs one keydown and one ask, and only on links where frames are already
+being lost.
+
+In the sim (`CAR_EARLY=1`): sparse host writes complete 7-12 % sooner
+(mean delay -17 to -23 %, p90 -18 to -31 % over ten seeds on awgn:0.02,
+cliff:8, cliff:3, fade:8:0.5, fade:3:0.5 and nvis), bulk on clean channels
+is byte-identical -- no slot is empty, so nothing closes -- and with
+`CAR_CS_DECODABLE=1` on cliff:3, fade:8:0.5, fade:3:0.5 and nvis, message
+and bulk, 80 runs with up to 164 closes per config: no collisions, nothing
+corrupt.
+
 Not modelled: the wait in `s_slot` for an application answer.  S's start
 may move by up to `min(d/2, APP_GRACE_MS)` past the opening of its slot.
 With a decode `d` late, that start can fall up to

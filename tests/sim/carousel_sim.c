@@ -333,6 +333,7 @@ static void io_bind_rx(void *ctx, int mode)
 }
 static int recv_fallbacks;
 static int floor_blind;
+static int early_closes;               /* "taken as over" trace lines (#495) */
 static int app_wait_says;              /* "tx: my application's data waits for" lines */
 static int gated_probes;
 static int dark_polls;
@@ -363,6 +364,7 @@ static void io_trace(void *ctx, const char *line)
      * traced right after "turn: mine"; m_decide_send's is not */
     if (s->turn_mine && !strncmp(line, "tx: no answer on lv=", 20) && strstr(line, "back to")) recv_fallbacks++;
     if (!strncmp(line, "tx: no answer -- continuing", 27)) floor_blind++;   /* #529 */
+    if (!strncmp(line, "tx: the peer's slot after keydown", 33) && strstr(line, "taken as over")) early_closes++;
     /* A poll naming a rung the last round left out and the SNR gates: a
      * re-probe the SNR forbids (on air 2026-11-05: DATAC3 at -4.2 dB). */
     if (!strncmp(line, "rx round lv=", 12)) {
@@ -730,6 +732,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
     nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
     car_set_nav_ms(nav_air);
+    car_set_early_slot(getenv("CAR_EARLY") && strcmp(getenv("CAR_EARLY"), "0"));   /* #495 prototype */
     car_set_short_rung(!(getenv("CAR_SHORT") && !strcmp(getenv("CAR_SHORT"), "0")));   /* A/B */
     car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
     car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
@@ -745,6 +748,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     done_polls = done_heard = floor_continues = 0;
     recv_fallbacks = 0;
     floor_blind = 0;
+    early_closes = 0;
     app_wait_says = 0;
     gated_probes = 0;
     dark_polls = 0;
@@ -934,6 +938,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->collisions = collisions;
     res->buffer_overclaim = buffer_overclaim;
     res->buffer_break_drops = buffer_break_drops;
+    res->early_closes = early_closes;
     res->frames = frame_no;
     res->non_mfsk[0] = non_mfsk[0]; res->non_mfsk[1] = non_mfsk[1];
     res->keydowns = keydown_no;
