@@ -68,7 +68,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm test
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port test_net_probe \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
-            test_mfsk_harq test_mfsk_modem test_psk_modem test_pattern_ack_detection \
+            test_mfsk_harq test_mfsk_modem test_psk_modem test_ctl_modem test_pattern_ack_detection \
             test_message_store test_ui_history test_ws_protocol \
             test_monitor_frame test_hermes_log test_host test_api_host test_bcast_carousel test_bcast_rx_host
 
@@ -447,6 +447,10 @@ test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MF
 
 # PSK modem backend (round trip through the vtable, CRC seed, noise)
 test_psk_modem: modem/test_psk_modem.c $(UNITY_SRC) ../modem/modem_psk.c ../modem/psk/mpsk.c $(FREEDV_LIB)
+	$(CC) $(CFLAGS) -I../modem -I../modem/psk -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
+
+# The control plane's codec (control mode and the short control frame)
+test_ctl_modem: modem/test_ctl_modem.c $(UNITY_SRC) ../modem/modem_ctl.c ../modem/modem_freedv.c ../modem/modem_psk.c ../modem/psk/mpsk.c $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem -I../modem/psk -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # Pattern ACK DSP (mfsk_pattern_tx/detect: noise rejects, real detects)

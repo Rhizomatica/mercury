@@ -1975,7 +1975,12 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                     abort_fallback(sess, now);
                     return;
                 }
-                if (sess->defer_count++ >= ARQ_ABORT_HOLD_MAX)
+                /* My own keydown on the air is not the channel kept busy:
+                 * the holds count from its end.  A round of 29 s keyed just
+                 * before the ABORT used them all up, and the caller was
+                 * never told (sim, the callee's ABORT 1.2 s into a six-frame
+                 * DATAC1 round). */
+                if (!sess->tx_active && sess->defer_count++ >= ARQ_ABORT_HOLD_MAX)
                 {
                     HLOGI(LOG_COMP, "Disconnect finalized (ABORT: the channel never came clear, the caller not told)");
                     notify_session_ended(sess);

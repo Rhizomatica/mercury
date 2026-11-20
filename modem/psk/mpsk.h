@@ -35,6 +35,7 @@ typedef struct {
     int nmark;                       /* markers a carrier                   */
     int rrc_span;                    /* 0: one-symbol RC; else RRC +/- span  */
     const char *code;                /* LDPC code (modem/freedv/ldpc_codes.c) */
+    double chi_min;                  /* the frame search's detection threshold */
 } mpsk_level_t;
 
 extern const mpsk_level_t mpsk_levels[];

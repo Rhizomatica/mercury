@@ -48,6 +48,7 @@ const char *mode_name_from_enum(int mode)
     case MERCURY_MODE_MFSK_N32: return "MFSK500";
     case MERCURY_MODE_MFSK_W2:  return "MFSK2K";
     case MERCURY_MODE_PSK3:     return "PSK3";
+    case MERCURY_MODE_PSKC:     return "PSKC";
     default: return "UNKNOWN";
     }
 }
