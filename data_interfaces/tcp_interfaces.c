@@ -968,8 +968,18 @@ static void execute_control_command(char *buffer)
 
     if (!strncmp(buffer, "VERSION", strlen("VERSION")))
     {
-        /* VARA compatibility: respond with modem identification. */
-        tcp_write(CTL_TCP_PORT, (uint8_t *)"VARA version 4.9.0 registered\r", 30);
+        /* VARA compatibility: respond with modem identification.  The reply
+         * starts with "VERSION ", as VARA's does: Pat (Pat-Vara, the VARA
+         * HF/FM driver) asks right after its start-up commands and waits
+         * for a line starting with VERSION, or for WRONG, without a timeout.
+         * The old "VARA version ..." matched neither: Pat's start-up hung
+         * with the connection open, and its next attempt was refused as a
+         * second host (#591).  It went unnoticed while CWID ON was answered
+         * WRONG, which that wait took for its answer; once CWID was
+         * accepted, nothing ended it.  The old text follows the prefix, so
+         * a host that looked for it inside the line still finds it. */
+        static const char reply[] = "VERSION VARA version 4.9.0 registered\r";
+        tcp_write(CTL_TCP_PORT, (uint8_t *)reply, sizeof(reply) - 1);
         return;
     }
 

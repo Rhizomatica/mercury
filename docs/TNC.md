@@ -445,10 +445,18 @@ Query the modem identification string.
 VERSION\r
 ```
 
-**Response:** A VARA-compatible version string on the control port.
+**Response:** A VARA-compatible version string on the control port, starting
+with `VERSION `:
+
+```
+VERSION VARA version 4.9.0 registered\r
+```
 
 This command exists for VARA-compatible clients that check the modem version
-at startup.
+at startup.  Pat waits for a reply starting with `VERSION ` (or `WRONG`) with
+no timeout, so the prefix matters.  The reply used to be
+`VARA version 4.9.0 registered`; Pat's VARA HF start-up got past it only
+while `CWID ON` was answered `WRONG`.
 
 ---
 

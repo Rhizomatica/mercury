@@ -1366,8 +1366,11 @@ void test_cmd_version(void)
     execute_control_command(cmd);
 
     TEST_ASSERT_EQUAL(1, tcp_write_call_count);
-    TEST_ASSERT_EQUAL_STRING_LEN("VARA version 4.9.0 registered\r",
-                                 (char *)last_tcp_write_buf, 30);
+    TEST_ASSERT_EQUAL_STRING("VERSION VARA version 4.9.0 registered\r",
+                             (char *)last_tcp_write_buf);
+    /* Pat waits for a line starting with "VERSION " (or WRONG) and nothing
+     * else: anything else hangs its start-up (#591). */
+    TEST_ASSERT_EQUAL_INT(0, strncmp((char *)last_tcp_write_buf, "VERSION ", 8));
     /* VERSION must not submit any ARQ command */
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }
