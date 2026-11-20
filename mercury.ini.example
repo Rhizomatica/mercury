@@ -15,6 +15,9 @@
 ui_enabled = false
 
 ; UI WebSocket port (default: 10000)
+; Mercury listens on every interface, so a remote UI, BPQ32 or Pat on another
+; host can reach it.  To limit who can, use a host firewall rule: see
+; "Restricting network access" in the README for an nftables example.
 ui_port = 10000
 
 ; WebSocket protocol: ws (plain) or wss (TLS) (default: ws)
