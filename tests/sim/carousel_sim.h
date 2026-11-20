@@ -31,6 +31,8 @@ typedef struct {
     int      app_wait_says;       /* the application's data said what it waits for (car_on_app_data) */
     int      recv_fallbacks;      /* falls back to ok_lv as the turn passed to a station that heard
                                      nothing (fall_back_unconfirmed in m_decide_recv, #448) */
+    int      floor_blind;         /* unanswered floor rounds M kept going on
+                                     ("tx: no answer -- continuing", #529) */
     int      gated_probes;        /* polls naming a rung out of the running (dead or locked
                                      out) whose SNR gate the smoothed SNR is below */
     int      dark_polls;          /* the most polls above the floor in a row, by one station,
