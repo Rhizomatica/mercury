@@ -577,6 +577,7 @@ keys are still read and mapped to the equivalent PTT configuration.
 | CM108/CM119 USB dongles | `cm108` | `cm108_gpio = 3` (some use 1 or 4) |
 | CAT-controlled HF rig | `hamlib` | `hamlib_model`, `device` |
 | sBitx | `hermes_shm` | — (or `-S`) |
+| uBitx (HERMES trx_v1, `ubitx_controller`) | `hermes_shm` | — (or `-S`) |
 
 The AIOC exposes both a CDC serial port and a CM108-compatible HID endpoint, so
 either method works. `cm108` needs no device path — Mercury finds it — but the
@@ -593,6 +594,34 @@ running as root.
 
 `pkg-config` detection is deliberately skipped for the Windows cross-build: it
 would find the *host* hidapi and link something that cannot run on the target.
+
+### Restricting network access
+
+Mercury's TCP ports listen on every interface, by design: the remote UI, BPQ32
+or Pat on another host, and the hosted web app all connect over the network.
+None of them is authenticated, and the ARQ control port can key the
+transmitter, so on a network you don't trust, limit who can reach them with a
+host firewall rather than in Mercury's configuration.
+
+The ports, with their defaults: ARQ control 8300 and data 8301 (`-p`,
+`arq_tcp_base_port`), broadcast 8100 (`-b`) and the UI WebSocket 10000 (`-U`,
+`ui_port`).  This nftables table lets them be reached only from this machine
+and one LAN; change `192.168.1.0/24` to yours:
+
+```
+table inet mercury {
+    chain input {
+        type filter hook input priority filter; policy accept;
+        tcp dport { 8100, 8300, 8301, 10000 } ip saddr { 127.0.0.0/8, 192.168.1.0/24 } accept
+        tcp dport { 8100, 8300, 8301, 10000 } drop
+    }
+}
+```
+
+Its own table and `policy accept` leave every other rule alone.  Load it with
+`sudo nft -f mercury.nft`; to keep it across reboots, add it to
+`/etc/nftables.conf` and `sudo systemctl enable nftables`.  If you change a
+port, change it here too.
 
 ## Documentation
 
@@ -654,7 +683,7 @@ measured thresholds: [docs/MODES.md](docs/MODES.md)):
 | **DATAC17** | 2250 Hz | 1184 B | Intermediate SNR, roughly 2× the goodput of DATAC1 |
 | **QAM16C2** | 2250 Hz | 1183 B | Good channels, roughly 2.9× DATAC1 |
 | **DATAC17W**, **QAM16C2W** | 2750 Hz | 1170 B, 1169 B | BW2750's rungs 5 and 6: DATAC17 and QAM16C2 on 44 carriers |
-| **DATAN1**, **QAM16N1**, **QAM16N2** | 560 Hz | 243 B, 179 B, 242 B | BW500's rungs 4-6, on 9 carriers |
+| **DATAN1**, **QAM16N1**, **QAM16N2** | 562 Hz | 243 B, 179 B, 242 B | BW500's rungs 4-6, on 9 carriers |
 | **MFSK** | 1000 Hz | 98 B | The deepest fringe: non-coherent 32-tone MFSK (50 % frame loss at −11.2 dB on AWGN, DATAC15 −10.3 dB; [measured](docs/MFSK-PORT.md)); the carousel's floor rung, and the carrier of CALLs and tone-pattern ACKs there |
 | **MFSK500** | 500 Hz | 98 B | The same frame in half the bandwidth (~26.2 s): the floor of a BW500 session, and of a wider one whose ACCEPT went on it (the deep floor) |
 | **MFSK2K** | 2000 Hz | 98 B | Twice the 1 kHz floor's rate (~6.56 s a frame): rung 1 of BW2300 and BW2750 |

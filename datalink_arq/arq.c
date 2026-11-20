@@ -1341,6 +1341,8 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
 
     if (!arq_protocol_connect_version_ok(data, frame_size))
         rc = -2;   /* another protocol version: below, once we know it is for us */
+    else if (!arq_protocol_connect_compatible(data))
+        rc = -3;   /* an older 2.x minor: likewise */
     else if (is_accept)
     {
         rc = arq_protocol_parse_accept(data, frame_size, &acc);
@@ -1427,12 +1429,13 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
                   dialed_call);
         return false;
     }
-    if (ARQ_TX_MFSK_ONLY && arq_protocol_connect_minor(data) < 1)
+    if (rc == -3)
     {
-        /* Minor 0, 1.9.20, does not read the TX-MFSK-only bit: it would put
-         * my rounds on rungs I cannot send. */
-        HLOGW(LOG_COMP, "%s for %s from Mercury 1.9.20, which cannot reach a TX-MFSK-only station: ignored",
-              is_accept ? "ACCEPT" : "CALL", dialed_call);
+        /* Minors 0 and 1 (1.9.20-1.9.24) map the ladder's levels to other
+         * modes (ARQ_CONNECT_MINOR_MIN): a session would lose its rounds. */
+        HLOGW(LOG_COMP, "%s for %s from Mercury 1.9.24 or older (protocol minor %d): the versions do not connect, %s",
+              is_accept ? "ACCEPT" : "CALL", dialed_call, arq_protocol_connect_minor(data),
+              is_accept ? "ignored" : "not answered");
         return false;
     }
 

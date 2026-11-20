@@ -1189,12 +1189,20 @@ static int open_listener(const char *bind_addr, uint16_t port)
 
     if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) != 0)
     {
+        char ip[INET_ADDRSTRLEN] = "?";
+        int e = sock_errno();   /* WSAGetLastError() on Windows */
+        inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
+        HLOGE(WS_LOG_TAG, "bind %s:%u failed: %s (%d)", ip, (unsigned) port,
+              strerror(e), e);
         SOCK_CLOSE(fd);
         return -1;
     }
 
     if (listen(fd, 8) != 0)
     {
+        int e = sock_errno();
+        HLOGE(WS_LOG_TAG, "listen on port %u failed: %s (%d)", (unsigned) port,
+              strerror(e), e);
         SOCK_CLOSE(fd);
         return -1;
     }

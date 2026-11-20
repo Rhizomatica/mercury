@@ -68,19 +68,73 @@ Results (`KD_BOTH` on any rung, and its round lost alone, are modelled):
       rung left the callee's fallback (`s_prev_lv`) apart from the caller's
       (`ok_lv`).
 
-A gap, on the floor: `RungAgreement` has no floor rung, so `WastedF` does not
-bound what happens when the fall-back (#448's, or the older one in
-`m_decide_send`) goes onto the MFSK floor by mistake.  After a silent
-`KD_BOTH` the caller cannot tell its round lost from the callee's answer
-lost.  If it was the answer, and the poll naming the callee's rung was lost
-too (`ok_lv` stale at 0), the fall-back lands on the floor and
-`FLOOR_SILENT_MAX` (6) keeps the caller sending blind instead of asking: in
-the sim (`cliff:-5` bidirectional, frames 0, 7 and 11 lost) 3 blind MFSK
-rounds, 52-68 s.  A possible fix: after an unconfirmed fall-back onto the
-floor, ask (REQ) instead of continuing blind.  It needs `FloorSilence` and
-`RungAgreement` combined.  `test_car_explore oct27` (`cliff:-5` bidirectional,
-frames 0, 3 and 6 lost) is the regression test for the case the fall-back
-gets right.
+`RungAgreement` has no floor rung, so `WastedF` does not bound what happens
+when the fall-back (#448's, or the older one in `m_decide_send`) goes onto
+the MFSK floor by mistake: `FloorFallback` below covers that (#529).
+`test_car_explore oct27` (`cliff:-5` bidirectional, frames 0, 3 and 6 lost)
+is the regression test for the case the fall-back gets right.
+
+## FloorFallback
+
+`RungAgreement` and `FloorSilence` combined (`FloorFallback.tla`): the
+floor is one of the rungs, with `m_decide_send`'s floor rule (keep going
+while `floor_silent` is within the cap), S's floor poll that moves M up
+with `ok_lv` left at the floor, M's control onto MFSK after `FL` silent
+floor rounds (`FLOOR_SILENT_LOSS`, `ctl_deaf_on_floor_silence`; S decodes a
+REQ there only bound to the floor), and S's own floor fallback after `FS`
+silent exchanges (`S_FALLBACK_MS`).
+
+The case (#529, VE4KLM-K7EK 2026-11-08): S's floor poll moves M up to rung
+`r` with `ok_lv` at the floor; S decodes M's round on `r` and confirms it
+(`s_prev_lv = r`) in an answer that is lost.  M cannot tell that from its
+round lost, falls back to the floor, and sends floor rounds S is not
+listening for.  After `FL` of them its REQ goes on MFSK, which S on `r` does
+not decode either: only S's own silence ends it.  The cap
+(`FLOOR_SILENT_FB`, 1) makes M ask on DATAC16, which S decodes on `r`,
+after one blind floor round.  `floor_silent` is cumulative (reset only when
+M hears S), so the rule reads "after the fall-back, ask once the floor has
+been silent `FB` times since M last heard S".
+
+    java -cp /opt/TLA+Toolbox/tla2tools.jar tlc2.TLC -workers 4 \
+        -metadir /tmp/tlc-floorfb -config FloorFallback.cfg FloorFallback.tla
+
+`WastedFB`: rounds sent where S does not listen while M's fall-back is
+unconfirmed, since the last loss, at most `B`.
+
+- `FloorFallback.cfg`: the code's rules (`FB = 1`, `FMax = 6`, `FL = 2`,
+  `FS = 3`: S_FALLBACK_MS, 90 s, over a 24-31 s floor exchange).  `Agree`,
+  `WastedF` (`W = 2`), `WastedFB` (`B = 2`) and `Delivered` hold: no error,
+  3665 distinct states.  `FloorFallback_FS8.cfg` (`FS = 8`): `Agree`,
+  `WastedFB` (`B = 2`) and `Delivered` hold, 5609 states.
+- `Mut_fb_six.cfg`: the old cap (`FB = 6`, `FLOOR_SILENT_MAX`).  Violates
+  `WastedFB` with `B = 2` (3 rounds at `FS = 3`); `Mut_fb_six_FS8.cfg`
+  violates it with `B = 6` (7 rounds at `FS = 8`).  `Delivered` still holds
+  with the old cap: it costs time, not delivery.
+- The smallest `B` that holds, by `FS` (1 rung above the floor, `N = 2`,
+  `L = 2`), is min(`FB` + 1, `FS`) up to `FMax` + 1:
+
+  | `FS`   | 1 | 2 | 3 | 4 | 5 | 6 | 8 | 10 |
+  |--------|---|---|---|---|---|---|---|----|
+  | `FB = 0` | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
+  | `FB = 1` | 1 | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
+  | `FB = 2` | 1 | 2 | 3 | 3 | 3 | 3 | 3 | 3 |
+  | `FB = 6` | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 7 |
+
+  With the old cap only S's silence bounds the waste; with 1 the bound
+  does not depend on `FS`.  At the default timers (`FS` 3-4) the cap
+  saves 1-2 floor rounds per such loss, 24-62 s, about what the
+  field log shows (#529).
+- Found by the model, not fixed here: `WastedF` with `FB = 1` grows with
+  `FS` (2, 2, 3, 6 at `FS` = 2, 3, 4, 8) through another path.  S's sized
+  poll moves the session down onto the floor and arms `CAR_T_W`; M's first
+  floor round is lost, so S goes back up (`s_prev_lv`).  M came to the
+  floor on S's word, not by a fall-back, so `fell_back` is clear and it
+  keeps going for up to `FLOOR_SILENT_MAX` rounds before it falls back up
+  to `ok_lv`.  S staying at a floor it asked for while it reads M below the
+  control mode (`CAR_T_W`, #548) avoids this; the model lets the timer take
+  S up either way.  Not seen in the sim yet.
+- Not modelled: the channel going down (`FloorSilence` covers it), time,
+  KD_BOTH on the floor, and patterns as a separate signal.
 
 ## FloorSilence
 

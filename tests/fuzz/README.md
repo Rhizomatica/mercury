@@ -24,7 +24,9 @@ not part of the blocking CI gates and require clang with libFuzzer.
     make -C tests/fuzz check
 
 This is what a reviewer runs to confirm the targets build and survive their seeds.
-It is a gate on *no crash*, not a real campaign.
+It is a gate on *no crash*, not a real campaign.  New inputs it finds go to
+`.check-corpus/<target>/` (ignored by git, removed by `make clean`), so the
+committed `corpus/` is left as it is.
 
 ## Real fuzzing run
 
@@ -65,6 +67,7 @@ section below.
   shape (`LLVMFuzzerTestOneInput`), so an OSS-Fuzz `project.yaml` + `build.sh` that
   compiles `tests/fuzz/*.c` would give continuous cloud fuzzing for free. Good
   candidate given Mercury is open-source humanitarian comms infrastructure.
-- **CI job**: a non-blocking scheduled workflow could run `make -C tests/fuzz check`
-  (build + short smoke) on a timer. Deliberately not added in this PR to keep the
-  blocking gates fast and gcc-only.
+- **CI job**: done. `.github/workflows/fuzz.yml` runs weekly and on manual
+  dispatch, never on PRs: `make check`, then a campaign per target, and uploads
+  any reproducer as an artifact.  The corpus it grows is minimised and cached
+  between runs.
