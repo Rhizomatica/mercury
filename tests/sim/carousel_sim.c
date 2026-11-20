@@ -18,6 +18,7 @@
  */
 #include "carousel_sim.h"
 #include "modem_mfsk.h"            /* MERCURY_MODE_MFSK */
+#include "modem_psk.h"             /* MERCURY_MODE_PSK3 */
 #include "sim_channel.h"
 #include "carousel.h"
 #include "arq_protocol.h"
@@ -649,6 +650,9 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
         { FREEDV_MODE_DATAC4,  0.45 }, { FREEDV_MODE_DATAC3,  0.67 },
         { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },
         { FREEDV_MODE_QAM16C2, 0.95 },
+        /* PSK3, measured as the others (psk_sweep psk3 80 12 12 1 itur-mdv):
+         * 76/80 delivered, where DATAC4 delivers 56/80 and DATAC3 28/80. */
+        { MERCURY_MODE_PSK3,   0.05 },
     };
     double snr_db = 12.0;
     if (!strncmp(chan, "fade:", 5)) {
