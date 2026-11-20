@@ -575,6 +575,7 @@ keys are still read and mapped to the equivalent PTT configuration.
 | CM108/CM119 USB dongles | `cm108` | `cm108_gpio = 3` (some use 1 or 4) |
 | CAT-controlled HF rig | `hamlib` | `hamlib_model`, `device` |
 | sBitx | `hermes_shm` | — (or `-S`) |
+| uBitx (HERMES trx_v1, `ubitx_controller`) | `hermes_shm` | — (or `-S`) |
 
 The AIOC exposes both a CDC serial port and a CM108-compatible HID endpoint, so
 either method works. `cm108` needs no device path — Mercury finds it — but the

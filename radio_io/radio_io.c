@@ -579,7 +579,7 @@ static int shm_ptt_open(const ptt_config_t *config)
     if (size == 0)
     {
         HLOGE(RADIO_LOG_TAG,
-              "Radio SHM not created. Is sbitx_controller running?");
+              "Radio SHM not created. Is sbitx_controller or ubitx_controller running?");
         return -1;
     }
     if (size >= sizeof(controller_conn))
