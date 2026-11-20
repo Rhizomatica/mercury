@@ -46,6 +46,9 @@
 #include "sbitx_io.h"
 #include "radio_cmds.h"
 #include "shm_utils.h"
+#include <stddef.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #endif
 
 typedef struct {
@@ -551,23 +554,55 @@ static void hamlib_close(void) { }
 #ifdef HAVE_HERMES_SHM
 static controller_conn *g_sbitx_connector = NULL;
 
+/* The trx_v1 controller (hermes-net trx_v1-userland, uBitx) shares the same
+ * key and the same controller_conn up to radio_fd, without the messaging
+ * fields, so its segment is smaller; and it forwards the uBitx firmware's own
+ * PTT codes, not the trx_v2 (sBitx) ones.  Told apart by the segment's size. */
+#define TRX_V1_CMD_PTT_ON  0x08
+#define TRX_V1_CMD_PTT_OFF 0x88
+static bool   g_shm_trx_v1 = false;
+static size_t g_shm_size = 0;
+
+static size_t shm_segment_size(key_t key)
+{
+    struct shmid_ds ds;
+    int shmid = shmget(key, 0, 0);
+    if (shmid == -1 || shmctl(shmid, IPC_STAT, &ds) == -1)
+        return 0;
+    return (size_t)ds.shm_segsz;
+}
+
 static int shm_ptt_open(const ptt_config_t *config)
 {
     (void)config;
-    if (!shm_is_created(SYSV_SHM_CONTROLLER_KEY_STR, sizeof(controller_conn)))
+    size_t size = shm_segment_size(SYSV_SHM_CONTROLLER_KEY_STR);
+    if (size == 0)
     {
         HLOGE(RADIO_LOG_TAG,
-              "Radio SHM not created. Is sbitx_controller running?");
+              "Radio SHM not created. Is sbitx_controller or ubitx_controller running?");
         return -1;
     }
+    if (size >= sizeof(controller_conn))
+        g_shm_trx_v1 = false;
+    else if (size >= offsetof(controller_conn, message))
+        g_shm_trx_v1 = true;
+    else
+    {
+        HLOGE(RADIO_LOG_TAG, "Radio SHM is %zu bytes, smaller than any "
+              "controller's (%zu): not attaching", size,
+              (size_t)offsetof(controller_conn, message));
+        return -1;
+    }
+    g_shm_size = g_shm_trx_v1 ? size : sizeof(controller_conn);
     g_sbitx_connector = (controller_conn *)shm_attach(
-        SYSV_SHM_CONTROLLER_KEY_STR, sizeof(controller_conn));
+        SYSV_SHM_CONTROLLER_KEY_STR, g_shm_size);
     if (!g_sbitx_connector)
     {
         HLOGE(RADIO_LOG_TAG, "Failed to attach to radio SHM");
         return -1;
     }
-    HLOGI(RADIO_LOG_TAG, "PTT method: HERMES shared memory");
+    HLOGI(RADIO_LOG_TAG, "PTT method: HERMES shared memory (%s controller)",
+          g_shm_trx_v1 ? "trx_v1 uBitx" : "trx_v2 sBitx");
     return 0;
 }
 
@@ -577,7 +612,10 @@ static int shm_ptt_set(bool on)
         return -1;
     uint8_t command[5] = {0};
     uint8_t response[5] = {0};
-    command[4] = on ? CMD_PTT_ON : CMD_PTT_OFF;
+    if (g_shm_trx_v1)
+        command[4] = on ? TRX_V1_CMD_PTT_ON : TRX_V1_CMD_PTT_OFF;
+    else
+        command[4] = on ? CMD_PTT_ON : CMD_PTT_OFF;
     radio_cmd(g_sbitx_connector, command, response);
     HLOGD(RADIO_LOG_TAG, "PTT %s via HERMES SHM", on ? "ON" : "OFF");
     return 0;
@@ -589,7 +627,7 @@ static void shm_ptt_close(void)
         return;
     (void)shm_ptt_set(false);
     shm_dettach(SYSV_SHM_CONTROLLER_KEY_STR,
-                sizeof(controller_conn), g_sbitx_connector);
+                g_shm_size, g_sbitx_connector);
     g_sbitx_connector = NULL;
 }
 #else
