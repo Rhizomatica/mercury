@@ -9,7 +9,7 @@ Express reported since 1.9.24.
 > direction.** The ladders' levels mean other modes now (below): left to
 > connect, a 1.9.24 and a 1.9.25 station would lose every round on the
 > levels they map apart. On a strong, steady link they connected and then
-> delivered nothing at all. So they refuse each other and say so in the log.
+> delivered nothing at all. So they refuse each other and say so in the log (#636).
 > **Upgrade every station you talk to at once**, and the gateways first.
 
 ### Which versions talk to each other
@@ -96,15 +96,19 @@ whose frames changed.
 - **BPQ32 and Pat commands** (#561): `CLEANTXBUFFER`, `WINLINK SESSION` and
   `CWID ON|OFF` are accepted. CWID sends no CW ID. `VERSION` now answers
   a second line, `VERSION VARA HF v4.9.0`, after VarAC's unchanged
-  `VARA version 4.9.0 registered` (#627, #591): Pat waits for a line
+  `VARA version 4.9.0 registered` (#638; #627, #591): Pat waits for a line
   starting with `VERSION`, and with `CWID ON` accepted its VARA HF start-up
   hung without it.
 - **A `BUFFER` query always gets an answer** (#620), also when the count
   has not changed.
 - **A playback device that stops taking audio is reopened** (#617), and
   reported in the GUI's audio health while it is down.
-- **hermes_shm PTT on the HERMES trx_v1 uBitx controller** (#635, if
-  merged), as well as the sBitx.
+- **hermes_shm PTT on the HERMES trx_v1 uBitx controller** (#635), as
+  well as the sBitx.
+- **PulseAudio: an opt-in silence feed between transmissions**
+  (`[audio] pulse_keepalive = true`, #625), for a PipeWire playback that
+  stopped draining after a long idle and never played the next CALL
+  (#591). Off by default: it costs some idle CPU.
 
 ## Fixes
 
@@ -116,30 +120,41 @@ whose frames changed.
   DISCONNECT is out (#560); an exit with a session up ends it on the air
   first (#609).
 - **Connect**: a CALL whose listening gap has passed is not answered (#559);
+  a callee answering a CALL takes its caller's newer session, so a redial
+  is not left unanswered (#632);
   a scan hop drops the MFSK listeners' half-heard CALL (#613); a busy
   channel holds the caller for one keydown at most (#607).
 - **Floor**: unanswered floor rounds mark the link deaf, so a lost "done"
   moves to MFSK (#615); `BUFFER` counts a floor block as in at its BREAK,
-  never 0 early (#593).
+  never 0 early (#593); after a fall-back the peer never confirmed, one
+  blind floor round, then ask (#578).
 - **TNC ports**: a host write during a call is held, not dropped, and the
   event loop never waits on the session lock (#590, #595); received data
   with no application reading is dropped, not waited on (#606); idle
   data-port bytes are dropped when their client leaves (#580); a web
   browser on the control port is told so and closed (#583); a host that
   resets its connection is logged as leaving (#608); an opt-in absorb of
-  Winlink Express's P2P idle DISCONNECT (#581).
+  Winlink Express's P2P idle DISCONNECT (#581); a frame a second KISS
+  client queued while another held the broadcast port is not sent late
+  (#588); a listener that cannot bind logs why (#565).
 - **Radio and audio**: a network rig's Hamlib session is reopened after a
   timeout or a server restart (#571, #574); no read of `rig_caps.macro_name`
   from a mismatched Hamlib (#573); with PulseAudio, "default" lets it choose
   the device (#576).
 - **Windows**: an upgrade keeps the station's `mercury.ini` (#594).
+- **Logs**: the DISCONNECT deferral count shows the cap actually in force
+  (#582).
+- **radiod build**: the daemon build links again (#549, after 1.9.24's tag).
 
 ## Documentation
 
 Each bandwidth's ladder in README and TNC.md (#626, #633); Winlink gateways
 and several Trimode instances (#563, #611); the efficiency findings and
-follow-ups (#552, #605, #624); a Linux build dependency (#557). CI runs the
-unit tests on macOS arm64 (#551).
+follow-ups (#552, #605, #624); a Linux build dependency (#557); transmit level and power on sBitx, ALC
+and no-ALC radios (#639); restricting who reaches Mercury's ports with
+nftables (#565); the 2 kHz MFSK follow-ups in MODES.md (#612); how to
+report a vulnerability, SECURITY.md (#569). CI runs the unit tests on macOS
+arm64 (#551), and a scheduled fuzz run (#567).
 
 Thanks to Pedro Messetti, Nate Goodall, Tom-Neverwinter, andreahaku,
 armysarge, tarantir and thagale.
