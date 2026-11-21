@@ -118,7 +118,8 @@ whose frames changed.
   `ABORT` cuts the keydown on the air short (#592), is retried if the
   command bus was full (#616), and holds a scanning host until its one
   DISCONNECT is out (#560); an exit with a session up ends it on the air
-  first (#609).
+  first (#609); a callee's ABORT waits out the caller's round, so the
+  caller is always told (#640).
 - **Connect**: a CALL whose listening gap has passed is not answered (#559);
   a callee answering a CALL takes its caller's newer session, so a redial
   is not left unanswered (#632);
