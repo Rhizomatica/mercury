@@ -1560,10 +1560,19 @@ static void decode_block(car_t *c, car_rblock_t *r)
         return;
     }
     for (int i = 0; i < r->K; i++) memcpy(r->piece[i], out[i], (size_t)P);
+    /* The check's value must not be read before len is known non-negative: a
+     * segment header can say more padding than one piece can carry (K=1,
+     * pad=P-1 passes decode_data, which checks K <= CAR_MAX_K and pad < P but
+     * not that K*P - pad leaves room for the check), and with len negative C's
+     * division truncates toward zero: (len + i) / P is 0 and (len + i) % P is
+     * negative, so the loop read piece[0][negative] -- undefined, and UBSan's
+     * bounds check aborts on it.  A block that short fails its check either
+     * way, so only the read needed removing. */
     int len = r->len - BLOCK_CHECK;
     uint32_t want = 0;
-    for (int i = 0; i < BLOCK_CHECK; i++)
-        want |= (uint32_t)r->piece[(len + i) / P][(len + i) % P] << (8 * i);
+    if (len >= 0)
+        for (int i = 0; i < BLOCK_CHECK; i++)
+            want |= (uint32_t)r->piece[(len + i) / P][(len + i) % P] << (8 * i);
     if (len < 0 || block_check(c, r->id, r->K, (const uint8_t (*)[CAR_PIECE])r->piece, len) != want) {
         car_trace(c, "rx block %d failed its check", r->id);
         if (!c->failed) c->failed = "a block failed its check";

@@ -692,6 +692,45 @@ static void test_carousel_piece_size_agrees(void)
     free(a); free(b);
 }
 
+/* A segment header can name more padding than its block can carry: K=1 with
+ * pad=P-1 passes decode_data -- K <= CAR_MAX_K and pad < P are checked, that
+ * K*P - pad clears the block check is not -- and decode_block lands on
+ * len = r->len - BLOCK_CHECK < 0.  Such a block must fail its check cleanly:
+ * the check's value used to be read before len was tested, indexing
+ * piece[0][negative] (UBSan's bounds check aborts the modem on it), where
+ * now the reading is guarded and the len < 0 arm fails the block. */
+static void test_carousel_forged_min_block_fails_clean(void)
+{
+    car_t *c = calloc(1, sizeof(*c));
+    car_io_t io = {0};
+    int lv = 3;
+
+    car_init(c, &io, lv, -1);
+    car_start_receiver(c, 0);
+    TEST_ASSERT_EQUAL_INT(CAR_PIECE, car_piece(c));
+
+    /* One DATA frame in decode_data's wire form: two header bytes, then a
+     * segment header -- block 0, K=1, one piece, first 0, pad=P-1, the layout
+     * put_seg_hdr writes (carousel.c) -- and the piece itself.  The first
+     * two bytes zero: no inline poll tag (CTL_SEG_K1) and not
+     * CTL_FLOOR_MARK, so neither control path takes it. */
+    enum { FRAME_HDR = 2, SEG_HDR = 4 };
+    uint8_t f[FRAME_HDR + SEG_HDR + CAR_PIECE];
+    uint32_t h = (uint32_t)0 << 28       /* the block id, mod 16 */
+               | (uint32_t)(1 - 1) << 21 /* K - 1 */
+               | (uint32_t)1 << 15      /* the pieces in this frame */
+               | (uint32_t)0 << 7       /* the first one's index */
+               | (uint32_t)(CAR_PIECE - 1) << 2;  /* padding: all but one byte */
+    memset(f, 0, sizeof f);
+    f[2] = (uint8_t)(h >> 24); f[3] = (uint8_t)(h >> 16);
+    f[4] = (uint8_t)(h >> 8);  f[5] = (uint8_t)h;
+
+    TEST_ASSERT_FALSE(car_on_frame(c, 1, f, sizeof f, car_bw_level_mode(2300, lv), false, 10.0f, 0));
+    TEST_ASSERT_NOT_NULL(c->failed);
+    TEST_ASSERT_EQUAL_STRING("a block failed its check", c->failed);
+    free(c);
+}
+
 /* The bandwidth table, and the cap clamping the start rungs both ways. */
 static void test_carousel_bandwidth_max_level(void)
 {
@@ -917,6 +956,7 @@ int main(void)
     RUN_TEST(test_carousel_sender_holds_for_peer_turn);
     RUN_TEST(test_carousel_drain_budget_fits_the_floor);
     RUN_TEST(test_carousel_piece_size_agrees);
+    RUN_TEST(test_carousel_forged_min_block_fails_clean);
     RUN_TEST(test_carousel_bandwidth_max_level);
     RUN_TEST(test_carousel_bw500_floor);
     RUN_TEST(test_carousel_mfsk_tx_only);
