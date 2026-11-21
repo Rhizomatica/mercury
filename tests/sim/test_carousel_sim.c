@@ -907,13 +907,13 @@ static abort_fate_t abort_fate(sim_t *s, sim_endpoint_t *ep, sim_endpoint_t *pee
  * keydown of ours was on the air at it (a keydown goes to the modem whole,
  * and the peer answers it before anything else can go); *untold counts the
  * peers never told within 60 s. */
-static uint64_t abort_sweep(bool callee, int *untold, int *cases)
+static uint64_t abort_sweep(bool callee, int n, int *untold, int *cases)
 {
     static uint8_t blob[6000];
     fill(blob, sizeof(blob), 5);
     uint64_t worst = 0;
     *untold = *cases = 0;
-    for (int k = 0; k < 12; k++) {
+    for (int k = 0; k < n; k++) {
         sim_t *s = idle_session(31 + k, 6.0);
         sim_endpoint_t *me = callee ? sim_b(s) : sim_a(s);
         sim_endpoint_t *peer = callee ? sim_a(s) : sim_b(s);
@@ -957,7 +957,7 @@ static uint64_t abort_sweep(bool callee, int *untold, int *cases)
 void test_car_abort_disconnect_before_the_hop(void)
 {
     int untold, cases;
-    abort_sweep(false, &untold, &cases);
+    abort_sweep(false, 12, &untold, &cases);
     TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
     TEST_ASSERT_EQUAL_INT(0, untold);
 }
@@ -969,10 +969,23 @@ void test_car_abort_disconnect_before_the_hop(void)
 void test_car_callee_abort_disconnect_before_the_hop(void)
 {
     int untold, cases;
-    uint64_t worst = abort_sweep(true, &untold, &cases);
+    uint64_t worst = abort_sweep(true, 12, &untold, &cases);
     TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
     TEST_ASSERT_EQUAL_INT(0, untold);
     TEST_ASSERT_TRUE(worst <= 15000);
+}
+
+/* The callee, over the full sweep (60 ABORT moments): every caller is told.
+ * Where the caller's round holds the channel past the scan's first hop, the
+ * DISCONNECT goes out once it ends, up to the caller's longest keydown (30 s)
+ * after the holds start.  Bounded at 30 s from the ABORT, 9 callees gave up
+ * while a round begun after their own keydown was still on the air. */
+void test_car_callee_abort_tells_the_caller_whole_sweep(void)
+{
+    int untold, cases;
+    abort_sweep(true, 60, &untold, &cases);
+    TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
+    TEST_ASSERT_EQUAL_INT(0, untold);
 }
 
 /* Request and reply, as UUCP talks: A's request arrives, B's application
@@ -1355,6 +1368,7 @@ int main(void)
     RUN_TEST(test_car_lost_disconnect_retried_before_the_hosts_abort);
     RUN_TEST(test_car_abort_disconnect_before_the_hop);
     RUN_TEST(test_car_callee_abort_disconnect_before_the_hop);
+    RUN_TEST(test_car_callee_abort_tells_the_caller_whole_sweep);
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
     RUN_TEST(test_car_bandwidth_caps_the_rungs);

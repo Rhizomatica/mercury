@@ -1055,9 +1055,11 @@ static void pending_hold(uint64_t now)
  * would clear it), again every ARQ_PENDING_HOLD_MS, and CANCELPENDING once
  * the DISCONNECT has gone (its keydown over) or the teardown has ended.  The
  * FSM's ABORT bounds (ARQ_CAR_ABORT_WAIT_MS) end it: the callee's
- * out-of-turn DISCONNECT that never finds a clear channel gives up about
- * 30 s after the ABORT (abort_key_by, then ARQ_ABORT_HOLD_MAX holds), and
- * the CANCELPENDING then comes with no DISCONNECT sent.  ARQ_ABORT_SCAN_HOLD_MS is only the
+ * out-of-turn DISCONNECT that never finds a clear channel gives up a
+ * longest keydown of the caller's (30 s) and its guard after its key-by time
+ * (abort_key_by, then ARQ_ABORT_HOLD_MAX holds, not counted while its own
+ * keydown is on the air): about 43 s after the ABORT.  The CANCELPENDING
+ * then comes with no DISCONNECT sent.  ARQ_ABORT_SCAN_HOLD_MS is only the
  * backstop.  The repeat is the answering hold's (pending_hold), the same
  * ARQ_PENDING_HOLD_MS.  Mercury already holds a scanner this way while a CQ is
  * on the air (arq_notify_cq_tx_started).  A plain DISCONNECT needs none:

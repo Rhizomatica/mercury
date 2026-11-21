@@ -1205,9 +1205,17 @@ static uint64_t channel_clear_at(const arq_session_t *sess)
 }
 
 /* How many ARQ_CHANNEL_DEFER_MS holds the out-of-turn DISCONNECT waits for a
- * clear channel past its key-by time: to about the 30 s mercuryv2 gave the
- * slot wait. */
-#define ARQ_ABORT_HOLD_MAX ((ARQ_CAR_ABORT_WAIT_MS - ARQ_ABORT_RELEASE_MS) / ARQ_CHANNEL_DEFER_MS)
+ * clear channel past its key-by time: a whole keydown of the caller's, with
+ * its guard.  The caller's rounds go to 30 s (the carousel's MAX_KEYDOWN_MS,
+ * whatever arq:max_keydown_s), and one may start as the holds do: the caller
+ * keys a round once my own keydown is off the air, and holds are counted
+ * only while it is not.  Bounded at 30 s from the ABORT, the wait ended up
+ * to ~5 s before such a round did, and the caller was never told: 9 of 60
+ * ABORT moments in test_car_callee_abort_disconnect_before_the_hop's sweep
+ * (the callee's host held all along: abort_hold's PENDING, 60 s backstop). */
+#define ARQ_PEER_KEYDOWN_MAX_MS 30000
+#define ARQ_ABORT_HOLD_MAX ((ARQ_PEER_KEYDOWN_MAX_MS + ARQ_CHANNEL_GUARD_MS + ARQ_ABORT_MARGIN_MS + \
+                             ARQ_CHANNEL_DEFER_MS - 1) / ARQ_CHANNEL_DEFER_MS)
 /* ...and how many the caller's waits while it hears the peer on the air. */
 #define ARQ_ABORT_HEARD_MAX (ARQ_CAR_ABORT_WAIT_MS / ARQ_CHANNEL_DEFER_MS)
 
@@ -2018,7 +2026,12 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                     abort_fallback(sess, now);
                     return;
                 }
-                if (sess->defer_count++ >= ARQ_ABORT_HOLD_MAX)
+                /* My own keydown on the air is not the channel kept busy:
+                 * the holds count from its end.  A round of 29 s keyed just
+                 * before the ABORT used them all up, and the caller was
+                 * never told (sim, the callee's ABORT 1.2 s into a six-frame
+                 * DATAC1 round). */
+                if (!sess->tx_active && sess->defer_count++ >= ARQ_ABORT_HOLD_MAX)
                 {
                     HLOGI(LOG_COMP, "Disconnect finalized (ABORT: the channel never came clear, the caller not told)");
                     notify_session_ended(sess);
