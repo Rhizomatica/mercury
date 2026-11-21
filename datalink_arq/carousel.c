@@ -1639,8 +1639,11 @@ static void stamp_hint(const car_t *c, msg_t *m)
 }
 
 /* The rung at or below lv whose round carrying bytes is shortest, and that
- * round's frames in *pn; lv itself (and *pn untouched) when none beats it.
- * Never the floor: MFSK is the longest frame there is. */
+ * round's frames in *pn.  On lv itself *pn only shrinks to what the bytes need
+ * (it may be less, what the rung has earned): a poll nobody answers holds its
+ * whole slot, and one for 7 DATAC3 frames kept the caller silent for 30 s
+ * while the peer held a short reply (N3JXB-K7EK, 2026-11-19).  Never the
+ * floor: MFSK is the longest frame there is. */
 static int short_rung(const car_t *c, int lv, size_t bytes, int *pn)
 {
     if (lv <= 1 || !bytes) return lv;
@@ -1658,7 +1661,7 @@ static int short_rung(const car_t *c, int lv, size_t bytes, int *pn)
         uint64_t a = round_air(c, l, n);
         if (a < best_air) { best_air = a; best = l; best_n = n; }
     }
-    if (best != lv) *pn = best_n;
+    if (best != lv || (best_n > 0 && best_n < *pn)) *pn = best_n;
     return best;
 }
 /* The peer's next message, before it says: as long as its last one -- a
