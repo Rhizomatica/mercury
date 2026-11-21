@@ -734,6 +734,42 @@ void test_accept_transitions_to_connected(void)
     TEST_ASSERT_TRUE(fake_notify_connected_fake.arg2_val);    /* we called */
 }
 
+/* The connect is logged on the carrier the ACCEPT came on, not the control
+ * mode: N3JXB's log said DATAC16 for an ACCEPT decoded on MFSK. */
+void test_caller_records_the_accept_carrier(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    ev.mode = MERCURY_MODE_MFSK;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, timing.connect_mode);
+}
+
+/* ...and on the callee, the carrier its ACCEPT went on. */
+void test_callee_records_the_accept_carrier(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    ev.mode = MERCURY_MODE_MFSK;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = 0x42;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, timing.connect_mode);
+}
+
 /* An outgoing call does not inherit the callsign the last incoming CALL
  * dialed: it fed the next outgoing call's retry rank, while the CALL itself
  * goes out from the primary. */
@@ -2750,5 +2786,7 @@ int main(void)
     RUN_TEST(test_timeout_ms_idle);
     RUN_TEST(test_accept_is_only_sent_in_answer_to_a_heard_call);
     RUN_TEST(test_accepting_silent_wait_gives_up_after_budget);
+    RUN_TEST(test_caller_records_the_accept_carrier);
+    RUN_TEST(test_callee_records_the_accept_carrier);
     return UNITY_END();
 }
