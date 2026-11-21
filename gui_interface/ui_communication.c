@@ -48,6 +48,7 @@
 #include "ui_history.h"
 #include "../modem/freedv/freedv_api.h"
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
+#include "../modem/modem_psk.h"    /* MERCURY_MODE_PSK3 */
 #include "../modem/modem.h"
 #include "../datalink_broadcast/bcast_status.h"
 #include "../common/mercury_cli.h"
@@ -90,6 +91,7 @@ static const char *ui_arq_mode_name(int mode)
     case MERCURY_MODE_MFSK: return "MFSK";
     case MERCURY_MODE_MFSK_N32: return "MFSK500";
     case MERCURY_MODE_MFSK_W2:  return "MFSK2K";
+    case MERCURY_MODE_PSK3:     return "PSK3";
     default: return "";
     }
 }

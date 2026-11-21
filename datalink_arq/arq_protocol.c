@@ -30,6 +30,7 @@ _Atomic int arq_tx_mfsk_only           = 0;
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
+#include "../modem/modem_psk.h"    /* MERCURY_MODE_PSK3 */
 
 /* Framer layer (write_frame_header, PACKET_TYPE_* constants) */
 #include "../modem/framer.h"
@@ -86,6 +87,9 @@ const arq_mode_timing_t arq_mode_table[] = {
     /* The 2 kHz rung: the same frame on 62.5 Hz tones, half the symbol
      * length, 6.56 s on the air. */
     {  MERCURY_MODE_MFSK_W2,   6.95f,    12.0f,          98   },
+    /* The three-carrier PSK rung: a 3.86 s frame of 133 payload bytes,
+     * no preamble, and the same ~0.45 s margin. */
+    {  MERCURY_MODE_PSK3,      4.30f,    12.0f,          133  },
 };
 
 const int arq_mode_table_count =
