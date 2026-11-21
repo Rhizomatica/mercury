@@ -279,9 +279,12 @@ and `CANCELPENDING` once the hold is no longer owed.  Owed is derived, no
 state of its own: the host was told at its ABORT (`g_host_told`), the
 session is DISCONNECTING, and its DISCONNECT is not out (not `ARQ_TD_SENT`
 with the keydown over).  The FSM's ABORT bounds end it: a callee's
-out-of-turn DISCONNECT that never finds a clear channel is dropped about
-30 s after the ABORT (`abort_key_by`, then `ARQ_ABORT_HOLD_MAX`), and the
-`CANCELPENDING` then comes with no DISCONNECT sent.  60 s
+out-of-turn DISCONNECT that never finds a clear channel is dropped once a
+whole keydown of the caller's (30 s) and its guard have passed since its
+key-by time (`abort_key_by`, then `ARQ_ABORT_HOLD_MAX`; holds while its own
+keydown is on the air do not count): about 43 s after the ABORT, so a round
+the caller began as the holds started has ended.  The `CANCELPENDING` then
+comes with no DISCONNECT sent.  60 s
 (`ARQ_ABORT_SCAN_HOLD_MS`) is a backstop, logged as a warning if it fires.
 
 Where the `CANCELPENDING` goes matters.  The hold is checked after each
