@@ -47,6 +47,11 @@ whose frames changed.
     peer missed its CALLs: on that link the same build at the old level
     failed both ways, and 1 dB above the new level (the first one tried)
     every session completed, its data 3.5 times faster towards the IC-7100.
+    **Lower the sBitx's power setting when you upgrade**: an ARQ session keys
+    often, and a PA near saturation gets hot. The same sBitx at 85 % ran hot
+    in a long A/B with this level. Start at 20-40 % and read the output while
+    keyed with `sbitx_client -c get_fwd` (watts × 10), or during a `TUNE -2`.
+    See the README's transmit level and power notes.
   - **On a radio with ALC** (IC-7100 and most transceivers on a USB sound
     card), the ALC takes the extra drive; check that it stays inside its
     range. The short MFSK frames (CALLs, acks) reach it first: a
