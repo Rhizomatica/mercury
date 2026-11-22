@@ -460,7 +460,7 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  *
  * 14 bytes (a DATAC16 frame), padded to the frame on MFSK.  Byte 0 is the
  * framer: type CALL2, and in its extension the bandwidth token (2 bits), the
- * 2.x minor revision (2 bits, 1) and the TX-MFSK-only bit.  Every 1.9.x
+ * 2.x minor revision (2 bits, ARQ_CONNECT_MINOR) and the TX-MFSK-only bit.  Every 1.9.x
  * release drops the type,
  * and a CALL of theirs (PACKET_TYPE_ARQ_CALL) addressed to this station is
  * logged, not answered: the versions do not connect (docs/CAROUSEL-ARQ.md,
@@ -491,15 +491,18 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  *              below the control mode (bit 3), 4 bits zero
  *           9: the SNR the callee read the CALL at, dB + 128 (0: unknown)
  *           10-13: zero */
-#define ARQ_CONNECT_MINOR             2
+#define ARQ_CONNECT_MINOR             3
 /* The lowest minor this station connects to.  Minor 2 (1.9.25) gave each
  * bandwidth its own ladder (BW2300 rung 1 the 2 kHz MFSK, the BW500 and
  * BW2750 ladders, the 500 Hz deep floor) and changed the QAM16C2 and DATAC17
- * frames.  The wire carries a rung's level, not its mode, so a pair that maps
- * a level to different modes would lose every round there: the versions do
- * not connect.  1.9.20-1.9.24 (minors 0 and 1) read any minor and still
- * ACCEPT our CALL; we ignore their ACCEPT and do not answer their CALL. */
-#define ARQ_CONNECT_MINOR_MIN         2
+ * frames.  Minor 3 put the three-carrier PSK (PSK3) at rung 2 of BW2300 and
+ * BW2750, where DATAC4 was.  The wire carries a rung's level, not its
+ * mode, so a pair that maps a level to different modes would lose every
+ * round there: the versions do not connect.  An older station still ACCEPTs
+ * our CALL (1.9.20-1.9.24 read any minor, 1.9.25 any from 2); we ignore its
+ * ACCEPT and do not answer its CALL.  3 is the last value the two bits
+ * hold. */
+#define ARQ_CONNECT_MINOR_MIN         3
 #define ARQ_CONNECT_EXT_BW_MASK       0x03
 #define ARQ_CONNECT_EXT_MINOR_SHIFT   2
 #define ARQ_CONNECT_EXT_MINOR_MASK    0x0C

@@ -73,13 +73,15 @@ Properties:
   other never sends, and the session fails closed.
 - `ReqGate`: a required end that is connected is encrypted.
 - `SameLadder`: a connected caller maps the ladder's levels to the same modes
-  as its callee: both of protocol minor `MinMinor` (2, 1.9.25) or later, or
-  both older.  The wire carries a rung's level, not its mode, and minor 2
-  changed what the levels mean (BW2300 rung 1 the 2 kHz MFSK, the BW500 and
-  BW2750 ladders, the deep floor).  A station of minor 2 takes a CALL or
-  ACCEPT only from minor 2 up (`arq_protocol_connect_compatible`); an older
-  one (1.9.20-1.9.24) reads any minor, so it still answers a 1.9.25 CALL,
-  and the 1.9.25 caller ignores that ACCEPT.
+  as its callee (`Ladder`: minors 0 and 1 share one; 2 and 3 each have
+  their own).  The wire carries a rung's level, not its mode.  Minor 2
+  (1.9.25) changed what the levels mean (BW2300 rung 1 the 2 kHz MFSK, the
+  BW500 and BW2750 ladders, the deep floor), and minor 3 put PSK3 at rung
+  2.  Each station takes a CALL or ACCEPT only from its lowest minor up
+  (`CMin`, `EMin`: `ARQ_CONNECT_MINOR_MIN`,
+  `arq_protocol_connect_compatible`); 1.9.20-1.9.24 read any minor (0) and
+  1.9.25 any from 2, so an older station still answers a newer CALL, and
+  the newer caller ignores that ACCEPT.
 
 Results:
 
@@ -90,15 +92,16 @@ Results:
 - `ConnectHandshake_creq.cfg`, `ConnectHandshake_ereq.cfg`: the caller, or
   the callee, required.  No error: 4833 and 3313 distinct states (3009 and
   2913 before the stale CALL).
-  (Every configuration above is of two minor-2 stations; the counts are
+  (Every configuration above is of two minor-3 stations; the counts are
   unchanged by the minors.)
-- `ConnectHandshake_oldE.cfg` (a 1.9.25 caller, a 1.9.24 callee) and
-  `ConnectHandshake_oldC.cfg` (the reverse): no error, `Settles` included,
-  5569 and 97 distinct states (5105 and 65 before the stale CALL).  They
-  never connect: the old callee answers and the caller gives up, or the
-  new callee never answers.
-- `Mut_mixed.cfg`: a 1.9.25 station takes any minor.  Violates
-  `SameLadder`: the 1.9.25 caller connects on the 1.9.24 callee's ACCEPT.
+- `ConnectHandshake_oldE.cfg` (a minor-3 caller, a 1.9.25 callee),
+  `ConnectHandshake_old24.cfg` (a minor-3 caller, a 1.9.24 callee) and
+  `ConnectHandshake_oldC.cfg` (a 1.9.25 caller, a minor-3 callee): no
+  error, `Settles` included, 5569, 5569 and 97 distinct states (5105 and 65
+  before the stale CALL).  They never connect: the old callee answers and
+  the caller gives up, or the new callee never answers.
+- `Mut_mixed.cfg`: a minor-3 station takes any minor.  Violates
+  `SameLadder`: the minor-3 caller connects on the 1.9.25 callee's ACCEPT.
 - `Mut_reanswer.cfg`: a repeated CALL gets a fresh answer to its offer (the
   first port of #306 to 2.0 did this: the callee in its ACCEPT fallback
   answered a repeat anew).  Violates `Agree`: the caller re-CONNECTs with

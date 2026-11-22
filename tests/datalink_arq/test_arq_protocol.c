@@ -511,7 +511,7 @@ void test_connect_other_version_refused(void)
         TEST_ASSERT_TRUE(arq_protocol_connect_version_ok(any, ARQ_CONTROL_FRAME_SIZE));
         TEST_ASSERT_EQUAL_INT((int)minor, arq_protocol_connect_minor(any));
         /* the layout reads at every minor; a station connects only from
-         * ARQ_CONNECT_MINOR_MIN, the ladder 1.9.25 introduced */
+         * ARQ_CONNECT_MINOR_MIN, the ladder with PSK3 at rung 2 */
         TEST_ASSERT_EQUAL(minor >= ARQ_CONNECT_MINOR_MIN, arq_protocol_connect_compatible(any));
     }
 }
