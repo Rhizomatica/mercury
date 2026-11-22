@@ -323,7 +323,8 @@ docs/CAROUSEL-ARQ.md, "Wire formats".
   this one.  **[1.9.25]** Minor 2: a CALL or ACCEPT of minor 0 or 1
   (1.9.20-1.9.24) is logged and ignored too (`arq_protocol_connect_compatible`),
   since minor 2 maps the ladder's levels to other modes (§ the per-bandwidth
-  ladders); specs/connect `SameLadder`.  Minor 3 (PSK3 at rung 2): a CALL or ACCEPT of minor 0-2 is ignored the same way;
+  ladders); specs/connect `SameLadder`.  Minor 3 (PSK3 at rung 2, the short
+  control frame): a CALL or ACCEPT of minor 0-2 is ignored the same way;
   3 is the last value the two bits hold.
 - CALL: session id, CRC16 of the called callsign, the caller's callsign
   (arithmetic-coded). No marker.

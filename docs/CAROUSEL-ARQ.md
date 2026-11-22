@@ -252,7 +252,8 @@ frame on MFSK.
   as with no answer.  This drops the minor-1 TX-MFSK-only rule above (minor
   0 is no longer connected at all).  specs/connect `SameLadder`.
 - Minor 3 put the three-carrier PSK (PSK3) at rung 2 of BW2300 and BW2750,
-  where DATAC4 was.  A station of minor 3 ignores minors 0-2 and logs
+  where DATAC4 was, and added the short control frame (PSKC), which a minor-2
+  station cannot decode.  A station of minor 3 ignores minors 0-2 and logs
   them ("from Mercury 1.9.25 or older"); 1.9.25 takes minor 2 and up, so it
   answers a minor-3 CALL and the caller ignores that ACCEPT, as above.  3 is
   the last value the two bits hold.

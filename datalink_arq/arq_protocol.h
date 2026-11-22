@@ -517,7 +517,8 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  * bandwidth its own ladder (BW2300 rung 1 the 2 kHz MFSK, the BW500 and
  * BW2750 ladders, the 500 Hz deep floor) and changed the QAM16C2 and DATAC17
  * frames.  Minor 3 put the three-carrier PSK (PSK3) at rung 2 of BW2300 and
- * BW2750, where DATAC4 was.  The wire carries a rung's level, not its
+ * BW2750, where DATAC4 was, and added the short control frame (PSKC), which
+ * a minor-2 station cannot decode.  The wire carries a rung's level, not its
  * mode, so a pair that maps a level to different modes would lose every
  * round there: the versions do not connect.  An older station still ACCEPTs
  * our CALL (1.9.20-1.9.24 read any minor, 1.9.25 any from 2); we ignore its
