@@ -34,7 +34,8 @@ What it models:
   gives up when the callee's kept seed lapses (`PeerLost`, one step).
 
 - Encryption (`arq_crypto.h`, `crypto_negotiate`): a CONNECT's CALLs offer
-  it or not; the callee answers the offer of the CALL it takes, once for
+  it or not, in the session id's low bit (`Offers`: odd ids offer; reserved
+  and always clear until encryption lands); the callee answers the offer of the CALL it takes, once for
   the session -- every ACCEPT of it carries that answer, as it carries the
   nonce; the caller takes an ACCEPT's bit only with an offer of its own.  A
   required caller (`CReq`) calls only to offer and hangs up on an ACCEPT
@@ -85,31 +86,35 @@ Properties:
 
 Results:
 
-- `ConnectHandshake.cfg`: the code's rules.  No error, 10609 distinct
-  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 52649.
-  (9473 and 34177 before the stale CALL; 1857 and 6421 before encryption;
+- `ConnectHandshake.cfg`: the code's rules.  No error, 12017 distinct
+  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 89929.
+  Four session ids, two for each offer (10609 and 52649 with two ids and
+  the offer apart from the id; 9473 and 34177 before the stale CALL; 1857 and 6421 before encryption;
   1425 and 4813 before the caller's watchdog could fire first.)
 - `ConnectHandshake_creq.cfg`, `ConnectHandshake_ereq.cfg`: the caller, or
-  the callee, required.  No error: 4833 and 3313 distinct states (3009 and
-  2913 before the stale CALL).
+  the callee, required.  No error: 4833 and 4113 distinct states (4833 and
+  3313 with two ids; 3009 and 2913 before the stale CALL).
   (Every configuration above is of two minor-3 stations; the counts are
   unchanged by the minors.)
 - `ConnectHandshake_oldE.cfg` (a minor-3 caller, a 1.9.25 callee),
   `ConnectHandshake_old24.cfg` (a minor-3 caller, a 1.9.24 callee) and
   `ConnectHandshake_oldC.cfg` (a 1.9.25 caller, a minor-3 callee): no
-  error, `Settles` included, 5569, 5569 and 97 distinct states (5105 and 65
-  before the stale CALL).  They never connect: the old callee answers and
+  error, `Settles` included, 6497, 6497 and 161 distinct states (5569 and
+  97 with two ids; 5105 and 65 before the stale CALL).  They never connect: the old callee answers and
   the caller gives up, or the new callee never answers.
 - `Mut_mixed.cfg`: a minor-3 station takes any minor.  Violates
   `SameLadder`: the minor-3 caller connects on the 1.9.25 callee's ACCEPT.
 - `Mut_reanswer.cfg`: a repeated CALL gets a fresh answer to its offer (the
   first port of #306 to 2.0 did this: the callee in its ACCEPT fallback
-  answered a repeat anew).  Violates `Agree`: the caller re-CONNECTs with
-  the same id, now offering, and decodes an ACCEPT of the old answer
-  (clear) still in the air, while the callee takes the session encrypted.
+  answered a repeat anew).  Violates `Agree`: the callee's answer changes
+  between two CALLs of the session (its key, or its client's ENCRYPT), and
+  the caller decodes an ACCEPT of the old answer still in the air.
 - `Mut_anyaccept.cfg`: the caller takes an ACCEPT that took an offer its
-  CONNECT did not make (one of an earlier CONNECT of the same id).
-  Violates `Agree`: the callee encrypts, the caller goes clear.
+  CONNECT did not make (one of an earlier CONNECT of the same id).  No
+  error since the offer is the id's low bit: an ACCEPT of the id answered
+  the same offer.  With the offer apart from the id it violated `Agree`
+  (the callee encrypts, the caller goes clear); the encryption code keeps
+  the check.
 - `Mut_ignorecall.cfg`: a connected callee ignores every CALL, as the code
   did before 2026-10-18.  Violates `NoDeafRedial`: the caller, its watchdog
   first, redials, and the callee answers only once its own watchdog fires

@@ -455,11 +455,18 @@ void test_connect_accept(void)
                 TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_parse_call(frame, sizeof(frame), &sid, src, &bw, &tx_mfsk));
                 TEST_ASSERT_FALSE(tx_mfsk);
                 if (k) continue;
+                /* the encryption answer (reserved) is ignored */
+                uint8_t ans[INT_BUFFER_SIZE];
+                memcpy(ans, frame, ARQ_CONTROL_FRAME_SIZE);
+                ans[ARQ_ACCEPT_LEVEL_IDX] |= ARQ_ACCEPT_CRYPTO_BIT;
+                arq_accept_t acc2;
+                TEST_ASSERT_EQUAL_INT(0, arq_protocol_parse_accept(ans, sizeof(ans), &acc2));
+                TEST_ASSERT_EQUAL_MEMORY(&acc, &acc2, sizeof(acc));
                 /* every reserved bit refuses it: the top of byte 8, bytes 10-13 */
                 for (int byte = ARQ_ACCEPT_LEVEL_IDX; byte < ARQ_CONTROL_FRAME_SIZE; byte++)
                 {
                     if (byte == ARQ_ACCEPT_SNR_IDX) continue;
-                    for (int bit = (byte == ARQ_ACCEPT_LEVEL_IDX ? 4 : 0); bit < 8; bit++)
+                    for (int bit = (byte == ARQ_ACCEPT_LEVEL_IDX ? 5 : 0); bit < 8; bit++)
                     {
                         uint8_t bad[INT_BUFFER_SIZE];
                         memcpy(bad, frame, ARQ_CONTROL_FRAME_SIZE);

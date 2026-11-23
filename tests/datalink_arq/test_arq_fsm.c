@@ -177,6 +177,23 @@ void test_connect_transitions_to_calling(void)
     TEST_ASSERT_EQUAL_STRING("TEST1", sess.remote_call);
 }
 
+/* A CONNECT's session id is never 0, and its low bit (the encryption
+ * offer, reserved) is clear */
+void test_connect_session_id_offers_nothing(void)
+{
+    for (uint64_t t = 1000; t < 1000 + 2 * 63; t++)
+    {
+        mock_set_uptime_ms(t);
+        arq_fsm_init(&sess);
+        arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+        strncpy(ev.remote_call, "TEST1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_NOT_EQUAL(0, sess.session_id);
+        TEST_ASSERT_EQUAL(0, sess.session_id & ARQ_CALL_CRYPTO_OFFER);
+        TEST_ASSERT_EQUAL(0, sess.session_id & ~ARQ_CONNECT_SESSION_MASK);
+    }
+}
+
 /* Incoming CALL from LISTENING transitions to ACCEPTING */
 void test_incoming_call_transitions_to_accepting(void)
 {
@@ -2669,6 +2686,7 @@ int main(void)
     RUN_TEST(test_init_mode_defaults);
     RUN_TEST(test_listen_transitions_to_listening);
     RUN_TEST(test_connect_transitions_to_calling);
+    RUN_TEST(test_connect_session_id_offers_nothing);
     RUN_TEST(test_call_retry_deadline_anchored_to_ptt_off);
     RUN_TEST(test_call_after_a_repeat_waits_out_a_floor_accept);
     RUN_TEST(test_incoming_call_transitions_to_accepting);

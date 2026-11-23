@@ -45,7 +45,8 @@
 (* ignored like another session's), the disconnect of a session once up.  *)
 (*                                                                         *)
 (* Encryption (arq_crypto.h, crypto_negotiate): each CONNECT's CALLs     *)
-(* offer it or not (a key for E, the client's ENCRYPT ON/OFF); E, taking  *)
+(* offer it or not (a key for E, the client's ENCRYPT ON/OFF), in the     *)
+(* session id's low bit (Offers: odd ids offer); E, taking                *)
 (* a CALL, answers the offer once for the session (it holds a key for C,  *)
 (* its client has not said OFF) and every ACCEPT of the session carries   *)
 (* that answer; C takes an ACCEPT's bit only with an offer of its own.    *)
@@ -146,6 +147,10 @@ Takes(min, peer) == peer >= min \/ Mutant = "mixed"
 \* (the per-bandwidth ladders) and minor 3 (PSK3 at rung 2) have their own.
 Ladder(m) == IF m < 2 THEN 1 ELSE m
 
+\* The offer is the session id's low bit (ARQ_CALL_CRYPTO_OFFER): an ACCEPT,
+\* echoing the id, answers that id's offer.
+Offers(s) == s % 2 = 1
+
 \* E holds a session's seed: answering its CALLs, or keeping it after them.
 EHolds == eSt \in {"accepting", "fallback"}
 
@@ -156,7 +161,7 @@ AppConnect ==
     /\ cSt' = "calling" /\ cCalls' = R /\ cSessions' = cSessions + 1
     /\ cNonce' = 0 /\ cLevel' = 0
     \* A required C calls only to offer (arq_crypto_may_call).
-    /\ \E o \in BOOLEAN : /\ cOffer' = o /\ (CReq => o)
+    /\ cOffer' = Offers(cSid') /\ (CReq => cOffer')
     /\ cEnc' = FALSE
     /\ UNCHANGED <<eSt, eSid, eNonce, eLevel, eBw, sent>>
     /\ UNCHANGED <<eLeft, deaf, cPast, eOffer, eTake>>

@@ -483,14 +483,21 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  * frames as before too.  Only a station that sets the bit needs a peer that
  * reads it, so it ignores frames of minor 0 (arq_protocol_connect_minor).
  *
- *   CALL    1: 0 | session id   2-3: CRC16 of the called callsign
+ *   CALL    1: 0 | session id (its low bit: the encryption offer)
+ *           2-3: CRC16 of the called callsign
  *           4-13: the caller's callsign, arithmetic-coded
  *   ACCEPT  1: 1 | session id   2-3: CRC16 of the caller's callsign
  *           4-5: CRC16 of the called callsign   6-7: the callee's nonce
  *           8: the caller's start rung (3 bits), the callee hears the caller
- *              below the control mode (bit 3), 4 bits zero
+ *              below the control mode (bit 3), the answer to the encryption
+ *              offer (bit 4), 3 bits zero
  *           9: the SNR the callee read the CALL at, dB + 128 (0: unknown)
- *           10-13: zero */
+ *           10-13: zero
+ *
+ * The encryption offer and answer are reserved: this station sends both 0
+ * and ignores them.  The offer is part of the session id, which the ACCEPT
+ * and every frame of the session carry; an ACCEPT of the id answers that
+ * id's offer. */
 #define ARQ_CONNECT_MINOR             3
 /* The lowest minor this station connects to.  Minor 2 (1.9.25) gave each
  * bandwidth its own ladder (BW2300 rung 1 the 2 kHz MFSK, the BW500 and
@@ -513,6 +520,10 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
 #define ARQ_ACCEPT_LEVEL_MASK         0x07
 #define ARQ_ACCEPT_CTL_DEAF_BIT       0x08  /* the callee hears the caller below
                                                the control mode */
+#define ARQ_ACCEPT_CRYPTO_BIT         0x10  /* the callee takes the encryption
+                                               offer (reserved: 0) */
+#define ARQ_CALL_CRYPTO_OFFER         0x01  /* in the session id: the caller
+                                               offers encryption (reserved: 0) */
 #define ARQ_ACCEPT_SNR_IDX            9
 
 /** Build a CALL.  tx_mfsk: this station can only transmit MFSK.  @return
@@ -565,8 +576,9 @@ typedef struct {
     bool     tx_mfsk;        /* the callee can only transmit MFSK */
 } arq_accept_t;
 
-/** Parse an ACCEPT.  @return 0, or -1 (wrong version, bad bandwidth token,
- *  a reserved bit set, a start rung off the ladder). */
+/** Parse an ACCEPT (the encryption answer ignored).  @return 0, or -1
+ *  (wrong version, bad bandwidth token, a reserved bit set, a start rung off
+ *  the ladder). */
 int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len, arq_accept_t *out);
 
 /**

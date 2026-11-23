@@ -600,11 +600,12 @@ int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len, arq_accept_t *
     if (!out || !arq_protocol_connect_version_ok(buf, buf_len) ||
         !(buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG))
         return -1;
-    /* The rung (3 bits) and the deaf bit, the rest of byte 8 and bytes
-     * 10-13 zero: a frame that passed its CRC with any of them set is not
-     * an ACCEPT.  Rung 7 is off the ladder. */
+    /* The rung (3 bits), the deaf bit and the encryption answer (ignored),
+     * the rest of byte 8 and bytes 10-13 zero: a frame that passed its CRC
+     * with any of them set is not an ACCEPT.  Rung 7 is off the ladder. */
     uint8_t lv = buf[ARQ_ACCEPT_LEVEL_IDX];
-    if (lv & ~(ARQ_ACCEPT_LEVEL_MASK | ARQ_ACCEPT_CTL_DEAF_BIT) || (lv & ARQ_ACCEPT_LEVEL_MASK) == 7)
+    if (lv & ~(ARQ_ACCEPT_LEVEL_MASK | ARQ_ACCEPT_CTL_DEAF_BIT | ARQ_ACCEPT_CRYPTO_BIT) ||
+        (lv & ARQ_ACCEPT_LEVEL_MASK) == 7)
         return -1;
     for (int i = ARQ_ACCEPT_SNR_IDX + 1; i < ARQ_CONTROL_FRAME_SIZE; i++)
         if (buf[i])

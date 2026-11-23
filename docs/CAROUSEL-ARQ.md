@@ -200,11 +200,11 @@ frame on MFSK.
 | byte | CALL | ACCEPT |
 |---|---|---|
 | 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 3), the sender transmits only MFSK (1) | the same |
-| 1 | 0, session id (7) | 1, session id (7) |
+| 1 | 0, session id (7; its low bit the encryption offer) | 1, session id (7) |
 | 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
 | 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |
 | 6-7 | | the callee's session nonce |
-| 8 | | the caller's start rung (3 bits, 0-6), the callee hears the caller below the control mode (1; the rung is then the floor), 4 bits zero |
+| 8 | | the caller's start rung (3 bits, 0-6), the callee hears the caller below the control mode (1; the rung is then the floor), the answer to the encryption offer (1), 3 bits zero |
 | 9 | | the SNR the callee read the CALL at, dB + 128 (0: unknown) |
 | 10-13 | | zero |
 
@@ -248,6 +248,11 @@ frame on MFSK.
 - 1.9.x carried a 2-bit protocol version in type CALL's extension: 1 was
   1.9.18 (MFSK at 1531-2500 Hz), 2 was 1.9.19 (MFSK centred on 1500 Hz), 3
   gave a BW500 session its own floor; 3 was the last value it held.
+- The encryption offer (the CALL's session id, low bit) and answer (ACCEPT
+  byte 8, bit 4) are reserved: a station sends both 0 and ignores them.
+  The offer is part of the session id, which the ACCEPT echoes, so an ACCEPT
+  answers the offer of the CALLs of its id; a CONNECT that offers and one
+  that does not never share an id.  specs/connect `Agree`.
 - An ACCEPT with a reserved bit set is dropped.  The caller takes an ACCEPT
   only if its session id, its own CRC and the called station's CRC all
   match: 39 bits, and every one of them full.

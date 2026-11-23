@@ -1318,7 +1318,8 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
          * incoming CALL dialed, which retry_deadline_from_s would otherwise
          * rank this call with. */
         sess->local_call[0] = '\0';
-        sess->session_id      = (uint8_t)(time_now_ms() & ARQ_CONNECT_SESSION_MASK) | 0x01;
+        /* 2..126: never 0, the low bit (the encryption offer) clear */
+        sess->session_id      = (uint8_t)((time_now_ms() % 63 + 1) << 1);
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->call_sends_done = 0;
         sess->call_carrier    = 0;
