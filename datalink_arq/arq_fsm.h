@@ -360,7 +360,7 @@ typedef struct
     void (*set_floor_mode)(int mode);
     /** Stop what the modem is keying: a session that ends with no peer left
      *  to hear it does not play its keydown out.  Optional. */
-    void (*cut_tx)(void);
+    void (*cut_tx)(const char *why);
 } arq_fsm_callbacks_t;
 
 /**

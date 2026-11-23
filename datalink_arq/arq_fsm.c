@@ -1059,10 +1059,10 @@ static void car_stop(arq_session_t *sess)
  * the host goes back to scanning at DISCONNECTED and may retune under it: on
  * air, KG9NI 22 Nov 2026, the watchdog fired 2.8 s into a 13.5 s poll and PTT
  * stayed on for 10.8 s after DISCONNECTED, with the scanner already running. */
-static void cut_keydown(void)
+static void cut_keydown(const char *why)
 {
     if (g_cbs.cut_tx)
-        g_cbs.cut_tx();
+        g_cbs.cut_tx(why);
 }
 
 /* The carousel can no longer trust the session (car_failed): a block failed
@@ -1117,7 +1117,7 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
     {
         HLOGI(LOG_COMP, "Disconnect finalized (nothing from the caller in %llu s)",
               (unsigned long long)((now - sess->car_last_rx_ms) / 1000));
-        cut_keydown();
+        cut_keydown("caller silent");
         notify_session_ended(sess);
         if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
         enter_idle_after_call(sess);
@@ -2265,7 +2265,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         {
             HLOGW(LOG_COMP, "carousel: nothing from the peer in %d s%s — link lost",
                   (int)((now - sess->car_last_rx_ms) / 1000), car_is_idle(sess->car) ? "" : " with data in flight");
-            cut_keydown();
+            cut_keydown("link lost");
             if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
             notify_session_ended(sess);
             enter_idle_after_call(sess);

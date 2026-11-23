@@ -590,7 +590,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 		if unkeyed > unkeyBy {
 			failWithLogs("A unkeyed %.2f s after its ABORT, want within %.1f s", unkeyed.Seconds(), unkeyBy.Seconds())
 		}
-		if b, _ := os.ReadFile(timingLogs["A"]); !strings.Contains(string(b), "keydown cut short") {
+		if b, _ := os.ReadFile(timingLogs["A"]); !strings.Contains(string(b), "keydown cut short (ABORT)") {
 			failWithLogs("A's log never said its keydown was cut")
 		}
 		deadline := time.Now().Add(4 * time.Minute)

@@ -42,7 +42,7 @@ FAKE_VALUE_FUNC(int, fake_tx_backlog);
 FAKE_VALUE_FUNC(bool, fake_channel_busy);
 FAKE_VALUE_FUNC(int, fake_tx_read, uint8_t *, size_t);
 FAKE_VOID_FUNC(fake_send_buffer_status, int);
-FAKE_VOID_FUNC(fake_cut_tx);
+FAKE_VOID_FUNC(fake_cut_tx, const char *);
 
 static arq_fsm_callbacks_t test_callbacks = {
     .send_tx_frame       = fake_send_tx_frame,
@@ -1787,7 +1787,7 @@ void test_watchdog_does_not_wait_for_a_keydown_after_the_mark(void)
  * before the host hears DISCONNECTED and goes back to scanning (KG9NI, 22
  * Nov 2026: PTT on for 10.8 s after it).  Before the mark nothing is cut. */
 static unsigned disconnected_at_cut;
-static void note_cut(void) { disconnected_at_cut = fake_notify_disconnected_fake.call_count; }
+static void note_cut(const char *why) { (void)why; disconnected_at_cut = fake_notify_disconnected_fake.call_count; }
 
 void test_watchdog_cuts_the_keydown_on_the_air(void)
 {
@@ -1812,6 +1812,7 @@ void test_watchdog_cuts_the_keydown_on_the_air(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_EQUAL_UINT(1, fake_cut_tx_fake.call_count);
+    TEST_ASSERT_EQUAL_STRING("link lost", fake_cut_tx_fake.arg0_val);
     TEST_ASSERT_EQUAL_UINT(1, fake_notify_disconnected_fake.call_count);
     TEST_ASSERT_EQUAL_UINT_MESSAGE(0, disconnected_at_cut, "cut before the host is told");
 }

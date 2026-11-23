@@ -878,7 +878,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
          * dropped.  The modem unkeys within its tail time, the FSM sees the
          * keydown end as it would any other, and the one DISCONNECT goes out
          * after it.  A CALL being sent is cut too: the call is over. */
-        arq_modem_cut_tx();
+        arq_modem_cut_tx("ABORT");
         ev.id = ARQ_EV_APP_DISCONNECT;
         ev.abort = true;
         break;
