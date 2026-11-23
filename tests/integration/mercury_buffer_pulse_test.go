@@ -24,20 +24,27 @@ import (
 // A uploads to B, and A's audio stops reaching B once B has its first bytes.
 // B's host must see a pulse about 50 s later, then another one, each followed
 // at once by BUFFER 0.
+//
+// These two run in real time, about four minutes together, and the suite is
+// already close to its 25-minute limit in CI, so they run only with
+// MERCURY_TEST_BUFFER_PULSE=1.  The rule itself is unit-tested
+// (test_tnc_buffer_pulse_only_for_a_stalled_inbound).
 func TestStalledInboundPulsesBuffer(t *testing.T) {
-	if testing.Short() {
-		t.Skip("takes about two minutes of real-time audio")
-	}
+	requireBufferPulseTests(t)
 	runBufferPulse(t, true)
 }
 
 // A session with nothing on its way gets no pulse: an idle BBS user still
 // meets the host's own idle timeout.
 func TestIdleSessionDoesNotPulseBuffer(t *testing.T) {
-	if testing.Short() {
-		t.Skip("takes over a minute of real-time audio")
-	}
+	requireBufferPulseTests(t)
 	runBufferPulse(t, false)
+}
+
+func requireBufferPulseTests(t *testing.T) {
+	if os.Getenv("MERCURY_TEST_BUFFER_PULSE") == "" {
+		t.Skip("set MERCURY_TEST_BUFFER_PULSE=1 to run (minutes of real-time audio)")
+	}
 }
 
 func runBufferPulse(t *testing.T, upload bool) {
