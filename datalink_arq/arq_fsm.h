@@ -220,6 +220,8 @@ typedef struct
     uint64_t last_tx_end_ms;           /* when our last transmission ended  */
     uint64_t disc_req_ms;              /* when the application asked to hang up
                                         * (diagnostics only, #442)            */
+    bool     lost_end;                 /* the watchdog ended it: one DISCONNECT, to a
+                                        * peer that may still hear us */
     bool     host_released;            /* the application ended this session
                                         * (DISCONNECT/ABORT): nothing more is
                                         * delivered to it until a new one.

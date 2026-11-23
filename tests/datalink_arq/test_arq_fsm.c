@@ -2052,8 +2052,62 @@ void test_watchdog_cuts_the_keydown_on_the_air(void)
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_EQUAL_UINT(1, fake_cut_tx_fake.call_count);
     TEST_ASSERT_EQUAL_STRING("link lost", fake_cut_tx_fake.arg0_val);
-    TEST_ASSERT_EQUAL_UINT(1, fake_notify_disconnected_fake.call_count);
     TEST_ASSERT_EQUAL_UINT_MESSAGE(0, disconnected_at_cut, "cut before the host is told");
+}
+
+/* The path can be one way: the watchdog's end sends one DISCONNECT, after the
+ * cut keydown, and only then tells the host. */
+void test_watchdog_sends_one_disconnect_then_tells_the_host(void)
+{
+    goto_connected();
+    fake_notify_disconnected_fake.call_count = 0;
+    arq_event_t ev = make_event(ARQ_EV_TX_STARTED);
+    arq_fsm_dispatch(&sess, &ev);
+    uint64_t lost = sess.car_last_rx_ms + 241000;
+    mock_set_uptime_ms(lost);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(0, sess.tx_retries_left);
+    TEST_ASSERT_EQUAL_UINT(0, fake_notify_disconnected_fake.call_count);
+
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    unsigned sent = fake_send_tx_frame_fake.call_count;
+    for (int i = 0; i < 200 && sess.teardown != ARQ_TD_SENT; i++)
+    {
+        lost += 100;
+        mock_set_uptime_ms(lost);
+        if (lost >= sess.deadline_ms)
+        {
+            ev = make_event(sess.deadline_event);
+            arq_fsm_dispatch(&sess, &ev);
+        }
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_SENT, sess.teardown);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(sent + 2, fake_send_tx_frame_fake.call_count, "two copies");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sess.control_mode, fake_send_tx_frame_fake.arg1_val,
+                                  "on the mode the peer's control decoder always hears");
+    TEST_ASSERT_EQUAL_UINT(0, fake_notify_disconnected_fake.call_count);
+
+    sent = fake_send_tx_frame_fake.call_count;
+    ev = make_event(ARQ_EV_TX_STARTED);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    for (int i = 0; i < 400 && sess.conn_state == ARQ_CONN_DISCONNECTING; i++)
+    {
+        lost += 100;
+        mock_set_uptime_ms(lost);
+        if (lost >= sess.deadline_ms)
+        {
+            ev = make_event(sess.deadline_event);
+            arq_fsm_dispatch(&sess, &ev);
+        }
+    }
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(sent, fake_send_tx_frame_fake.call_count, "never retried");
+    TEST_ASSERT_EQUAL_UINT(1, fake_notify_disconnected_fake.call_count);
 }
 
 /* A deferred APP_DISCONNECT that never drains must still tear down once the
@@ -2994,6 +3048,7 @@ int main(void)
     RUN_TEST(test_watchdog_waits_for_an_answer_on_the_air);
     RUN_TEST(test_watchdog_does_not_wait_for_a_keydown_after_the_mark);
     RUN_TEST(test_watchdog_cuts_the_keydown_on_the_air);
+    RUN_TEST(test_watchdog_sends_one_disconnect_then_tells_the_host);
     RUN_TEST(test_disconnect_waits_out_a_long_keydown);
     RUN_TEST(test_disconnect_keyed_deferral_is_bounded);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);

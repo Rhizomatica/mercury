@@ -193,6 +193,8 @@ static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_t
           arq_conn_state_name(sess->conn_state),
           arq_conn_state_name(new_state));
     sess->teardown = td;
+    if (new_state != ARQ_CONN_DISCONNECTING)
+        sess->lost_end = false;
     if (new_state == ARQ_CONN_CONNECTED && sess->conn_state != ARQ_CONN_CONNECTED)
     {
         sess->host_released  = false;        /* a new session: a new reader */
@@ -566,6 +568,13 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
  * its uucico was killed. */
 static int session_ctl_mode(const arq_session_t *sess)
 {
+    /* The watchdog's DISCONNECT goes where the peer is sure to be listening:
+     * its control decoder always runs, and it reaches the floor only after 90 s
+     * of silence of its own.  On the floor, a peer still hearing our polls
+     * never decoded it (one-way link, real engines). */
+    if (sess->lost_end)
+        return sess->control_mode;
+
     if (!sess->car)
         return ARQ_TX_MFSK_ONLY ? sess->floor_mode : sess->control_mode;
     bool deaf = sess->car_active ? car_peer_ctl_deaf(sess->car) : sess->ctl_floor_at_stop;
@@ -615,6 +624,9 @@ static void send_disconnect_frame(arq_session_t *sess)
  * 13.5 s more (26 s at 500 Hz). */
 static int unretried_disconnect_copies(const arq_session_t *sess)
 {
+    /* The link has just failed: how well the peer hears us is not known. */
+    if (sess->lost_end)
+        return 2;
     if (session_ctl_mode(sess) != sess->control_mode || !sess->car ||
         !car_peer_hears_ctl_marginal(sess->car))
         return 1;
@@ -1126,8 +1138,9 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
         return;
     }
     /* The callee keys only in slots of the caller's keydowns: with none heard
-     * in this long there is no slot to wait for. */
-    if (quiet)
+     * in this long there is no slot to wait for.  The watchdog's end still
+     * tells it, out of turn (car_end_lost). */
+    if (quiet && !sess->lost_end)
     {
         HLOGI(LOG_COMP, "Disconnect finalized (nothing from the caller in %llu s)",
               (unsigned long long)((now - sess->car_last_rx_ms) / 1000));
@@ -1140,6 +1153,27 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
     sess->teardown_deadline_ms = now + ARQ_CAR_END_WAIT_MS;
     car_request_end(sess->car);
     sess_enter(sess, ARQ_CONN_DISCONNECTING, sess->teardown_deadline_ms, ARQ_EV_TIMER_CAROUSEL);
+}
+
+/* The lost-peer watchdog has fired.  I hear nothing, but the path can be one
+ * way: on air, KG9NI -> K7EK 22 Nov 2026, K7EK was still decoding KG9NI's polls
+ * 54 s before KG9NI gave up, KG9NI left without a word, and K7EK sat in the
+ * session for 186 s more.  So what is on the air stops, one DISCONNECT goes
+ * (never retried, nothing waited for past it), and the host hears
+ * DISCONNECTED once it is out, so a scanner does not retune under it. */
+static void car_end_lost(arq_session_t *sess, uint64_t now)
+{
+    bool master = car_is_master(sess->car);
+    cut_keydown("link lost");
+    sess->lost_end = true;
+    car_begin_disconnect(sess, now);
+    sess->tx_retries_left = 0;
+    if (!master)
+    {
+        /* No slot of the caller's is coming: out of turn, on a clear channel. */
+        sess->teardown_deadline_ms = now;
+        sess->defer_count = 0;
+    }
 }
 
 /* ABORT: VARA's "disconnect the link immediately".  The peer is still told
@@ -2084,9 +2118,10 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
             /* ABORT's one DISCONNECT is off the air (abort_teardown). */
             if (sess->teardown == ARQ_TD_SENT && sess->tx_retries_left == 0)
             {
-                HLOGI(LOG_COMP, "Disconnect finalized (ABORT: my one DISCONNECT is out)");
+                HLOGI(LOG_COMP, "Disconnect finalized (%s: my one DISCONNECT is out)",
+                      sess->lost_end ? "link lost" : "ABORT");
                 notify_session_ended(sess);
-                if (g_timing) arq_timing_record_disconnect(g_timing, "abort");
+                if (g_timing) arq_timing_record_disconnect(g_timing, sess->lost_end ? "timeout" : "abort");
                 enter_idle_after_call(sess);
                 return;
             }
@@ -2103,7 +2138,8 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                  * my slot, which carries it (car_io_end). */
                 if (!sess->tx_active && !peer_is_transmitting(sess) && now >= channel_clear_at(sess))
                 {
-                    HLOGI(LOG_COMP, "ABORT: DISCONNECT keyed out of turn on a clear channel, the host's scan due");
+                    HLOGI(LOG_COMP, "%s: DISCONNECT keyed out of turn on a clear channel",
+                          sess->lost_end ? "Link lost" : "ABORT");
                     /* Its copies were timed to be off the air a margin
                      * before the host's scan (abort_key_by); held past that
                      * for a clear channel (a deferral step or more), the
@@ -2123,9 +2159,10 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                  * DATAC1 round). */
                 if (!sess->tx_active && sess->defer_count++ >= ARQ_ABORT_HOLD_MAX)
                 {
-                    HLOGI(LOG_COMP, "Disconnect finalized (ABORT: the channel never came clear, the caller not told)");
+                    HLOGI(LOG_COMP, "Disconnect finalized (%s: the channel never came clear, the caller not told)",
+                          sess->lost_end ? "link lost" : "ABORT");
                     notify_session_ended(sess);
-                    if (g_timing) arq_timing_record_disconnect(g_timing, "abort");
+                    if (g_timing) arq_timing_record_disconnect(g_timing, sess->lost_end ? "timeout" : "abort");
                     enter_idle_after_call(sess);
                     return;
                 }
@@ -2343,10 +2380,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         {
             HLOGW(LOG_COMP, "carousel: nothing from the peer in %d s%s — link lost",
                   (int)((now - sess->car_last_rx_ms) / 1000), car_is_idle(sess->car) ? "" : " with data in flight");
-            cut_keydown("link lost");
-            if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
-            notify_session_ended(sess);
-            enter_idle_after_call(sess);
+            car_end_lost(sess, now);
             return true;
         }
         if (car_peer_ending(sess->car) && now - sess->car_last_rx_ms >= car_peer_end_wait_ms(sess))
