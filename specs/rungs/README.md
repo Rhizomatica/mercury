@@ -247,6 +247,9 @@ Which model covers the other 2.0 changes:
   for, within the 1 .. `keydown_cap` that `poll_size` already gave, which
   no model constrains (rounds are atomic in `RungAgreement` and `PollRung`;
   `CarouselTurns` bounds keydowns by the cap).
+- a short poll on the rung it already chose asks only for the frames the
+  backlog takes (`short_rung`): it only lowers how many frames a poll asks
+  for, never raises them, which no model constrains (as for `level_earned`).
 - a round's overhead charged at the poll it really costs, the floor frame
   when the poll goes on the floor (`round_overhead`): it changes only the
   goodput S scores rungs by, so S's choice; `RungAgreement` lets S name any
