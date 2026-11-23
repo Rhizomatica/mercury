@@ -1,4 +1,8 @@
-/* The age of the frame a decoder is locked onto (modem/rx_inflight.h). */
+/* The age of the frame a decoder is locked onto (modem/rx_inflight.h).
+ *
+ * Copyright (C) 2026 Rhizomatica
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 #include "unity.h"
 #include "rx_inflight.h"
 

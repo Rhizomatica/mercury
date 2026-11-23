@@ -441,10 +441,11 @@ MFSK_SRC = ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_syn
 test_mfsk_harq: modem/test_mfsk_harq.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $(filter %.c %.a %.o,$^) -lm
 
-# MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
+# The age of the frame a decoder is locked onto (a header-only rule)
 test_rx_inflight: modem/test_rx_inflight.c $(UNITY_SRC)
 	$(CC) $(CFLAGS) -I../modem -o $@ $(filter %.c,$^) $(LDFLAGS)
 
+# MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
 test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC) $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 

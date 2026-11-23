@@ -1,3 +1,9 @@
+/* The frame a decoder is locked onto: when it began, pass by pass of the RX loop.
+ *
+ * Copyright (C) 2026 Rhizomatica
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 #ifndef RX_INFLIGHT_H_
 #define RX_INFLIGHT_H_
 
