@@ -178,12 +178,14 @@ Results:
   configuration above passes with the counts above (the states were all
   reachable already, by a caller giving up while calling; the transition
   was not), and every mutant still fails.
-- Since: seeds 1-100 (their own loss, 0-69 %, 1-2 CONNECTs, 2-4 CALLs):
-  100 of 100 accepted, up to 12 rows; seeds 101-160 at 75 % loss, 3
-  CONNECTs of 4 CALLs: 60 of 60, up to 18 rows.
+- Since, with the start rungs read too (the caller's first round,
+  `car_tx_level`, and the rung the callee's ACCEPT names, `accept_level`),
+  each seed picking its SNR (-2..20 dB) and half duplex or not: seeds 1-150
+  (their own loss, 0-69 %, 1-2 CONNECTs, 2-4 CALLs) all accepted; seeds
+  151-250 at 75 % loss, 3 CONNECTs of 4 CALLs, all accepted, up to 19 rows.
 
-Not read yet: rungs, bandwidths and encryption (the sim has no crypto
-callback), and the stale CALL (the sim does not delay a decode).
+Not read yet: bandwidths and encryption (the sim has no crypto callback),
+and the stale CALL (the sim does not delay a decode).
 
 ## ConnectCarrier
 
