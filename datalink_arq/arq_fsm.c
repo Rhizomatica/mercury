@@ -1525,13 +1525,13 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         sess->car_my_snr   = ev->rx_snr;
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call, true);
-        /* The carrier the ACCEPT came on, which a weak link's is not the
-         * control mode: the log said DATAC16 for a connect made on MFSK. */
-        if (g_timing)
-            arq_timing_record_connect(g_timing, ev->mode > 0 ? ev->mode : sess->control_mode);
         sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_CAROUSEL);
         sess->car_nonce = ev->car_nonce;
         sess->call_rx_mode = ev->mode;   /* the ACCEPT's carrier: the session's floor */
+        /* That carrier, which a weak link's is not the control mode: the log
+         * said DATAC16 for a connect made on MFSK. */
+        if (g_timing)
+            arq_timing_record_connect(g_timing, sess->call_rx_mode > 0 ? sess->call_rx_mode : sess->control_mode);
         car_set_seed(sess, car_seed(sess, true));
         car_start(sess, true, time_now_ms());
         break;
