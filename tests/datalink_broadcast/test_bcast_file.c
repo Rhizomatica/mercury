@@ -307,7 +307,7 @@ void test_symbol_size_is_fixed_across_modes(void)
         { 7,  "DATAC15",   0 },   /* likewise */
         { 8,  "DATAC16",   0 },
         { 9,  "DATAC17",  28 },
-        { 10, "QAM16C2",  29 },
+        { 10, "QAM16C2",  28 },   /* 1183 B since its 36-carrier geometry */
     };
     for (unsigned i = 0; i < sizeof(expect) / sizeof(expect[0]); i++)
     {

@@ -16,6 +16,7 @@
 
 #include "freedv_api.h"
 #include "modem_mfsk.h"
+#include "modem_psk.h"
 #include "framer.h"
 #include "arq.h"
 #include "arq_protocol.h"
@@ -37,9 +38,16 @@ const char *mode_name_from_enum(int mode)
     case FREEDV_MODE_DATAC16: return "DATAC16";
     case FREEDV_MODE_DATAC17: return "DATAC17";
     case FREEDV_MODE_QAM16C2: return "QAM16C2";
+    case FREEDV_MODE_DATAC17W: return "DATAC17W";
+    case FREEDV_MODE_QAM16C2W: return "QAM16C2W";
+    case FREEDV_MODE_DATAN1: return "DATAN1";
+    case FREEDV_MODE_QAM16N1: return "QAM16N1";
+    case FREEDV_MODE_QAM16N2: return "QAM16N2";
     case FREEDV_MODE_FSK_LDPC: return "FSK_LDPC";
     case MERCURY_MODE_MFSK: return "MFSK";
     case MERCURY_MODE_MFSK_N32: return "MFSK500";
+    case MERCURY_MODE_MFSK_W2:  return "MFSK2K";
+    case MERCURY_MODE_PSK3:     return "PSK3";
     default: return "UNKNOWN";
     }
 }

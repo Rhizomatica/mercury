@@ -12,19 +12,23 @@
  *
  * WIRE FORMAT -- designed so that crypto OFF costs nothing at all:
  *
- *  Negotiation rides in the CALL/ACCEPT framer byte's 2.x minor revision
- *  (ARQ_CONNECT_MINOR_CRYPTO = 2, arq_protocol.h, next to the bandwidth
- *  token and the TX-MFSK bit: the extension field's five bits were already
- *  spoken for, so the offer and the answer take the minor field's fourth
- *  value).  No extra bytes, no extra turnaround.  With crypto off the minor
- *  is 1.  Releases 1.9.20 to 1.9.24 read any minor and answer at their own,
- *  so an offer to one of them ends in a clear session (optional) or none
- *  (required); tested against both ends of that range in the Go harness.
+ *  Negotiation rides in two bits of the CALL and the ACCEPT (arq_protocol.h):
+ *  no extra bytes, no extra turnaround.
  *
- *    CALL   minor 2   = the initiator offers Noise_KK (mode != off, holds the
+ *    CALL   session id, low bit (ARQ_CALL_CRYPTO_OFFER)
+ *                     = the initiator offers Noise_KK (mode != off, holds the
  *                       callee's key, and the client has not said ENCRYPT OFF)
- *    ACCEPT minor 2   = the responder accepts (offered, mode != off, holds the
+ *    ACCEPT byte 8, bit 4 (ARQ_ACCEPT_CRYPTO_BIT)
+ *                     = the responder accepts (offered, mode != off, holds the
  *                       caller's key, and its client has not said ENCRYPT OFF)
+ *
+ *  The offer is decided once per CONNECT, as the session id is picked, so it
+ *  is part of the id that the ACCEPT echoes: an ACCEPT answers its own id's
+ *  offer (one of an earlier CONNECT of the same id answered the same offer).
+ *  With crypto off both bits are 0, and a
+ *  station with crypto off ignores them, so an offer to it ends in a clear
+ *  session (optional) or none (required).  Both bits came with the connect
+ *  minor 3: older releases do not connect to it at all.
  *
  *  With both bits set, the first bytes of each direction's ARQ stream are the
  *  Noise_KK handshake messages (48 B each; the payloads are always empty), and

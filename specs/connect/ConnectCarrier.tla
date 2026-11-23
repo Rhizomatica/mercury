@@ -56,18 +56,35 @@
 (*   FloorOnly  an end that transmits only MFSK keys nothing else.         *)
 (*                                                                         *)
 (* MfskTx: which end transmits only MFSK (arq:mfsk_tx_only, an FSK-only    *)
-(* radio).  C then CALLs on the floor only, each the floor's interval      *)
+(* radio).  C then CALLs on MFSK only (Deep: the floor and deep twice, *)
+(* from the first CALL; else the floor), each its carrier's interval      *)
 (* after the last (the first too: arq_fsm.c sets its deadline from its     *)
 (* carrier).  E then answers only where its ACCEPT goes on the floor       *)
 (* (accept_keys): where it would go on fast it keys nothing, and the next  *)
 (* CALL, a repeat C listens for on the floor, gets the floor ACCEPT.  A    *)
 (* decoder of C's is on an ACCEPT only on a carrier C listens on.          *)
+(*                                                                         *)
+(* Deep: C is wider than 500 Hz (BW2300/BW2750), so its floor is the 1 kHz *)
+(* MFSK and a third carrier, "deep" (the 500 Hz MFSK, which every listener *)
+(* decodes too: #451), joins the rotation after the fast CALLs: the floor, *)
+(* then deep twice.  C listens on one MFSK carrier at a time (its       *)
+(* payload decoder, bound to call_answer_carrier): deep after a deep CALL, *)
+(* the floor after a floor CALL or a repeat.  E answers a deep CALL on     *)
+(* deep, and a session connected there runs on that floor.  An end of 500 *)
+(* Hz has the 500 Hz floor already: Deep FALSE, and the model is the one   *)
+(* before.  Lengths: the 500 Hz CALL/ACCEPT 27 s -> LD 108, its interval    *)
+(* 27 + 10.5 s -> IvDeep 150; its decode allowance is the floor's (DM).    *)
+(*                                                                         *)
+(* Connects then holds with only the deep paths delivering (Sense "any"):  *)
+(* the fringe the 1 kHz carriers do not reach (ConnectCarrier_deeponly).    *)
 (***************************************************************************)
 EXTENDS Integers
 
-CONSTANTS LF, LM, TG, DF, DM, DW, SA, IvFast, IvFloor, R, H,
+CONSTANTS LF, LM, LD, TG, DF, DM, DW, SA, IvFast, IvFloor, IvDeep, R, H,
           F,      \* fast CALLs before the floor (ARQ_CALL_FAST_SLOTS), >= 2
+          Deep,   \* TRUE: C is wider than 500 Hz and CALLs on deep too
           FwdFast, RetFast, FwdFloor, RetFloor,  \* "always", "never" or "any"
+          FwdDeep, RetDeep,
           Sense,  \* "always" or "any": is a decoder of C's on an ACCEPT arriving?
           MfskTx, \* "none", "C", "E" or "CE": who transmits only MFSK
           Mutant  \* "none", or one rule broken (to show the model can fail):
@@ -89,6 +106,14 @@ CONSTANTS LF, LM, TG, DF, DM, DW, SA, IvFast, IvFloor, R, H,
                   \*   "fastiv":    a repeat on fast waits IvFast, though E may
                   \*                answer it on the floor (the code before
                   \*                call_interval_s)
+                  \*   "lateanswer": E also answers a CALL decoded later than
+                  \*                D(carrier) after its end, up to IvFast later
+                  \*                (a decoder behind: the code before
+                  \*                call_too_late)
+                  \*   "deepfloor":  after a deep CALL C keeps listening on
+                  \*                the floor (call_answer_carrier not
+                  \*                following the deep CALL)
+                  \*   "deepiv":     a deep CALL waits the floor's interval
 
 VARIABLES t,
           cSt,      \* "calling", "connected", "gaveup"
@@ -96,7 +121,7 @@ VARIABLES t,
           cNext,    \* when C keys its next CALL (-1: none planned)
           cHeld,    \* that CALL has waited (call_must_wait's defer_count > 0)
           cTx,      \* C's latest keydown: [s, e, call]  (call 0: the round)
-          cListen,  \* C listens on the floor
+          cListen,  \* the MFSK carrier C listens on: "none", "floor", "deep"
           cDec,     \* when C decodes an ACCEPT (-1: none coming; -2: spent)
           eTx,      \* E's latest keydown, an ACCEPT: [s, e, car, sensed]
           eDec,     \* when E decodes a CALL (-1: none coming)
@@ -110,29 +135,44 @@ vars == <<t, cSt, k, cNext, cHeld, cTx, cListen, cDec, eTx, eDec, eDecCar, eHear
 CM == MfskTx \in {"C", "CE"}
 EM == MfskTx \in {"E", "CE"}
 
-Len(car) == IF car = "fast" THEN LF ELSE LM
+Len(car) == IF car = "fast" THEN LF ELSE IF car = "floor" THEN LM ELSE LD
 Dec(car) == IF car = "fast" THEN DF ELSE DM
+Mfsk(car) == car # "fast"
+\* The latest a CALL decodes and is answered: D(car), the decode bound
+\* (call_too_late: a CALL decoded later is not answered).  The mutant
+\* answers one decoded up to IvFast past it.
+DecMax(car) == Dec(car) + (IF Mutant = "lateanswer" THEN IvFast ELSE 0)
 
-\* arq_call_carrier: CALLs 1 .. F fast, then the floor and fast in turn.
-CallCar(i) == IF CM THEN "floor"
-              ELSE IF i <= F THEN "fast" ELSE IF (i - F - 1) % 2 = 0 THEN "floor" ELSE "fast"
-\* call_answer_carrier, as send_call_accept binds the payload decoder to it.
-Listen(i)  == CallCar(i) = "floor" \/ (i >= 2 /\ Mutant \notin {"old", "nolisten"})
-              \/ Mutant = "listenall"
+\* arq_call_carrier: CALLs 1 .. F fast, then the floor and fast in turn --
+\* or, Deep, the floor and then deep twice.  An MFSK-only caller has no fast
+\* CALLs: the floor every time, or, Deep, the floor and deep twice from the
+\* first.
+CallCar(i) == IF CM THEN (IF Deep /\ (i - 1) % 3 # 0 THEN "deep" ELSE "floor")
+              ELSE IF i <= F THEN "fast"
+              ELSE IF Deep THEN (IF (i - F - 1) % 3 = 0 THEN "floor" ELSE "deep")
+              ELSE IF (i - F - 1) % 2 = 0 THEN "floor" ELSE "fast"
+\* call_answer_carrier, as send_call_accept binds the payload decoder to it:
+\* the MFSK carrier C listens on after CALL i ("none": it keeps the last).
+Listen(i)  == IF CallCar(i) = "deep" THEN (IF Mutant = "deepfloor" THEN "floor" ELSE "deep")
+              ELSE IF CallCar(i) = "floor" \/ (i >= 2 /\ Mutant \notin {"old", "nolisten"})
+                      \/ Mutant = "listenall" THEN "floor"
+              ELSE "none"
 \* call_interval_s: the interval of the carrier the ACCEPT may come on.
 Wait(i)    == IF i = 1 /\ CM /\ Mutant = "firstiv" THEN 0
+              ELSE IF CallCar(i) = "deep" THEN (IF Mutant = "deepiv" THEN IvFloor ELSE IvDeep)
               ELSE IF CallCar(i) = "floor" THEN IvFloor
               ELSE IF i >= 2 /\ Mutant \notin {"old", "nolisten", "fastiv"} THEN IvFloor
               ELSE IvFast
 
-\* accept_carrier: E's carrier for an ACCEPT to a CALL on car.
-AcceptCar(car) == IF car = "floor" THEN "floor"
+\* accept_carrier: E's carrier for an ACCEPT to a CALL on car: an MFSK
+\* CALL's own; a repeat on fast on the floor, unless the last went there.
+AcceptCar(car) == IF Mfsk(car) THEN car
                   ELSE IF eHeard /\ Mutant # "old" /\ (eLast # "floor" \/ Mutant = "noalt")
                        THEN "floor" ELSE "fast"
 
 \* May a frame in this direction, on this carrier, arrive?
-Path(dir, car) == IF dir = "fwd" THEN (IF car = "fast" THEN FwdFast ELSE FwdFloor)
-                  ELSE (IF car = "fast" THEN RetFast ELSE RetFloor)
+Path(dir, car) == IF dir = "fwd" THEN (IF car = "fast" THEN FwdFast ELSE IF car = "floor" THEN FwdFloor ELSE FwdDeep)
+                  ELSE (IF car = "fast" THEN RetFast ELSE IF car = "floor" THEN RetFloor ELSE RetDeep)
 Choice(p) == IF p = "always" THEN {TRUE} ELSE IF p = "never" THEN {FALSE} ELSE BOOLEAN
 
 On(x) == x.s <= t /\ t < x.e
@@ -146,7 +186,7 @@ Held == /\ Mutant \notin {"old", "nohold"}
            \/ (cHeld /\ eTx.e <= t /\ t < eTx.e + (IF Mutant = "nodecwait" THEN 0 ELSE DW))
 
 Init == /\ t = 0 /\ cSt = "calling" /\ k = 0 /\ cNext = 0 /\ cHeld = FALSE
-        /\ cTx = [s |-> -1, e |-> -1, call |-> 0] /\ cListen = FALSE /\ cDec = -1
+        /\ cTx = [s |-> -1, e |-> -1, call |-> 0] /\ cListen = "none" /\ cDec = -1
         /\ eTx = [s |-> -1, e |-> -1, car |-> "fast", sensed |-> FALSE]
         /\ eDec = -1 /\ eDecCar = "fast" /\ eHeard = FALSE /\ eLast = "fast"
 
@@ -159,7 +199,7 @@ CHold == /\ cSt = "calling" /\ cNext = t /\ k < R /\ Held
 CKey == /\ cSt = "calling" /\ cNext = t /\ k < R /\ ~Held
         /\ k' = k + 1 /\ cNext' = -1 /\ cHeld' = FALSE
         /\ cTx' = [s |-> t, e |-> t + Len(CallCar(k + 1)), call |-> k + 1]
-        /\ cListen' = (cListen \/ Listen(k + 1))
+        /\ cListen' = (IF Listen(k + 1) = "none" THEN cListen ELSE Listen(k + 1))
         /\ UNCHANGED <<t, cSt, cDec, eTx, eDec, eDecCar, eHeard, eLast>>
 
 \* Out of CALLs, the last one's wait over: C gives up.
@@ -171,7 +211,7 @@ CGiveUp == /\ cSt = "calling" /\ cNext = t /\ k = R
 CEnd == /\ cTx.call > 0 /\ cTx.e = t /\ cSt = "calling" /\ cNext = -1
         /\ cNext' = t + Wait(cTx.call)
         /\ LET car == CallCar(cTx.call) IN
-           \E ok \in Choice(Path("fwd", car)), d \in 0 .. Dec(car) :
+           \E ok \in Choice(Path("fwd", car)), d \in 0 .. DecMax(car) :
              IF ok /\ ~Meet(cTx, eTx) /\ eDec = -1
              THEN eDec' = t + d /\ eDecCar' = car
              ELSE UNCHANGED <<eDec, eDecCar>>
@@ -187,7 +227,7 @@ EAnswer == /\ eDec = t
                  THEN UNCHANGED eTx
                  ELSE \E sensed \in Choice(Sense) :
                         eTx' = [s |-> t + TG, e |-> t + TG + Len(car), car |-> car,
-                                sensed |-> sensed /\ (car = "fast" \/ cListen)]
+                                sensed |-> sensed /\ (car = "fast" \/ cListen = car)]
               /\ eLast' = car
            /\ eHeard' = TRUE /\ eDec' = -1
            /\ UNCHANGED <<t, cSt, k, cNext, cHeld, cTx, cListen, cDec, eDecCar>>
@@ -195,7 +235,7 @@ EAnswer == /\ eDec = t
 \* An ACCEPT ends: C, still calling and listening on its carrier, may decode it.
 EEnd == /\ eTx.e = t /\ cDec = -1
         /\ \E ok \in Choice(Path("ret", eTx.car)), d \in 0 .. Dec(eTx.car) :
-             IF ok /\ cSt = "calling" /\ (eTx.car = "fast" \/ cListen) /\ ~Meet(cTx, eTx)
+             IF ok /\ cSt = "calling" /\ (eTx.car = "fast" \/ cListen = eTx.car) /\ ~Meet(cTx, eTx)
              THEN cDec' = t + d
              ELSE cDec' = -2       \* this ACCEPT is spent
         /\ UNCHANGED <<t, cSt, k, cNext, cHeld, cTx, cListen, eTx, eDec, eDecCar, eHeard, eLast>>
@@ -224,14 +264,15 @@ Next == CHold \/ CKey \/ CGiveUp \/ CEnd \/ EAnswer \/ EEnd \/ CConnect \/ Tick
 Spec == Init /\ [][Next]_vars
 
 \* ---- properties ----
+Cars == {"fast", "floor", "deep"}
 TypeOK == /\ t \in 0 .. H /\ cSt \in {"calling", "connected", "gaveup"} /\ k \in 0 .. R
-          /\ cHeld \in BOOLEAN /\ cListen \in BOOLEAN /\ eHeard \in BOOLEAN
-          /\ eDecCar \in {"fast", "floor"} /\ eTx.car \in {"fast", "floor"}
-          /\ eLast \in {"fast", "floor"}
+          /\ cHeld \in BOOLEAN /\ cListen \in {"none", "floor", "deep"} /\ eHeard \in BOOLEAN
+          /\ eDecCar \in Cars /\ eTx.car \in Cars /\ eLast \in Cars
+          /\ (~Deep => "deep" \notin {eDecCar, eTx.car, eLast, cListen})
 
 NoOverlap == ~(On(cTx) /\ On(eTx))
-FloorOnly == /\ (EM /\ eTx.s >= 0 => eTx.car = "floor")
-             /\ (CM /\ cTx.call > 0 => CallCar(cTx.call) = "floor")
+FloorOnly == /\ (EM /\ eTx.s >= 0 => Mfsk(eTx.car))
+             /\ (CM /\ cTx.call > 0 => Mfsk(CallCar(cTx.call)))
 Early     == k <= 2
 Connects  == t = H => cSt = "connected"
 =============================================================================

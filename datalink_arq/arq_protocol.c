@@ -30,6 +30,7 @@ _Atomic int arq_tx_mfsk_only           = 0;
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
+#include "../modem/modem_psk.h"    /* MERCURY_MODE_PSK3 */
 
 /* Framer layer (write_frame_header, PACKET_TYPE_* constants) */
 #include "../modem/framer.h"
@@ -65,8 +66,15 @@ const arq_mode_timing_t arq_mode_table[] = {
     {  FREEDV_MODE_DATAC4,    5.80f,     14.0f,          54   },
     {  FREEDV_MODE_DATAC3,    3.82f,     12.0f,          126  },
     {  FREEDV_MODE_DATAC1,    4.81f,     13.0f,          510  },
-    {  FREEDV_MODE_DATAC17,   7.40f,     15.0f,          1180 },
-    {  FREEDV_MODE_QAM16C2,   3.70f,     12.0f,          1213 },
+    {  FREEDV_MODE_DATAC17,   5.90f,     15.0f,          1184 },
+    {  FREEDV_MODE_QAM16C2,   3.30f,     12.0f,          1183 },
+    /* BW2750's top rungs (44 carriers) and BW500's above DATAC3 (9):
+     * the burst and the same ~0.45 s margin as their BW2300 versions. */
+    {  FREEDV_MODE_DATAC17W,  4.95f,     15.0f,          1170 },
+    {  FREEDV_MODE_QAM16C2W,  2.85f,     12.0f,          1169 },
+    {  FREEDV_MODE_DATAN1,    4.60f,     12.0f,          243  },
+    {  FREEDV_MODE_QAM16N1,   2.70f,     12.0f,          179  },
+    {  FREEDV_MODE_QAM16N2,   2.70f,     12.0f,          242  },
     /* The MFSK fringe rung: non-coherent 32-MFSK, a ~13.5 s burst of 98
      * payload bytes, below DATAC15 (50 % FER at -11.2 dB AWGN against
      * DATAC15's -10.3, docs/MFSK-PORT.md).  Its row also sets the
@@ -76,6 +84,12 @@ const arq_mode_timing_t arq_mode_table[] = {
     /* The BW500 floor: the same frame on 32 tones 15.6 Hz apart, twice the
      * symbol length, 26.2 s on the air (arq_floor_mode). */
     {  MERCURY_MODE_MFSK_N32, 27.00f,    32.0f,          98   },
+    /* The 2 kHz rung: the same frame on 62.5 Hz tones, half the symbol
+     * length, 6.56 s on the air. */
+    {  MERCURY_MODE_MFSK_W2,   6.95f,    12.0f,          98   },
+    /* The three-carrier PSK rung: a 3.86 s frame of 133 payload bytes,
+     * no preamble, and the same ~0.45 s margin. */
+    {  MERCURY_MODE_PSK3,      4.30f,    12.0f,          133  },
 };
 
 const int arq_mode_table_count =
@@ -463,16 +477,19 @@ static int decode_callsign_only_payload(const uint8_t *in, size_t in_len, char *
     return 0;
 }
 
-static uint8_t connect_ext(uint8_t bw_token, bool tx_mfsk, bool crypto)
+static uint8_t connect_ext(uint8_t bw_token, bool tx_mfsk)
 {
-    int minor = crypto ? ARQ_CONNECT_MINOR_CRYPTO : ARQ_CONNECT_MINOR;
-    return (uint8_t)(bw_token | (minor << ARQ_CONNECT_EXT_MINOR_SHIFT) |
+    return (uint8_t)(bw_token | (ARQ_CONNECT_MINOR << ARQ_CONNECT_EXT_MINOR_SHIFT) |
                      (tx_mfsk ? ARQ_CONNECT_EXT_TXMFSK : 0));
 }
 
 bool arq_protocol_connect_crypto(const uint8_t *buf)
 {
-    return buf && arq_protocol_connect_minor(buf) == ARQ_CONNECT_MINOR_CRYPTO;
+    if (!buf)
+        return false;
+    if (buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG)
+        return (buf[ARQ_ACCEPT_LEVEL_IDX] & ARQ_ACCEPT_CRYPTO_BIT) != 0;
+    return (buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CALL_CRYPTO_OFFER) != 0;
 }
 
 static void put_crc16(uint8_t *p, uint16_t crc) { p[0] = (uint8_t)crc; p[1] = (uint8_t)(crc >> 8); }
@@ -491,6 +508,11 @@ int arq_protocol_connect_minor(const uint8_t *buf)
     return (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_MINOR_MASK) >> ARQ_CONNECT_EXT_MINOR_SHIFT;
 }
 
+bool arq_protocol_connect_compatible(const uint8_t *buf)
+{
+    return arq_protocol_connect_minor(buf) >= ARQ_CONNECT_MINOR_MIN;
+}
+
 static bool connect_tx_mfsk(const uint8_t *buf)
 {
     return (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_TXMFSK) != 0;
@@ -504,7 +526,7 @@ static int connect_bw_hz(const uint8_t *buf)
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
                             uint8_t session_id,
                             const char *caller, const char *called,
-                            int bw_hz, bool tx_mfsk, bool crypto)
+                            int bw_hz, bool tx_mfsk)
 {
     uint8_t encoded[ARQ_CONNECT_MAX_ENCODED];
     if (!buf || !caller || !called || buf_len < ARQ_CONTROL_FRAME_SIZE)
@@ -519,7 +541,7 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
     memset(buf, 0, ARQ_CONTROL_FRAME_SIZE);
     buf[ARQ_CONNECT_SESSION_IDX] = (uint8_t)(session_id & ARQ_CONNECT_SESSION_MASK);
     memcpy(buf + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)enc_len);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token, tx_mfsk, crypto));
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token, tx_mfsk));
     return ARQ_CONTROL_FRAME_SIZE;
 }
 
@@ -550,9 +572,10 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
     put_crc16(buf + ARQ_CONNECT_PAYLOAD_IDX, arq_protocol_callsign_crc16(caller));
     put_crc16(buf + ARQ_ACCEPT_CALLED_CRC_IDX, arq_protocol_callsign_crc16(called));
     put_crc16(buf + ARQ_ACCEPT_NONCE_IDX, nonce);
-    buf[ARQ_ACCEPT_LEVEL_IDX] = (uint8_t)(start_level | (ctl_deaf ? ARQ_ACCEPT_CTL_DEAF_BIT : 0));
+    buf[ARQ_ACCEPT_LEVEL_IDX] = (uint8_t)(start_level | (ctl_deaf ? ARQ_ACCEPT_CTL_DEAF_BIT : 0) |
+                                          (crypto ? ARQ_ACCEPT_CRYPTO_BIT : 0));
     buf[ARQ_ACCEPT_SNR_IDX] = snr_byte(call_snr_db);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token, tx_mfsk, crypto));
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token, tx_mfsk));
     return ARQ_CONTROL_FRAME_SIZE;
 }
 
@@ -587,11 +610,13 @@ int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len, arq_accept_t *
     if (!out || !arq_protocol_connect_version_ok(buf, buf_len) ||
         !(buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG))
         return -1;
-    /* The rung (3 bits) and the deaf bit, the rest of byte 8 and bytes
-     * 10-13 zero: a frame that passed its CRC with any of them set is not
-     * an ACCEPT.  Rung 7 is off the ladder. */
+    /* The rung (3 bits), the deaf bit and the encryption answer
+     * (arq_protocol_connect_crypto), the rest of byte 8 and bytes 10-13
+     * zero: a frame that passed its CRC with any of them set is not an
+     * ACCEPT.  Rung 7 is off the ladder. */
     uint8_t lv = buf[ARQ_ACCEPT_LEVEL_IDX];
-    if (lv & ~(ARQ_ACCEPT_LEVEL_MASK | ARQ_ACCEPT_CTL_DEAF_BIT) || (lv & ARQ_ACCEPT_LEVEL_MASK) == 7)
+    if (lv & ~(ARQ_ACCEPT_LEVEL_MASK | ARQ_ACCEPT_CTL_DEAF_BIT | ARQ_ACCEPT_CRYPTO_BIT) ||
+        (lv & ARQ_ACCEPT_LEVEL_MASK) == 7)
         return -1;
     for (int i = ARQ_ACCEPT_SNR_IDX + 1; i < ARQ_CONTROL_FRAME_SIZE; i++)
         if (buf[i])

@@ -99,8 +99,8 @@ typedef struct
      * frame itself (RX_CAROUSEL). */
     uint8_t  session_id;
     int      mode;
-    uint8_t  payload[1280];           /* >= largest user payload: QAM16C2
-                                       * carries 1213 - 8 = 1205 bytes      */
+    uint8_t  payload[1280];           /* >= largest user payload: DATAC17
+                                       * carries 1184 - 8 = 1176 bytes      */
     size_t   payload_len;
 
     /* RX_CAROUSEL: the control decoder (DATAC16) produced it; otherwise the
@@ -147,7 +147,8 @@ typedef struct
 
 /* The steps of a connect's encryption negotiation (crypto_negotiate). */
 typedef enum {
-    ARQ_NEG_CALL_OUT,     /* a CALL of ours is built: offer?               */
+    ARQ_NEG_CALL_OUT,     /* a CONNECT picks its session id (low bit
+                             clear): offer?  The offer is its low bit.     */
     ARQ_NEG_CALL_IN,      /* we take a CALL: what it offered               */
     ARQ_NEG_ACCEPT_OUT,   /* our ACCEPT is built: take the offer?          */
     ARQ_NEG_ACCEPT_IN,    /* the ACCEPT of our CALL: what it took          */
@@ -169,7 +170,8 @@ typedef struct
     uint8_t  session_id;               /* random byte chosen by caller         */
     int      call_sends_done;          /* CALLs sent this attempt (escalation) */
     int      call_carrier;             /* the carrier the last CALL went out on */
-    int      call_rx_mode;             /* the carrier we ACCEPT on (accept_carrier) */
+    int      call_rx_mode;             /* the connect's ACCEPT carrier: the one we key it
+                                        * on (accept_carrier), or calling, the one it came on */
     char     remote_call[CALLSIGN_MAX_SIZE];
     char     local_call[CALLSIGN_MAX_SIZE];  /* our dialed callsign/SSID for an
                                               * accepted incoming CALL (empty =>
@@ -369,7 +371,8 @@ typedef struct
      *  geometry patterns are keyed and detected at.  Optional. */
     void (*set_floor_mode)(int mode);
     /** The connect's encryption bit (arq_crypto.h), at each step of it: the
-     *  bit to send as a CALL or an ACCEPT is built, and what the peer's said
+     *  offer as a CONNECT picks its session id, the answer as an ACCEPT is
+     *  built, and what the peer's said
      *  (peer_bit) as we take its CALL or hear its ACCEPT.  The bits are kept
      *  there, by session id, not in the session.  Optional: NULL never
      *  encrypts. */
@@ -449,7 +452,8 @@ arq_listen_end_t arq_fsm_dispatch_ends_listening(arq_session_t *sess, const arq_
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now);
 
 /** The carrier the next CALL goes out on: the control mode for the first
- *  ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately. */
+ *  ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately -- or,
+ *  wider than 500 Hz, the floor and then the 500 Hz MFSK twice. */
 int arq_call_carrier(const arq_session_t *sess);
 /** Whether a pattern can arrive now (the modem's detector runs only then). */
 bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now);
@@ -476,5 +480,14 @@ bool arq_conn_state_has_peer(arq_conn_state_t s);
  * @brief Human-readable name for an event (for log output).
  */
 const char *arq_event_name(arq_event_id_t ev);
+
+/* The carousel's open blocks as BUFFER shows them (arq_buffer_inflight_shown),
+ * as last set with tx_inflight_bytes, readable without the session lock
+ * (BUFFER from the TCP reactor). */
+int arq_fsm_tx_inflight_published(void);
+/* What BUFFER counts of `inflight` unconfirmed bytes in the carousel's open
+ * blocks, `unstopped` of them in blocks no floor BREAK has said are in: those,
+ * but at least 1 while any is unconfirmed (0 means all acknowledged). */
+int arq_buffer_inflight_shown(int inflight, int unstopped);
 
 #endif /* ARQ_FSM_H_ */

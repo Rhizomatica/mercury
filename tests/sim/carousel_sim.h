@@ -31,6 +31,8 @@ typedef struct {
     int      app_wait_says;       /* the application's data said what it waits for (car_on_app_data) */
     int      recv_fallbacks;      /* falls back to ok_lv as the turn passed to a station that heard
                                      nothing (fall_back_unconfirmed in m_decide_recv, #448) */
+    int      floor_blind;         /* unanswered floor rounds M kept going on
+                                     ("tx: no answer -- continuing", #529) */
     int      gated_probes;        /* polls naming a rung out of the running (dead or locked
                                      out) whose SNR gate the smoothed SNR is below */
     int      dark_polls;          /* the most polls above the floor in a row, by one station,
@@ -56,6 +58,21 @@ typedef struct {
      * (#501); NAN when no frame of that kind was delivered. */
     double   ctl_snr_db, data_snr_db;
     int      ctl_frames, data_frames;
+    /* BUFFER's estimate (car_tx_inflight_unstopped): the most bytes either
+     * station counted as in beyond what its peer had delivered, and how many
+     * times a BREAK lowered it ahead of the poll that retires the block. */
+    size_t   buffer_overclaim;
+    int      buffer_break_drops;
+    /* CAR_CONFIRM=1: the run goes on past done_ms until each sender has had
+     * everything it sent confirmed (car_tx_inflight 0, nothing left to send),
+     * as a sender's host sees it from BUFFER 0 and an application from the
+     * end of the transfer.  confirm_ms: then (0: not within the limit).
+     * done_polls: "done" polls the receivers keyed (rx -> done), and
+     * done_heard those a sender decoded (tx polled ... n=0). */
+    uint64_t confirm_ms;
+    int      done_polls, done_heard;
+    int      floor_continues;     /* "tx: no answer -- continuing": a sender's
+                                     floor round answered by nothing it heard */
 } car_sim_result_t;
 
 /* Exploration: from the next run on, no random loss -- the frames (and

@@ -46,6 +46,28 @@ void *server_worker_thread_ctl(void *port);
 /* Configure TNC control-port pacing (from [tnc] INI keys; clamped). */
 void tnc_set_intervals(int keepalive_s, int buffer_report_ms);
 
+/* [tnc] absorb_idle_disconnect_s: 0 (off), or MIN..MAX s.  In a session, a
+ * host DISCONNECT with no data-port write for that long, or with host data
+ * held back from a full ARQ queue (#590), is answered OK and not acted on, unless another
+ * DISCONNECT came within the last 60 s or one has already gone through
+ * (#392: Winlink Express's P2P inactivity timeout, 300 s after each write;
+ * 240 suits it). */
+#define TNC_ABSORB_IDLE_DISCONNECT_S_MIN 30
+#define TNC_ABSORB_IDLE_DISCONNECT_S_MAX 3600
+void tnc_set_absorb_idle_disconnect_s(int seconds);
+typedef struct
+{
+    uint64_t idle_ms;            /* the setting, in ms; 0 is off */
+    bool     session_up;         /* CONNECTED told, DISCONNECTED not yet */
+    bool     disconnect_passed;  /* one of this session's went to the ARQ */
+    bool     host_data_held;     /* host data held from a full ARQ queue */
+    uint64_t now_ms;
+    uint64_t last_data_rx_ms;    /* last data-port read, or CONNECTED */
+    uint64_t last_disconnect_ms; /* the previous DISCONNECT, 0 for none */
+} tnc_absorb_state_t;
+/* Is this DISCONNECT one to absorb? */
+bool tnc_absorb_disconnect_due(const tnc_absorb_state_t *s);
+
 // ARQ control + data port reactor (started by interfaces_init)
 void *arq_reactor_thread(void *port);
 
@@ -63,6 +85,7 @@ void tnc_send_connected();
 void tnc_send_cqframe(const char *source_call, int bw_hz);
 void tnc_send_disconnected();
 void tnc_send_buffer(uint32_t bytes);
+void tnc_send_cleantxbuffer(bool dropped_any);
 /* A broadcast chat message from the host program, at the listen mode's frame
  * size: 0, -1 with no broadcast frame size yet, -2 too long for one frame. */
 int broadcast_send_message(const uint8_t *msg, size_t len);
@@ -87,6 +110,9 @@ int    tnc_host_command(const char *line);
 void   tnc_host_release(void);
 bool   tnc_host_holds(void);
 size_t tnc_host_arq_read(uint8_t *buf, size_t len);
+/* Something reads the session's received bytes: a TCP data client, or the
+ * host holding the TNC. */
+bool   tnc_rx_reader_attached(void);
 /* Is a periodic BUFFER report due: the count changed, or -- in a session,
  * with bytes still to confirm -- no BUFFER line went for
  * TNC_BUFFER_REPEAT_MS (50 s)?  (#397) */

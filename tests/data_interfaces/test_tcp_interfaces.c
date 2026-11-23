@@ -93,8 +93,12 @@ int arq_reported_bandwidth_hz(void)
 }
 
 bool arq_is_link_connected(void) { return false; }
+bool arq_call_in_progress(void) { return false; }
+bool arq_link_connected_now(bool *connected) { if (connected) *connected = false; return true; }
+int arq_buffer_bytes_nowait(void) { return mock_snapshot_valid ? mock_snapshot.tx_backlog_bytes : 0; }
 static atomic_int discard_stale_rx_calls;
 void arq_discard_stale_rx(void) { discard_stale_rx_calls++; }
+size_t arq_discard_stale_tx(void) { return 0; }
 
 void arq_set_trx(int trx) { arq_conn.TRX = trx; }
 int  arq_get_trx(void)    { return arq_conn.TRX; }
@@ -584,6 +588,66 @@ void test_cmd_compression(void)
 
     assert_ok_response();
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* ---- VARA commands real hosts send (BPQ32 VARA.c, Pat's vara transport) */
+
+void test_cmd_cleantxbuffer(void)
+{
+    char cmd[] = "CLEANTXBUFFER";
+    execute_control_command(cmd);
+
+    /* no OK: the ARQ thread answers with VARA's line after the clear */
+    TEST_ASSERT_EQUAL(0, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_CLEAN_TX_BUFFER, captured_cmd.type);
+}
+
+void test_cmd_cleantxbuffer_submit_fails(void)
+{
+    arq_submit_return = -1;
+    char cmd[] = "CLEANTXBUFFER";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("CLEANTXBUFFER FAILED\r", (char *)last_tcp_write_buf, 21);
+}
+
+void test_tnc_send_cleantxbuffer(void)
+{
+    tnc_send_cleantxbuffer(true);
+    TEST_ASSERT_EQUAL_STRING("CLEANTXBUFFER OK\r", last_queued_line);
+    tnc_send_cleantxbuffer(false);
+    TEST_ASSERT_EQUAL_STRING("CLEANTXBUFFER BUFFEREMPTY\r", last_queued_line);
+}
+
+void test_cmd_winlink_session(void)
+{
+    char cmd[] = "WINLINK SESSION";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+void test_cmd_cwid_on_off(void)
+{
+    char on[] = "CWID ON";
+    execute_control_command(on);
+    assert_ok_response();
+
+    tcp_write_call_count = 0;
+    char off[] = "CWID OFF";
+    execute_control_command(off);
+    assert_ok_response();
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+void test_cmd_cwid_bad_arg_is_wrong(void)
+{
+    char cmd[] = "CWID MAYBE";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
 }
 
 /* ---- TUNE: the ATU tuning carrier (VARA syntax) ----
@@ -1117,6 +1181,21 @@ void test_tnc_send_buffer(void)
     TEST_ASSERT_EQUAL_STRING("BUFFER 1234\r", last_queued_line);
 }
 
+/* A BUFFER query is answered every time, also when the count is the one the
+ * last BUFFER line said; the unsolicited report still does not repeat it
+ * (#584). */
+void test_cmd_buffer_query_always_answers(void)
+{
+    char q1[] = "BUFFER", q2[] = "BUFFER";
+    execute_control_command(q1);
+    execute_control_command(q2);
+    TEST_ASSERT_EQUAL_INT(2, queued_line_count);
+    TEST_ASSERT_EQUAL_STRING("BUFFER 0\r", queued_lines[0]);
+    TEST_ASSERT_EQUAL_STRING("BUFFER 0\r", queued_lines[1]);
+    tnc_send_buffer(0);                  /* a report of the same count */
+    TEST_ASSERT_EQUAL_INT(2, queued_line_count);
+}
+
 /* A VARA client gives up when no BUFFER comes for a minute while its data
  * waits (Pat: "write: buffer timeout"), and a carousel block's bytes are
  * confirmed only when the whole block is through: in a session, with bytes
@@ -1130,6 +1209,83 @@ void test_tnc_buffer_report_repeats_unchanged_backlog(void)
     TEST_ASSERT_TRUE(tnc_buffer_report_due(1322, 1322, true, 50900, 900));     /* 50 s */
     TEST_ASSERT_FALSE(tnc_buffer_report_due(1322, 1322, false, 90000, 900));   /* no session */
     TEST_ASSERT_FALSE(tnc_buffer_report_due(0, 0, true, 90000, 900));          /* empty */
+}
+
+/* Winlink Express's P2P inactivity DISCONNECT, 300 s after each write of
+ * the host's, with the modem still sending it or the answer not yet back
+ * (#392, PR #581): absorbed when switched on, in a session, with the host
+ * idle that long or its data held back, as often as it comes, unless
+ * another DISCONNECT came in the last 60 s or one has gone through. */
+void test_tnc_absorb_disconnect_due(void)
+{
+    const uint64_t last = 1000;
+    tnc_absorb_state_t base = { .idle_ms = 240000, .session_up = true, .last_data_rx_ms = last };
+    tnc_absorb_state_t s;
+#define AT(ms) (s = base, s.now_ms = (ms), &s)
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(AT(last + 300000)));
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(AT(last + 240000)));       /* 240 s */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(AT(last + 239999)));      /* host just wrote */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(AT(last + 4100)));        /* a real end */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(AT(last - 1)));           /* clock behind */
+    (void)AT(last + 300000); s.idle_ms = 0;
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));                     /* off */
+    (void)AT(last + 300000); s.session_up = false;
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));                     /* no session */
+
+    /* the timer's next, 300 s after the one absorbed: absorbed too */
+    base.last_disconnect_ms = last + 300000;
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(AT(last + 600000)));
+    /* said again within 60 s: meant, goes through */
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(AT(last + 308000)));
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(AT(last + 359999)));
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(AT(last + 360000)));
+    base.last_disconnect_ms = 0;
+
+    /* one has gone through (its drain under way): none absorbed after it */
+    (void)AT(last + 600000); s.disconnect_passed = true;
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));
+
+    /* a piece of the host's data held back from a full ARQ queue (#590):
+     * its timer runs from its write, ours from our read -- absorbed however
+     * recent our last read */
+    (void)AT(last + 4100); s.host_data_held = true;
+    TEST_ASSERT_TRUE(tnc_absorb_disconnect_due(&s));
+    /* ...but said again within 60 s still goes through */
+    (void)AT(last + 4100); s.host_data_held = true; s.last_disconnect_ms = last + 1000;
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));
+    (void)AT(last + 4100); s.host_data_held = true; s.session_up = false;
+    TEST_ASSERT_FALSE(tnc_absorb_disconnect_due(&s));
+#undef AT
+}
+
+/* Switched on but no session up: the DISCONNECT goes to the ARQ. */
+void test_cmd_disconnect_not_absorbed_without_session(void)
+{
+    tnc_set_absorb_idle_disconnect_s(240);
+    memset(&mock_snapshot, 0, sizeof(mock_snapshot));
+    memset(&captured_cmd, 0, sizeof(captured_cmd));
+    char cmd[] = "DISCONNECT";
+    execute_control_command(cmd);
+    tnc_set_absorb_idle_disconnect_s(0);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_DISCONNECT, captured_cmd.type);
+}
+
+/* In a session, a DISCONNECT seconds after the host was last active (here
+ * the CONNECTED itself) is the host's real end: it goes to the ARQ. */
+void test_cmd_disconnect_not_absorbed_right_after_connected(void)
+{
+    tnc_set_absorb_idle_disconnect_s(240);
+    tnc_send_connected();
+    memset(&captured_cmd, 0, sizeof(captured_cmd));
+    char cmd[] = "DISCONNECT";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_DISCONNECT, captured_cmd.type);
+    tnc_send_disconnected();
+    tnc_set_absorb_idle_disconnect_s(0);
 }
 
 void test_tnc_send_sn(void)
@@ -1210,8 +1366,14 @@ void test_cmd_version(void)
     execute_control_command(cmd);
 
     TEST_ASSERT_EQUAL(1, tcp_write_call_count);
-    TEST_ASSERT_EQUAL_STRING_LEN("VARA version 4.9.0 registered\r",
-                                 (char *)last_tcp_write_buf, 30);
+    /* VarAC's line first and unchanged; then the one Pat waits for: a line
+     * starting with "VERSION" (or WRONG), without which its start-up hangs
+     * (#627, #591). */
+    TEST_ASSERT_EQUAL_STRING("VARA version 4.9.0 registered\r"
+                             "VERSION VARA HF v4.9.0\r",
+                             (char *)last_tcp_write_buf);
+    TEST_ASSERT_EQUAL_INT(0, strncmp((char *)last_tcp_write_buf,
+                                     "VARA version 4.9.0 registered\r", 30));
     /* VERSION must not submit any ARQ command */
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }
@@ -2315,6 +2477,7 @@ int main(void)
     RUN_TEST(test_data_client_connect_discards_stale_rx);
     /* Command parser tests */
     RUN_TEST(test_cmd_mycall);
+    RUN_TEST(test_cmd_buffer_query_always_answers);
     RUN_TEST(test_cmd_mycall_registered_follows_ok);
     RUN_TEST(test_cmd_mycall_registers_every_callsign);
     RUN_TEST(test_cmd_mycall_does_not_register_dropped_secondaries);
@@ -2324,6 +2487,12 @@ int main(void)
     RUN_TEST(test_cmd_listen_off_mid_frame_still_releases);
     RUN_TEST(test_cmd_public_on);
     RUN_TEST(test_cmd_compression);
+    RUN_TEST(test_cmd_cleantxbuffer);
+    RUN_TEST(test_cmd_cleantxbuffer_submit_fails);
+    RUN_TEST(test_tnc_send_cleantxbuffer);
+    RUN_TEST(test_cmd_winlink_session);
+    RUN_TEST(test_cmd_cwid_on_off);
+    RUN_TEST(test_cmd_cwid_bad_arg_is_wrong);
     RUN_TEST(test_cmd_tune_on);
     RUN_TEST(test_cmd_tune_on_fractional_level);
     RUN_TEST(test_cmd_tune_off);
@@ -2421,5 +2590,8 @@ int main(void)
     RUN_TEST(test_host_tnc_command_busy_while_a_tcp_client_is_attached);
     RUN_TEST(test_host_tnc_command_runs_a_control_line);
     RUN_TEST(test_host_tnc_release_is_a_client_leaving_once);
+    RUN_TEST(test_tnc_absorb_disconnect_due);
+    RUN_TEST(test_cmd_disconnect_not_absorbed_right_after_connected);
+    RUN_TEST(test_cmd_disconnect_not_absorbed_without_session);
     return UNITY_END();
 }

@@ -434,10 +434,9 @@ func TestMercuryARQOptionalFallsBackToClear(t *testing.T) {
 	}
 }
 
-// A station with encryption optional meets one that has none: [crypto] off
-// here, or a release from before encryption with MERCURY_TEST_BIN_B (1.9.20
-// to 1.9.24 read the offer as a minor revision they need not know).  The
-// session comes up in the clear in both directions, A calling and A called.
+// A station with encryption optional meets one that has none ([crypto] off:
+// it sends the offer and answer bits 0 and ignores them).  The session comes
+// up in the clear in both directions, A calling and A called.
 func TestMercuryARQOptionalMeetsAStationWithoutEncryption(t *testing.T) {
 	a := newCryptoStation(t, "TESTA")
 	b := newCryptoStation(t, "TESTB")

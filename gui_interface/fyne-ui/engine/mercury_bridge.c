@@ -134,7 +134,15 @@ const char *mercury_log_status(void)
 /* ------------------------------------------------------------------ */
 void mercury_request_shutdown(void)
 {
+    mercury_engine_say_goodbye();   /* a session up: ended on the air first */
     mercury_stop = true;
+}
+
+/* The goodbye alone, for a caller that times the rest of its teardown
+ * (main.go's exit watchdog) and must not count the goodbye in it. */
+void mercury_say_goodbye(void)
+{
+    mercury_engine_say_goodbye();
 }
 
 /* ------------------------------------------------------------------ */

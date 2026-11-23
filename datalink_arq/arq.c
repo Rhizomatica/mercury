@@ -17,6 +17,7 @@
 #include "arq_channels.h"
 #include "carousel.h"
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK, _N32 */
+#include "../modem/modem_psk.h"    /* MERCURY_MODE_PSK3 */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -406,6 +407,55 @@ static void crypto_session_start(const char *remote_call, const char *local_call
     HLOGI(LOG_COMP, "Connected to %s (not encrypted)", remote_call);
 }
 
+/* Received bytes this session dropped: the ring was full with nothing
+ * reading it.  Once non-zero, nothing more of the session is delivered (the
+ * stream would have a hole in it), and the session is ended with the host's
+ * ABORT (g_rx_abort_sent once the command bus took it).  Both reset when a
+ * session starts or ends.  Event-loop thread only. */
+static size_t g_rx_dropped;
+static bool   g_rx_abort_sent;
+
+static void rx_dropped_summary(const char *when)
+{
+    if (g_rx_dropped)
+        HLOGW(LOG_COMP, "%s: %zu received bytes were dropped, no application reading them",
+              when, g_rx_dropped);
+    g_rx_dropped = 0;
+    g_rx_abort_sent = false;
+}
+
+/* The session can't deliver what it receives any more: end it as the host's
+ * ABORT does, so the peer hears a DISCONNECT and its application reports the
+ * transfer failed, instead of its bytes being acknowledged and thrown away
+ * until it hangs up.  Non-blocking: the command thread takes the session
+ * lock this thread holds.  If the command bus is full, rx_abort_tick retries
+ * on every pass of the event loop (at least every 500 ms), not only on the
+ * next delivery: a peer that stops sending would make none. */
+static void rx_end_session_for_no_reader(void)
+{
+    if (g_rx_abort_sent)
+        return;
+    arq_cmd_msg_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = ARQ_CMD_ABORT;
+    if (arq_channel_bus_try_send_cmd(&g_bus, &cmd) == 0)
+    {
+        g_rx_abort_sent = true;
+        HLOGW(LOG_COMP, "Ending the session (ABORT): it can't deliver what it receives");
+    }
+    else
+        HLOGD(LOG_COMP, "Command bus full: the session's ABORT will be retried");
+}
+
+/* Event loop, under g_sess_lock: an ABORT owed for a drop and not yet on the
+ * bus.  g_rx_dropped resets when the session ends, so one owed is always for
+ * the session still up. */
+static void rx_abort_tick(void)
+{
+    if (g_rx_dropped && !g_rx_abort_sent)
+        rx_end_session_for_no_reader();
+}
+
 static void cb_notify_connected(const char *remote_call, const char *local_call,
                                 bool we_called)
 {
@@ -425,6 +475,7 @@ static void cb_notify_connected(const char *remote_call, const char *local_call,
      * of the previous session have time to drain to the TCP socket before
      * the buffer is cleared (clearing on disconnect races with UUCP reads). */
     clear_buffer(data_rx_buffer_arq);
+    rx_dropped_summary("Previous session");
     /* A new session starts with a clean slate: drop any partial chat line left
      * over from the previous session's feed buffer. */
     msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
@@ -441,8 +492,13 @@ static void cb_notify_connected(const char *remote_call, const char *local_call,
     crypto_session_start(remote_call, local_call);
 }
 
+static void abort_hold_release(uint64_t now);
+
 static void cb_notify_pending(const char *remote_call, const char *local_call)
 {
+    /* An ABORT hold still on is an earlier session's: its CANCELPENDING goes
+     * first, or it would cancel this PENDING (abort_hold_release). */
+    abort_hold_release(time_now_ms());
     /* An incoming call makes us the callee, whatever an earlier session left
      * behind.  cb_notify_connected takes a set src_addr to mean "we called",
      * so addresses left over from an outgoing session that ended without
@@ -521,8 +577,16 @@ static void cb_notify_disconnected(bool to_no_client)
      * The host hears the call is off, as when we stop answering one. */
     bool pending = g_pending_ms != 0;
     g_pending_ms = 0;
+    rx_dropped_summary("Session ended");
     if (told)
+    {
         HLOGI(LOG_COMP, "Disconnected (the host was told at its ABORT)");
+        /* The ABORT hold's CANCELPENDING goes here, as the session ends, not
+         * after the pass: fsm_disconnecting's RX_CALL ends the session and
+         * answers the CALL in one dispatch, and that CALL's PENDING must
+         * come after it (abort_hold). */
+        abort_hold_release(time_now_ms());
+    }
     else
     {
         if (pending)
@@ -544,9 +608,47 @@ static void cb_notify_disconnected(bool to_no_client)
     }
 }
 
+/* Into data_rx_buffer_arq, under g_sess_lock.  While something reads the
+ * ring (a TCP data client, or the host holding the TNC), a full ring is
+ * waited on, as before: the reader drains it, and the TCP reactor never
+ * waits on this lock (#590).  With nothing reading -- the host closed its
+ * data port mid-session, or was dropped for not reading -- nothing ever
+ * would, and waiting stopped the event loop for good: no frames decoded, no
+ * timers, the link left to die on the peer's watchdog.
+ *
+ * So what fits is kept and the rest dropped, with a warning.  The dropped
+ * bytes were acknowledged on the air, so from the first one the session's
+ * stream has a hole: nothing more of it is delivered, even to a client
+ * that reconnects (it would get the bytes before the hole, then the ones
+ * after, with nothing marking the gap), and the session is ended with an
+ * ABORT, so the peer learns the transfer failed. */
 static void deliver_plaintext(const uint8_t *data, size_t len)
 {
-    write_buffer(data_rx_buffer_arq, (uint8_t *)data, len);
+    if (!data || len == 0)
+        return;
+    size_t put = 0;
+    while (put < len && g_rx_dropped == 0)
+    {
+        size_t room = circular_buf_free_size(data_rx_buffer_arq);
+        size_t n = len - put < room ? len - put : room;
+        if (n > 0)
+        {
+            write_buffer(data_rx_buffer_arq, (uint8_t *)data + put, n);  /* the only writer: it fits */
+            put += n;
+            continue;
+        }
+        if (!tnc_rx_reader_attached())
+            break;
+        hermes_usleep(10000);   /* full, and a reader there to drain it */
+    }
+    if (put < len)
+    {
+        if (g_rx_dropped == 0)
+            HLOGW(LOG_COMP, "No application is reading the session's received data and its buffer is full: "
+                  "dropping the rest of the session's data");
+        g_rx_dropped += len - put;
+        rx_end_session_for_no_reader();
+    }
 
     char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
     arq_conn_get_calls(my_call, src, dst, CALLSIGN_MAX_SIZE);
@@ -655,8 +757,10 @@ static bool cb_crypto_negotiate(arq_neg_step_t step, const char *remote_call,
     switch (step)
     {
     case ARQ_NEG_CALL_OUT:
+        /* the offer goes on air as the session id's low bit */
         bit = arq_crypto_should_offer(remote_call);
-        g_neg.valid = true; g_neg.session_id = session_id; g_neg.caller = true;
+        g_neg.valid = true; g_neg.caller = true;
+        g_neg.session_id = bit ? session_id | ARQ_CALL_CRYPTO_OFFER : session_id;
         g_neg.offer = bit; g_neg.accept = false;
         break;
     case ARQ_NEG_CALL_IN:
@@ -839,6 +943,35 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         arq_set_retry_slots(msg->value);   /* outside lock: takes g_sess_lock internally */
         return;
 
+    case ARQ_CMD_CLEAN_TX_BUFFER:
+    {
+        /* VARA's CLEANTXBUFFER: drop the host's bytes not yet sent, keep the
+         * session.  BPQ32 sends it right before DISCONNECT at its session
+         * time limit, so the DISCONNECT's drain has nothing left to wait
+         * for.  Frames already on the air (awaiting an ACK) stay: the FSM
+         * owns those, and clearing them is ABORT's job.  The host's bytes
+         * sent before this command count as unsent too.  Clear before
+         * waiting as well: with g_app_tx_buf full the payload bridge is
+         * parked in write_buffer, and only a clear lets it finish. */
+        size_t dropped = 0;
+        for (int pass = 0; pass < 2; pass++)
+        {
+            pthread_mutex_lock(&g_app_tx_mtx);
+            dropped += size_buffer(g_app_tx_buf);
+            clear_buffer(g_app_tx_buf);
+            pthread_mutex_unlock(&g_app_tx_mtx);
+            if (pass == 0)
+                wait_payload_written();
+        }
+        HLOGI(LOG_COMP, "CLEANTXBUFFER: dropped %zu unsent bytes", dropped);
+        /* The message store took those bytes when they were queued: a
+         * partly sent chat line must not be glued onto the next message. */
+        if (dropped > 0)
+            msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
+        arq_tnc_send_cleantxbuffer(dropped > 0);
+        return;
+    }
+
     case ARQ_CMD_SET_CALLINT:
         if (msg->value <= 0)
         {
@@ -1001,6 +1134,14 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
             pthread_mutex_unlock(&g_conn_lock);
         }
         arq_tnc_send_disconnected();
+        /* ...and what we are transmitting stops with it.  A carousel round
+         * at the floor is a 27 s keydown, and it used to play out to the end:
+         * on air, VE4KLM 15 Nov (JNOS "mbox reset"), PTT stayed on 20 s past
+         * the ABORT and its DISCONNECTED, carrying data the session had just
+         * dropped.  The modem unkeys within its tail time, the FSM sees the
+         * keydown end as it would any other, and the one DISCONNECT goes out
+         * after it.  A CALL being sent is cut too: the call is over. */
+        arq_modem_cut_tx();
         ev.id = ARQ_EV_APP_DISCONNECT;
         ev.abort = true;
         break;
@@ -1146,7 +1287,8 @@ static void call_progress(uint64_t now)
                  ? (uint32_t)(tm->payload_bytes * 8 / tm->frame_duration_s + 0.5f) : 0;
     /* The modem's speed levels (modem.c, bitrate_level_from_payload_mode),
      * and 16 for the control mode, which it never reports. */
-    uint32_t level = mode == MERCURY_MODE_MFSK ? 100 : mode == MERCURY_MODE_MFSK_N32 ? 103 : 16;
+    uint32_t level = mode == MERCURY_MODE_MFSK ? 100 : mode == MERCURY_MODE_MFSK_N32 ? 103 :
+                     mode == MERCURY_MODE_MFSK_W2 ? 104 : mode == MERCURY_MODE_PSK3 ? 110 : 16;
     arq_tnc_send_bitrate(level, bps);
 }
 
@@ -1180,6 +1322,202 @@ static void pending_hold(uint64_t now)
         return;
     arq_tnc_send_pending();
     g_pending_ms = now;
+}
+
+/* After an ABORT, PENDING holds a scanning host on the channel until our one
+ * DISCONNECT is out.
+ *
+ * ABORT answers the host at once (DISCONNECTED, g_host_told), and BPQ32
+ * releases the port on it: LISTEN ON and SCANSTART 15 (VARA.c,
+ * VARAReleaseTNC), so its scan's first hop comes about 15 s later, and the
+ * hop's LISTEN OFF releases the radio.  Our DISCONNECT is never keyed over
+ * the peer (abort_teardown), and at BW500 a peer's floor frame is 26 s: on
+ * air (K7EK, callee, ABORT 2026-11-13 15:17:40.8, KG9NI on the air with an
+ * MFSK500 frame to about 15:18:08) the hop came at 15:17:57, the DISCONNECT
+ * was never sent, and KG9NI sat out its 240 s watchdog.
+ *
+ * A hop is refused while the port reports a connect pending (VARA.c: scan
+ * permission is refused while ConnectPending, set to 6 scan intervals by
+ * PENDING, cleared by CANCELPENDING or DISCONNECTED).  So, with the host
+ * told and our DISCONNECT not yet out: PENDING, after the DISCONNECTED (it
+ * would clear it), again every ARQ_PENDING_HOLD_MS, and CANCELPENDING once
+ * the DISCONNECT has gone (its keydown over) or the teardown has ended.  The
+ * FSM's ABORT bounds (ARQ_CAR_ABORT_WAIT_MS) end it: the callee's
+ * out-of-turn DISCONNECT that never finds a clear channel gives up a
+ * longest keydown of the caller's (30 s) and its guard after its key-by time
+ * (abort_key_by, then ARQ_ABORT_HOLD_MAX holds, not counted while its own
+ * keydown is on the air): about 43 s after the ABORT.  The CANCELPENDING
+ * then comes with no DISCONNECT sent.  ARQ_ABORT_SCAN_HOLD_MS is only the
+ * backstop.  The repeat is the answering hold's (pending_hold), the same
+ * ARQ_PENDING_HOLD_MS.  Mercury already holds a scanner this way while a CQ is
+ * on the air (arq_notify_cq_tx_started).  A plain DISCONNECT needs none:
+ * its DISCONNECTED comes when the session has closed (#493). */
+#define ARQ_ABORT_SCAN_HOLD_MS 60000
+static uint64_t g_abort_hold_ms;   /* the hold's first PENDING; 0: none (g_sess_lock) */
+static uint64_t g_abort_hold_last; /* its last PENDING */
+static bool     g_abort_hold_done; /* this teardown has had its hold */
+
+/* CANCELPENDING for a hold in progress.  From abort_hold once the hold is no
+ * longer owed (after the event loop's pass), and earlier where a new call
+ * may follow in the same pass: cb_notify_disconnected, as the ABORTed
+ * session ends, and cb_notify_pending, before a new call's PENDING.  A
+ * CANCELPENDING after that PENDING would cancel it and release a scanner in
+ * the middle of the answer.  The FSM answers a CALL in the pass that ended
+ * the teardown: fsm_disconnecting's RX_CALL ends the session and dispatches
+ * the CALL in one go, and enter_idle_after_call enters LISTENING at once, so
+ * a CALL later in the same batch is taken too.  All on the event loop, under
+ * g_sess_lock. */
+static void abort_hold_release(uint64_t now)
+{
+    if (!g_abort_hold_ms)
+        return;
+    arq_tnc_send_cancelpending();
+    HLOGI(LOG_COMP, "ABORT: the scanner released (%llu s held)",
+          (unsigned long long)((now - g_abort_hold_ms) / 1000));
+    g_abort_hold_ms = 0;
+}
+
+static void abort_hold(uint64_t now)
+{
+    pthread_mutex_lock(&g_conn_lock);
+    bool told = g_host_told;
+    pthread_mutex_unlock(&g_conn_lock);
+    bool owed = told && g_sess.conn_state == ARQ_CONN_DISCONNECTING &&
+                !(g_sess.teardown == ARQ_TD_SENT && !g_sess.tx_active);
+    if (owed && g_abort_hold_ms && now - g_abort_hold_ms >= ARQ_ABORT_SCAN_HOLD_MS)
+    {
+        /* Not reached while the FSM's ABORT bounds hold (~30 s). */
+        HLOGW(LOG_COMP, "ABORT: the hold reached its %d s backstop with the teardown still on",
+              ARQ_ABORT_SCAN_HOLD_MS / 1000);
+        owed = false;
+    }
+    if (!owed)
+    {
+        abort_hold_release(now);
+        if (!told || g_sess.conn_state != ARQ_CONN_DISCONNECTING)
+            g_abort_hold_done = false;   /* a new teardown may hold again */
+        return;
+    }
+    if (g_abort_hold_ms && now - g_abort_hold_last < ARQ_PENDING_HOLD_MS)
+        return;
+    if (!g_abort_hold_ms)
+    {
+        if (g_abort_hold_done)
+            return;
+        g_abort_hold_done = true;
+        g_abort_hold_ms = now;
+        HLOGI(LOG_COMP, "ABORT: holding a scanning host on the channel until our DISCONNECT is out (PENDING)");
+    }
+    arq_tnc_send_pending();
+    g_abort_hold_last = now;
+}
+
+/* A CALL on its way: PENDING as soon as a decoder has locked onto a frame,
+ * not when the CALL has decoded.
+ *
+ * A scanning host leaves the channel on its own schedule -- RMS Trimode stays
+ * on a frequency for 4 s and is deaf for 0.5 s while it changes -- and it
+ * stops only on PENDING, which it takes for "a connect request has been
+ * detected".  Ours came when the CALL had decoded: a 3.74 s frame (13.5 s on
+ * the MFSK floor) that falls whole inside one 4 s stay on about one visit in
+ * twenty-five (#527).  A decoder's lock comes about a second into the frame
+ * (the modem keeps it: modem_rx_frame_in_flight), so a stay that catches the
+ * frame's start holds the channel for the rest of it.
+ *
+ * So, while LISTENING and not keyed: PENDING when a lock begins, again every
+ * ARQ_PENDING_HOLD_MS while it lasts (a floor frame at BW500 is 27 s), and
+ * CANCELPENDING once it is gone and the FSM has not taken a CALL out of it.
+ * That last wait is ARQ_ARRIVAL_GRACE_MS: a CALL for us decodes as the lock
+ * ends and the FSM answers it a pass later, with the PENDING of the call
+ * (cb_notify_pending), and a CANCELPENDING in between would let the host go.
+ * A frame that is not a CALL for us -- another session's, a station calling
+ * someone else -- holds the host for its length and the grace, no more.
+ * A lock that outlasts any frame (ARQ_ARRIVAL_MAX_MS) is noise: released, and
+ * not held again until it has gone.
+ *
+ * No state beyond these statics: nothing is added to the session, and the
+ * hold is a function of the lock, the connection state and the clock. */
+#define ARQ_ARRIVAL_GRACE_MS 2000
+#define ARQ_ARRIVAL_MAX_MS   45000
+/* The modem says so on every pass of its loop in which a decoder was locked,
+ * and a pass in which the decoder published nothing says nothing: a lock that
+ * was seen within ARQ_ARRIVAL_STALE_MS is still there.  The loop passes every
+ * 20 ms (RX_DECODE_CHUNK_SAMPLES); an RX loop stalled for longer than this and
+ * the grace together (2.75 s) reads as a lock gone, and the host is released
+ * while the CALL may still be on the air -- as such a stall loses that CALL's
+ * audio anyway. */
+#define ARQ_ARRIVAL_STALE_MS 750
+static _Atomic uint64_t g_call_seen_ms;     /* the last time a CALL decoder was locked; 0: never */
+static uint64_t        g_arrival_ms;       /* the hold's first PENDING; 0: none (g_sess_lock) */
+static uint64_t        g_arrival_last_ms;  /* its last PENDING */
+static uint64_t        g_arrival_gone_ms;  /* when the lock was first seen gone; 0: it is there */
+static bool            g_arrival_noise;    /* the lock outlasted any frame: not held again until gone */
+
+void arq_note_call_in_flight(void)
+{
+    uint64_t now = time_now_ms();
+    uint64_t was = atomic_exchange(&g_call_seen_ms, now);
+    if (!was || now - was >= ARQ_ARRIVAL_STALE_MS)
+    {
+        /* Wake the event loop: its timeout is 500 ms and the host's stay is 4 s. */
+        pthread_mutex_lock(&g_evq_lock);
+        pthread_cond_signal(&g_evq_cond);
+        pthread_mutex_unlock(&g_evq_lock);
+    }
+}
+
+static void arrival_hold(uint64_t now)
+{
+    uint64_t seen = atomic_load(&g_call_seen_ms);
+    bool on = seen && now - seen < ARQ_ARRIVAL_STALE_MS;
+    bool idle = g_sess.conn_state == ARQ_CONN_LISTENING && !g_sess.tx_active;
+
+    if (!on)
+        g_arrival_noise = false;
+    if (!idle)
+    {
+        /* A session has taken over (its own notices follow), or we are keyed,
+         * or the host has asked for the radio back: nothing of this hold left
+         * to say. */
+        g_arrival_ms = g_arrival_gone_ms = 0;
+        return;
+    }
+    if (on)
+    {
+        g_arrival_gone_ms = 0;
+        if (g_arrival_noise)
+            return;
+        if (!g_arrival_ms)
+        {
+            arq_tnc_send_pending();
+            g_arrival_ms = g_arrival_last_ms = now;
+            HLOGI(LOG_COMP, "A CALL is arriving: holding a scanning host (PENDING)");
+        }
+        else if (now - g_arrival_ms >= ARQ_ARRIVAL_MAX_MS)
+        {
+            arq_tnc_send_cancelpending();
+            HLOGI(LOG_COMP, "A lock that outlasts any frame: noise, the scanner released");
+            g_arrival_ms = 0;
+            g_arrival_noise = true;
+        }
+        else if (now - g_arrival_last_ms >= ARQ_PENDING_HOLD_MS)
+        {
+            arq_tnc_send_pending();
+            g_arrival_last_ms = now;
+        }
+        return;
+    }
+    if (!g_arrival_ms)
+        return;
+    if (!g_arrival_gone_ms)
+        g_arrival_gone_ms = now;
+    if (now - g_arrival_gone_ms >= ARQ_ARRIVAL_GRACE_MS)
+    {
+        arq_tnc_send_cancelpending();
+        HLOGI(LOG_COMP, "The frame was no CALL for us: the scanner released (%llu s held)",
+              (unsigned long long)((now - g_arrival_ms) / 1000));
+        g_arrival_ms = g_arrival_gone_ms = 0;
+    }
 }
 
 static void *arq_event_loop_worker(void *arg)
@@ -1230,6 +1568,9 @@ static void *arq_event_loop_worker(void *arg)
         }
         call_progress(now);
         pending_hold(now);
+        abort_hold(now);
+        rx_abort_tick();
+        arrival_hold(now);
         pthread_mutex_unlock(&g_sess_lock);
     }
 
@@ -1275,7 +1616,8 @@ static void log_connect_frame_hex(const char *kind, const uint8_t *data, size_t 
     HLOGTR(LOG_COMP, "%s frame bytes: %s", kind, buf);
 }
 
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode)
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode,
+                                       uint32_t age_ms)
 {
     if (!data || frame_size < 2) return false;
 
@@ -1289,6 +1631,8 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
 
     if (!arq_protocol_connect_version_ok(data, frame_size))
         rc = -2;   /* another protocol version: below, once we know it is for us */
+    else if (!arq_protocol_connect_compatible(data))
+        rc = -3;   /* an older 2.x minor: likewise */
     else if (is_accept)
     {
         rc = arq_protocol_parse_accept(data, frame_size, &acc);
@@ -1375,12 +1719,13 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
                   dialed_call);
         return false;
     }
-    if (ARQ_TX_MFSK_ONLY && arq_protocol_connect_minor(data) < 1)
+    if (rc == -3)
     {
-        /* Minor 0, 1.9.20, does not read the TX-MFSK-only bit: it would put
-         * my rounds on rungs I cannot send. */
-        HLOGW(LOG_COMP, "%s for %s from Mercury 1.9.20, which cannot reach a TX-MFSK-only station: ignored",
-              is_accept ? "ACCEPT" : "CALL", dialed_call);
+        /* Minors 0-2 (1.9.20-1.9.25) map the ladder's levels to other
+         * modes (ARQ_CONNECT_MINOR_MIN): a session would lose its rounds. */
+        HLOGW(LOG_COMP, "%s for %s from Mercury 1.9.25 or older (protocol minor %d): the versions do not connect, %s",
+              is_accept ? "ACCEPT" : "CALL", dialed_call, arq_protocol_connect_minor(data),
+              is_accept ? "ignored" : "not answered");
         return false;
     }
 
@@ -1388,8 +1733,9 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
      * session to disconnect yet, so silence is the refusal.  Checked only
      * once the DST CRC has matched, so it applies only to calls for us. */
     bool crypto = arq_protocol_connect_crypto(data);
-    /* An ACCEPT that takes an offer we did not make answers an earlier
-     * CONNECT of the same session id: not ours (specs/connect, Agree). */
+    /* An ACCEPT that takes an offer we did not make is not ours: the session
+     * id carries the offer, so no ACCEPT of our id should (specs/connect,
+     * Agree, Mut_anyaccept). */
     if (is_accept && crypto)
     {
         pthread_mutex_lock(&g_app_tx_mtx);
@@ -1416,6 +1762,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     ev.rx_snr     = rx_snr;
     ev.mode       = mode;          /* the carrier: an answer goes back on it */
     ev.tx_mfsk    = tx_mfsk;       /* the peer can only transmit MFSK */
+    ev.rx_age_ms  = age_ms;        /* a CALL decoded too late is not answered */
     if (is_accept)
     {
         /* The callee's callsign is not on the air, only its CRC: the FSM
@@ -1683,6 +2030,15 @@ bool arq_link_has_peer(void)
     return has_peer;
 }
 
+int arq_goodbye_progress(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    int p = !arq_conn_state_has_peer(g_sess.conn_state) ? 0
+          : (g_sess.conn_state == ARQ_CONN_DISCONNECTING && g_sess.teardown == ARQ_TD_SENT) ? 2 : 1;
+    pthread_mutex_unlock(&g_sess_lock);
+    return p;
+}
+
 bool arq_is_link_connected(void)
 {
     pthread_mutex_lock(&g_sess_lock);
@@ -1691,16 +2047,134 @@ bool arq_is_link_connected(void)
     return connected;
 }
 
+/* For the TCP reactor, which must never wait on g_sess_lock: the event loop
+ * holds it while it delivers received bytes, and a delivery larger than the
+ * free room in data_rx_buffer_arq waits there for the reactor to drain it.
+ * A reactor waiting on the lock then drained nothing, and both stopped for
+ * good (Go harness, CCIR Poor 20 dB, a 30 kB transfer: the receiver's
+ * delivery of 6 blocks at once, its periodic BUFFER report due).  So these
+ * take the lock only if it is free. */
+bool arq_call_in_progress(void)
+{
+    if (pthread_mutex_trylock(&g_sess_lock) != 0)
+        return true;             /* the event loop is at work: say a call, the safe answer */
+    bool call = g_initialized && g_sess.conn_state != ARQ_CONN_DISCONNECTED &&
+                g_sess.conn_state != ARQ_CONN_LISTENING;
+    pthread_mutex_unlock(&g_sess_lock);
+    return call;
+}
+
+bool arq_link_connected_now(bool *connected)
+{
+    if (!connected || pthread_mutex_trylock(&g_sess_lock) != 0)
+        return false;
+    *connected = (g_sess.conn_state == ARQ_CONN_CONNECTED);
+    pthread_mutex_unlock(&g_sess_lock);
+    return true;
+}
+
+int arq_buffer_bytes_nowait(void)
+{
+    if (!g_initialized)
+        return 0;
+    return arq_get_tx_backlog_bytes() + arq_fsm_tx_inflight_published();
+}
+
+/* g_sess_lock for the TCP reactor: never waits on it for long, since the
+ * event loop holds it while it waits on the reactor (above).  Up to ~1 s of
+ * tries; false if it stayed busy. */
+static bool sess_lock_for_reactor(void)
+{
+    for (int i = 0; i < 1000; i++)
+    {
+        if (pthread_mutex_trylock(&g_sess_lock) == 0)
+            return true;
+        hermes_usleep(1000);
+    }
+    return false;
+}
+
 void arq_discard_stale_rx(void)
 {
     /* Every FSM dispatch -- so every CONNECTED transition and every delivery
      * into the buffer -- runs under g_sess_lock.  Holding it across the check
      * and the clear means a session cannot start in between and have its
      * first bytes wiped. */
-    pthread_mutex_lock(&g_sess_lock);
+    if (!sess_lock_for_reactor())
+        return;          /* the event loop is busy delivering: a session is up */
     if (g_sess.conn_state != ARQ_CONN_CONNECTED)
         clear_buffer(data_rx_buffer_arq);
     pthread_mutex_unlock(&g_sess_lock);
+}
+
+size_t arq_discard_stale_tx(void)
+{
+    if (!g_initialized)
+        return 0;
+
+    /* Only with no call at all: idle or listening.  While calling or
+     * accepting, the bytes belong to the session being set up (a host may
+     * write as soon as it sends CONNECT, and may reopen its data socket);
+     * with a session up, the session ends and flushes them itself.
+     * g_sess_lock across the check and the clear, as arq_discard_stale_rx:
+     * a CONNECT or an incoming CALL taken by the ARQ thread cannot slip in
+     * between.  g_app_tx_mtx inside it, the order the FSM's dispatch takes
+     * them in (cb_tx_read).
+     *
+     * Not covered: a CONNECT still on the command bus.  It reaches the ARQ
+     * thread asynchronously, so for a few ms after the host sends it the
+     * state is still DISCONNECTED, and a host that writes its first bytes
+     * and closes its data socket inside that window loses them.  No known
+     * host reopens its data socket right after CONNECT.
+     *
+     * Bytes the client wrote just before it closed may still be on the
+     * payload bus, and must land before the last clear or they go out on the
+     * next session anyway.  The bridge may also be blocked on a full queue
+     * (an idle write beyond APP_TX_BUF_SIZE: nothing drains it with no
+     * session); one clear would wake it to write the rest after the clear.
+     * So clear until everything sent before now has landed: each clear makes
+     * room for the next messages.  The TCP thread calls this, so no new
+     * payload joins the bus meanwhile.  Bounded as wait_payload_written. */
+    unsigned target = atomic_load(&g_payload_sent);
+    size_t dropped = 0;
+    for (int i = 0; i < 1000; i++)
+    {
+        /* Read before the clear: if everything had landed, this clear is
+         * the last one needed. */
+        bool landed = (int)(atomic_load(&g_payload_written) - target) >= 0;
+        bool idle;
+
+        if (!sess_lock_for_reactor())
+            break;       /* busy for a second: a session is at work, not idle */
+        idle = (g_sess.conn_state == ARQ_CONN_DISCONNECTED ||
+                g_sess.conn_state == ARQ_CONN_LISTENING);
+        if (idle)
+        {
+            pthread_mutex_lock(&g_app_tx_mtx);
+            size_t n = size_buffer(g_app_tx_buf);
+            if (n > 0)
+            {
+                clear_buffer(g_app_tx_buf);
+                dropped += n;
+            }
+            pthread_mutex_unlock(&g_app_tx_mtx);
+        }
+        pthread_mutex_unlock(&g_sess_lock);
+
+        if (landed || !idle)
+            break;
+        hermes_usleep(1000);
+    }
+
+    if (dropped > 0)
+    {
+        /* A partial chat line from those bytes must not be glued onto the
+         * next session's first message. */
+        msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
+        HLOGW(LOG_COMP, "Data client left with no session up: discarded %zu "
+              "queued byte(s) that no session would carry", dropped);
+    }
+    return dropped;
 }
 
 int arq_queue_data(const uint8_t *data, size_t len)

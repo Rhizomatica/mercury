@@ -119,8 +119,17 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
 {
     sim_outframe_t of;
     int dir = (sender == s->a) ? 0 : 1;
+    bool in_burst = false;   /* the last frame left its keydown open */
     while (sim_endpoint_take_outframe(sender, &of))
     {
+        /* A frame of a burst: right behind the one before, in its keydown --
+         * no TX_STARTED of its own, and TX_COMPLETE only after the last, as
+         * the modem plays an action's frames (read_action_frames). */
+        bool cont = in_burst;
+        in_burst = of.burst_remaining > 0;
+        if (cont && s->tx_end_ms[dir] > now_ms)
+            now_ms = s->tx_end_ms[dir];
+
         /* A station plays its frames one after another: one queued while it
          * is still keyed goes out when the current one ends (on air the modem
          * keyed a DISCONNECT 42 ms after the frame it was queued behind),
@@ -135,7 +144,7 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
         uint64_t tx_end  = now_ms + airtime;
         if (!mercury_mode_is_mfsk(of.mode)) s->non_mfsk[dir]++;
 
-        if (s->carrier_sense)
+        if (s->carrier_sense && !cont)
         {
             sim_pending_t tx_go = {
                 .fire_at_ms = now_ms,
@@ -147,13 +156,16 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
 
         uint64_t over_end = tx_end;
 
-        /* TX_COMPLETE back to sender at TX-end time. */
-        sim_pending_t tx_done = {
-            .fire_at_ms = over_end,
-            .target     = sender,
-            .kind       = SIM_PENDING_TX_COMPLETE,
-        };
-        enqueue(s, &tx_done);
+        /* TX_COMPLETE back to sender at TX-end time (the burst's end). */
+        if (!in_burst)
+        {
+            sim_pending_t tx_done = {
+                .fire_at_ms = over_end,
+                .target     = sender,
+                .kind       = SIM_PENDING_TX_COMPLETE,
+            };
+            enqueue(s, &tx_done);
+        }
 
         /* Half-duplex: does this transmission overlap one already on the air?
          *
@@ -188,7 +200,8 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                 s->collisions++;    /* ours is destroyed too */
             }
         }
-        s->tx_start_ms[dir] = now_ms;     /* the whole keydown is on the air */
+        if (!cont)
+            s->tx_start_ms[dir] = now_ms; /* the whole keydown is on the air */
         s->tx_end_ms[dir]   = over_end;
 
         /* Frame delivery to peer (may be erased, or destroyed by a collision). */
@@ -486,6 +499,11 @@ void sim_set_fading(sim_t *s, double mean_snr_db, double doppler_hz)
 void sim_set_return_mode_per(sim_t *s, int freedv_mode, double per)
 {
     sim_channel_set_return_mode_per(s->ch, freedv_mode, per);
+}
+
+void sim_set_dir_mode_per(sim_t *s, int dir, int freedv_mode, double per)
+{
+    sim_channel_set_dir_mode_per(s->ch, dir, freedv_mode, per);
 }
 
 void sim_set_mode_per(sim_t *s, const sim_mode_per_t *table, int count,

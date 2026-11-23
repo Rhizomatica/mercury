@@ -177,6 +177,64 @@ void test_conf_sets_names_a_key_case_insensitively(void)
     TEST_ASSERT_FALSE(radio_conf_sets(NULL, "rts_state"));
 }
 
+/* ---- radio_port_split_host: the shapes Hamlib's network_open() takes ---- */
+
+static int split(const char *dev, char *h, char *p)
+{
+    return radio_port_split_host(dev, h, 64, p, 8);
+}
+
+void test_split_host_and_port(void)
+{
+    char h[64], p[8];
+    TEST_ASSERT_EQUAL_INT(1, split("192.168.1.50:4532", h, p));
+    TEST_ASSERT_EQUAL_STRING("192.168.1.50", h);
+    TEST_ASSERT_EQUAL_STRING("4532", p);
+    TEST_ASSERT_EQUAL_INT(1, split("shack-pi.local:12345", h, p));
+    TEST_ASSERT_EQUAL_STRING("shack-pi.local", h);
+    TEST_ASSERT_EQUAL_STRING("12345", p);
+}
+
+void test_split_host_without_port(void)
+{
+    char h[64], p[8];
+    TEST_ASSERT_EQUAL_INT(1, split("192.168.1.50", h, p));
+    TEST_ASSERT_EQUAL_STRING("192.168.1.50", h);
+    TEST_ASSERT_EQUAL_STRING("", p);
+}
+
+void test_split_ipv6(void)
+{
+    char h[64], p[8];
+    TEST_ASSERT_EQUAL_INT(1, split("[fe80::1]:4532", h, p));
+    TEST_ASSERT_EQUAL_STRING("fe80::1", h);
+    TEST_ASSERT_EQUAL_STRING("4532", p);
+    TEST_ASSERT_EQUAL_INT(1, split("[::1]", h, p));
+    TEST_ASSERT_EQUAL_STRING("::1", h);
+    TEST_ASSERT_EQUAL_STRING("", p);
+    /* Bare: the whole string is the host; any port is Hamlib's to find. */
+    TEST_ASSERT_EQUAL_INT(1, split("2001:db8::7", h, p));
+    TEST_ASSERT_EQUAL_STRING("2001:db8::7", h);
+    TEST_ASSERT_EQUAL_STRING("", p);
+}
+
+void test_split_refuses_what_is_not_an_address(void)
+{
+    char h[64], p[8];
+    TEST_ASSERT_EQUAL_INT(0, split("", h, p));
+    TEST_ASSERT_EQUAL_INT(0, split(NULL, h, p));
+    TEST_ASSERT_EQUAL_INT(0, split(":4532", h, p));         /* host left to Hamlib */
+    TEST_ASSERT_EQUAL_INT(0, split("/dev/ttyUSB0", h, p));
+    TEST_ASSERT_EQUAL_INT(0, split("COM4", h, p));
+    TEST_ASSERT_EQUAL_INT(0, split("host:", h, p));
+    TEST_ASSERT_EQUAL_INT(0, split("host:45x2", h, p));
+    TEST_ASSERT_EQUAL_INT(0, split("host:123456", h, p));
+    TEST_ASSERT_EQUAL_INT(0, split("[]:4532", h, p));
+    TEST_ASSERT_EQUAL_INT(0, split("[fe80::1", h, p));
+    TEST_ASSERT_EQUAL_INT(0, split("[fe80::1]x", h, p));
+    TEST_ASSERT_EQUAL_INT(0, radio_port_split_host("a-rather-long-host-name:1", h, 8, p, 8));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -192,5 +250,9 @@ int main(void)
     RUN_TEST(test_other_port_kinds_are_never_flagged);
     RUN_TEST(test_serial_rig_with_an_address_is_flagged);
     RUN_TEST(test_com_prefix_matching_is_not_greedy);
+    RUN_TEST(test_split_host_and_port);
+    RUN_TEST(test_split_host_without_port);
+    RUN_TEST(test_split_ipv6);
+    RUN_TEST(test_split_refuses_what_is_not_an_address);
     return UNITY_END();
 }

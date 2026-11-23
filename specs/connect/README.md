@@ -16,15 +16,26 @@ What it models:
   out: spec R25).
 - The callee answers a new session with a fresh nonce, a measured start
   rung and the CALL's bandwidth; every repeat of the session's CALL gets the
-  same ACCEPT; another session's CALL, or another station's, is ignored.  Out
+  same ACCEPT; another station's CALL is ignored.  The caller's CALL of
+  another session (it CONNECTed again: a session id per CONNECT) means it
+  has left the one being answered, and the callee answers the new one,
+  fresh (`fsm_accepting`) -- except while its ACCEPT of the one it answers
+  could still be answered (the caller's first frames may be on their way),
+  and never one decoded too late: a stale frame is not a redial.  Out
   of ACCEPT retries it keeps the seed (`accept_fallback`) until it lapses.
+- A CALL the caller keyed for a session it has left may surface at the
+  callee late (a decoder backlog; on air, KG9NI <- K7EK, 2026-11-17
+  21:19): `StaleCall`.  The callee, answering, ignores it; `Mut_staletake`
+  answers it (the switch before the age check), which violates
+  `NoDeadAnswer`.
 - The callee connects on the caller's first frame only on the rung it named
   and with its nonce (the CRC is seeded).  A caller that gave up and hears an
   ACCEPT sends a DISCONNECT; a connected caller whose callee never answers
   gives up when the callee's kept seed lapses (`PeerLost`, one step).
 
 - Encryption (`arq_crypto.h`, `crypto_negotiate`): a CONNECT's CALLs offer
-  it or not; the callee answers the offer of the CALL it takes, once for
+  it or not, in the session id's low bit (`Offers`: odd ids offer; reserved
+  and always clear until encryption lands); the callee answers the offer of the CALL it takes, once for
   the session -- every ACCEPT of it carries that answer, as it carries the
   nonce; the caller takes an ACCEPT's bit only with an offer of its own.  A
   required caller (`CReq`) calls only to offer and hangs up on an ACCEPT
@@ -33,7 +44,11 @@ What it models:
 
 Not modelled: the carrier (DATAC16 or MFSK: a frame is lost or not;
 ConnectCarrier below has it), the session once up (its turns, rungs and
-blocks are the other specs'), its teardown.
+blocks are the other specs'), its teardown.  A CALL is heard as it is
+keyed; a stale one surfaces only as `StaleCall`, at the callee, and only
+while it is answering.  The caller's next CALL, heard on time, brings the
+callee back, as with a connected callee (`fsm_connected` ends its session
+on such a CALL the same way).
 
 Properties:
 
@@ -42,35 +57,81 @@ Properties:
   cap, MFSK floor).
 - `NoHalfConnect`: a connected callee means a connected caller, same session
   -- or a caller that has left it on its lost-peer watchdog.
-- `NoDeafRedial`: a connected callee never leaves a CALL of its caller's
-  unanswered.  The caller stops calling before its first frame, the one that
-  connects the callee, so a CALL heard there means the caller has left.
+- `NoDeafRedial`: a callee connected in, or answering, a session its caller
+  has left never leaves the caller's CALL unanswered.  The caller stops
+  calling before its first frame, the one that connects the callee, so a
+  CALL heard there means the caller has left; and it calls only for its
+  current session, so a CALL of another session means it has left the one
+  being answered.
+- `NoDeadAnswer`: a callee never answers a session other than the one its
+  connected caller is in.  A stale CALL, answered, drops the live session's
+  seed; the caller's frames fail it and the session ends on its lost-peer
+  watchdog.  `Settles` cannot see that (a lost-peer failure still ends with
+  both idle), so the stale-CALL mutant is checked against this.
 - `Settles`: every attempt ends with both connected, or both idle.
 - `Agree`: a connected callee and its caller both took the session to be
   encrypted, or both clear.  Otherwise one end waits for a handshake the
   other never sends, and the session fails closed.
 - `ReqGate`: a required end that is connected is encrypted.
+- `SameLadder`: a connected caller maps the ladder's levels to the same modes
+  as its callee (`Ladder`: minors 0 and 1 share one; 2 and 3 each have
+  their own).  The wire carries a rung's level, not its mode.  Minor 2
+  (1.9.25) changed what the levels mean (BW2300 rung 1 the 2 kHz MFSK, the
+  BW500 and BW2750 ladders, the deep floor), and minor 3 put PSK3 at rung
+  2.  Each station takes a CALL or ACCEPT only from its lowest minor up
+  (`CMin`, `EMin`: `ARQ_CONNECT_MINOR_MIN`,
+  `arq_protocol_connect_compatible`); 1.9.20-1.9.24 read any minor (0) and
+  1.9.25 any from 2, so an older station still answers a newer CALL, and
+  the newer caller ignores that ACCEPT.
 
 Results:
 
-- `ConnectHandshake.cfg`: the code's rules.  No error, 9473 distinct
-  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 34177.
-  (1857 and 6421 before encryption; 1425 and 4813 before the caller's
-  watchdog could fire first.)
+- `ConnectHandshake.cfg`: the code's rules.  No error, 12017 distinct
+  states; `ConnectHandshake_big.cfg` (3 CALLs, 3 CONNECTs, 3 nonces): 89929.
+  Four session ids, two for each offer (10609 and 52649 with two ids and
+  the offer apart from the id; 9473 and 34177 before the stale CALL; 1857 and 6421 before encryption;
+  1425 and 4813 before the caller's watchdog could fire first.)
 - `ConnectHandshake_creq.cfg`, `ConnectHandshake_ereq.cfg`: the caller, or
-  the callee, required.  No error: 3009 and 2913 distinct states.
+  the callee, required.  No error: 4833 and 4113 distinct states (4833 and
+  3313 with two ids; 3009 and 2913 before the stale CALL).
+  (Every configuration above is of two minor-3 stations; the counts are
+  unchanged by the minors.)
+- `ConnectHandshake_oldE.cfg` (a minor-3 caller, a 1.9.25 callee),
+  `ConnectHandshake_old24.cfg` (a minor-3 caller, a 1.9.24 callee) and
+  `ConnectHandshake_oldC.cfg` (a 1.9.25 caller, a minor-3 callee): no
+  error, `Settles` included, 6497, 6497 and 161 distinct states (5569 and
+  97 with two ids; 5105 and 65 before the stale CALL).  They never connect: the old callee answers and
+  the caller gives up, or the new callee never answers.
+- `Mut_mixed.cfg`: a minor-3 station takes any minor.  Violates
+  `SameLadder`: the minor-3 caller connects on the 1.9.25 callee's ACCEPT.
 - `Mut_reanswer.cfg`: a repeated CALL gets a fresh answer to its offer (the
   first port of #306 to 2.0 did this: the callee in its ACCEPT fallback
-  answered a repeat anew).  Violates `Agree`: the caller re-CONNECTs with
-  the same id, now offering, and decodes an ACCEPT of the old answer
-  (clear) still in the air, while the callee takes the session encrypted.
+  answered a repeat anew).  Violates `Agree`: the callee's answer changes
+  between two CALLs of the session (its key, or its client's ENCRYPT), and
+  the caller decodes an ACCEPT of the old answer still in the air.
 - `Mut_anyaccept.cfg`: the caller takes an ACCEPT that took an offer its
-  CONNECT did not make (one of an earlier CONNECT of the same id).
-  Violates `Agree`: the callee encrypts, the caller goes clear.
+  CONNECT did not make (one of an earlier CONNECT of the same id).  No
+  error since the offer is the id's low bit: an ACCEPT of the id answered
+  the same offer.  With the offer apart from the id it violated `Agree`
+  (the callee encrypts, the caller goes clear); the encryption code keeps
+  the check.
 - `Mut_ignorecall.cfg`: a connected callee ignores every CALL, as the code
   did before 2026-10-18.  Violates `NoDeafRedial`: the caller, its watchdog
   first, redials, and the callee answers only once its own watchdog fires
   (sim, nvis seed 28: 104 s later).
+- `Mut_ignorenewer.cfg`: a callee answering a session ignores its caller's
+  CALL of another session, as the code did before 2026-11-19.  Violates
+  `NoDeafRedial`: the caller re-CONNECTs, and its new session's CALLs go
+  unanswered until the callee's ACCEPTs for the old one run out (on air:
+  K7EK answering N3JXB, 2026-11-18 06:06, 3 min; KG9NI answering an old
+  CALL of K7EK's decoded late, 2026-11-17 21:19, the attempt failed).
+- `Mut_staletake.cfg`: a callee answering answers a stale CALL, one of a
+  session the caller keyed earlier and left (the switch before the age
+  check).  Violates `NoDeadAnswer`: the caller has taken the live
+  session's ACCEPT, and the callee drops it for the dead one, whose seed
+  fails the caller's frames.  `NoHalfConnect` and `Settles` hold -- the
+  session still ends with both idle, on the caller's lost-peer watchdog --
+  which is why the model needs `NoDeadAnswer` for this mutant.
 - `Mut_renonce.cfg`: a repeated CALL gets a fresh nonce.  Violates `NoDoom`.
 - `Mut_remeasure.cfg`: a repeated CALL gets a re-measured start rung (as
   before spec R25).  Violates `NoDoom`.
@@ -112,6 +173,20 @@ The carriers and timing ConnectHandshake leaves out, in 0.25 s steps
   floor's decode allowance and a deferral step).  The energy busy detector
   holds no CALL.
 - Any frame may be lost, and a decoder may miss an ACCEPT arriving (`Sense`).
+- The callee keys an ACCEPT only for a CALL decoded within `D(carrier)` of
+  its end (1 s on the control mode, 4.5 s on the floor: the carousel's
+  decode bound, `car_decode_bound_ms`) and while it is not keyed
+  (`call_too_late`).  A later CALL is not answered: it still holds the
+  scanner and restarts the ACCEPT retries (`notify_pending_again`), and the
+  caller's next CALL is answered.  The model's callee decodes within D by
+  construction (`CEnd`), so that is the code meeting the model's assumption;
+  before `call_too_late` the code answered a CALL decoded at any age.
+- Not modelled: a CALL decoded while the callee is keyed.  `eDec` holds one
+  pending decode, and a CALL that overlaps the callee's own keydown is lost
+  (half duplex), so a second CALL decoded during the callee's ACCEPT (the
+  on-air case: a decoder behind delivering an older CALL) can't be
+  expressed.  The code's keyed check covers it; the unit tests
+  (`test_accepting_call_decoded_while_keyed_is_not_answered`) pin it.
 
 Properties: `NoOverlap` (no two keydowns at once; with decoders always
 catching an ACCEPT, and since `call_interval_s` with `Sense` "any" too); `Early` (the fast forward path and the floor delivering, the fast
@@ -156,6 +231,12 @@ Results:
     `_f10_emfsk_floor` now check 1250: 964335 and 773661).  The same for
     an MFSK-only callee.  That is the cost of more fast CALLs on a path
     only the floor carries: ~28 s per fast repeat now, so the cap at 4.
+- `Mut_lateanswer.cfg` (`ConnectCarrier.cfg` with the callee also
+  answering a CALL decoded up to `IvFast` past D, as before
+  `call_too_late`): violates `NoOverlap`.  The first CALL ends at 3.75 s
+  and decodes 6 s late; the ACCEPT is keyed at 10.5 s, and the caller's
+  repeat, due at 11.75 s, goes before its decoder is on that ACCEPT
+  (`SA`, 1.5 s in) and keys over it.  1880 states.
 - `Mut_old.cfg`, the code before (no floor answer, no floor listening, no
   hold): violates `Early` (a third CALL, the floor one, 22 s later).
 - `Mut_nohold.cfg`: the CALL goes when due.  Violated `NoOverlap` before
@@ -198,5 +279,59 @@ Results:
   `Connects` failed on a tie with the caller giving up, in the old code too:
   the reason for 0.25 s.  The floor call interval is safe from 21 s up (the
   code's is 24 s).
+- `Deep`, a caller wider than 500 Hz (the deep floor): a third carrier,
+  `"deep"` (the 500 Hz MFSK, `LD` 108 = 27 s, call interval `IvDeep` 150 =
+  37.5 s, the floor's decode allowance), joins the rotation after the fast
+  CALLs: the floor, then deep twice (in the connect sim the third slot on
+  fast added nothing, and a second deep CALL connected more under fading).  The caller listens on one MFSK carrier
+  at a time, the one its last CALL's ACCEPT may come on (`cListen`, now a
+  carrier: the payload decoder is one); the callee answers a deep CALL on
+  deep, and a fast repeat on the floor unless its last ACCEPT went there.
+  Every config above has `Deep` FALSE (a 500 Hz caller, or the rotation
+  before) and gives the counts above: the model with `Deep` FALSE is the
+  one before.  With `Deep` TRUE:
+  - `ConnectCarrier_deep.cfg` (every path "any", `H` 700 so the rotation
+    reaches both deep CALLs): no error, 294649 states; `_deep_sense`
+    (`Sense` "any"), `NoOverlap` holds, 588005; `_deep_f4` (`F` = 4, `R` =
+    8, `H` 1100), 623918; `_deep_emfsk` (an MFSK-only callee: `FloorOnly`
+    allows either MFSK carrier), 276863.
+  - `_deep_early`: `Early` holds, 23222 (the deep CALL comes after the
+    second); `_deep_floor`: `Connects`, 244623 (connected on the floor CALL
+    before the deep one comes due).
+  - `ConnectCarrier_deeponly.cfg` (only the deep paths deliver, `Sense`
+    "any", `H` 600): `Connects` holds, 51801: the fringe only the 500 Hz
+    MFSK reaches.  The earliest horizon it holds from is between 560 and 580
+    (140-145 s): the deep CALL is the fourth, keyed at 77 s.  `_deeponly_f4`
+    (`H` 820, 205 s), 50583; `_deeponly_emfsk`, 51801.
+  - An MFSK-only caller (`MfskTx` "C") with `Deep`: no fast CALLs, the
+    floor and deep twice from the first.  `ConnectCarrier_deep_cmfsk.cfg`
+    (every path "any"): `NoOverlap` and `FloorOnly` (any MFSK carrier) hold,
+    385439 states; `_deeponly_cmfsk`: `Connects` too, 165715.  Without
+    `Deep` its CALLs are on the floor, as before (`_cmfsk*` unchanged).
+  - `Mut_deepfloor.cfg` (the caller keeps listening on the floor after a
+    deep CALL): violates `Connects`.  `Mut_deepiv.cfg` (a deep CALL waits
+    the floor's interval, `Sense` "any"): violates `NoOverlap`, the next CALL
+    keyed over the 27 s ACCEPT a decoder missed.
 
-Give each TLC run its own `-metadir`.
+Give each TLC run its own `-metadir`.  The state counts here are TLC
+2026.10.04 (`tlc2.TLC -h` prints the version); another version can count a
+few hundred states differently with the same results.
+
+## The notice that holds a scanning host while a CALL arrives (`arrival_hold`, #527)
+
+Not modelled: it adds no state to the connect.  LISTENING says `PENDING` when
+a CALL decoder (the control plane's, or the 1 kHz MFSK listener's) has locked
+onto a frame, again every `ARQ_PENDING_HOLD_MS` while the lock lasts, and
+`CANCELPENDING` `ARQ_ARRIVAL_GRACE_MS` after it is gone when the FSM has not
+taken a CALL out of it.  Where the FSM does (a CALL for this station decoded),
+the CALL's own `PENDING` (`cb_notify_pending`) follows in the same pass and the
+hold lets go without a `CANCELPENDING`: the session's notices take over, so the
+host sees one unbroken `PENDING` from the lock to `CONNECTED`, `CANCELPENDING`
+or `DISCONNECTED`.  The hold is a function of the decoder's lock, the
+connection state and the clock (statics in `arq.c`, nothing in the session),
+and is silent while a session exists or the radio is keyed.  Measured in the Go
+harness with a scanning host (4 s dwell, 0.5 s deaf, 2 channels, nine phases of
+the scan cycle): connects at 7 of 9 phases within 120 s, against 5 of 9 before.
+The two it misses, phases 4 and 5, are those where the caller's CALL repeats
+land outside the dwell each time (its cadence has locked to the scan cycle).
+

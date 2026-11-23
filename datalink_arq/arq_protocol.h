@@ -311,20 +311,41 @@ void arq_protocol_session_calls(bool we_called, const char *remote_call,
 /* Decode thresholds (dB) of the rungs, which set the carousel's start rung
  * (carousel.c, car_start_level) and MFSK's place below DATAC15. */
 #define ARQ_SNR_HYST_DB               5.0f
+/* The 2 kHz MFSK rung (BW2300/BW2750 rung 1): 90 % at -8 dB on white noise
+ * (MFSK reads the burst's SNR3k, constant-envelope: the carrier axis), plus
+ * the ~1.5 dB the OFDM rungs keep; -5 under CCIR Moderate/Poor. */
+#define ARQ_SNR_MIN_MFSK_W2_DB       -6.5f
+/* The PSK rung (BW2300/BW2750 rung 2), by the rule below: 90 % reads at
+ * -4.5 dB on white noise (utils/psk_sweep, 80 frames a point; the reading
+ * is the burst's S/N), plus 1.5 dB.  Faded it needs ~5 dB more (CCIR
+ * Moderate/Poor 90 % at +1.6/+1.8 dB carrier, 0.2/0.4 dB burst). */
+#define ARQ_SNR_MIN_PSK3_DB          -3.0f
 #define ARQ_SNR_MIN_DATAC15_DB       -7.0f  /* its cliff (sim, bench): below
                                              * it the carousel's MFSK rung wins */
 #define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* bench (docs/MODES.md):
                                              * DATAC15/DATAC4 goodput crossover
                                              * ~-7.5 dB MPP / -8.5 dB AWGN     */
-#define ARQ_SNR_MIN_DATAC3_DB        -1.0f
-#define ARQ_SNR_MIN_DATAC1_DB         3.0f
-#define ARQ_SNR_MIN_DATAC17_DB        7.0f  /* bench (docs/MODES.md): goodput
-                                             * crossover vs DATAC1 ~ +6 dB MPP;
-                                             * 89/100 delivery at +8          */
-#define ARQ_SNR_MIN_QAM16C2_DB       13.0f  /* bench: goodput crossover vs
-                                             * DATAC17 ~ +11 dB MPP, 84/100 at
-                                             * +13.7; upstream's published
-                                             * operating point is +15        */
+/* From DATAC3 up, each rung's threshold is the S/N the modem reports where
+ * 90 % of its frames decode on white noise (utils/rung_sweep, 40 bursts a
+ * 0.5 dB point; the reading equals the burst S/N since the maps were refit)
+ * plus about 1.5 dB, the margin DATAC3 (-3.0) and DATAC1 (1.7) keep.
+ * Each lands ~2 dB over its goodput crossover with the rung below on the
+ * same sweep (DATAC1->DATAC17 3.8, DATAC17->QAM16C2 9.6; DATAC3->DATAC1
+ * 0.8 against its 3.0), so a first probe, allowed SNR_GATE_DB/2 under the
+ * threshold, comes just above the crossover.  The
+ * old DATAC17 (7) and QAM16C2 (13) values were set on readings ~2 dB high:
+ * on air the refit maps read ~11 dB where the old read 12.9, and QAM16C2
+ * was never reached (QAM16C2's moved with its map, #575).                                    90 % reads at   */
+#define ARQ_SNR_MIN_DATAC3_DB        -1.0f  /* -3.0 */
+#define ARQ_SNR_MIN_DATAC1_DB         3.0f  /*  1.7 */
+#define ARQ_SNR_MIN_DATAC17_DB        5.5f  /*  3.9 */
+#define ARQ_SNR_MIN_QAM16C2_DB       11.5f  /* 10.2 */
+/* The 2.0 bandwidth ladders' rungs (car_set_bandwidth), by the same rule. */
+#define ARQ_SNR_MIN_DATAC17W_DB       6.5f  /*  4.8 */
+#define ARQ_SNR_MIN_QAM16C2W_DB      13.5f  /* 11.9 */
+#define ARQ_SNR_MIN_DATAN1_DB         0.0f  /* -1.7 */
+#define ARQ_SNR_MIN_QAM16N1_DB        6.0f  /*  4.4 */
+#define ARQ_SNR_MIN_QAM16N2_DB        7.5f  /*  5.9 */
 
 /* Absolute cap on how long an APP_DISCONNECT may stay deferred while the FSM
  * tries to drain the last app bytes.  Once the application has asked to
@@ -439,9 +460,8 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  *
  * 14 bytes (a DATAC16 frame), padded to the frame on MFSK.  Byte 0 is the
  * framer: type CALL2, and in its extension the bandwidth token (2 bits), the
- * 2.x minor revision (2 bits, 1; 2 = the encryption negotiation is offered on
- * a CALL and taken on an ACCEPT, ARQ_CONNECT_MINOR_CRYPTO) and the TX-MFSK-only
- * bit.  Every 1.9.x release drops the type,
+ * 2.x minor revision (2 bits, ARQ_CONNECT_MINOR) and the TX-MFSK-only bit.  Every 1.9.x
+ * release drops the type,
  * and a CALL of theirs (PACKET_TYPE_ARQ_CALL) addressed to this station is
  * logged, not answered: the versions do not connect (docs/CAROUSEL-ARQ.md,
  * "Wire formats").
@@ -463,23 +483,34 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  * frames as before too.  Only a station that sets the bit needs a peer that
  * reads it, so it ignores frames of minor 0 (arq_protocol_connect_minor).
  *
- *   CALL    1: 0 | session id   2-3: CRC16 of the called callsign
+ *   CALL    1: 0 | session id (its low bit: the encryption offer)
+ *           2-3: CRC16 of the called callsign
  *           4-13: the caller's callsign, arithmetic-coded
  *   ACCEPT  1: 1 | session id   2-3: CRC16 of the caller's callsign
  *           4-5: CRC16 of the called callsign   6-7: the callee's nonce
  *           8: the caller's start rung (3 bits), the callee hears the caller
- *              below the control mode (bit 3), 4 bits zero
+ *              below the control mode (bit 3), the answer to the encryption
+ *              offer (bit 4), 3 bits zero
  *           9: the SNR the callee read the CALL at, dB + 128 (0: unknown)
- *           10-13: zero */
-#define ARQ_CONNECT_MINOR             1
-/* Minor 2 is the encryption negotiation (ARQ_CRYPTO_EXT_MINOR): a CALL sent
- * at minor 2 offers an encrypted session, an ACCEPT at minor 2 takes it.
- * A station of minor 0 or 1 accepts the frame (version_ok takes any minor),
- * reads the bandwidth, and never sets the bit back: the session goes clear,
- * which optional mode falls back to and required mode refuses.  The CALL2
- * extension field is five bits and full (bandwidth 2, minor 2, TX-MFSK 1),
- * so the negotiation rides in the minor field's fourth value. */
-#define ARQ_CONNECT_MINOR_CRYPTO      2
+ *           10-13: zero
+ *
+ * The encryption offer and answer (arq_crypto.h; [crypto], off by default):
+ * the caller decides the offer once per CONNECT, as it picks the session id,
+ * and the offer is part of that id, which the ACCEPT and every frame of the
+ * session carry; an ACCEPT of the id answers that id's offer.  A station
+ * with [crypto] off sends both 0 and ignores them. */
+#define ARQ_CONNECT_MINOR             3
+/* The lowest minor this station connects to.  Minor 2 (1.9.25) gave each
+ * bandwidth its own ladder (BW2300 rung 1 the 2 kHz MFSK, the BW500 and
+ * BW2750 ladders, the 500 Hz deep floor) and changed the QAM16C2 and DATAC17
+ * frames.  Minor 3 put the three-carrier PSK (PSK3) at rung 2 of BW2300 and
+ * BW2750, where DATAC4 was.  The wire carries a rung's level, not its
+ * mode, so a pair that maps a level to different modes would lose every
+ * round there: the versions do not connect.  An older station still ACCEPTs
+ * our CALL (1.9.20-1.9.24 read any minor, 1.9.25 any from 2); we ignore its
+ * ACCEPT and do not answer its CALL.  3 is the last value the two bits
+ * hold. */
+#define ARQ_CONNECT_MINOR_MIN         3
 #define ARQ_CONNECT_EXT_BW_MASK       0x03
 #define ARQ_CONNECT_EXT_MINOR_SHIFT   2
 #define ARQ_CONNECT_EXT_MINOR_MASK    0x0C
@@ -490,14 +521,19 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
 #define ARQ_ACCEPT_LEVEL_MASK         0x07
 #define ARQ_ACCEPT_CTL_DEAF_BIT       0x08  /* the callee hears the caller below
                                                the control mode */
+#define ARQ_ACCEPT_CRYPTO_BIT         0x10  /* the callee takes the encryption
+                                               offer */
+#define ARQ_CALL_CRYPTO_OFFER         0x01  /* in the session id: the caller
+                                               offers encryption */
 #define ARQ_ACCEPT_SNR_IDX            9
 
-/** Build a CALL.  tx_mfsk: this station can only transmit MFSK.  crypto:
- *  offer an encrypted session.  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
+/** Build a CALL.  tx_mfsk: this station can only transmit MFSK.  The
+ *  encryption offer is session_id's low bit (ARQ_CALL_CRYPTO_OFFER).
+ *  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
                             uint8_t session_id,
                             const char *caller, const char *called,
-                            int bw_hz, bool tx_mfsk, bool crypto);
+                            int bw_hz, bool tx_mfsk);
 
 /** Build an ACCEPT.  called: the callsign the CALL was addressed to (the
  *  callee's primary or a secondary); start_level 0..6; ctl_deaf: the callee
@@ -517,8 +553,11 @@ bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len);
 
 /** The 2.x minor revision of a CALL or ACCEPT (version_ok already checked). */
 int arq_protocol_connect_minor(const uint8_t *buf);
+/** Does this station connect to the sender of buf (minor >= ARQ_CONNECT_MINOR_MIN)? */
+bool arq_protocol_connect_compatible(const uint8_t *buf);
 
-/** A CALL's or ACCEPT's encryption negotiation (ARQ_CONNECT_MINOR_CRYPTO). */
+/** A CALL's encryption offer (its session id's low bit) or an ACCEPT's
+ *  answer (ARQ_ACCEPT_CRYPTO_BIT). */
 bool arq_protocol_connect_crypto(const uint8_t *buf);
 
 /** Is a CALL or ACCEPT addressed to callsign (bytes 2-3, all 16 bits)?
@@ -544,8 +583,9 @@ typedef struct {
     bool     tx_mfsk;        /* the callee can only transmit MFSK */
 } arq_accept_t;
 
-/** Parse an ACCEPT.  @return 0, or -1 (wrong version, bad bandwidth token,
- *  a reserved bit set, a start rung off the ladder). */
+/** Parse an ACCEPT (its encryption answer: arq_protocol_connect_crypto).
+ *  @return 0, or -1 (wrong version, bad bandwidth token, a reserved bit set,
+ *  a start rung off the ladder). */
 int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len, arq_accept_t *out);
 
 /**

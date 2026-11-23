@@ -15,6 +15,9 @@
 ui_enabled = false
 
 ; UI WebSocket port (default: 10000)
+; Mercury listens on every interface, so a remote UI, BPQ32 or Pat on another
+; host can reach it.  To limit who can, use a host firewall rule: see
+; "Restricting network access" in the README for an nftables example.
 ui_port = 10000
 
 ; WebSocket protocol: ws (plain) or wss (TLS) (default: ws)
@@ -38,6 +41,10 @@ waterfall_enabled = true
 ; device across replug and reboot and is distinct between two units of the
 ; same model.  Do NOT store the enumeration index shown by other tools: it is
 ; not an identity, and once the device is replugged it addresses nothing.
+;
+; With pulse, empty or "default" lets PulseAudio choose: its default device,
+; or the one you moved Mercury to in pavucontrol, which it remembers.  A device
+; id here always wins over pavucontrol.
 input_device =
 
 ; Audio playback (output) device id (e.g. "plughw:0,0")
@@ -149,9 +156,10 @@ hamlib_log_level = 0
 [audio]
 
 ; TX audio gain in dB applied to modulator output samples (default: 0.0).
-; 0.0 dB = no change.  Use this to set Mercury's TX level independently
-; of the host audio mixer, so other modems sharing the radio aren't
-; disturbed when you tune Mercury's drive.  Saturation is applied at the
+; At 0.0 every mode peaks at about -2 dBFS (since 1.9.25; before, at -6
+; dBFS, so -4.0 keeps an older station's drive).  Use this to set Mercury's
+; TX level independently of the host audio mixer, so other modems sharing
+; the radio aren't disturbed when you tune Mercury's drive.  Saturation is applied at the
 ; int32 PCM ceiling so any value clips cleanly.
 ; Range: -20.0 .. +20.0 (values outside are clamped).
 tx_gain_db = 0.0
@@ -164,6 +172,16 @@ tx_gain_db = 0.0
 ; start of the transmission can be clipped before the radio is keyed.
 ; Range: 0 .. 2000 (values outside are clamped).
 tx_delay_ms = 10
+
+; PulseAudio only (-x pulse): keep the playback stream fed with silence
+; between transmissions (default: false).  Turn it on if, after Mercury has
+; been idle for a while, a transmission keys the radio but sends no audio:
+; some USB sound cards on PipeWire do not start their output again after a
+; long idle spell (issue #591).  With it on, the log says "pulse_keepalive:
+; playback is fed with silence between transmissions".  It costs a little
+; CPU while idle, in Mercury and in the PulseAudio server, and keeps the
+; card from suspending.  ALSA and the other sound systems ignore it.
+pulse_keepalive = false
 
 [arq]
 
@@ -301,6 +319,14 @@ keepalive_s = 60
 ; Interval between BUFFER reports sent to the TNC control port, telling
 ; clients how many bytes are queued for TX. Valid range: 100..10000 ms. (default: 1000)
 buffer_report_ms = 1000
+; Winlink Express P2P: answer OK to, and ignore, a DISCONNECT that comes in a
+; session when the host has written nothing to the data port for this long
+; (or its data is held back by a full TX queue). Winlink Express sends one 300 s after each
+; write, while the modem is still sending it, and a long message is lost
+; (#392). A DISCONNECT within 60 s of the previous one, or after one has gone
+; through, ends the session as usual, as does ABORT. 0 = off; else 30..3600
+; seconds, 240 suggested. (default: 0)
+;absorb_idle_disconnect_s = 240
 
 [store]
 ; Persist ARQ and broadcast chat messages to a JSONL file so the conversation

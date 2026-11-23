@@ -30,7 +30,7 @@ waveform, the error correction, the retransmissions and the radio keying, and
 presents the result to your application as an ordinary TCP connection.
 
 - **ARQ data link for point-to-point sessions** — a connect/accept handshake, an erasure-coded "carousel" that the receiver drives (Reed-Solomon blocks, so a lost frame is replaced by any other frame of the block rather than resent), and a controlled disconnect, so a file either arrives intact or you are told it did not.
-- **Adaptive speed** — each direction runs on one of seven rungs, from the 32-tone MFSK floor through DATAC15, DATAC4, DATAC3, DATAC1 and DATAC17 up to QAM16C2. It starts on the rung the connect's SNR supports and moves on measured delivery. Control frames ride DATAC16 (and MFSK, or tone patterns, at the floor), so signalling survives when payload cannot.
+- **Adaptive speed** — each direction runs on one of seven rungs of its bandwidth's ladder; at BW2300, from the 32-tone MFSK floor through MFSK2K, DATAC4, DATAC3, DATAC1 and DATAC17 up to QAM16C2 (BW500 and BW2750 ladders: [docs/MODES.md](docs/MODES.md)). It starts on the rung the connect's SNR supports and moves on measured delivery. Control frames ride DATAC16 (and MFSK, or tone patterns, at the floor), so signalling survives when payload cannot.
 - **Broadcast mode** alongside ARQ, with its own framing and TCP ingress port — used for one-to-many traffic and for [Reticulum](#reticulum) mesh networking.
 - **VARA-style TCP TNC interface** on two sockets (control on the base port, data on base+1), speaking `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, `BITRATE`, `TUNE` (a 1 kHz ATU tuning carrier with a hard 60 s unkey timer) and `MONITOR` (a passive VARA-style monitor that decodes every mode). Existing VARA-aware software can generally talk to Mercury unchanged.
 - **Runs on the audio hardware you have** — `alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, `rtp` (to hermes-radio-daemon), `hl2` (a [Hermes-Lite 2](docs/HERMES-LITE-2.md) on the network, with no sound card or CAT), plus `shm`, `null`, `fifo` and `sock` for embedded and test use.
@@ -113,13 +113,15 @@ Mode behavior notes:
   what the payload decoder listens on while no ARQ session is up.  It does not
   affect an ARQ session.  `mercury -l` lists the indices: 0 DATAC1, 1 DATAC3,
   2 DATAC0, 3 DATAC4, 4 DATAC13, 5 DATAC14, 6 FSK_LDPC, 7 DATAC15, 8 DATAC16,
-  9 DATAC17, 10 QAM16C2, 11 MFSK.
-- During an ARQ session, control frames use DATAC16, and each direction's
-  payload runs on the carousel's rungs: MFSK, DATAC15, DATAC4, DATAC3, DATAC1,
-  DATAC17, QAM16C2.  The start rung comes from the SNR measured on the
-  connect; see [docs/CAROUSEL-ARQ.md](docs/CAROUSEL-ARQ.md).
-- VARA `BW500` keeps the link narrow; `BW2300` and `BW2750` allow the full
-  Mercury payload-mode ladder.
+  9 DATAC17, 10 QAM16C2, 11 MFSK, 12 MFSK500, 13 DATAC17W, 14 QAM16C2W,
+  15 DATAN1, 16 QAM16N1, 17 QAM16N2, 18 MFSK2K.
+- During an ARQ session, control frames normally use DATAC16, and each direction's
+  payload runs on the rungs of the session's bandwidth: at BW2300 MFSK
+  (MFSK500 on the deep floor), MFSK2K, DATAC4, DATAC3, DATAC1, DATAC17, QAM16C2; the BW500 and BW2750
+  ladders are in [docs/MODES.md](docs/MODES.md).  The start rung comes from
+  the SNR measured on the connect; see [docs/CAROUSEL-ARQ.md](docs/CAROUSEL-ARQ.md).
+- VARA `BW500` keeps the link narrow.  The negotiated bandwidth selects one
+  of the three seven-rung payload ladders.
 - `CALL` advertises the local BW token and `ACCEPT` returns the negotiated
   session token. If either side uses `BW500`, the link stays narrow; `BW2750`
   is preserved in `CONNECTED ... BW` only when both peers advertise it.
@@ -139,6 +141,14 @@ Sound card notes:
 - A capture device that stops delivering audio is reopened every 2 s. After three reopens in a row that bring nothing (about 6 s, not counting the time Mercury is transmitting), Mercury logs `the capture device delivers no audio` once and reports the audio as failed (`audio_ok: false` in the GUI and the WebSocket status) until samples come back. When they do, the log says how long the station was deaf: `capture delivering again after reopen #N (S s without audio)`.
 - When it reports the failure, and on every 5th reopen after that, Mercury also lists the sound cards again and looks for the device by the name it had when capture started. Windows can give a USB codec a new id, under the same name, when it resets or is re-plugged. If exactly one device has that name, Mercury opens it under its new id (`listed under a new id: ... -- opening that`). If two have it (two radios with the same codec), Mercury does not guess, and asks you to select it again. The default device (no `-i`) is left to the sound system.
 - The same at start, on Windows (`wasapi`, `dsound`): when you choose the devices in the GUI, their names are saved next to their ids (`input_device_name`, `output_device_name` in `mercury.ini`). If a saved id is no longer listed when Mercury starts, the device with that exact name is used, if exactly one has it (`device id '...' is gone; found '...' by its saved name`). `-i` and `-o` on the command line drop the saved name. A config without the names works as before.
+- A playback device that takes no audio for 1 s while Mercury has audio to send is reopened, and what was queued meanwhile is dropped, so later transmissions stay inside their PTT. After three reopens in a row that bring nothing, the GUI shows `playback: the playback device takes no audio (still trying it)`.
+- PulseAudio (`-x pulse`): if a transmission after a long idle spell keys the radio but sends no audio (seen with a USB card on PipeWire, issue #591), set `[audio] pulse_keepalive = true`. Mercury then feeds the playback stream with silence between transmissions, as VARA and WSJT-X do. It is off by default: it costs a little CPU while idle and keeps the card from suspending.
+
+Transmit level and power notes:
+- Since 1.9.25 every mode peaks at about −2 dBFS: the OFDM modes at −2.0 dBFS and MFSK at −2.5 dBFS, measured at the sound card with `tx_gain_db` at 0 (1.9.24 peaked at −6 dBFS). `[audio] tx_gain_db` trims around that level, and `-4` gives back the 1.9.24 drive. `TUNE <dBFS>` keys a steady 1 kHz tone at an absolute level that `tx_gain_db` doesn't touch. `TUNE -2` therefore shows the RF power your frames peak at.
+- **sBitx (hermes-radio-daemon):** the power setting is the share of the PA's output for a full-scale signal, so Mercury's frames now get most of what the setting allows. An ARQ session keys often (about 25 transmissions in 10 minutes), so a PA run near saturation gets hot. Start low (20-40 %), and read the real output while keyed with `sbitx_client -c get_fwd` (watts × 10) and `get_ref` (SWR × 10), or during a `TUNE -2`. Raise the setting only while the radio stays cool. One field sBitx V3 saturated at about 10-14 W and ran hot at 85 % in a long A/B.
+- **Radios with ALC on a USB sound card** (IC-7100 and most transceivers): set the radio's power, and let the ALC level the audio. OFDM frames, whose peaks sit 7-8 dB above their mean, kept an IC-7100's ALC around 0.88 of its range. The short MFSK frames (CALLs, acknowledgements) reached the top of it: a constant-envelope signal carries more average power for the same peak. If the ALC is pinned on those, lower the drive with `tx_gain_db -2`, or with the radio's USB modulation level.
+- **Radios without ALC on a sound card** (uBitx and similar): more drive past the PA's linear range gives a weaker, wider signal, not a stronger one. Find the knee with a `TUNE` sweep at increasing dBFS, measured at the other station or on an SDR. One uBitx gave its strongest tone at `TUNE -20` (with its sound card's Master at −5 dB) and dropped, splattering, above it. Then set the sound card's playback level, or `tx_gain_db`, so that Mercury's −2 dBFS peaks land at the knee.
 
 ## Getting Started with Mercury
 
@@ -211,7 +221,8 @@ build without it using `HAVE_HAMLIB=0`.
 ### Build the Fyne GUI (Linux)
 
 ```bash
-sudo apt install golang-go libhamlib-dev libpulse-dev libasound2-dev
+sudo apt install golang-go pkg-config libhamlib-dev libpulse-dev libasound2-dev libssl-dev libhidapi-dev \
+    libgl1-mesa-dev libegl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
 make fyne-ui
 ./mercury-ui
 ```
@@ -572,6 +583,7 @@ keys are still read and mapped to the equivalent PTT configuration.
 | CM108/CM119 USB dongles | `cm108` | `cm108_gpio = 3` (some use 1 or 4) |
 | CAT-controlled HF rig | `hamlib` | `hamlib_model`, `device` |
 | sBitx | `hermes_shm` | — (or `-S`) |
+| uBitx (HERMES trx_v1, `ubitx_controller`) | `hermes_shm` | — (or `-S`) |
 
 The AIOC exposes both a CDC serial port and a CM108-compatible HID endpoint, so
 either method works. `cm108` needs no device path — Mercury finds it — but the
@@ -588,6 +600,34 @@ running as root.
 
 `pkg-config` detection is deliberately skipped for the Windows cross-build: it
 would find the *host* hidapi and link something that cannot run on the target.
+
+### Restricting network access
+
+Mercury's TCP ports listen on every interface, by design: the remote UI, BPQ32
+or Pat on another host, and the hosted web app all connect over the network.
+None of them is authenticated, and the ARQ control port can key the
+transmitter, so on a network you don't trust, limit who can reach them with a
+host firewall rather than in Mercury's configuration.
+
+The ports, with their defaults: ARQ control 8300 and data 8301 (`-p`,
+`arq_tcp_base_port`), broadcast 8100 (`-b`) and the UI WebSocket 10000 (`-U`,
+`ui_port`).  This nftables table lets them be reached only from this machine
+and one LAN; change `192.168.1.0/24` to yours:
+
+```
+table inet mercury {
+    chain input {
+        type filter hook input priority filter; policy accept;
+        tcp dport { 8100, 8300, 8301, 10000 } ip saddr { 127.0.0.0/8, 192.168.1.0/24 } accept
+        tcp dport { 8100, 8300, 8301, 10000 } drop
+    }
+}
+```
+
+Its own table and `policy accept` leave every other rule alone.  Load it with
+`sudo nft -f mercury.nft`; to keep it across reboots, add it to
+`/etc/nftables.conf` and `sudo systemctl enable nftables`.  If you change a
+port, change it here too.
 
 ## Documentation
 
@@ -639,15 +679,20 @@ and contributors, and **extends them with waveforms and link-layer techniques
 developed by Rhizomatica** for the conditions HERMES actually operates in:
 long NVIS and regional paths, marginal signal levels, and fading.
 
-Five of the modes Mercury uses are ours, not upstream:
+These modes Mercury uses are ours, not upstream (all modes, with FEC, airtime and
+measured thresholds: [docs/MODES.md](docs/MODES.md)):
 
 | Mode | Bandwidth | Payload | What it is for |
 |---|---|---|---|
 | **DATAC15** | 200 Hz | 30 B | Fringe data. Rate-1/3 LDPC, 3 carriers — reaches below the floor of any stock data mode |
 | **DATAC16** | 200 Hz | 14 B | Control and ACK at the fringe; the mode the whole session depends on |
-| **DATAC17** | 2100 Hz | 1180 B | Intermediate SNR, roughly 2× the goodput of DATAC1 |
-| **QAM16C2** | 2100 Hz | 1213 B | Good channels, roughly 2.9× DATAC1 |
+| **DATAC17** | 2250 Hz | 1184 B | Intermediate SNR, roughly 2× the goodput of DATAC1 |
+| **QAM16C2** | 2250 Hz | 1183 B | Good channels, roughly 2.9× DATAC1 |
+| **DATAC17W**, **QAM16C2W** | 2750 Hz | 1170 B, 1169 B | BW2750's rungs 5 and 6: DATAC17 and QAM16C2 on 44 carriers |
+| **DATAN1**, **QAM16N1**, **QAM16N2** | 562 Hz | 243 B, 179 B, 242 B | BW500's rungs 4-6, on 9 carriers |
 | **MFSK** | 1000 Hz | 98 B | The deepest fringe: non-coherent 32-tone MFSK (50 % frame loss at −11.2 dB on AWGN, DATAC15 −10.3 dB; [measured](docs/MFSK-PORT.md)); the carousel's floor rung, and the carrier of CALLs and tone-pattern ACKs there |
+| **MFSK500** | 500 Hz | 98 B | The same frame in half the bandwidth (~26.2 s): the floor of a BW500 session, and of a wider one whose ACCEPT went on it (the deep floor) |
+| **MFSK2K** | 2000 Hz | 98 B | Twice the 1 kHz floor's rate (~6.56 s a frame): rung 1 of BW2300 and BW2750 |
 
 Beyond the waveforms, the link layer adds:
 

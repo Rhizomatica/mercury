@@ -22,22 +22,49 @@ that index.
 | Index | Mode | Payload B | Occupied Hz | In Mercury |
 |---|---|---|---|---|
 | 0 | DATAC1 | 510 | 1687 | ARQ rung 4 |
-| 1 | DATAC3 | 126 | 562 | ARQ rung 3 (top rung at BW500); default `-m` |
+| 1 | DATAC3 | 126 | 562 | ARQ rung 3; default `-m` |
 | 2 | DATAC0 | 14 | 562 | broadcast and tests only |
-| 3 | DATAC4 | 54 | 250 | ARQ rung 2 |
+| 3 | DATAC4 | 54 | 250 | ARQ rung 2 (BW500) |
 | 4 | DATAC13 | 14 | 187 | broadcast and monitor; no longer an ARQ mode |
 | 5 | DATAC14 | 3 | 222 | broadcast and tests only |
 | 6 | FSK_LDPC | 30 | — | experimental, tests only |
-| 7 | DATAC15 | 30 | 187 | ARQ rung 1 |
+| 7 | DATAC15 | 30 | 187 | ARQ rung 1 (BW500) |
 | 8 | DATAC16 | 14 | 187 | ARQ control (CALL, ACCEPT, polls, DISCONNECT, CQ) |
-| 9 | DATAC17 | 1180 | 2062 | ARQ rung 5 |
-| 10 | QAM16C2 | 1213 | 2062 | ARQ rung 6 |
+| 9 | DATAC17 | 1184 | 2250 | ARQ rung 5 (BW2300) |
+| 10 | QAM16C2 | 1183 | 2250 | ARQ rung 6 (BW2300) |
 | 11 | MFSK | 98 | 1000 | ARQ rung 0 (the floor); CALLs, control and tone patterns at the floor |
-| 12 | MFSK500 | 98 | 500 | ARQ rung 0 of a BW500 session; its CALLs, control and patterns at the floor |
+| 12 | MFSK500 | 98 | 500 | ARQ rung 0 of a BW500 session, and of a wider one connected on it (the deep floor); its CALLs, control and patterns at the floor |
+| 13 | DATAC17W | 1170 | 2750 | ARQ rung 5 (BW2750) |
+| 14 | QAM16C2W | 1169 | 2750 | ARQ rung 6 (BW2750) |
+| 15 | DATAN1 | 243 | 562 | ARQ rung 4 (BW500) |
+| 16 | QAM16N1 | 179 | 562 | ARQ rung 5 (BW500) |
+| 17 | QAM16N2 | 242 | 562 | ARQ rung 6 (BW500) |
+| 18 | MFSK2K | 98 | 2000 | ARQ rung 1 (BW2300, BW2750) |
+| 19 | PSK3 | 133 | 1300 | ARQ rung 2 (BW2300, BW2750) |
 
-An ARQ session runs each direction on rungs 0-6 (0-3 at BW500), starting on
-the rung the connect's SNR supports (`ARQ_SNR_MIN_*`, the thresholds below)
-and moving on measured delivery ([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md)).
+An ARQ session runs each direction on rungs 0-6 of its bandwidth's ladder,
+starting on the rung the connect's SNR supports (`ARQ_SNR_MIN_*`, the
+thresholds below) and moving on measured delivery
+([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md)).  Rung 3 is shared; each bandwidth
+has its own floor and top, and BW2300/BW2750 their own rungs 1 and 2:
+
+| Rung | BW500 | BW2300 | BW2750 |
+|---|---|---|---|
+| 0 | MFSK500 | MFSK (MFSK500 on the deep floor) | MFSK (the same) |
+| 1 | DATAC15 | MFSK2K | MFSK2K |
+| 2 | DATAC4 | PSK3 | PSK3 |
+| 3 | DATAC3 | DATAC3 | DATAC3 |
+| 4 | DATAN1 | DATAC1 | DATAC1 |
+| 5 | QAM16N1 | DATAC17 | DATAC17W |
+| 6 | QAM16N2 | QAM16C2 | QAM16C2W |
+
+BW2300's top rungs fit 375-2562 Hz, inside the 300-2700 Hz transmit passband
+of radios like the IC-7100; BW2750's span 94-2844 Hz for radios that pass
+3 kHz; BW500's 9-carrier rungs fit behind a 500 Hz filter.  A BW2300 or
+BW2750 session that connected on a CALL on MFSK500 (the caller's fourth and fifth
+at the default `RETRIES`, after its 1 kHz CALLs went unanswered) runs on the
+deep floor: MFSK500 at rung 0, its bandwidth's modes above
+([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md), "The deep floor").
 
 ## Mode summary
 
@@ -58,10 +85,27 @@ single-frame bursts, 100 trials, "delivered" = acquired AND decoded.
 | DATAC14 | 250  | 58  | 3   | (112,56)    | 0.69 | 90/100 at −2 dB ¹ | Reverse link ACK packets (low SNR) |
 | **DATAC15** | 200 | 68 | 30 | (768,256)  | 3.74 | 81/100 at −4 dB, 70/100 at −7 dB ² | Forward link data (very low SNR / fringe) |
 | **DATAC16** | 200 | 42 | 14 | (640,128)  | 3.08 | 78/100 at −4 dB, 67/100 at −7 dB ² | Control/ACK packets (very low SNR / fringe) |
-| **DATAC17** | 2100 | 1410 | 1180 | (15936,9456) | 6.71 | 89/100 at +8 dB, 97/100 at +10 dB ² | Forward link data (intermediate SNR, ~2× DATAC1 goodput) |
-| QAM16C2 | 2100 | 3100 | 1213 | (16200,9720) | 3.2 | 94/100 at +15.7 dB, 84/100 at +13.7 dB ² (upstream: 90/100 at 15 dB ¹) | Forward link data (high SNR, ~2.9× DATAC1 goodput) |
+| **DATAC17** | 2250 | 1741 | 1184 | (16200,9720) shortened | 5.45 | 90 % reads 3.9 dB (AWGN) ³ | Forward link data (intermediate SNR) |
+| QAM16C2 | 2250 | 3286 | 1183 | (16200,9720) shortened | 2.85 | 90 % reads 10.2 dB (AWGN) ³ | Forward link data (high SNR) |
+| **DATAC17W** | 2750 | 2089 | 1170 | (16200,9720) shortened | 4.50 | 90 % reads 4.8 dB (AWGN) ³ | BW2750's rung 5 |
+| **QAM16C2W** | 2750 | 3897 | 1169 | (16200,9720) shortened | 2.40 | 90 % reads 11.9 dB (AWGN) ³ | BW2750's rung 6 |
+| **DATAN1** | 560 | 467 | 243 | (3072,2048) IRA | 4.15 | 90 % reads −1.7 dB (AWGN) ³ | BW500's rung 4 |
+| **QAM16N1** | 560 | 639 | 179 | (3072,1536) IRA | 2.25 | 90 % reads 4.4 dB (AWGN) ³ | BW500's rung 5 |
+| **QAM16N2** | 560 | 868 | 242 | (3072,2048) IRA | 2.25 | 90 % reads 5.9 dB (AWGN) ³ | BW500's rung 6 |
 | **MFSK** | 1000 | ~60 | 98 | LDPC rate 8/16, N=1600 | ~13.5 | 50 % FER at −11.2 dB AWGN (DATAC15 −10.3 on the same harness) ⁴ | Fringe data and control (the carousel's floor) |
 | **MFSK500** | 500 | ~31 | 98 | LDPC rate 8/16, N=1600 | ~26.2 | 90 % at −14.1 dB AWGN, −14.1 behind a 500 Hz filter, −10.4 moderate fading ⁵ | The floor of a BW500 session |
+| **MFSK2K** | 2000 | ~122 | 98 | LDPC rate 8/16, N=1600 | ~6.56 | 90 % at −8 dB AWGN, −5 CCIR Moderate and Poor ⁵ | Rung 1 of BW2300/BW2750: twice the floor's rate for ~2 dB more under fading |
+| **PSK3** | 1300 | 280 | 133 | (2172,1080) IRA | 3.86 | 90 % at −3.1 dB AWGN, +1.6 CCIR Moderate, +1.8 Poor, +8 NVIS (7 ms) ⁶ | Rung 2 of BW2300/BW2750: three differential QPSK carriers, no preamble |
+
+⁶ `utils/psk_sweep psk3`, 80 frames a 1 dB point, on the axis of a steady
+carrier at the transmitter's peak (the frame goes out 1.4 dB under it,
+after the peak reduction in `modem/psk/mpsk.c`).  The receiver finds the
+frame from its 12 marker symbols a carrier and the data's fourth power and
+decodes it differentially, so it fades like the MFSK rungs rather than the
+coherent OFDM ones: on the NVIS channel (ITU-R mid-latitude disturbed, 7 ms)
+DATAC4 and DATAC3 never pass 60-68 % and ~50 % (`utils/rung_sweep`).  The
+three carriers are offset in time (0, 25 and 55 of a symbol's 80 samples)
+to lower the peaks before the clipping.
 
 ⁴ [MFSK-PORT.md](MFSK-PORT.md), "The fringe floor was the sync accept
 threshold"; its sections have the fading figures and the rate ladder.
@@ -70,12 +114,52 @@ threshold"; its sections have the fading figures and the rate ladder.
 equal peak power); on the same harness the 1 kHz MFSK reaches 90 % at
 −11.1 dB on AWGN and never decodes behind the 500 Hz filter.
 
+³ `utils/rung_sweep`, 40 bursts a 0.5 dB point: the S/N the modem reports
+where 90 % of frames decode on white noise (the reading equals the burst's
+S/N since the maps were refit).  The 2.0 geometry; the MPP rows of the old
+DATAC17 and QAM16C2 are in the section below.
+
 ¹ Upstream codec2 figures.
 ² Mercury bench (ch simulator, `--mpp`, Octave-generated fading file).  The
 bench reproduces upstream DATAC13 exactly (90/100 at −4 dB) and DATAC4 within
 0.5 dB (89/100 at −3.6 dB), so the DATAC15/16 rows are directly comparable.
 
 ## DATAC17 and QAM16C2: the fast end of the ladder
+
+**2.0 geometry.**  DATAC17 and QAM16C2 now run on 36 carriers (375-2562 Hz),
+a 4 ms guard and a pilot every 8 symbols, without edge pilots: DATAC17
+1362 -> 1741 bit/s (+28 %), QAM16C2 2941 -> 3286 (+12 %), at the same
+thresholds on white noise and CCIR Moderate/Poor (`utils/rung_sweep`; edge
+pilots measured no difference faded).  BW2750's DATAC17W and QAM16C2W are the
+same on 44 carriers (94-2844 Hz, +20 % and +19 %), BW500's DATAN1, QAM16N1
+and QAM16N2 9-carrier modes on repeat-accumulate codes built by
+`utils/ldpc_ira_peg.py`.  The DVB-S2 short codes of rates 2/5 to 4/5
+(`utils/ldpc_dvbs2_gen.py`) are in the code table; rates 3/4 and up floor
+under fading and are not used.
+
+**16-QAM under fading: the preamble detector.**  The 16-QAM rungs (QAM16C2,
+QAM16C2W, QAM16N1, QAM16N2) kept codec2's default preamble-detector
+threshold, 0.30, where DATAC1, DATAC3 and DATAC17 use 0.10.  Under CCIR Poor
+a fade over both the preamble and the postamble then lost the frame at any
+S/N: QAM16C2 found 33 of 40 bursts from +18 to +28 dB (37 of 40 on
+Moderate), QAM16C2W 30-34 of 40 (found, not delivered: the table below
+counts delivered frames), and the unique word never failed
+(`RS_DIAG=1 utils/rung_sweep`).  At 0.10 every burst is found; what is
+still lost was found, passed the unique word and failed in the decode.
+
+| Delivered (40 bursts) | +18/+20 dB | +23/+24 dB | +28 dB |
+|---|---|---|---|
+| QAM16C2, Poor (0.30 -> 0.10) | 19 -> 20 | 31 -> 36 | 32 -> 37 |
+| QAM16C2, Moderate | -- | 37 -> 40 | 37 -> 40 |
+| QAM16C2W, Moderate | 25 -> 32 | 32 -> 37 | 32 -> 38 |
+| QAM16C2W, Poor | 20 -> 20 | 25 -> 30 | 29 -> 37 |
+
+QAM16N1 and QAM16N2 under Poor, 160 bursts: equal or better at every point
+(QAM16N2 113/125/126 -> 117/125/128 at +20/+24/+28 dB).  White noise is
+unchanged, and no trigger came from 600 s of white noise or from DATAC1, 3,
+4, 16 and 17 frames.
+
+The history below describes the 1.9.x modes.
 
 Goodput, not raw bps, picks the ladder order.  Under the old stop-and-wait ARQ,
 where every frame paid a ~5.3 s ACK cycle, that was DATAC1 ≈ 50 B/s, DATAC17
@@ -84,10 +168,17 @@ same way.  DATAC17 is a Mercury custom mode: QPSK on the same rate-0.6
 `H_16200_9720` codeword QAM16C2 uses, shortened to np=61 so its 1180-byte
 frame stays distinct from QAM16C2's 1213 bytes (frame sizes are kept
 pairwise distinct across the mode table).  QAM16C2 is ported from the Rhizomatica codec2 fork
-(dr-qam16-cport); it runs unclipped (PAPR ≈ 10 dB), so on peak-limited
-transmitters its effective +15 dB operating point is harder to reach than the
-clipped QPSK modes' figures suggest — on the bench this shows up directly as
-~5 dB less average signal power at the same ch gain setting.
+(dr-qam16-cport).  It is clipped like the other data modes (drive 2.0, no
+make-up gain: peak-to-average ratio 6.7 dB).  Unclipped, as it ran until
+1.9.24, it peaked 11.4 dB over its average, so a peak-limited transmitter
+sent it 4.7 dB weaker than DATAC17 at the same setting and its +15 dB
+operating point was out of reach where the QPSK modes' figures said it
+was not.  The clip costs the decoder about 1 dB and gives the transmitter
+almost 5: on the air, at a setting where DATAC17 read 10 dB, the unclipped
+mode decoded 0 frames of 64 and the clipped one 58
+([CLIPPED-QAM16C2-FINDINGS.md](CLIPPED-QAM16C2-FINDINGS.md)).  The figures
+below were measured on the unclipped mode, each mode at its own average
+power.
 
 Measured MPP delivery (1 Hz Doppler, 100 single-frame bursts), same bench as
 the DATAC15/16 tables (DATAC1 control row reproduces upstream within ~1 dB):
@@ -105,10 +196,13 @@ the DATAC15/16 tables (DATAC1 control row reproduces upstream within ~1 dB):
 
 AWGN: DATAC17 100/100 at +5, 63/100 at +3; QAM16C2 100/100 down to +8.7.
 
-Goodput crossovers (measured with the stop-and-wait ACK cycle) put the
-thresholds at `ARQ_SNR_MIN_DATAC17_DB = +7` (crossover vs DATAC1 ≈ +6) and
-`ARQ_SNR_MIN_QAM16C2_DB = +13` (crossover vs DATAC17 ≈ +11).  The carousel
-uses them for its start rung and its SNR gate.
+**Thresholds (2.0).**  From DATAC3 up, each rung's `ARQ_SNR_MIN_*` is the
+reading where 90 % of its frames decode on white noise plus about 1.5 dB,
+the margin DATAC3 and DATAC1 keep, which lands about 2 dB over each rung's
+goodput crossover with the rung below: DATAC17 5.5, QAM16C2 11.5, DATAC17W
+6.5, QAM16C2W 13.5, DATAN1 0, QAM16N1 6, QAM16N2 7.5 dB.  The 1.9.x values
+(DATAC17 +7, QAM16C2 +13) were set on readings about 2 dB high.  The
+carousel uses them for its start rung and its SNR gate.
 
 ## Why DATAC15/16: behavior below the DATAC4/13 floor
 
@@ -149,7 +243,8 @@ DATAC13 ≈ −9.6 dB, with DATAC16 degrading much more gracefully below that.
 Operational consequences, reflected in the ARQ design
 ([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md)):
 
-- **DATAC15** is the lowest OFDM rung (rung 1), above the MFSK floor.
+- **DATAC15** is the lowest OFDM rung (rung 1 at BW500; at BW2300 and BW2750
+  rung 1 is MFSK2K), above the MFSK floor.
   Including the stop-and-wait cycle overhead (frame + guards + DATAC16 ACK ≈
   frame + 5.3 s), goodput crossed over vs DATAC4 at ≈ −7.5 dB MPP / −8.5 dB
   AWGN, which set `ARQ_SNR_MIN_DATAC4_DB = −6 dB`.  The carousel never

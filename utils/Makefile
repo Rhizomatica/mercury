@@ -26,7 +26,7 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
- OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode acq_tuning_sweep qam16_papr_sweep resync_gap_probe burst_train_probe
+ OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode acq_tuning_sweep qam16_papr_sweep rung_sweep resync_gap_probe burst_train_probe
 
 # CPU-cost instruments.  Linux/macOS only: they time with
 # clock_gettime(CLOCK_PROCESS_CPUTIME_ID), which mingw-w64 does not provide
@@ -34,7 +34,7 @@ endif
 # for profiling the RX path, so there is nothing to gain from porting them to
 # the Windows build -- just exclude them and keep the cross-compile green.
 ifneq ($(OS),Windows_NT)
-OUT += resampler_bench rxcost_bench idle_cpu_probe
+OUT += resampler_bench rxcost_bench idle_cpu_probe modem_cpu_probe
 
 # bcast_file_tool talks to Mercury's broadcast port with BSD sockets
 # (<arpa/inet.h>, <netinet/tcp.h>, unistd read/write), which mingw-w64 does not
@@ -114,6 +114,18 @@ shift_selftest: shift_selftest.c bench_common.c ../modem/freedv/libfreedvdata.a
 qam16_papr_sweep: qam16_papr_sweep.c bench_common.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
+# A shipped mode, or a candidate rung in codec2's custom slot (carriers, modem
+# frames per packet, LDPC code), as a peak-limited transmitter sends it:
+# delivery and goodput against the S/N of a steady carrier at the same peak.
+psk_file: psk_file.c ../modem/psk/mpsk.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -I../modem/psk -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+psk_sweep: psk_sweep.c bench_common.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/psk/mpsk.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -I../modem/psk -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+rung_sweep: rung_sweep.c bench_common.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
 # Does the payload decoder hear a data burst that follows a control burst, and
 # where may the control-plane resync (g_payload_resync_req) land?
 resync_gap_probe: resync_gap_probe.c ../modem/freedv/libfreedvdata.a
@@ -135,6 +147,9 @@ rxcost_bench: rxcost_bench.c
 # in, CPU seconds / false syncs / decode attempts out, per audio second so a
 # Pi 4 and a desktop make directly comparable tables.
 idle_cpu_probe: idle_cpu_probe.c bench_common.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+modem_cpu_probe: modem_cpu_probe.c bench_common.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 .PHONY: all clean run

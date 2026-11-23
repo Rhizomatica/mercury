@@ -27,6 +27,7 @@ typedef struct
      * "ENCRYPTED LINK" or "UNENCRYPTED LINK". */
     void (*send_encryption)(bool encrypted);
     void (*send_bitrate)(uint32_t speed_level, uint32_t bps);
+    void (*send_cleantxbuffer)(bool dropped_any);
 } arq_tnc_callbacks_t;
 
 /* Register the TNC notification callbacks (call once, after arq_init()).
@@ -45,5 +46,6 @@ void arq_tnc_send_buffer(uint32_t bytes);
 void arq_tnc_send_registered(const char *callsign);
 void arq_tnc_send_encryption(bool encrypted);
 void arq_tnc_send_bitrate(uint32_t speed_level, uint32_t bps);
+void arq_tnc_send_cleantxbuffer(bool dropped_any);
 
 #endif /* ARQ_TNC_H */

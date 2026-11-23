@@ -49,6 +49,7 @@ having — they are not updated as the code moves on.
 | [HERMES-LITE-2.md](HERMES-LITE-2.md) | A Hermes-Lite 2 on the network as Mercury's radio and sound card (`-x hl2`): no sound card, CAT or PTT; settings, what goes on the wire, networking, and what was tested. |
 | [RETICULUM.md](RETICULUM.md) | Carrying a Reticulum mesh over HF, via the broadcast port or an ARQ backbone. |
 | [JNOS.md](JNOS.md) | JNOS 2.0 over Mercury's VARA-compatible TNC: BBS to BBS, and telnet to the other station's Linux with no IP on the air. Bench setup, configs, test transcripts and the problems found. |
+| [WINLINK.md](WINLINK.md) | Winlink gateways with Mercury: finding them (service code `MERCURY`, Pat, DigiPi), running one with RMS Trimode, and the known issues. |
 | [BROADCAST-FILE.md](BROADCAST-FILE.md) | Broadcasting a file to whoever is listening, with no return path: the RaptorQ carousel, `bcast_file_tool`, and which modes can carry it. |
 | [MACOS-UNIVERSAL.md](MACOS-UNIVERSAL.md) | Building the self-contained universal macOS app with vendored static Hamlib. |
 | [WINDOWS-SIGNING.md](WINDOWS-SIGNING.md) | Authenticode signing for Windows releases. |
@@ -67,6 +68,8 @@ them for reasoning, not for current behaviour.
 | Document | The question it answered |
 |---|---|
 | [CAROUSEL-REPORT.md](CAROUSEL-REPORT.md) | Was the carousel with the MFSK floor ready to replace stop-and-wait? On-air and simulator results, what broke on the way, and the deep-fade collisions still open. |
+| [EFFICIENCY-FINDINGS.md](EFFICIENCY-FINDINGS.md) | Where a session's time and CPU actually go: throughput vs VARA's published figures, the control tax on message traffic, and the modem's cost per mode — measured, on the bench and the simulator. |
+| [EFFICIENCY-FOLLOWUPS.md](EFFICIENCY-FOLLOWUPS.md) | Which of those measured losses a protocol change can buy back, and which are waveform ceilings: per-peer rung memory, HARQ in the retx path, the connect round trip, and the two codec2-scale asks. |
 | [HARQ-FINDINGS.md](HARQ-FINDINGS.md) | Does soft-combining repeated frames actually rescue a link at the fading cliff? (Yes — roughly half the frames, where single-shot delivers none.) |
 | [ACQ-TUNING-FINDINGS.md](ACQ-TUNING-FINDINGS.md) | Can the DATAC15/16 acquisition knee be moved by tuning knobs? (Yes — `timing_mx_thresh` 0.45 -> 0.40, ~1.5-2 dB at ~0-2% noise-only false syncs; the UW budget buys nothing. Its frequency-offset section was wrong — a defective instrument — and is corrected in place.) |
 | [OFFSET-ACQUISITION-FINDINGS.md](OFFSET-ACQUISITION-FINDINGS.md) | How far off carrier can the acquisition capture a mistuned signal, and what does it cost to widen? (±55 Hz today, set by the search's geometry; a ±20 Hz offset is nearly free. A ±150 Hz span captures ±153 Hz for 2.5x the idle CPU. Also the correction of the instrument that got the earlier offset answer wrong.) |

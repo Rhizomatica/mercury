@@ -42,8 +42,11 @@ FUZZ_BINS = fuzz_arq_hdr fuzz_frame_header fuzz_kiss fuzz_arith fuzz_ws_json
 # build+no-crash gate, not a fuzzing campaign).
 CHECK_RUNS ?= 20000
 
-.PHONY: all check preflight clean
+.PHONY: all check preflight clean print-bins
 all: preflight $(FUZZ_BINS)
+
+print-bins:
+	@echo $(FUZZ_BINS)
 
 # Fail loudly and early if the chosen compiler cannot do libFuzzer.
 preflight:
@@ -62,7 +65,8 @@ check: all
 	@fail=0; \
 	for t in $(FUZZ_BINS); do \
 	  echo "--- smoke-fuzzing $$t ($(CHECK_RUNS) runs) ---"; \
-	  ./$$t -runs=$(CHECK_RUNS) corpus/$$t || fail=1; \
+	  mkdir -p .check-corpus/$$t; \
+	  ./$$t -runs=$(CHECK_RUNS) .check-corpus/$$t corpus/$$t || fail=1; \
 	  if [ -n "$$(ls -A regressions/$$t 2>/dev/null | grep -v '^.gitkeep$$')" ]; then \
 	    echo "--- replaying saved regressions for $$t ---"; \
 	    for f in regressions/$$t/*; do \
@@ -76,9 +80,11 @@ check: all
 
 clean:
 	rm -f $(FUZZ_BINS) .preflight.c .preflight.bin crash-* leak-* oom-* timeout-*
+	rm -rf out merged .check-corpus
 
 fuzz_arq_hdr: fuzz_arq_hdr.c ../../datalink_arq/arq_protocol.c \
-              ../../datalink_arq/arith.c ../../modem/framer.c
+              ../../datalink_arq/arith.c ../../modem/framer.c \
+              ../../common/virtual_clock.c ../../common/hermes_log.c
 	$(FUZZ_CC) $(FUZZ_CFLAGS) $(PROJECT_INC) -o $@ $^ $(FUZZ_LDFLAGS)
 
 fuzz_frame_header: fuzz_frame_header.c ../../modem/framer.c

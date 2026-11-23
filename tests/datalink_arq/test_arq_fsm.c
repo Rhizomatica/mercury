@@ -178,6 +178,45 @@ void test_connect_transitions_to_calling(void)
     TEST_ASSERT_EQUAL_STRING("TEST1", sess.remote_call);
 }
 
+/* A CONNECT that offers encryption carries the offer in its session id's
+ * low bit, decided once: every CALL of the session offers the same. */
+void test_connect_offer_is_the_session_ids_low_bit(void)
+{
+    RESET_FAKE(fake_crypto_negotiate);
+    fake_crypto_negotiate_fake.return_val = true;
+    test_callbacks.crypto_negotiate = fake_crypto_negotiate;
+    arq_fsm_set_callbacks(&test_callbacks);
+
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "TEST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL(ARQ_CALL_CRYPTO_OFFER, sess.session_id & ARQ_CALL_CRYPTO_OFFER);
+    TEST_ASSERT_EQUAL_INT(1, fake_crypto_negotiate_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_NEG_CALL_OUT, fake_crypto_negotiate_fake.arg0_val);
+    TEST_ASSERT_EQUAL_HEX8(sess.session_id & ~ARQ_CALL_CRYPTO_OFFER, fake_crypto_negotiate_fake.arg2_val);
+
+    test_callbacks.crypto_negotiate = NULL;
+    arq_fsm_set_callbacks(&test_callbacks);
+}
+
+/* A CONNECT's session id is never 0, and its low bit (the encryption
+ * offer) is clear without an offer */
+void test_connect_session_id_offers_nothing(void)
+{
+    for (uint64_t t = 1000; t < 1000 + 2 * 63; t++)
+    {
+        mock_set_uptime_ms(t);
+        arq_fsm_init(&sess);
+        arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+        strncpy(ev.remote_call, "TEST1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_NOT_EQUAL(0, sess.session_id);
+        TEST_ASSERT_EQUAL(0, sess.session_id & ARQ_CALL_CRYPTO_OFFER);
+        TEST_ASSERT_EQUAL(0, sess.session_id & ~ARQ_CONNECT_SESSION_MASK);
+    }
+}
+
 /* Incoming CALL from LISTENING transitions to ACCEPTING */
 void test_incoming_call_transitions_to_accepting(void)
 {
@@ -293,8 +332,9 @@ void test_accept_fallback_completes_on_first_frame(void)
 
 /* The callee answers a session's encryption offer once: a repeat of its CALL,
  * back in the ACCEPT fallback, gets the same answer, like the same nonce --
- * the caller may decode an ACCEPT of the first answer still in the air
- * (specs/connect, Agree, Mut_reanswer). */
+ * its key or its client's ENCRYPT may have changed since, and the caller may
+ * decode an ACCEPT of the first answer still in the air (specs/connect,
+ * Agree, Mut_reanswer). */
 void test_repeat_call_keeps_the_encryption_answer(void)
 {
     RESET_FAKE(fake_crypto_negotiate);
@@ -305,7 +345,7 @@ void test_repeat_call_keeps_the_encryption_answer(void)
     arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
     arq_fsm_dispatch(&sess, &ev);
     ev = make_event(ARQ_EV_RX_CALL);
-    ev.session_id = 0x42;
+    ev.session_id = 0x42 | ARQ_CALL_CRYPTO_OFFER;
     ev.crypto = true;
     strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
     arq_fsm_dispatch(&sess, &ev);
@@ -318,8 +358,7 @@ void test_repeat_call_keeps_the_encryption_answer(void)
     unsigned asked = fake_crypto_negotiate_fake.call_count;
     uint16_t nonce = sess.car_nonce;
 
-    ev.crypto = false;                                 /* the re-CONNECT's CALL */
-    arq_fsm_dispatch(&sess, &ev);
+    arq_fsm_dispatch(&sess, &ev);                      /* the same CALL again */
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
     TEST_ASSERT_EQUAL_HEX16(nonce, sess.car_nonce);    /* the same session */
     for (unsigned i = asked; i < fake_crypto_negotiate_fake.call_count; i++)
@@ -487,6 +526,244 @@ void test_accepting_repeat_call_sends_pending_again(void)
     arq_fsm_dispatch(&sess, &other);
     TEST_ASSERT_EQUAL_INT(1, fake_notify_pending_again_fake.call_count);
     TEST_ASSERT_EQUAL_INT(first, fake_notify_pending_fake.call_count);
+}
+
+/* A CALL whose gap has gone is not answered (arq_fsm.c, call_too_late).  On
+ * air (K7EK <- N3MEL-7, BW500, 2026-11-13 14:55): an MFSK500 CALL decoded
+ * 3.9 s late, while K7EK's ACCEPT to the caller's newer DATAC16 CALL was on
+ * the air, drew a second, 26 s ACCEPT straight after the first. */
+static arq_event_t call_ev(int mode, uint32_t age_ms)
+{
+    arq_event_t ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    ev.rx_snr = 5.0f;
+    ev.bw_hz = 2300;
+    ev.mode = mode;
+    ev.rx_age_ms = age_ms;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    return ev;
+}
+
+/* One channel guard on, and the ACCEPT to its end: how many frames went out. */
+static int accepts_after_guard(void)
+{
+    RESET_FAKE(fake_send_tx_frame);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    int sent = fake_send_tx_frame_fake.call_count;
+    if (sent) {
+        ev = make_event(ARQ_EV_TX_STARTED);
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_TX_COMPLETE);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+    return sent;
+}
+
+/* Our caller CALLing in another session (its application CONNECTed again:
+ * a session id is picked per CONNECT) has left the one we answer.  That CALL
+ * is answered, fresh -- its id, a PENDING -- and an ACCEPT goes one guard on,
+ * instead of the dead session's ACCEPTs running out first (on air: K7EK <-
+ * N3JXB, 2026-11-18 06:06, three CALLs ignored for 3 min).  Another
+ * station's CALL is still ignored.  After our ACCEPT's answer window has
+ * closed (its TIMER_RETRY fired), not inside it: there the caller's first
+ * frames could be on their way
+ * (test_accepting_new_session_call_in_accept_window_is_ignored). */
+void test_accepting_same_caller_new_session_is_answered(void)
+{
+    enter_accepting();
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());      /* the old session's ACCEPT */
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+    int pendings = fake_notify_pending_fake.call_count;
+
+    arq_event_t other = make_event(ARQ_EV_RX_CALL);
+    other.session_id = 0x45;
+    strncpy(other.remote_call, "OTHER1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &other);
+    TEST_ASSERT_EQUAL_UINT8(0x42, sess.session_id);       /* another station: ignored */
+    TEST_ASSERT_EQUAL_INT(pendings, fake_notify_pending_fake.call_count);
+
+    /* The ACCEPT's answer window closes (its TIMER_RETRY): the caller did
+     * not take it.  A new session's CALL now is the caller CONNECTing again,
+     * not a stale frame, and is answered. */
+    arq_event_t window = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &window);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    arq_event_t again = make_event(ARQ_EV_RX_CALL);
+    again.session_id = 0x44;
+    strncpy(again.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &again);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x44, sess.session_id);
+    TEST_ASSERT_FALSE(sess.accept_fallback);
+    TEST_ASSERT_EQUAL_INT(0, sess.crc_seed);               /* the old seed dropped */
+    TEST_ASSERT_EQUAL_INT(pendings + 1, fake_notify_pending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());      /* the new session's ACCEPT */
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+}
+
+/* A CALL of another session while our ACCEPT's answer window is open is a
+ * stale frame, not a redial: the caller may have taken that ACCEPT and its
+ * first frames could be on their way, which a switch would drop (the seed).
+ * Ignored; the caller's next CALL, outside the window, is answered. */
+void test_accepting_new_session_call_in_accept_window_is_ignored(void)
+{
+    enter_accepting();
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());      /* ACCEPT out, window open */
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+    int pendings = fake_notify_pending_fake.call_count;
+
+    arq_event_t again = make_event(ARQ_EV_RX_CALL);
+    again.session_id = 0x44;
+    strncpy(again.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &again);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x42, sess.session_id);       /* not taken for a redial */
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);              /* the seed survives */
+    TEST_ASSERT_EQUAL_INT(pendings, fake_notify_pending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
+
+    /* The window closes; the next CALL of the new session is answered. */
+    arq_event_t window = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &window);
+    arq_fsm_dispatch(&sess, &again);
+    TEST_ASSERT_EQUAL_UINT8(0x44, sess.session_id);
+    TEST_ASSERT_EQUAL_INT(0, sess.crc_seed);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());      /* the new session's ACCEPT */
+}
+
+/* The same, decoded late: the age check runs before the switch, so a CALL
+ * past its decode bound is never taken as "the caller CONNECTed again". */
+void test_accepting_new_session_call_decoded_too_late_is_ignored(void)
+{
+    enter_accepting();
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+    int again = fake_notify_pending_again_fake.call_count;
+
+    arq_event_t stale = call_ev(FREEDV_MODE_DATAC16, 4000);   /* past DATAC16's 1 s */
+    stale.session_id = 0x44;
+    arq_fsm_dispatch(&sess, &stale);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x42, sess.session_id);       /* the live session kept */
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+    TEST_ASSERT_EQUAL_INT(again + 1, fake_notify_pending_again_fake.call_count);
+
+    /* The caller's next CALL, decoded on time, gets the switch. */
+    arq_event_t fresh = call_ev(FREEDV_MODE_DATAC16, 0);
+    fresh.session_id = 0x44;
+    arq_fsm_dispatch(&sess, &fresh);
+    TEST_ASSERT_EQUAL_UINT8(0x44, sess.session_id);
+    TEST_ASSERT_EQUAL_INT(0, sess.crc_seed);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
+}
+
+/* ...but not while the host's LISTEN OFF waits out the grace period: the host
+ * wants the radio back, and the CALL is left for the next listener. */
+void test_accepting_new_session_waits_for_deferred_listen_off(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    mock_set_uptime_ms(1010);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LISTEN_OFF, sess.teardown);
+    int pendings = fake_notify_pending_fake.call_count;
+
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x44;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x42, sess.session_id);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LISTEN_OFF, sess.teardown);
+    TEST_ASSERT_EQUAL_INT(pendings, fake_notify_pending_fake.call_count);
+}
+
+
+void test_accepting_call_decoded_while_keyed_is_not_answered(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = call_ev(FREEDV_MODE_DATAC16, 0);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());          /* the first CALL answered */
+
+    ev = call_ev(FREEDV_MODE_DATAC16, 0);                      /* a repeat: answered */
+    arq_fsm_dispatch(&sess, &ev);
+    RESET_FAKE(fake_send_tx_frame);
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+    ev = make_event(ARQ_EV_TX_STARTED);                        /* that ACCEPT on the air */
+    arq_fsm_dispatch(&sess, &ev);
+
+    int again = fake_notify_pending_again_fake.call_count;
+    ev = call_ev(MERCURY_MODE_MFSK, 3920);                     /* the stale CALL, decoded now */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(again + 1, fake_notify_pending_again_fake.call_count);
+
+    /* One guard on, ours still on the air (as on air: the second ACCEPT was
+     * queued at 14:55:44.1 and keyed when the first ended, 14:55:46.8). */
+    RESET_FAKE(fake_send_tx_frame);
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);   /* no second ACCEPT */
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, accepts_after_guard());
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+}
+
+void test_accepting_call_decoded_too_late_is_not_answered(void)
+{
+    enter_accepting();
+    (void)accepts_after_guard();
+    int again = fake_notify_pending_again_fake.call_count;
+    arq_event_t ev = call_ev(MERCURY_MODE_MFSK, 5000);         /* past MFSK's 4.5 s */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(again + 1, fake_notify_pending_again_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, accepts_after_guard());
+    ev = call_ev(MERCURY_MODE_MFSK, 0);                        /* the next, on time */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
+}
+
+/* Late, but within the mode's decode bound: answered as before. */
+void test_accepting_call_within_the_decode_bound_is_answered(void)
+{
+    enter_accepting();
+    (void)accepts_after_guard();
+    arq_event_t ev = call_ev(MERCURY_MODE_MFSK, 3900);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
+    ev = call_ev(FREEDV_MODE_DATAC16, 900);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
+}
+
+/* A first CALL too late to answer: pending (a scanner holds), but the
+ * ACCEPT waits for the caller's next CALL. */
+void test_listening_late_first_call_waits_for_the_next(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    int pend = fake_notify_pending_fake.call_count;
+    ev = call_ev(FREEDV_MODE_DATAC16, 2000);                   /* past OFDM's 1 s */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(pend + 1, fake_notify_pending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, accepts_after_guard());
+    ev = call_ev(FREEDV_MODE_DATAC16, 0);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
 }
 
 /* Connection-setup slots must stay short by default so a failed connect and
@@ -698,6 +975,91 @@ void test_repeat_on_control_mode_is_answered_on_the_floor(void)
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, answer_mode(FREEDV_MODE_DATAC16));
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK,   answer_mode(MERCURY_MODE_MFSK));
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+}
+
+/* Wider than 500 Hz, the caller adds the 500 Hz MFSK after its floor CALL:
+ * the floor, then the 500 Hz MFSK twice.  At 500 Hz its floor is that MFSK
+ * already, and the rotation is the floor and the control mode. */
+void test_wide_caller_also_calls_on_the_500_hz_mfsk(void)
+{
+    static const int wide[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK,
+                                MERCURY_MODE_MFSK_N32, MERCURY_MODE_MFSK_N32, MERCURY_MODE_MFSK,
+                                MERCURY_MODE_MFSK_N32, MERCURY_MODE_MFSK_N32 };
+    static const int narrow[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK_N32,
+                                  FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK_N32, FREEDV_MODE_DATAC16 };
+    sess.control_mode = FREEDV_MODE_DATAC16;
+    int bws[] = { ARQ_BANDWIDTH_FULL_HZ, ARQ_BANDWIDTH_TACTICAL_HZ };
+    for (size_t b = 0; b < 2; b++) {
+        arq_conn.bw = bws[b];
+        for (int i = 0; i < (int)(sizeof(wide) / sizeof(wide[0])); i++) {
+            sess.call_sends_done = i;
+            TEST_ASSERT_EQUAL_INT(wide[i], arq_call_carrier(&sess));
+        }
+    }
+    arq_conn.bw = ARQ_BANDWIDTH_NARROW_HZ;
+    for (int i = 0; i < (int)(sizeof(narrow) / sizeof(narrow[0])); i++) {
+        sess.call_sends_done = i;
+        TEST_ASSERT_EQUAL_INT(narrow[i], arq_call_carrier(&sess));
+    }
+    /* A station that transmits only MFSK has no control-mode CALLs: wide,
+     * the floor and the 500 Hz MFSK twice from the first; narrow, its floor. */
+    atomic_store(&arq_tx_mfsk_only, 1);
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+    for (int i = 0; i < 6; i++) {
+        sess.call_sends_done = i;
+        TEST_ASSERT_EQUAL_INT(wide[i + ARQ_CALL_FAST_SLOTS], arq_call_carrier(&sess));
+    }
+    arq_conn.bw = ARQ_BANDWIDTH_NARROW_HZ;
+    for (int i = 0; i < 4; i++) {
+        sess.call_sends_done = i;
+        TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, arq_call_carrier(&sess));
+    }
+    atomic_store(&arq_tx_mfsk_only, 0);
+    arq_conn.bw = 0;
+}
+
+/* A wider session connected on the 500 Hz MFSK keeps it as its floor, at
+ * both ends: the caller from the ACCEPT's carrier, the callee from its own.
+ * Connected on anything else, the floor is the bandwidth's. */
+void test_connect_on_the_500_hz_mfsk_is_the_deep_floor(void)
+{
+    for (int deep = 0; deep <= 1; deep++) {
+        arq_fsm_init(&sess);
+        snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "A0AAA");
+        arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+        arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_APP_CONNECT);
+        strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        sess.call_carrier = deep ? MERCURY_MODE_MFSK_N32 : MERCURY_MODE_MFSK;
+        ev = make_event(ARQ_EV_RX_ACCEPT);
+        ev.session_id = sess.session_id;
+        ev.rx_snr = -14.0f;
+        ev.bw_hz = ARQ_BANDWIDTH_FULL_HZ;
+        ev.mode = sess.call_carrier;
+        strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+        TEST_ASSERT_EQUAL_INT(deep ? MERCURY_MODE_MFSK_N32 : MERCURY_MODE_MFSK, sess.floor_mode);
+        TEST_ASSERT_EQUAL_INT(deep ? MERCURY_MODE_MFSK_N32 : MERCURY_MODE_MFSK,
+                              car_session_level_mode(sess.car, 0));
+        TEST_ASSERT_EQUAL_INT(car_bw_level_mode(ARQ_BANDWIDTH_FULL_HZ, 1),
+                              car_session_level_mode(sess.car, 1));
+    }
+    arq_fsm_init(&sess);
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;     /* the callee's: answer_mode's CALLs say 2300 */
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, answer_mode(MERCURY_MODE_MFSK_N32));
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, sess.floor_mode);
+    /* A repeat on the control mode after that answer goes on the bandwidth's
+     * floor, and the floor follows the ACCEPT.  This pins accept_carrier's
+     * code path; a wide caller does not send this sequence (its control-mode
+     * CALLs come before any 500 Hz one). */
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, answer_mode(FREEDV_MODE_DATAC16));
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.floor_mode);
+    arq_conn.bw = 0;
 }
 
 /* The caller listens on the floor from its first repeat on, where the callee
@@ -1405,25 +1767,49 @@ void test_silent_peer_after_hangup_is_ended_early(void)
 void test_silent_peer_after_hangup_waits_the_callees_drain(void)
 {
     int saved = atomic_load(&arq_disconnect_drain_timeout_s);
-    atomic_store(&arq_disconnect_drain_timeout_s, 110);
     goto_connected();
     sess.car->end_req = CAR_END_WISH;
-    sess.car->tx_level = sess.car->poll_level = 1;      /* a rung whose budget is under 110 s */
-    uint64_t budget = car_drain_budget_ms(sess.car);
-    TEST_ASSERT_TRUE_MESSAGE(budget < 110000, "the rung's budget is under the drain timeout");
+    /* The rung with the shortest budget, and a drain timeout past it but
+     * under the 120 s cap, so the timeout is what holds the caller. */
+    uint64_t budget = UINT64_MAX;
+    int at = 1;
+    for (int lv = 1; lv < CAR_NLEVELS; lv++) {
+        sess.car->tx_level = sess.car->poll_level = lv;
+        uint64_t b = car_drain_budget_ms(sess.car);
+        if (b < budget) { budget = b; at = lv; }
+    }
+    sess.car->tx_level = sess.car->poll_level = at;
+    int timeout_s = (int)(budget / 1000) + 2;            /* rung 2: 116.9 s -> 118 */
+    TEST_ASSERT_TRUE_MESSAGE(timeout_s <= 120, "a rung's budget leaves room under the 120 s cap");
+    uint64_t timeout = (uint64_t)timeout_s * 1000;
+    atomic_store(&arq_disconnect_drain_timeout_s, timeout_s);
 
     mock_set_uptime_ms(sess.car_last_rx_ms + budget + 1000);
     arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
     arq_fsm_dispatch(&sess, &ev);
     bool held = sess.conn_state == ARQ_CONN_CONNECTED;
 
-    mock_set_uptime_ms(sess.car_last_rx_ms + 110000);
+    /* The silence may have taken the poll a rung down, whose budget can be
+     * past the timeout: the wait is then that budget, at most the 120 s cap.
+     * Either way it is at least the configured timeout.  (This mirrors
+     * car_peer_end_wait_ms in arq_fsm.c: the timeout set above, and the
+     * 120 s of ARQ_CAR_PEER_QUIET_MS; if either changes, change it here.) */
+    uint64_t end = car_drain_budget_ms(sess.car);
+    if (end < timeout) end = timeout;
+    if (end > 120000) end = 120000;
+    mock_set_uptime_ms(sess.car_last_rx_ms + timeout - 1000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    bool held_to_timeout = sess.conn_state == ARQ_CONN_CONNECTED;
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + end);
     ev = make_event(ARQ_EV_TIMER_CAROUSEL);
     arq_fsm_dispatch(&sess, &ev);
     arq_conn_state_t after = sess.conn_state;
     atomic_store(&arq_disconnect_drain_timeout_s, saved);
 
     TEST_ASSERT_TRUE_MESSAGE(held, "past the budget, inside the callee's drain");
+    TEST_ASSERT_TRUE_MESSAGE(held_to_timeout, "inside the configured drain timeout");
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, after);
 }
 
@@ -2332,14 +2718,37 @@ void test_disconnect_reply_survives_another_tx_complete(void)
     TEST_ASSERT_EQUAL_INT(0, sess.crc_seed);
 }
 
+/* BUFFER's figure for the carousel's open blocks (arq_buffer_inflight_shown):
+ * the blocks a floor BREAK said are in come off, but 0 -- "all data has been
+ * acknowledged by the peer" -- only once nothing is unconfirmed. */
+void test_buffer_shown_counts_break_stopped_blocks_as_in(void)
+{
+    /* VE4KLM -> K7EK, 15 Nov 2026: blocks of 524 and 229, the first BREAKed */
+    TEST_ASSERT_EQUAL_INT(753, arq_buffer_inflight_shown(753, 753));
+    TEST_ASSERT_EQUAL_INT(229, arq_buffer_inflight_shown(753, 229));
+}
+
+void test_buffer_shown_is_never_zero_while_unconfirmed(void)
+{
+    TEST_ASSERT_EQUAL_INT(1, arq_buffer_inflight_shown(753, 0));    /* every block BREAKed */
+    TEST_ASSERT_EQUAL_INT(0, arq_buffer_inflight_shown(0, 0));      /* a poll retired them */
+    /* never above the exact count, whatever it is handed */
+    TEST_ASSERT_EQUAL_INT(753, arq_buffer_inflight_shown(753, 900));
+    TEST_ASSERT_EQUAL_INT(0, arq_buffer_inflight_shown(-3, -1));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_buffer_shown_counts_break_stopped_blocks_as_in);
+    RUN_TEST(test_buffer_shown_is_never_zero_while_unconfirmed);
     /* Connection lifecycle tests */
     RUN_TEST(test_init_state_disconnected);
     RUN_TEST(test_init_mode_defaults);
     RUN_TEST(test_listen_transitions_to_listening);
     RUN_TEST(test_connect_transitions_to_calling);
+    RUN_TEST(test_connect_session_id_offers_nothing);
+    RUN_TEST(test_connect_offer_is_the_session_ids_low_bit);
     RUN_TEST(test_call_retry_deadline_anchored_to_ptt_off);
     RUN_TEST(test_call_after_a_repeat_waits_out_a_floor_accept);
     RUN_TEST(test_incoming_call_transitions_to_accepting);
@@ -2351,6 +2760,8 @@ int main(void)
     RUN_TEST(test_mfsk_only_connect_starts_deaf_on_the_floor);
     RUN_TEST(test_floor_accept_to_a_control_mode_call_is_not_deafness);
     RUN_TEST(test_repeat_on_control_mode_is_answered_on_the_floor);
+    RUN_TEST(test_wide_caller_also_calls_on_the_500_hz_mfsk);
+    RUN_TEST(test_connect_on_the_500_hz_mfsk_is_the_deep_floor);
     RUN_TEST(test_call_after_a_repeat_listens_on_the_floor_and_waits_for_a_frame);
     RUN_TEST(test_busy_detector_does_not_hold_a_call);
     RUN_TEST(test_listen_mode_does_not_leak_into_inbound_session);
@@ -2413,6 +2824,14 @@ int main(void)
     RUN_TEST(test_ended_session_is_not_resurrected_by_a_late_frame);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
     RUN_TEST(test_accepting_repeat_call_sends_pending_again);
+    RUN_TEST(test_accepting_same_caller_new_session_is_answered);
+    RUN_TEST(test_accepting_new_session_call_in_accept_window_is_ignored);
+    RUN_TEST(test_accepting_new_session_call_decoded_too_late_is_ignored);
+    RUN_TEST(test_accepting_new_session_waits_for_deferred_listen_off);
+    RUN_TEST(test_accepting_call_decoded_while_keyed_is_not_answered);
+    RUN_TEST(test_accepting_call_decoded_too_late_is_not_answered);
+    RUN_TEST(test_accepting_call_within_the_decode_bound_is_answered);
+    RUN_TEST(test_listening_late_first_call_waits_for_the_next);
     RUN_TEST(test_default_call_accept_slots_are_short);
     RUN_TEST(test_retries_scale_fast_call_slots);
     RUN_TEST(test_stop_listen);

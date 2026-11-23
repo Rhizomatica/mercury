@@ -1,3 +1,68 @@
+mercury (1.9.25-1) unstable; urgency=medium
+
+  * Release 1.9.25.
+  * host: the daemon build defines #534's two audioio calls; CI links it.
+  * ci: run the unit tests on macOS arm64.
+  * Add libxxf86vm-dev for fyne-ui to Linux build instructions.
+  * docs: Winlink gateways with Mercury.
+  * fix: don't read rig_caps.macro_name from a mismatched Hamlib (#568).
+  * radio_io: reopen a network rig's Hamlib session after its server restarts.
+  * arq: after an ABORT, hold a scanning host until our one DISCONNECT is out.
+  * arq: a CALL whose listening gap has gone is not answered.
+  * audioio: with pulse, "default" lets PulseAudio choose the device.
+  * radio_io: reopen a network rig's Hamlib session on a timeout too.
+  * arq: the DISCONNECT deferral log shows the cap in force.
+  * tcp: drop idle data-port bytes when their data client leaves (#572).
+  * tnc: a web browser on the control port is told so and closed.
+  * Comment on reset clients in the broadcast backlog.
+  * arq: a DISCONNECT that is never retried goes twice to a marginal peer.
+  * windows-installer: an upgrade keeps the station's mercury.ini.
+  * tcp: a host write is held, not dropped, in a call; the reactor never waits on the session lock.
+  * modem: clip QAM16C2 like the other data modes (on air: 58 of 64 frames against none).
+  * carousel: size the poll that rides with an ack and a round for the answer.
+  * arq: ABORT cuts the keydown on the air short.
+  * modem, carousel: a ladder per bandwidth on a faster geometry; thresholds on the accurate S/N scale.
+  * arq: BUFFER counts a floor block as in at its BREAK, never 0 early.
+  * tnc: opt-in absorb of Winlink Express's P2P idle DISCONNECT (#392).
+  * modem, carousel: a 2 kHz MFSK as rung 1 of BW2300 and BW2750.
+  * tests: #579 regression -- the reactor never waits on the session lock.
+  * docs/WINLINK: several Trimode instances, one SSID and service code per mode.
+  * carousel: the caller acks the callee's last bytes before it hangs up (#585).
+  * carousel: a busy channel holds the caller for one keydown at most, then it keys.
+  * tnc: a host that resets its connection is logged as leaving, not as a warning.
+  * modem: a scan hop drops the MFSK listeners' half-heard CALL too.
+  * arq: with no application reading, received data is dropped, not waited on.
+  * carousel: the caller's DISCONNECT retry is not held for a floor answer.
+  * engine: an exit with a session up ends it on the air first.
+  * carousel: floor rounds unanswered set CAR_DEAF_LOSS, so a lost "done" moves to MFSK (#604).
+  * arq: an ABORT the full command bus refused is retried on the event loop.
+  * modem, docs, tests: the 2 kHz MFSK follow-ups (#602 review).
+  * docs: EFFICIENCY-FINDINGS -- throughput, airtime, and CPU on current trunk.
+  * freedv: the 16-QAM rungs' preamble detector at 0.10, as DATAC1/3/17.
+  * Deep floor: a wider caller also CALLs on the 500 Hz MFSK.
+  * tcp: CLEANTXBUFFER, WINLINK SESSION and CWID, which BPQ32 and Pat send.
+  * docs: EFFICIENCY-FINDINGS -- name the rung changes since 237481e7, fix a citation.
+  * docs: EFFICIENCY-FOLLOWUPS -- where the protocol can still gain (the #552 split).
+  * tcp: a BUFFER query is answered also when the count has not changed (#584).
+  * docs: README and TNC.md name each bandwidth's ladder (MFSK2K, BW500, BW2750).
+  * arq: PENDING when a CALL decoder locks, not when the CALL has decoded (#527).
+  * audio: reopen a playback device that stops taking audio.
+  * docs: BW500's 9-carrier rungs span 562 Hz, not 560.
+  * modem: transmit 4 dB louder, peaks at -2 dBFS instead of -6.
+  * radio_io: hermes_shm PTT on the trx_v1 (uBitx) controller.
+  * arq: 1.9.25 (connect minor 2) does not connect to 1.9.20-1.9.24.
+  * Log listener bind errors; document an nftables rule for Mercury's ports.
+  * tests/fuzz: fix the fuzz_arq_hdr link, add a scheduled fuzz workflow.
+  * Add SECURITY.md: how to report a vulnerability privately.
+  * carousel: one blind floor round after an unconfirmed fall-back, then ask (#529).
+  * audio: opt-in silence feed for PulseAudio playback between transmissions.
+  * tcp: VERSION also answers VARA's "VERSION ..." line, or Pat's VARA HF start-up hangs.
+  * arq: a callee answering a CALL takes its caller's newer session.
+  * docs: transmit level and power -- sBitx, ALC and no-ALC radios.
+  * arq: a callee's ABORT always tells the caller (waits out a whole caller round).
+
+ -- Rafael Diniz <rafael@riseup.net>  Sat, 21 Nov 2026 19:47:30 +0000
+
 mercury (1.9.24-1) unstable; urgency=medium
 
   * Release 1.9.24.

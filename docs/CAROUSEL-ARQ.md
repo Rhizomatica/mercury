@@ -51,10 +51,15 @@ rungs that could beat it; a rung's round is capped at one frame more than it
 recently delivered; 4 frames lost in a row is a dead verdict (2 near the rung's
 SNR threshold, or once two rounds in a row brought nothing of the peer at all),
 re-probed after 60 s, doubling to 8 min.  A direction starts on the rung the connect's SNR
-supports (`ARQ_SNR_MIN_*`), as a one-frame probe.  The session's bandwidth caps the
-ladder in both directions: BW500 uses its own MFSK floor, DATAC15, DATAC4
-and DATAC3; BW2300 and BW2750 use every rung (nothing is wider than 2.1 kHz
-yet).
+supports (`ARQ_SNR_MIN_*`), as a one-frame probe.  Each bandwidth has its own
+ladder, in both directions (`car_set_bandwidth`; the rung on the wire maps to
+the session's mode): rung 3 (DATAC3) is shared; BW500 has the
+500 Hz MFSK floor, DATAC15, DATAC4 and 9-carrier top rungs (DATAN1, QAM16N1,
+QAM16N2), BW2300 the 2 kHz MFSK (MFSK2K) as rung 1, the three-carrier
+differential QPSK (PSK3) as rung 2 and DATAC1, DATAC17 and
+QAM16C2 on 36 carriers (inside a 300-2700 Hz transmit passband), BW2750 the
+same rungs 1 and 2, DATAC1 and 44-carrier DATAC17W and QAM16C2W
+([MODES.md](MODES.md)).
 
 **The BW500 floor.**  A BW500 session's rung 0 is the 500 Hz MFSK (`MFSK500`,
 mode 103): the same 98-byte frame on 32 tones 15.6 Hz apart, 80 ms symbols,
@@ -74,6 +79,27 @@ on a DATAC16 CALL 217 s in).  The callee answers on the CALL's floor, where
 the caller listens, and the session then runs at the lower bandwidth, on
 its floor.  A BW500 station still hears a 2300 caller's 1 kHz CALLs only
 through a filter wide enough for them; the narrow CALL passes any filter.
+**The deep floor.**  A caller wider than 500 Hz (BW2300, BW2750) also calls
+on the 500 Hz MFSK: after its fast CALLs its rotation is the floor and then
+the 500 Hz MFSK twice (`arq_call_carrier`), so at the default `RETRIES` its
+fourth and fifth CALLs are the narrow ones, about 77 s and 141 s in, each
+waiting that carrier's call interval (37.5 s) for the answer.  In the
+connect sim (60 seeds) this connected wherever the old rotation did, as fast,
+and under fading also at −13/−14/−15 dB in 59/56/49 runs, against 23/8/3;
+a third control-mode CALL in the rotation added nothing.  Every listener
+decodes it, and the callee answers there.  A session connected on it keeps
+the 500 Hz MFSK as its floor at both ends (the caller from the ACCEPT's
+carrier, the callee from its own: `session_floor_mode`), under its
+bandwidth's other rungs: only rung 0 changes, so the wire, the rung modes
+and the piece sizes are those of its bandwidth (`car_set_bandwidth`).  This
+is the fringe the 1 kHz floor does not reach: in the Go harness (256 B) a
+BW2300 session never connected at −15 dB on white noise or −13 dB under
+CCIR Moderate, a BW500 one completed down to −17 and −14 dB.  The callee
+answers a later repeat on the control mode on its bandwidth's floor, as
+before (`accept_carrier`).  A station at 500 Hz has that floor already.  An
+MFSK-only station (`arq:mfsk_tx_only`) has no control-mode CALLs: a wide
+one calls on the floor and the 500 Hz MFSK twice from its first CALL (it is
+the station the deep floor is for), a 500 Hz one on its floor.
 A floor keydown holds one frame (`MAX_KEYDOWN_MS` 30 s).  The narrow floor's
 decoder searches at 2 kHz and reads the payload at 8 kHz, so it costs less
 than the 1 kHz one (0.34 % against 0.5-0.6 % of an x86 core; a listening
@@ -125,6 +151,18 @@ DATAC16 frames stop near −10 dB (`utils/pattern_probe`).  The detector
 (one FFT per 5 ms step, all lists scored by lookup) runs throughout a
 session, for about 1 % of an x86 core.  `MERCURY_NAV=0` turns headers off.
 
+A *reservation* holds the caller's planned keydown for at most one
+keydown's length with its guard (`CARRIER_HOLD_MAX_MS`, 30.7 s); then it
+keys.  A reservation is a caught preamble (its frame's airtime, 26.2 s on
+MFSK500) or a NAV header (its keydown), and each false one renews it: on air
+(N3JXB-VE4KLM, 2026-11-16) QRM that kept looking like a frame's start held
+the caller 116 s, and the lost-peer watchdog ended the session.  The callee
+keys only in its slots, which the caller keeps clear of without carrier
+sense (`docs/CAROUSEL-TURNS.md`), so a reservation nothing live renews past
+that is not the peer.  A live sign -- a decoder in sync, the busy detector --
+holds the caller as long as it lasts: Mercury does not key over a signal it
+senses, only into a gap of one.
+
 ## Wire formats
 
 DATA, in a payload mode, filling the frame:
@@ -161,17 +199,18 @@ frame on MFSK.
 
 | byte | CALL | ACCEPT |
 |---|---|---|
-| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 1; = 2 when encryption is offered (on a CALL, `[crypto]`) or taken (on an ACCEPT) -- the extension's five bits are otherwise full), the sender transmits only MFSK (1) | the same, the minor revision: encryption taken |
-| 1 | 0, session id (7) | 1, session id (7) |
+| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 3), the sender transmits only MFSK (1) | the same |
+| 1 | 0, session id (7; its low bit the encryption offer) | 1, session id (7) |
 | 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
 | 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |
 | 6-7 | | the callee's session nonce |
-| 8 | | the caller's start rung (3 bits, 0-6), the callee hears the caller below the control mode (1; the rung is then the floor), 4 bits zero |
+| 8 | | the caller's start rung (3 bits, 0-6), the callee hears the caller below the control mode (1; the rung is then the floor), the answer to the encryption offer (1), 3 bits zero |
 | 9 | | the SNR the callee read the CALL at, dB + 128 (0: unknown) |
 | 10-13 | | zero |
 
-- A station takes a CALL or ACCEPT only of type CALL2, any 2.x minor
-  revision; every 1.9.x release drops the type.  The versions do not
+- A station takes a CALL or ACCEPT only of type CALL2, of minor 3 or later
+  (`ARQ_CONNECT_MINOR_MIN`, `arq_protocol_connect_compatible`); every 1.9.x
+  release drops the type.  The versions do not
   connect to each other.  A 1.9.x CALL (type CALL) for this station is
   logged ("another protocol version (Mercury 1.9.x?)") and not answered.
   Checked 2026-10-18 with the Go harness (`TestMercuryARQTransfer`,
@@ -190,18 +229,33 @@ frame on MFSK.
   the floor (`accept_keys`): silent to a first CALL on DATAC16, it answers
   the repeat, which the caller listens for on the floor
   (specs/connect/ConnectCarrier.tla, `MfskTx`).
-- Minor 2 is the encryption offer and its answer (`[crypto]`, off by
-  default): a CALL at minor 2 offers a Noise_KK session, an ACCEPT at minor
-  2 takes it, and every other frame goes at minor 1.  The extension's five
-  bits were full, and the minor field is the one place a station of 1.9.20
-  to 1.9.24 reads and does not act on: it answers such a CALL at its own
-  minor, and the session is clear.  An ACCEPT at minor 2 is only ever sent
-  to a CALL at minor 2, and a caller ignores one it did not ask for
-  (specs/connect/ConnectHandshake.tla, `Agree`, `Mut_anyaccept`).  Minor 3
-  is the last value free; the next option needs another place.
+- Minor 2 (1.9.25) gave each bandwidth its own ladder: BW2300 rung 1 is the
+  2 kHz MFSK (DATAC15 before), BW500 and BW2750 have ladders of their own,
+  and an MFSK-only or deep-floor session starts on the 500 Hz MFSK; the
+  QAM16C2 and DATAC17 frames changed too.  The wire carries a rung's level,
+  not its mode, so a pair of minors 1 and 2 would lose every round on the
+  levels they map apart.  A station of minor 2 ignores the CALLs and ACCEPTs
+  of minors 0 and 1 and logs them ("from Mercury 1.9.24 or older ... the
+  versions do not connect").  1.9.20-1.9.24 read any minor, so one still
+  answers a 1.9.25 CALL; the 1.9.25 caller ignores that ACCEPT and gives up
+  as with no answer.  This drops the minor-1 TX-MFSK-only rule above (minor
+  0 is no longer connected at all).  specs/connect `SameLadder`.
+- Minor 3 put the three-carrier PSK (PSK3) at rung 2 of BW2300 and BW2750,
+  where DATAC4 was.  A station of minor 3 ignores minors 0-2 and logs
+  them ("from Mercury 1.9.25 or older"); 1.9.25 takes minor 2 and up, so it
+  answers a minor-3 CALL and the caller ignores that ACCEPT, as above.  3 is
+  the last value the two bits hold.
 - 1.9.x carried a 2-bit protocol version in type CALL's extension: 1 was
   1.9.18 (MFSK at 1531-2500 Hz), 2 was 1.9.19 (MFSK centred on 1500 Hz), 3
   gave a BW500 session its own floor; 3 was the last value it held.
+- The encryption offer (the CALL's session id, low bit) and answer (ACCEPT
+  byte 8, bit 4), `[crypto]` (docs/TNC.md, off by default): the caller
+  decides the offer once per CONNECT, as it picks the session id, and the
+  callee answers it once per session.  A station with encryption off sends
+  both 0 and ignores them, so a pair with one end off connects in the clear.
+  The offer is part of the session id, which the ACCEPT echoes, so an ACCEPT
+  answers the offer of the CALLs of its id; a CONNECT that offers and one
+  that does not never share an id.  specs/connect `Agree`.
 - An ACCEPT with a reserved bit set is dropped.  The caller takes an ACCEPT
   only if its session id, its own CRC and the called station's CRC all
   match: 39 bits, and every one of them full.
@@ -229,6 +283,24 @@ frame on MFSK.
   the dead-forward cells unchanged, nvis (random DATAC16 loss) +9.7 s on
   the 8 seeds that lose one ACCEPT and -21..-30 s on the 2 that lose two
   (specs/connect/ConnectCarrier.tla).
+- The callee answers a CALL one channel guard after it decodes it, in the
+  gap the caller opened by dropping PTT.  A CALL whose gap has gone is not
+  answered: one decoded later than its mode's decode bound (R4 in
+  CAROUSEL-TURNS.md: 1 s OFDM, 4.5 s MFSK; the modem's backlog is the
+  frame's age), or one decoded while the callee is keyed (half duplex: its
+  audio came before the keydown, so the ACCEPT on the air already answers
+  the caller's latest gap).  It still says the caller is there: PENDING
+  again, the ACCEPT retries restart, and a first CALL still takes the callee
+  to ACCEPTING.  The caller's next CALL, decoded on time, is answered.  On
+  air (K7EK answering N3MEL-7, BW500, 2026-11-13 14:55) an MFSK500 CALL
+  decoded 3.9 s late, while K7EK's ACCEPT to the caller's newer DATAC16 CALL
+  was on the air, drew a second, 26 s ACCEPT straight after the first (1 of
+  86 CALLs decoded at K7EK and KG9NI on 12-13 Nov; `call_too_late`).
+  If every CALL from a caller logs "decoded too late: not answered", the
+  callee's decoder is behind on every frame and the callee never answers:
+  look at the `age=` of its "Decoded frame" lines (the modem's backlog, for
+  example a CPU too slow for the bandwidth).  The carousel's frames would
+  go unanswered by the same bound.
 - The callee's callsign is not on the air in full: the caller knows whom it
   called, and the CRC confirms it.
 

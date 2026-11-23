@@ -5,6 +5,7 @@
 #include "arq_protocol.h"
 #include "freedv_api.h"
 #include "modem_mfsk.h"   /* MERCURY_MODE_MFSK */
+#include "modem_psk.h"    /* MERCURY_MODE_PSK3 */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,8 +24,9 @@ struct sim_channel {
     double   return_cliff_db; /* with per-mode PER: direction 1 also below this
                                * SNR, as a cliff (sim_channel_set_return_snr) */
     double   snr_dir_db[2];
-    int      ret_mode;        /* direction 1 also loses this share of this */
-    double   ret_per;         /* mode's frames (sim_channel_set_return_mode_per) */
+    int      ret_mode;        /* direction ret_dir (1 unless set) also loses */
+    double   ret_per;         /* this share of this mode's frames */
+    int      ret_dir;         /* (sim_channel_set_return_mode_per, _dir_mode_per) */
     sim_mode_per_t mode_per[SIM_MODE_PER_MAX]; /* empirical per-mode erasure */
     int      mode_per_count;
     bool     fading;          /* time-varying SNR (see sim_channel_set_fading) */
@@ -43,6 +45,14 @@ static double mode_cliff_db(int freedv_mode)
     {
     case FREEDV_MODE_QAM16C2: return 13.0;
     case FREEDV_MODE_DATAC17: return  8.0;
+    /* the 2.0 bandwidth ladders, by what rung_sweep measured against the
+     * modes above: BW2750's 44-carrier rungs 1 dB over their BW2300
+     * versions; BW500's 9-carrier ones 1, 5 and 7 dB over DATAC3 */
+    case FREEDV_MODE_QAM16C2W: return 14.0;
+    case FREEDV_MODE_DATAC17W: return  9.0;
+    case FREEDV_MODE_QAM16N2:  return  7.0;
+    case FREEDV_MODE_QAM16N1:  return  5.0;
+    case FREEDV_MODE_DATAN1:   return  1.0;
     case FREEDV_MODE_DATAC1:  return  5.0;
     case FREEDV_MODE_DATAC3:  return  0.0;
     case FREEDV_MODE_DATAC4:  return -4.0;
@@ -52,6 +62,8 @@ static double mode_cliff_db(int freedv_mode)
     /* BW500's floor: 3 dB below (twice the airtime a bit), sim AWGN 90 %
      * at -14.1 dB against the 1 kHz floor's -11.1 (mfsk_channel_sweep) */
     case MERCURY_MODE_MFSK_N32: return -16.0;
+    case MERCURY_MODE_MFSK_W2:  return -10.0;   /* the floor + 3 dB (twice the rate) */
+    case MERCURY_MODE_PSK3:     return -3.0;    /* 90 % at -3.1 dB carrier S/N (psk_sweep) */
     case SIM_MODE_PATTERN: {  /* ~10 dB below DATAC16 (mfsk-margin) */
         /* SIM_PATTERN_CLIFF: utils/pattern_probe measures the real detector
          * at 50 % near -14.5 dB, -14 with a +25 Hz offset. */
@@ -77,6 +89,7 @@ sim_channel_t *sim_channel_create(const sim_channel_cfg_t *cfg)
     ch->guard_ms = cfg->guard_ms;
     ch->return_cliff_db = NAN;
     ch->ret_mode = -1;
+    ch->ret_dir  = 1;
     return ch;
 }
 
@@ -125,15 +138,21 @@ void sim_channel_set_return_snr(sim_channel_t *ch, double snr_db)
  * per-mode PER. */
 void sim_channel_set_return_mode_per(sim_channel_t *ch, int freedv_mode, double per)
 {
+    sim_channel_set_dir_mode_per(ch, 1, freedv_mode, per);
+}
+
+void sim_channel_set_dir_mode_per(sim_channel_t *ch, int dir, int freedv_mode, double per)
+{
     if (!ch) return;
+    ch->ret_dir = dir & 1;
     ch->ret_mode = freedv_mode;
     ch->ret_per = per;
 }
 
-/* At least the return path's share for its mode (sim_channel_set_return_mode_per). */
+/* At least that direction's share for its mode (sim_channel_set_dir_mode_per). */
 static double return_per(const sim_channel_t *ch, int dir, int freedv_mode, double per)
 {
-    return (dir & 1) && freedv_mode == ch->ret_mode && per < ch->ret_per ? ch->ret_per : per;
+    return (dir & 1) == ch->ret_dir && freedv_mode == ch->ret_mode && per < ch->ret_per ? ch->ret_per : per;
 }
 
 static bool below_return(const sim_channel_t *ch, int dir, int freedv_mode)

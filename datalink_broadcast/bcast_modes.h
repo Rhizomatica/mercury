@@ -117,7 +117,7 @@ static inline unsigned bcast_syms_per_frame(size_t frame_size, size_t T)
  * DATAC1, DATAC3, DATAC0, DATAC4, DATAC13, DATAC14,
  * FSK_LDPC, DATAC15, DATAC16, DATAC17, QAM16C2. */
 static const uint32_t bcast_frame_size[BCAST_MODE_MAX + 1] = {
-    510, 126, 14, 54, 14, 3, 30, 30, 14, 1180, 1213
+    510, 126, 14, 54, 14, 3, 30, 30, 14, 1184, 1183
 };
 
 /* Names as `mercury -l` and hermes-broadcast use them, in the same order as

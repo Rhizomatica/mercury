@@ -24,6 +24,7 @@
 /* Socket compatibility */
 #define SOCK_CLOSE(fd) closesocket(fd)
 #define SOCK_SHUTDOWN(fd) shutdown(fd, SD_BOTH)
+#define SOCK_SHUTDOWN_WR(fd) shutdown(fd, SD_SEND)
 #define SOCK_IOCTL(fd, cmd, argp) ioctlsocket((SOCKET)(fd), (long)(cmd), (u_long*)(argp))
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
@@ -94,6 +95,7 @@ static inline int sock_errno(void) { return WSAGetLastError(); }
 #define SOCK_EWOULDBLOCK WSAEWOULDBLOCK
 #define SOCK_EINTR       WSAEINTR
 #define SOCK_ESHUTDOWN   WSAESHUTDOWN   /* recv() after our own shutdown() */
+#define SOCK_ECONNRESET  WSAECONNRESET  /* the client closed with a reset (10054) */
 
 #ifdef __cplusplus
 extern "C" {
@@ -157,6 +159,7 @@ int COND_SIGNAL(HANDLE *mqh_wait);
 /* Socket compatibility */
 #define SOCK_CLOSE(fd) close(fd)
 #define SOCK_SHUTDOWN(fd) shutdown(fd, SHUT_RDWR)
+#define SOCK_SHUTDOWN_WR(fd) shutdown(fd, SHUT_WR)
 #define SOCK_IOCTL(fd, cmd, argp) ioctl((fd), (unsigned long)(cmd), (argp))
 
 static inline int sock_set_nonblocking(int fd)
@@ -171,6 +174,7 @@ static inline int sock_errno(void) { return errno; }
 #define SOCK_EWOULDBLOCK EWOULDBLOCK
 #define SOCK_EINTR       EINTR
 #define SOCK_ESHUTDOWN   ESHUTDOWN
+#define SOCK_ECONNRESET  ECONNRESET
 
 #define MUTEX_LOCK(x)   pthread_mutex_lock(x)
 #define MUTEX_UNLOCK(x) pthread_mutex_unlock(x)

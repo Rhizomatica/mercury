@@ -1786,6 +1786,10 @@ func main() {
 		saveWindowGeometry(myWindow, myApp.Preferences())
 		shutdownOnce.Do(func() {
 			go func() {
+				// A session up is ended on the air first (up to 40 s, the
+				// window already closed); the 5 s watchdog below is for the
+				// teardown's joins and must not count it.
+				mercuryGoodbye()
 				go func() {
 					time.Sleep(5 * time.Second)
 					os.Exit(0)

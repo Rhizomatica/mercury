@@ -292,22 +292,53 @@ static void explore_sensing(int k)
  * heard, and it must go back to the rung it has an answer on (m_decide_recv)
  * instead of keying the unconfirmed one again.  Frames 0, 3 and 6 of the
  * 600-byte bidirectional session on cliff:-5 reach that branch; the indices
- * hold only for that size. */
+ * hold only for that size, and on the BW500 ladder: its rung above the floor
+ * is DATAC15, as BW2300's was.  BW2300's is now the 2 kHz MFSK, and no set
+ * of three frames up to 24 reaches the branch there (cliff:-5, -3, 0, 3). */
 static void oct27_recv_fallback(void)
 {
 #if CAR_SIM_BYTES == 600
     static const int idx[] = { 0, 3, 6 };    /* kept by carousel_sim_force_losses */
     car_sim_result_t r;
     carousel_sim_force_losses(idx, 3);
+    setenv("CAR_BW", "500", 1);
     carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &r);
+    unsetenv("CAR_BW");
     runs++;
     if (!r.intact || !r.done_ms || r.recv_fallbacks < 1) {
         failures++;
-        printf("FAIL oct27: cliff:-5 bidir lost {0,3,6}: intact=%d done=%llu recv_fallbacks=%d (want >= 1)\n",
+        printf("FAIL oct27: BW500 cliff:-5 bidir lost {0,3,6}: intact=%d done=%llu recv_fallbacks=%d (want >= 1)\n",
                r.intact, (unsigned long long)r.done_ms, r.recv_fallbacks);
         printf("  If the frame order changed and the fall-back still works, pick a new set: run\n"
-               "  CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 test_car_explore replay 1 <i> <j> <k> on sets from\n"
+               "  CAR_BW=500 CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 test_car_explore replay 1 <i> <j> <k> on sets from\n"
                "  `test_car_explore 1 3` until \"back to\" follows \"turn: mine\" at once; use it above.\n");
+    }
+#endif
+}
+
+/* #529: the cap on blind floor rounds after an unconfirmed fall-back
+ * (FLOOR_SILENT_FB).  cliff:-5 bidir with frames 2 to 9 lost (one block,
+ * deeper than the explorer's k<=3) takes the caller through an unconfirmed
+ * fall-back onto the floor: at FLOOR_SILENT_FB 1 it keeps going on one
+ * silent floor round, then asks; built with -DFLOOR_SILENT_FB=6 it keeps
+ * going on two and does not ask (same finish, 435.1 s).  So this pins the
+ * shipped cap.  It counts the blind rounds, not the time.  If the session
+ * changes shape, pick another block that reaches the cap with
+ * CAR_EXPLORE_CHAN=cliff:-5 CAR_TRACE=1 test_car_explore replay 1 <frames...>
+ * (look for "continuing" then "asking"), built both ways. */
+static void five29fb_cap(void)
+{
+#if CAR_SIM_BYTES == 600
+    static const int idx[] = { 2, 3, 4, 5, 6, 7, 8, 9 };   /* kept by carousel_sim_force_losses */
+    car_sim_result_t r;
+    carousel_sim_force_losses(idx, 8);
+    carousel_sim_run(1, "cliff:-5", true, LIMIT_MS, &r);
+    carousel_sim_force_losses(NULL, -1);
+    runs++;
+    if (!r.intact || !r.done_ms || r.floor_blind != 1) {
+        failures++;
+        printf("FAIL five29fb: intact=%d done=%llu, blind floor rounds %d (want intact, 1)\n",
+               r.intact, (unsigned long long)r.done_ms, r.floor_blind);
     }
 #endif
 }
@@ -316,6 +347,7 @@ int main(int argc, char **argv)
 {
     if (argc == 1) {
         oct27_recv_fallback();
+        five29fb_cap();
         explore_losses(-1, 3);
         explore_sensing(3);
         explore_spurious(1);
@@ -352,6 +384,11 @@ int main(int argc, char **argv)
     }
     if (!strcmp(argv[1], "oct27")) {
         oct27_recv_fallback();
+        printf("%s\n", failures ? "FAILED" : "ok");
+        return failures != 0;
+    }
+    if (!strcmp(argv[1], "five29fb")) {
+        five29fb_cap();
         printf("%s\n", failures ? "FAILED" : "ok");
         return failures != 0;
     }

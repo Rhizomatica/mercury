@@ -1,0 +1,123 @@
+# Winlink gateways with Mercury
+
+Mercury speaks the VARA TNC protocol (control on port 8300, data on 8301, see
+[TNC.md](TNC.md)), so Winlink software that drives VARA HF can drive Mercury.
+Several gateways run Mercury today. This page collects what their sysops and
+users found out, in issues #527 and #554 (November 2026).
+
+Winlink has no Mercury mode of its own yet. A Mercury gateway is listed as a
+**VARA** channel, and the service code **`MERCURY`** is what tells users it
+runs Mercury, not VARA.
+
+Over the air, a Mercury gateway works like a VARA HF one: the client calls the
+gateway, Mercury opens an ARQ connection, and the Winlink software exchanges
+messages through Mercury's data port, as it would through VARA's. Both ends must
+run Mercury: a Mercury gateway cannot connect to a client running VARA, nor the
+reverse. On the client side, use the VARA HF session type (Winlink Express) or
+transport (Pat), with Mercury running in VARA's place.
+
+## Finding Mercury gateways
+
+- **Winlink map** (https://winlink.org/RMSChannels): select **VARA** and enter
+  service code **`MERCURY`**.
+- **Pat**: `pat rmslist` only lists `PUBLIC` gateways by default. Add
+  `MERCURY` to `service_codes` in Pat's `config.json`:
+
+  ```json
+  "service_codes": ["PUBLIC", "MERCURY"]
+  ```
+
+  Then connect with Pat's VARA HF transport, pointed at Mercury's TNC ports.
+- **DigiPi** searches `PUBLIC` and `MERCURY`, so Mercury gateways appear when
+  VARA HF is selected, with no change needed.
+- **Winlink Express** takes several service codes, separated by spaces:
+  `PUBLIC MERCURY` lists `PUBLIC` and Mercury gateways together.
+
+## Running a gateway with RMS Trimode (Windows)
+
+RMS Trimode starts the VARA program it was set up with. When it cannot find
+that program, it asks for it, and it accepts Mercury instead. This way Mercury
+stays where its installer put it (found by YO4CIL, in #563):
+
+1. In Trimode, set up VARA as usual (for example `C:\VARA\VARA.exe`), then
+   close Trimode.
+2. Rename `C:\VARA\VARA.exe` to `VARA_original.exe`.
+3. Open Trimode again. It does not find `VARA.exe` and asks where the VARA
+   program is. Select `C:\Program Files\MercuryHF\mercury-ui.exe` and press
+   **Open**.
+
+Trimode then starts Mercury, and its VARA line shows the gateway listening. To
+go back to VARA, rename `VARA_original.exe` to `VARA.exe` and point Trimode at
+it again.
+
+An earlier workaround also works, but mixes Mercury's files with VARA's: copy
+all of Mercury's files into the VARA folder, rename `VARA.exe` to
+`VARA_original.exe`, and rename `mercury-ui.exe` to `VARA.exe`.
+
+### Channel settings
+
+- **Use one channel entry, with VARA and ARDOP both enabled on it.** An RMS
+  gateway dwells 4 s on each channel entry: VARA's command reference says so
+  for `WINLINK SESSION`, whose connect retries follow "a 4.0 seconds cycle,
+  necessary to connect with the RMS Gateways (dwell time 4 s)". In the setup
+  we saw, Trimode was also deaf for 500 ms while switching. A Mercury call
+  frame is 3.74 s long, and later calls are longer, so with more than one
+  entry most calls are missed. This is being worked on in #527.
+- **Service code `MERCURY`.** Trimode takes one service code per channel:
+  `PUBLIC MERCURY` does not work. The code applies to everything on that
+  channel, so ARDOP on the same entry is listed under `MERCURY` too, and
+  clients that search only `PUBLIC` do not see it.
+
+### Several Trimode instances
+
+To list Mercury under `MERCURY` and ARDOP under `PUBLIC`, run one copy of
+Trimode per mode on one radio. All the modems then listen at the same time,
+instead of taking turns. YO4CIL runs it this way (#554), with three copies on
+the same frequency:
+
+| Copy | Modem                  | Callsign | Service code |
+|------|------------------------|----------|--------------|
+| 1    | xara (VARA-compatible) | YO4CIL-1 | `XARA`       |
+| 2    | Mercury                | YO4CIL-2 | `MERCURY`    |
+| 3    | ARDOP                  | YO4CIL-3 | `PUBLIC`     |
+
+Each copy enables one mode only, and gets its own SSID and service code in
+**Setup Channels to scan**, so the Winlink map shows each mode under its own
+code. Each modem also needs its own TCP ports: Mercury's are 8300/8301, ARDOP's
+8200/8201, and a second VARA-compatible modem must use others (xara uses
+8320/8321 there). All three share the radio's USB audio device.
+
+Mercury opens its PTT serial port when it starts and keeps it open, with
+exclusive access on Windows (`radio_io/serial_ptt.c`), so no other program can
+open that port while Mercury runs. Keying several copies with RTS on the same
+COM port did not work in YO4CIL's test. So:
+
+- turn off CAT control in every copy and set the radio to the channel by
+  hand; and
+- use the radio's DATA VOX, so no modem needs a port. This is what works: on
+  YO4CIL's radio, with the VOX delay at its minimum, 30 ms.
+
+Keying each modem through its own port should also work, but has not been
+tried. Some radios give two virtual COM ports on one USB cable; the FTDX10,
+for example, gives "Enhanced" and "Standard".
+
+## Known issues
+
+- **Calls missed by a scanning gateway**: see above and #527.
+- **`WRONG Last cmd=PUBLIC ON` in Trimode's log**: Mercury supports
+  `PUBLIC ON`, so the `WRONG` was the answer to a different command, most
+  likely `CWID ON`. Pat sends `CWID ON` right after `PUBLIC ON` at every VARA
+  HF start, without waiting for the answer. Mercury now accepts `CWID ON` and
+  `CWID OFF` (it sends no CW ID; see [TNC.md](TNC.md#cwid)). If the `WRONG`
+  still shows, Mercury logs every command it rejects as
+  `Command rejected (WRONG): <command>`, which names the cause. The Mercury
+  window writes it to `mercury_engine.log`, in the `logs` folder next to
+  `mercury-ui.exe` on Windows (see also [Logging](ARQ.md#logging)).
+
+## Scanning BBS software (BPQ32, LinBPQ)
+
+BPQ32 drives Mercury through its VARA driver too. The
+[scanning hosts](TNC.md#scanning-hosts-bpq32) section of TNC.md describes how
+Mercury signals an incoming call to a scanning host (`PENDING`,
+`CANCELPENDING`) and how it handles `LISTEN OFF` and disconnects while the
+host scans.

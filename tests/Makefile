@@ -65,14 +65,14 @@ ARQ_CRYPTO_SRC = ../datalink_arq/arq_crypto.c ../common/noise_kk.c
 ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
-TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
-            test_tcp_interfaces test_resampler test_pcm24 test_cap_recover test_arq_sim \
+TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm test_arq_reactor_lock \
+            test_tcp_interfaces test_resampler test_pcm24 test_cap_recover test_play_recover test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_rtp_wire test_hl2_wire test_hl2_dsp test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
-            test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
+            test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port test_net_probe \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
-            test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
+            test_mfsk_harq test_mfsk_modem test_psk_modem test_pattern_ack_detection \
             test_message_store test_ui_history test_ws_protocol \
             test_monitor_frame test_hermes_log test_host test_api_host test_bcast_carousel test_bcast_rx_host
 ifneq ($(strip $(CRYPTO_CFLAGS)),)
@@ -117,6 +117,10 @@ test_hl2_wire: audioio/test_hl2_wire.c $(UNITY_SRC)
 
 # 24-bit packed PCM conversion test (offline, no sound card)
 test_cap_recover: audioio/test_cap_recover.c $(UNITY_SRC) ../audioio/cap_recover.c
+	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+test_play_recover: audioio/test_play_recover.c $(UNITY_SRC) ../audioio/play_recover.c \
+                   ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c
 	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 test_pcm24: audioio/test_pcm24.c $(UNITY_SRC)
@@ -205,6 +209,11 @@ carousel_bound: sim/carousel_bound.c $(CAROUSEL_SIM_SRC)
 carousel_bench: sim/carousel_bench.c $(CAROUSEL_SIM_SRC)
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
+# How long a sender goes on after its receiver has everything (sim/done_tail.c):
+#   ./done_tail 1 50 ctlloss:-9:-3:0.6
+done_tail: sim/done_tail.c $(CAROUSEL_SIM_SRC)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 # Idle sessions at the floor, with patterns: the runs a station went 240 s
 # without hearing its peer (a bench, not run by `make test`):
 #   CAR_CS_DECODABLE=1 CAR_SCRIPT='A30,B30+1800000' ./floor_idle 1 100 cliff:-9:0.2
@@ -272,6 +281,18 @@ test_hermes_log: common/test_hermes_log.c $(UNITY_SRC) ../common/hermes_log.c
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # ARQ→TNC seam test (standalone TU, no threads/bus)
+# #579 regression: the TCP reactor never waits on g_sess_lock while the event
+# loop holds it, blocked on a full RX ring.  Includes arq.c for its statics.
+test_arq_reactor_lock: datalink_arq/test_arq_reactor_lock.c $(UNITY_SRC) ../datalink_arq/arq.c \
+                       ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c \
+                       ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c ../datalink_arq/arith.c \
+                       ../datalink_arq/arq_channels.c ../datalink_arq/arq_trace.c ../datalink_arq/arq_tnc.c \
+                       ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c \
+                       ../common/virtual_clock.c ../common/hermes_log.c ../common/message_store.c \
+                       ../common/chan.c ../common/queue.c ../modem/framer.c ../modem/freedv/libfreedvdata.a \
+                       $(ARQ_CRYPTO_SRC)
+	$(CC) $(CFLAGS) -I../modem/freedv -I.. -o $@ $(filter-out ../datalink_arq/arq.c,$(filter %.c %.a %.o,$^)) $(LDFLAGS)
+
 test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
@@ -381,6 +402,10 @@ test_tx_pacing: modem/test_tx_pacing.c $(UNITY_SRC) ../modem/tx_pacing.h
 test_radio_port: radio_io/test_radio_port.c $(UNITY_SRC) ../radio_io/radio_port.h
 	$(CC) $(CFLAGS) -I../radio_io -o $@ radio_io/test_radio_port.c $(UNITY_SRC) $(LDFLAGS)
 
+# The bounded reachability probe a Hamlib reopen runs first (header-only).
+test_net_probe: radio_io/test_net_probe.c $(UNITY_SRC) ../radio_io/net_probe.h
+	$(CC) $(CFLAGS) -I../radio_io -o $@ radio_io/test_net_probe.c $(UNITY_SRC) $(LDFLAGS)
+
 # Optional CAT telemetry must return its cache immediately while PTT or another
 # timing-sensitive radio operation owns the shared mutex.
 #
@@ -443,6 +468,10 @@ test_mfsk_harq: modem/test_mfsk_harq.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/m
 # MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
 test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC) $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
+
+# PSK modem backend (round trip through the vtable, CRC seed, noise)
+test_psk_modem: modem/test_psk_modem.c $(UNITY_SRC) ../modem/modem_psk.c ../modem/psk/mpsk.c $(FREEDV_LIB)
+	$(CC) $(CFLAGS) -I../modem -I../modem/psk -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # Pattern ACK DSP (mfsk_pattern_tx/detect: noise rejects, real detects)
 test_pattern_ack_detection: modem/test_pattern_ack_detection.c $(UNITY_SRC) \
