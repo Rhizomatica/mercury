@@ -898,6 +898,13 @@ fyne-ui-macos-dmg: fyne-ui-macos
 # wss://.  A single-arch `make fyne-ui-macos` still picks up OpenSSL if the
 # system has it.
 
+# The oldest macOS the universal builds run on: the vendored Hamlib and libusb
+# (radio_io/hamlib-macos) are built for 15.0.  Without a deployment target
+# clang and the linker target the build machine's macOS (a release built on
+# macos-latest needed macOS 26, #622), and fyne writes 10.11 into Info.plist.
+MACOS_MIN ?= 15.0
+macos-universal fyne-ui-macos-universal: export MACOSX_DEPLOYMENT_TARGET = $(MACOS_MIN)
+
 # Universal, self-contained mercury CLI (pure C).
 macos-universal:
 	@for A in x86_64 arm64; do \
@@ -936,7 +943,8 @@ fyne-ui-macos-universal:
 		-name $(MACOS_APP_NAME) -appID $(MACOS_APP_ID) -icon mercury-ui.png \
 		-executable $(abspath mercury-ui)
 	$(PLIST_BUDDY) -c "Add :NSMicrophoneUsageDescription string 'Mercury needs access to the radio audio to listen for data signals'" $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/Info.plist
-	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app  (universal)"
+	plutil -replace LSMinimumSystemVersion -string $(MACOS_MIN) $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/Info.plist
+	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app  (universal, macOS $(MACOS_MIN)+)"
 	@lipo -archs $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/MacOS/* || true
 
 # Universal .app wrapped in a drag-to-install .dmg.  The finished .dmg lands at
@@ -1028,23 +1036,18 @@ MACOS_APPSTORE_IDENTITY  ?=
 MACOS_INSTALLER_IDENTITY ?=
 MACOS_APPSTORE_PROFILE   ?=
 MACOS_BUILD              ?= $(shell echo $(MERCURY_VERSION) | awk -F. '{ print $$1 "." $$2 "." $$3 * 100 }')
-# The oldest macOS it runs on: the vendored Hamlib and libusb
-# (radio_io/hamlib-macos) are built for 15.0.  Without it clang targets the
-# build machine's SDK, and fyne writes 10.11 into Info.plist.
-MACOS_STORE_MIN          ?= 15.0
 MACOS_PKG                ?= $(MACOS_APP_NAME)-$(MERCURY_VERSION).pkg
 MACOS_STORE_STAGE         = $(FYNE_UI_DIR)/appstore-stage
 
 fyne-ui-macos-appstore-pkg:
 	@test -n "$(MACOS_APPSTORE_IDENTITY)" -a -n "$(MACOS_INSTALLER_IDENTITY)" -a -f "$(MACOS_APPSTORE_PROFILE)" || { \
 		echo "error: needs MACOS_APPSTORE_IDENTITY, MACOS_INSTALLER_IDENTITY and MACOS_APPSTORE_PROFILE"; exit 1; }
-	MACOSX_DEPLOYMENT_TARGET=$(MACOS_STORE_MIN) $(MAKE) fyne-ui-macos-universal
+	$(MAKE) fyne-ui-macos-universal
 	rm -rf $(MACOS_STORE_STAGE) && mkdir -p $(MACOS_STORE_STAGE)
 	cp -R $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(MACOS_STORE_STAGE)/
 	P=$(MACOS_STORE_STAGE)/$(MACOS_APP_NAME).app/Contents/Info.plist; \
 	plutil -replace CFBundleShortVersionString -string $(MERCURY_VERSION) $$P && \
 	plutil -replace CFBundleVersion -string $(MACOS_BUILD) $$P && \
-	plutil -replace LSMinimumSystemVersion -string $(MACOS_STORE_MIN) $$P && \
 	plutil -replace LSApplicationCategoryType -string public.app-category.utilities $$P && \
 	plutil -replace ITSAppUsesNonExemptEncryption -bool NO $$P
 	# Readable by all: a profile kept 0600 with the other secrets is refused at
