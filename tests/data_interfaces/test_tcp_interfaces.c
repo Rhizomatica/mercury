@@ -663,12 +663,12 @@ void test_cmd_cwid_bad_arg_is_wrong(void)
 
 /* Case-sensitive like every other command: "cwid on" was WRONG while
  * "CWID on" was OK. */
-void test_cmd_cwid_lower_case_arg_is_wrong(void)
+void test_cmd_cwid_lower_case_arg_is_ok(void)
 {
     char cmd[] = "CWID on";
     execute_control_command(cmd);
 
-    assert_wrong_response();
+    assert_ok_response();
 }
 
 /* ---- Callsigns that can go on the air (arith.c's alphabet) */
@@ -798,6 +798,17 @@ void test_cmd_mycall_secondary_any_characters(void)
 void test_cmd_mycall_needs_a_word_boundary(void)
 {
     char cmd[] = "MYCALLTEST1";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* A primary longer than 15 characters used to be cut to 15, which named a
+ * different station; it is WRONG now. */
+void test_cmd_mycall_over_15_is_wrong(void)
+{
+    char cmd[] = "MYCALL ABCDEFGHIJKLMNOP";
     execute_control_command(cmd);
 
     assert_wrong_response();
@@ -945,6 +956,35 @@ void test_cmd_drivelevel(void)
     TEST_ASSERT_EQUAL_FLOAT(-10.0f, mock_drive_db);
 
     TEST_ASSERT_EQUAL(2, mock_tune_set_level_calls);
+    TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* XARA rounds first, then checks [-30, 0]: a fractional value at the edge
+ * is taken when it rounds into the range, where the check-before-rounding
+ * order refused it. */
+void test_cmd_drivelevel_rounds_before_range(void)
+{
+    char a[] = "DRIVELEVEL -30.4";
+    execute_control_command(a);
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_FLOAT(-30.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-30.0f, mock_drive_db);
+
+    tcp_write_call_count = 0;
+    char b[] = "DRIVELEVEL 0.4";
+    execute_control_command(b);
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, mock_drive_db);
+
+    tcp_write_call_count = 0;
+    char c[] = "DRIVELEVEL -0.4";
+    execute_control_command(c);
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_FLOAT(-0.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-0.0f, mock_drive_db);
+
     TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }
@@ -1541,6 +1581,52 @@ void test_cmd_p2p(void)
     execute_control_command(cmd);
 
     assert_ok_response();
+}
+
+/* A command name needs a word boundary after it, for the rest of the parser
+ * too: these used to be read as their head command ("ABORTX" aborted a live
+ * session). */
+void test_cmd_word_boundary_for_the_rest(void)
+{
+    static const char *lines[] = {
+        "ABORTX", "ABORT SESSION", "DISCONNECTX", "DISCONNECT NOW",
+        "VERSIONX", "VERSION 1", "BUFFERX", "BUFFER NOW", "SNX", "BITRATEX",
+        "P2PX", "COMPRESSIONX", "IGNOREKISSDCDX", "BUSYDETECTX", "TUNEX",
+        "MODEX", "BEACONMODEX", "BWF", "CALLINTX", "RETRIESX",
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", lines[i]);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("WRONG\r", (char *)last_tcp_write_buf, 6, lines[i]);
+    }
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* Words after a valid argument used to be ignored by positional sscanf. */
+void test_cmd_extra_words_after_a_valid_command(void)
+{
+    static const char *lines[] = {
+        "MONITOR ON junk", "TUNE OFF junk", "TUNE -5x", "BW500x",
+        "MODE 7 junk", "BEACONMODE 8 junk", "BUSYDETECT ON junk",
+        "BUSYRESEED OFF junk", "LISTEN OFF junk", "PUBLIC ON junk",
+        "CHAT OFF junk", "CWID ON junk",
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", lines[i]);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("WRONG\r", (char *)last_tcp_write_buf, 6, lines[i]);
+    }
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+    TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
+    TEST_ASSERT_EQUAL(0, mock_tune_stop_calls);
 }
 
 void test_cmd_unknown(void)
@@ -2910,7 +2996,7 @@ int main(void)
     RUN_TEST(test_cmd_winlink_session);
     RUN_TEST(test_cmd_cwid_on_off);
     RUN_TEST(test_cmd_cwid_bad_arg_is_wrong);
-    RUN_TEST(test_cmd_cwid_lower_case_arg_is_wrong);
+    RUN_TEST(test_cmd_cwid_lower_case_arg_is_ok);
     RUN_TEST(test_callsign_encodable);
     RUN_TEST(test_cmd_mycall_uncodable_primary_still_ok);
     RUN_TEST(test_cmd_connect_after_uncodable_mycall);
@@ -2919,6 +3005,7 @@ int main(void)
     RUN_TEST(test_vb_val_number);
     RUN_TEST(test_cmd_mycall_secondary_any_characters);
     RUN_TEST(test_cmd_mycall_needs_a_word_boundary);
+    RUN_TEST(test_cmd_mycall_over_15_is_wrong);
     RUN_TEST(test_cmd_connect_with_ssids);
     RUN_TEST(test_cmd_connect_long_and_unusual_calls);
     RUN_TEST(test_cmd_connect_via_is_wrong);
@@ -2928,6 +3015,7 @@ int main(void)
     RUN_TEST(test_cmd_gateway_bare_is_wrong);
     RUN_TEST(test_cmd_gateway_any_argument);
     RUN_TEST(test_cmd_drivelevel);
+    RUN_TEST(test_cmd_drivelevel_rounds_before_range);
     RUN_TEST(test_cmd_drivelevel_junk_is_ok_and_ignored);
     RUN_TEST(test_cmd_drivelevel_reads_the_leading_number);
     RUN_TEST(test_cmd_drivelevel_bare_is_wrong);
@@ -2975,6 +3063,8 @@ int main(void)
     RUN_TEST(test_cmd_disconnect);
     RUN_TEST(test_cmd_cqframe);
     RUN_TEST(test_cmd_p2p);
+    RUN_TEST(test_cmd_word_boundary_for_the_rest);
+    RUN_TEST(test_cmd_extra_words_after_a_valid_command);
     RUN_TEST(test_cmd_unknown);
     RUN_TEST(test_cmd_submit_failure);
     RUN_TEST(test_cmd_abort);

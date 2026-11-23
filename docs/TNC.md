@@ -57,6 +57,12 @@ took over.)
 
 All control commands and responses are **CR-terminated ASCII** (`\r`).
 
+Command names are matched as **whole words**: `ABORTX` is not `ABORT`, and
+`MONITORING` is not `MONITOR`.  Extra words where a command takes none, or a
+word after its last argument, are `WRONG` (`ABORT SESSION`, `DISCONNECT
+NOW`, `MONITOR ON junk`); the VARA no-ops `COMPRESSION` and
+`IGNOREKISSDCD`, and `GATEWAY`, take whatever follows without checking it.
+
 ---
 
 ## Commands (Client → Mercury)
@@ -88,7 +94,9 @@ Must be set before `LISTEN ON` or `CONNECT`.
 
 The primary callsign is what this station's `CALL` frames carry, coded over
 the letters `A`–`Z` (either case), the digits and `-`, in at most 14
-characters.  A primary outside that is still taken (`OK`): the station can
+characters.  A primary of more than 15 characters is `WRONG`: it used to be
+cut short, which named a different station.  Up to 15, a primary outside
+the CALL's alphabet is still taken (`OK`): the station can
 answer calls, since an `ACCEPT` carries only CRC16s of the callsigns, but it
 cannot make them: Mercury logs a warning saying so, and every `CONNECT`
 after it answers `WRONG` until a `MYCALL` gives a primary a `CALL` can
@@ -123,7 +131,7 @@ CALL frames addressed to the local callsign (or any callsign if PUBLIC is ON).
 
 `LISTEN CQ` is treated as `LISTEN ON` (VARA compatibility).  Any other
 argument is `WRONG`: the argument is compared as a whole word, in upper case,
-as it is for `PUBLIC`, `CHAT` and `CWID`.
+as it is for `PUBLIC` and `CHAT` (`CWID` takes either case).
 
 ---
 
@@ -271,19 +279,16 @@ backlog to be sent.
 
 ### CWID
 
-Accepted for VARA client compatibility.  Mercury sends no CW ID and no
-periodic ID.  A CALL or CQ carries the sending station's callsign; other
-frames don't.  Identifying the station as your licence requires is up to the
-operator or the host program.
+Accepted for VARA client compatibility.
 
 ```
 CWID ON\r
 CWID OFF\r
 ```
 
-**Response:** `OK\r` for `ON` or `OFF`, `WRONG\r` otherwise.  `CWID ON` logs
-an info line that no CW ID is sent.  Pat sends `CWID ON` at every VARA HF
-start.
+**Response:** `OK\r` for `ON` or `OFF`, `WRONG\r` otherwise; the argument is
+matched in either case.  `CWID ON` logs an info line that no CW ID is sent.
+Pat sends `CWID ON` at every VARA HF start.
 
 Mercury sends no CW ID and no periodic ID.  A `CALL` or `CQ` frame carries
 the sending station's callsign; other frames do not (an `ACCEPT` carries only
@@ -320,9 +325,9 @@ DRIVELEVEL <-dB>\r
 **Response:** `OK\r` whatever the argument, as VARA does; `WRONG\r` for a
 bare `DRIVELEVEL` with no space after it.  The number is read the way
 VARA's `Val()` reads it: blanks are skipped and reading stops at the first
-other character (`-5dB` is -5).  A number from `-30` to `0` sets the level,
-rounded to a whole dB (`-9.5` gives `-10`); anything else is logged and
-leaves the level as it was.
+other character (`-5dB` is -5).  The number is rounded to a whole dB first
+(`-9.5` gives `-10`), and a value from `-30` to `0` then sets the level;
+anything else is logged and leaves the level as it was.
 
 The [tuning carrier](#tune) takes the level as its dBFS: `TUNE ?` reports it
 and a carrier already on changes to it.  Data frames take it as attenuation

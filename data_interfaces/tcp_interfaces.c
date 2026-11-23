@@ -500,6 +500,19 @@ static int split_words(const char *line, char words[][ARQ_EVENT_TEXT_MAX])
     }
 }
 
+/* A single base-10 whole word parsed into OUT; false on an empty or
+ * non-numeric word (a trailing "x" or a second word is a mismatch, not a
+ * number: positional sscanf stopped at the digits and ignored the rest). */
+static bool single_int_word(const char *word, long *out)
+{
+    char *end = NULL;
+    long v = strtol(word, &end, 10);
+    if (end == word || *end != '\0')
+        return false;
+    *out = v;
+    return true;
+}
+
 /* Can CALL go on the air as the SENDING station's callsign?  A CALL and a
  * CQ carry it arithmetic-coded over an alphabet of A-Z, 0-9 and '-' (arith.c;
  * lower case is folded first); any other character fails to encode.  The
@@ -623,6 +636,16 @@ static void execute_control_command(char *buffer)
             reply_wrong(received);
             return;
         }
+        /* A primary longer than 15 characters used to be cut short, which
+         * named a different station; it is WRONG now, as it is for CONNECT
+         * and CQFRAME.  Up to 15 it is taken whole. */
+        if (strlen(tok) > CALLSIGN_MAX_SIZE - 1)
+        {
+            HLOGW("tcp-ctl", "MYCALL %s: a callsign may be at most %d characters",
+                  tok, CALLSIGN_MAX_SIZE - 1);
+            reply_wrong(received);
+            return;
+        }
         /* The primary is what this station's CALLs carry.  One that cannot be
          * coded still answers calls (an ACCEPT carries only CRC16s), so it is
          * taken as before, but the log says why its own calls will fail. */
@@ -722,37 +745,33 @@ static void execute_control_command(char *buffer)
     }
 
     /* Match "MONITOR" exactly, or "MONITOR <arg>" -- not any command whose
-     * name merely starts with it ("MONITORING" must not be caught here). */
-    if (!strncmp(buffer, "MONITOR", 7) && (buffer[7] == '\0' || buffer[7] == ' '))
+     * name merely starts with it ("MONITORING" must not be caught here).
+     * The argument is one whole word, case-insensitive, and nothing may
+     * follow it: "MONITOR ON junk" used to be taken as ON. */
+    if (command_args(buffer, "MONITOR"))
     {
         /* VARA-style passive monitor: decode every mode and report each frame.
          * MONITOR ON / MONITOR OFF toggle it; MONITOR alone reports the state.
          * The mode is read-only with respect to the link -- the monitor
          * decoders never feed the ARQ FSM, so nothing is ACKed or keyed. */
-        char arg[16] = {0};
-        if (sscanf(buffer + 7, " %15s", arg) == 1)
-        {
-            /* Case-insensitive whole-word match, not the second letter. */
-            if (!strcasecmp(arg, "ON"))
-            {
-                modem_set_monitor_enabled(true);
-                tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
-            }
-            else if (!strcasecmp(arg, "OFF"))
-            {
-                modem_set_monitor_enabled(false);
-                tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
-            }
-            else
-            {
-                reply_wrong(received);
-            }
-        }
-        else
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        int n = split_words(buffer, words);
+        if (n == 1)
         {
             bool on = modem_get_monitor_enabled();
             tcp_write(CTL_TCP_PORT, (uint8_t *)(on ? "MONITOR ON\r" : "MONITOR OFF\r"),
                       on ? 11 : 12);
+        }
+        else if (n == 2 &&
+                 (!strcasecmp(words[1], "ON") || !strcasecmp(words[1], "OFF")))
+        {
+            /* Case-insensitive whole-word match, not the second letter. */
+            modem_set_monitor_enabled(!strcasecmp(words[1], "ON"));
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        }
+        else
+        {
+            reply_wrong(received);
         }
         return;
     }
@@ -772,28 +791,26 @@ static void execute_control_command(char *buffer)
         };
         for (size_t k = 0; k < sizeof(busy_switches) / sizeof(busy_switches[0]); k++)
         {
-            size_t len = strlen(busy_switches[k].name);
-            if (strncmp(buffer, busy_switches[k].name, len) ||
-                (buffer[len] != '\0' && buffer[len] != ' '))
+            const char *busy_args = command_args(buffer, busy_switches[k].name);
+            if (!busy_args)
                 continue;
-            char arg[16] = {0};
-            if (sscanf(buffer + len, " %15s", arg) == 1)
+            char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+            int n = split_words(buffer, words);
+            if (n == 2 &&
+                (!strcasecmp(words[1], "ON") || !strcasecmp(words[1], "OFF")))
             {
-                if (!strcasecmp(arg, "ON") || !strcasecmp(arg, "OFF"))
-                {
-                    busy_switches[k].set(!strcasecmp(arg, "ON"));
-                    tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
-                }
-                else
-                    reply_wrong(received);
+                busy_switches[k].set(!strcasecmp(words[1], "ON"));
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
             }
-            else
+            else if (n == 1)
             {
                 char reply[32];
-                int n = snprintf(reply, sizeof(reply), "%s %s\r", busy_switches[k].name,
-                                 busy_switches[k].get() ? "ON" : "OFF");
-                tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)n);
+                int rn = snprintf(reply, sizeof(reply), "%s %s\r", busy_switches[k].name,
+                                  busy_switches[k].get() ? "ON" : "OFF");
+                tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)rn);
             }
+            else
+                reply_wrong(received);
             return;
         }
     }
@@ -819,9 +836,11 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "COMPRESSION", strlen("COMPRESSION")))
+    if (command_args(buffer, "COMPRESSION"))
     {
-        /* Compatibility no-op: VARA-style clients expect this command. */
+        /* Compatibility no-op: VARA-style clients expect this command, with
+         * any argument (BPQ32 sends "COMPRESSION 1").  "COMPRESSIONX" is not
+         * the command. */
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
@@ -854,18 +873,26 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "BW", strlen("BW")))
+    /* BW<Hz> with nothing after the number ("BW500").  "BWF" was already
+     * WRONG, but "BW500x" was silently taken as 500. */
+    if (!strncmp(buffer, "BW", 2))
     {
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_BANDWIDTH;
-        if (sscanf(buffer, "BW%d", &cmd.value) == 1 &&
-            (cmd.value == ARQ_BANDWIDTH_NARROW_HZ ||
-             cmd.value == ARQ_BANDWIDTH_FULL_HZ ||
-             cmd.value == ARQ_BANDWIDTH_TACTICAL_HZ) &&
-            arq_submit_tcp_cmd(&cmd) == 0)
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
-        else
-            reply_wrong(received);
+        char *end = NULL;
+        long bw = strtol(buffer + 2, &end, 10);
+        if (end != buffer + 2 && *end == '\0' &&
+            (bw == ARQ_BANDWIDTH_NARROW_HZ || bw == ARQ_BANDWIDTH_FULL_HZ ||
+             bw == ARQ_BANDWIDTH_TACTICAL_HZ))
+        {
+            cmd.value = (int)bw;
+            if (arq_submit_tcp_cmd(&cmd) == 0)
+            {
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+                return;
+            }
+        }
+        reply_wrong(received);
         return;
     }
 
@@ -893,11 +920,13 @@ static void execute_control_command(char *buffer)
      * (the beacon: PACKET_TYPE_STATION, sent with CMD_MODEM_FRAME) go on,
      * instead of the listen mode: 8 (DATAC16, the default) or any index MODE
      * accepts; -1 sends them at the listen mode.  BEACONMODE alone reports it. */
-    if (!strncmp(buffer, "BEACONMODE", strlen("BEACONMODE")))
+    if (command_args(buffer, "BEACONMODE"))
     {
-        int idx = -2;
         int count = mercury_cli_mode_count();
-        if (sscanf(buffer, "BEACONMODE %d", &idx) == 1)
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        int n = split_words(buffer, words);
+        long idx = -2;
+        if (n == 2 && single_int_word(words[1], &idx))
         {
             int mode = idx >= 0 && idx < count ? freedv_modes[idx] : -1;
             if (idx == -1 ||
@@ -909,27 +938,31 @@ static void execute_control_command(char *buffer)
             else
                 reply_wrong(received);
         }
-        else
+        else if (n == 1)
         {
             int mode = atomic_load(&bcast_beacon_mode);
             char reply[64];
-            int n = snprintf(reply, sizeof(reply), "BEACONMODE -1 LISTEN\r");
+            int rn = snprintf(reply, sizeof(reply), "BEACONMODE -1 LISTEN\r");
             for (int i = 0; mode >= 0 && i < count; i++)
                 if (freedv_modes[i] == mode)
                 {
-                    n = snprintf(reply, sizeof(reply), "BEACONMODE %d %s\r",
-                                 i, freedv_mode_names[i]);
+                    rn = snprintf(reply, sizeof(reply), "BEACONMODE %d %s\r",
+                                  i, freedv_mode_names[i]);
                     break;
                 }
-            tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)n);
+            tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)rn);
         }
+        else
+            reply_wrong(received);
         return;
     }
 
-    if (!strncmp(buffer, "MODE", strlen("MODE")))
+    if (command_args(buffer, "MODE"))
     {
-        int idx = -1;
-        if (sscanf(buffer, "MODE %d", &idx) == 1)
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        int n = split_words(buffer, words);
+        long idx = -1;
+        if (n == 2 && single_int_word(words[1], &idx))
         {
             int count = mercury_cli_mode_count();
             int rc = (idx >= 0 && idx < count)
@@ -942,23 +975,25 @@ static void execute_control_command(char *buffer)
             else
                 reply_wrong(received);
         }
-        else
+        else if (n == 1)
         {
             /* Report the live mode by index so the answer round-trips as the
              * argument to a later MODE command. */
             int mode = modem_get_listen_mode();
             int count = mercury_cli_mode_count();
             char reply[64];
-            int n = snprintf(reply, sizeof(reply), "MODE -1 UNKNOWN\r");
+            int rn = snprintf(reply, sizeof(reply), "MODE -1 UNKNOWN\r");
             for (int i = 0; i < count; i++)
                 if (freedv_modes[i] == mode)
                 {
-                    n = snprintf(reply, sizeof(reply), "MODE %d %s\r",
-                                 i, freedv_mode_names[i]);
+                    rn = snprintf(reply, sizeof(reply), "MODE %d %s\r",
+                                  i, freedv_mode_names[i]);
                     break;
                 }
-            tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)n);
+            tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)rn);
         }
+        else
+            reply_wrong(received);
         return;
     }
 
@@ -975,8 +1010,14 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "BUFFER", strlen("BUFFER")))
+    if (command_args(buffer, "BUFFER"))
     {
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 1)
+        {
+            reply_wrong(received);
+            return;
+        }
         /* A query is always answered, even with the count of the last BUFFER
          * line: past tnc_send_buffer's "unchanged" filter, which is for the
          * unsolicited reports (#584).  The value is still recorded, so the
@@ -987,8 +1028,14 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "SN", strlen("SN")))
+    if (command_args(buffer, "SN"))
     {
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 1)
+        {
+            reply_wrong(received);
+            return;
+        }
         uint32_t bits = atomic_load_explicit(&last_sn_bits, memory_order_relaxed);
         float snr;
         memcpy(&snr, &bits, sizeof snr);
@@ -996,21 +1043,33 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "BITRATE", strlen("BITRATE")))
+    if (command_args(buffer, "BITRATE"))
     {
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 1)
+        {
+            reply_wrong(received);
+            return;
+        }
         uint32_t sl  = atomic_load_explicit(&last_bitrate_sl, memory_order_relaxed);
         uint32_t bps = atomic_load_explicit(&last_bitrate_bps, memory_order_relaxed);
         tnc_send_bitrate(sl, bps);
         return;
     }
 
-    if (!strncmp(buffer, "P2P", strlen("P2P")))
+    if (command_args(buffer, "P2P"))
     {
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 1)
+        {
+            reply_wrong(received);
+            return;
+        }
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
 
-    if (!strncmp(buffer, "TUNE", strlen("TUNE")))
+    if (command_args(buffer, "TUNE"))
     {
         /* VARA-compatible tuning carrier, so an ATU can find a match:
          *   TUNE -<dB>   key TX and hold a ~1 kHz tone at that drive level
@@ -1018,15 +1077,18 @@ static void execute_control_command(char *buffer)
          *   TUNE OFF     unkey
          * The carrier also stops on its own after modem.c's hard safety
          * deadline — a keyed tone has no protocol underneath it, so a host
-         * that dies or forgets TUNE OFF must not leave the radio keyed. */
-        char arg[16] = {0};
-        if (sscanf(buffer, "TUNE %15s", arg) != 1)
+         * that dies or forgets TUNE OFF must not leave the radio keyed.
+         * The argument is one whole word: "TUNE OFF junk" and "TUNE -5x"
+         * used to be read as their word's head and are WRONG now. */
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 2)
         {
             reply_wrong(received);
             return;
         }
+        const char *arg = words[1];
 
-        if (!strncasecmp(arg, "OFF", strlen("OFF")))
+        if (!strcasecmp(arg, "OFF"))
         {
             modem_tune_stop();
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
@@ -1036,14 +1098,16 @@ static void execute_control_command(char *buffer)
         if (arg[0] == '?')
         {
             char reply[32];
-            int n = snprintf(reply, sizeof(reply), "TUNE %g\r",
-                             (double)modem_tune_level_dbfs());
-            tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)n);
+            int rn = snprintf(reply, sizeof(reply), "TUNE %g\r",
+                              (double)modem_tune_level_dbfs());
+            tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)rn);
             return;
         }
 
         float dbfs = 0.0f;
-        if (sscanf(arg, "%f", &dbfs) != 1 || modem_tune_start(dbfs) != 0)
+        char *end = NULL;
+        dbfs = strtof(arg, &end);
+        if (end == arg || *end != '\0' || modem_tune_start(dbfs) != 0)
         {
             reply_wrong(received);
             return;
@@ -1128,8 +1192,16 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
+    if (command_args(buffer, "DISCONNECT"))
     {
+        /* DISCONNECT and nothing after it: "DISCONNECTX" or a word behind
+         * it used to end the session too. */
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 1)
+        {
+            reply_wrong(received);
+            return;
+        }
         uint64_t idle_ms = atomic_load(&tnc_absorb_idle_disconnect_ms);
         if (idle_ms)
         {
@@ -1164,10 +1236,17 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "ABORT", strlen("ABORT")))
+    if (command_args(buffer, "ABORT"))
     {
         /* VARA compatibility: ABORT is a dirty disconnect — clear all
-         * buffers and disconnect immediately without air-side teardown. */
+         * buffers and disconnect immediately without air-side teardown.
+         * ABORT and nothing after it: "ABORTX" used to abort the session. */
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 1)
+        {
+            reply_wrong(received);
+            return;
+        }
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_ABORT;
         if (arq_submit_tcp_cmd(&cmd) == 0)
@@ -1177,8 +1256,14 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "VERSION", strlen("VERSION")))
+    if (command_args(buffer, "VERSION"))
     {
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        if (split_words(buffer, words) != 1)
+        {
+            reply_wrong(received);
+            return;
+        }
         /* VARA compatibility: respond with modem identification, in two
          * lines, for two hosts that want different ones.
          *
@@ -1232,18 +1317,20 @@ static void execute_control_command(char *buffer)
      * start, without waiting for the answer.  Mercury sends no CW ID and no
      * periodic ID: a CALL or CQ carries the sending station's callsign, other
      * frames do not (arq_protocol.h).  Accepted so the host's init does not
-     * fail, and ON says so in the log.  Upper case only, as VARA matches
-     * "CWID ON" exactly (XARA's parser); Pat and BPQ32 send upper case. */
+     * fail, and ON says so in the log.  The argument is matched in either
+     * case, as it was before this change: VARA itself matches "CWID ON"
+     * exactly (XARA's parser), but Pat and BPQ32 send upper case and a
+     * lowercase "cwid on" has no reason to fail the init. */
     if (command_args(buffer, "CWID"))
     {
         char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
         if (split_words(buffer, words) != 2 ||
-            (strcmp(words[1], "ON") && strcmp(words[1], "OFF")))
+            (strcasecmp(words[1], "ON") && strcasecmp(words[1], "OFF")))
         {
             reply_wrong(received);
             return;
         }
-        if (!strcmp(words[1], "ON"))
+        if (!strcasecmp(words[1], "ON"))
             HLOGI("tcp-ctl", "CWID ON: Mercury sends no CW ID");
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
@@ -1264,11 +1351,12 @@ static void execute_control_command(char *buffer)
     }
 
     /* DRIVELEVEL <-dB>: the drive level, without keying.  VARA answers OK
-     * whatever follows, and takes a number in [-30, 0] rounded to a whole dB
-     * (XARA: tune_and_drivelevel_follow_vara); anything else leaves the level
-     * as it was.  The tuning carrier takes it as its dBFS level (TUNE ?
-     * reports it); data frames take it as attenuation below the operator's
-     * TX gain, so a host can lower data power but never raise it. */
+     * whatever follows, and takes the number rounded to a whole dB in
+     * [-30, 0] (XARA: tune_and_drivelevel_follow_vara rounds first, then
+     * checks the range); anything else leaves the level as it was.  The
+     * tuning carrier takes it as its dBFS level (TUNE ? reports it); data
+     * frames take it as attenuation below the operator's TX gain, so a host
+     * can lower data power but never raise it. */
     const char *drive_args = command_args(buffer, "DRIVELEVEL");
     if (drive_args)
     {
@@ -1278,12 +1366,19 @@ static void execute_control_command(char *buffer)
             return;
         }
         double db = 0.0;
-        if (vb_val_number(drive_args, &db) && db >= -30.0 && db <= 0.0)
+        if (vb_val_number(drive_args, &db))
         {
-            modem_tune_set_level_dbfs((float)rint(db));
-            modem_set_drive_db((float)rint(db));
-            HLOGI("tcp-ctl", "DRIVELEVEL %.0f: TUNE carrier at %.0f dBFS, data "
-                  "frames %.0f dB below the TX gain", rint(db), rint(db), -rint(db));
+            double rounded = rint(db);
+            if (rounded >= -30.0 && rounded <= 0.0)
+            {
+                modem_tune_set_level_dbfs((float)rounded);
+                modem_set_drive_db((float)rounded);
+                HLOGI("tcp-ctl", "DRIVELEVEL %.0f: TUNE carrier at %.0f dBFS, data "
+                      "frames %.0f dB below the TX gain", rounded, rounded, -rounded);
+            }
+            else
+                HLOGW("tcp-ctl", "DRIVELEVEL '%s' ignored: want a number from -30 to 0",
+                      drive_args + strspn(drive_args, " \t"));
         }
         else
             HLOGW("tcp-ctl", "DRIVELEVEL '%s' ignored: want a number from -30 to 0",
@@ -1292,9 +1387,10 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "IGNOREKISSDCD", strlen("IGNOREKISSDCD")))
+    if (command_args(buffer, "IGNOREKISSDCD"))
     {
-        /* VARA compatibility no-op. */
+        /* VARA compatibility no-op, with whatever argument (hosts send
+         * "IGNOREKISSDCD ON").  "IGNOREKISSDCDX" is not the command. */
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
