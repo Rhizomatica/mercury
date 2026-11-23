@@ -1763,6 +1763,11 @@ int arq_buffer_bytes_nowait(void)
     return arq_get_tx_backlog_bytes() + arq_fsm_tx_inflight_published();
 }
 
+bool arq_rx_open_nowait(void)
+{
+    return g_initialized && arq_fsm_rx_open_published();
+}
+
 /* g_sess_lock for the TCP reactor: never waits on it for long, since the
  * event loop holds it while it waits on the reactor (above).  Up to ~1 s of
  * tries; false if it stayed busy. */

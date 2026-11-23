@@ -96,6 +96,7 @@ bool arq_is_link_connected(void) { return false; }
 bool arq_call_in_progress(void) { return false; }
 bool arq_link_connected_now(bool *connected) { if (connected) *connected = false; return true; }
 int arq_buffer_bytes_nowait(void) { return mock_snapshot_valid ? mock_snapshot.tx_backlog_bytes : 0; }
+bool arq_rx_open_nowait(void) { return false; }
 static atomic_int discard_stale_rx_calls;
 void arq_discard_stale_rx(void) { discard_stale_rx_calls++; }
 size_t arq_discard_stale_tx(void) { return 0; }
@@ -1209,6 +1210,19 @@ void test_tnc_buffer_report_repeats_unchanged_backlog(void)
     TEST_ASSERT_TRUE(tnc_buffer_report_due(1322, 1322, true, 50900, 900));     /* 50 s */
     TEST_ASSERT_FALSE(tnc_buffer_report_due(1322, 1322, false, 90000, 900));   /* no session */
     TEST_ASSERT_FALSE(tnc_buffer_report_due(0, 0, true, 90000, 900));          /* empty */
+}
+
+/* BPQ32 ends a CMS session after about 130 s with no data and no BUFFER above
+ * 0, also while an upload is only stalled (#392): the pulse goes while the
+ * peer's data is on its way, and in no other case. */
+void test_tnc_buffer_pulse_only_for_a_stalled_inbound(void)
+{
+    TEST_ASSERT_FALSE(tnc_buffer_pulse_due(0, true, true, 50899, 900));        /* 49.999 s */
+    TEST_ASSERT_TRUE(tnc_buffer_pulse_due(0, true, true, 50900, 900));         /* 50 s */
+    TEST_ASSERT_FALSE(tnc_buffer_pulse_due(0, true, false, 90000, 900));       /* nothing arriving */
+    TEST_ASSERT_FALSE(tnc_buffer_pulse_due(0, false, true, 90000, 900));       /* no session */
+    TEST_ASSERT_FALSE(tnc_buffer_pulse_due(5, true, true, 90000, 900));        /* BUFFER already above 0 */
+    TEST_ASSERT_FALSE(tnc_buffer_pulse_due(0, true, true, 800, 900));          /* traffic just now */
 }
 
 /* Winlink Express's P2P inactivity DISCONNECT, 300 s after each write of
@@ -2553,6 +2567,7 @@ int main(void)
     RUN_TEST(test_tnc_send_cancelpending);
     RUN_TEST(test_tnc_send_buffer);
     RUN_TEST(test_tnc_buffer_report_repeats_unchanged_backlog);
+    RUN_TEST(test_tnc_buffer_pulse_only_for_a_stalled_inbound);
     RUN_TEST(test_tnc_send_sn);
     RUN_TEST(test_tnc_send_bitrate);
     RUN_TEST(test_tnc_send_connected);

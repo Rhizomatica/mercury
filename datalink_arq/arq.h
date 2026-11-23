@@ -237,6 +237,9 @@ bool arq_link_connected_now(bool *connected);
 /** @brief BUFFER: the application's queue plus the carousel's unconfirmed
  *         bytes, without the session lock (the TCP reactor's figure). */
 int arq_buffer_bytes_nowait(void);
+/** @brief In a session the host has not ended, the peer's data is still on
+ *         its way to us; without the session lock (the TCP reactor). */
+bool arq_rx_open_nowait(void);
 /** A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED,
  *  DISCONNECTING): what stops a broadcast carousel. */
 bool arq_session_active(void);
