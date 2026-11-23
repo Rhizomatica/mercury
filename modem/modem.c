@@ -174,14 +174,18 @@ float modem_get_tx_gain(void)
     return atomic_load(&g_tx_gain);
 }
 
-/* Host DRIVELEVEL: attenuation on top of the operator's TX gain, so a host
- * can lower the drive but never raise it past what the operator set. */
+/* Host DRIVELEVEL: attenuation, MODEM_DRIVE_MIN_DB..0 dB, on everything the
+ * modem keys -- data frames below the operator's TX gain, the tuning carrier
+ * below the level TUNE set -- so a host can lower the drive but never raise
+ * it past what the operator set.  Not saved: each start is at 0 dB. */
+static _Atomic int   g_drive_milli  = 0;      /* dB * 1000 */
 static _Atomic float g_drive_linear = 1.0f;
 
 int modem_set_drive_db(float db)
 {
     if (!isfinite(db) || db < MODEM_DRIVE_MIN_DB || db > 0.0f)
         return -1;
+    atomic_store(&g_drive_milli, (int)lrintf(db * 1000.0f));
     atomic_store(&g_drive_linear, powf(10.0f, db / 20.0f));
     return 0;
 }
@@ -264,34 +268,13 @@ float modem_tune_level_dbfs(void)
     return (float)atomic_load(&g_tune_dbfs_milli) / 1000.0f;
 }
 
-/* Host DRIVELEVEL as attenuation on the tuning carrier, as on the data path:
- * the carrier goes out at the level TUNE set (default -15 dBFS) plus this
- * value, so DRIVELEVEL 0 leaves the carrier as it is and a host can only
- * lower it, never raise it past what the operator set. */
-#define MODEM_TUNE_DRIVE_MIN_DB (-30.0f)
-static _Atomic int g_tune_drive_milli = 0;   /* dB * 1000, [-30000, 0] */
-
-int modem_tune_set_drive_db(float db)
-{
-    if (!isfinite(db) || db < MODEM_TUNE_DRIVE_MIN_DB || db > 0.0f)
-        return -1;
-    atomic_store(&g_tune_drive_milli, (int)lrintf(db * 1000.0f));
-    HLOGI("tune", "drive attenuation set to %.1f dB", (double)db);
-    return 0;
-}
-
-/* The level the carrier is actually generated at: what TUNE set, lowered by
- * the host's DRIVELEVEL.  tune_thread reads it for every chunk, so a carrier
- * already on follows a change within ~100 ms, and its safety deadline is
- * left alone. */
+/* The level the carrier is generated at: what TUNE set, lowered by the
+ * host's DRIVELEVEL.  tune_thread reads it for every chunk, so a carrier
+ * already on follows a change within ~100 ms. */
 static float modem_tune_effective_dbfs(void)
 {
-    float base = (float)atomic_load(&g_tune_dbfs_milli) / 1000.0f;
-    float drive = (float)atomic_load(&g_tune_drive_milli) / 1000.0f;
-    float eff = base + drive;
-    if (eff < MODEM_TUNE_MIN_DBFS)
-        eff = MODEM_TUNE_MIN_DBFS;
-    return eff;
+    float eff = (float)(atomic_load(&g_tune_dbfs_milli) + atomic_load(&g_drive_milli)) / 1000.0f;
+    return eff < MODEM_TUNE_MIN_DBFS ? MODEM_TUNE_MIN_DBFS : eff;
 }
 
 static void *tune_thread(void *unused)

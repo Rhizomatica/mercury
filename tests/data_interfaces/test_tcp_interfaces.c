@@ -197,16 +197,9 @@ int modem_tune_start(float dbfs)
 void  modem_tune_stop(void)        { mock_tune_stop_calls++; }
 bool  modem_tune_active(void)      { return false; }
 float modem_tune_level_dbfs(void)  { return mock_tune_level_dbfs; }
-static float mock_tune_drive_db = 1.0f;   /* 1.0: never set */
-static int   mock_tune_drive_calls = 0;
-int modem_tune_set_drive_db(float db)
-{
-    mock_tune_drive_calls++;
-    mock_tune_drive_db = db;
-    return 0;
-}
 static float mock_drive_db = 1.0f;      /* 1.0: never set */
-int modem_set_drive_db(float db) { mock_drive_db = db; return 0; }
+static int   mock_drive_calls = 0;
+int modem_set_drive_db(float db) { mock_drive_calls++; mock_drive_db = db; return 0; }
 
 /* ---- modem listen-mode stubs ---- */
 
@@ -444,9 +437,8 @@ void setUp(void)
     mock_tune_start_rc    = 0;
     mock_tune_stop_calls  = 0;
     mock_tune_level_dbfs  = -15.0f;
-    mock_tune_drive_db    = 1.0f;      /* 1.0: never set */
-    mock_tune_drive_calls = 0;
     mock_drive_db         = 1.0f;      /* 1.0: never set */
+    mock_drive_calls      = 0;
     atomic_store(&mycall_cannot_call, false);
 
     /* Listen mode */
@@ -678,7 +670,7 @@ void test_cmd_cwid_lower_case_arg_is_ok(void)
 
 void test_callsign_encodable(void)
 {
-    /* Mercury's rule, wider than VARA's: long names and any SSID pass. */
+    /* Long names and any SSID pass. */
     static const char *good[] = {
         "A", "N0CALL", "kd0abc", "KD0ABCDE", "HERMES-GW-01", "N0CALL-20",
         "N0CALL-100", "PU2UIT-10", "ABCDEFGHIJKLMN",             /* 14 */
@@ -765,28 +757,6 @@ void test_split_words_limits(void)
     TEST_ASSERT_EQUAL_INT(-1, split_words("ABCDEFGHIJKLMNOP", w));   /* 16 */
 }
 
-void test_vb_val_number(void)
-{
-    static const struct { const char *s; bool ok; double v; } cases[] = {
-        { "-12", true, -12 }, { "-9.5", true, -9.5 }, { "- 5", true, -5 },
-        { "-5dB", true, -5 }, { "-0x5", true, 0 }, { "-1D1", true, -10 },
-        { "-1e1", true, -10 }, { "-1e", true, -1 }, { ".5", true, 0.5 },
-        { "abc", false, 0 }, { "-", false, 0 }, { "", false, 0 },
-        { "&HFFF6", false, 0 },
-        /* 64 characters: too long to read whole, so no number at all */
-        { "-000000000000000000000000000000000000000000000000000000000000005", false, 0 },
-        /* 63 fit */
-        { "-00000000000000000000000000000000000000000000000000000000000005", true, -5 },
-    };
-    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
-    {
-        double v = 12345;
-        TEST_ASSERT_EQUAL_MESSAGE(cases[i].ok, vb_val_number(cases[i].s, &v), cases[i].s);
-        if (cases[i].ok)
-            TEST_ASSERT_TRUE_MESSAGE(v == cases[i].v, cases[i].s);
-    }
-}
-
 /* Secondaries go on the air only as a CRC16: no alphabet, unchanged. */
 void test_cmd_mycall_secondary_any_characters(void)
 {
@@ -830,7 +800,7 @@ void test_cmd_connect_with_ssids(void)
 }
 
 /* The digipeated form used to be answered OK and connected direct, the path
- * dropped.  VARA HF refuses it, and so does Mercury now. */
+ * dropped.  Mercury has no relay: WRONG. */
 void test_cmd_connect_via_is_wrong(void)
 {
     char one[] = "CONNECT SRC1 DST1 VIA RLY1";
@@ -878,7 +848,7 @@ void test_cmd_connect_rejects_extra_words_and_long_calls(void)
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }
 
-/* The bandwidth stays mandatory (VARA HF refuses a bare CQFRAME <call>),
+/* The bandwidth stays mandatory,
  * and what used to be ignored after it is now WRONG. */
 void test_cmd_cqframe_rejects_malformed(void)
 {
@@ -903,29 +873,11 @@ void test_cmd_cqframe_rejects_malformed(void)
 
 /* ---- GATEWAY and DRIVELEVEL */
 
+/* GATEWAY is a no-op, with any argument or none. */
 void test_cmd_gateway(void)
 {
-    char cmd[] = "GATEWAY N0CALL";
-    execute_control_command(cmd);
-
-    assert_ok_response();
-    TEST_ASSERT_EQUAL(0, captured_cmd_count);
-}
-
-void test_cmd_gateway_bare_is_wrong(void)
-{
-    char cmd[] = "GATEWAY";
-    execute_control_command(cmd);
-
-    assert_wrong_response();
-}
-
-/* VARA HF takes any line starting "GATEWAY ", however long, even a bare
- * space after it: no word limits here. */
-void test_cmd_gateway_any_argument(void)
-{
     static const char *lines[] = {
-        "GATEWAY ", "GATEWAY ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "GATEWAY", "GATEWAY N0CALL", "GATEWAY ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "GATEWAY 1 2 3 4 5 6 7 8 9 10",
     };
     for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
@@ -940,85 +892,36 @@ void test_cmd_gateway_any_argument(void)
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }
 
-/* DRIVELEVEL, as VARA's tune_and_drivelevel behaviour: OK whatever follows;
- * a number in [-30, 0] sets the attenuation rounded to a whole dB (ties to
- * even), anything else leaves it.  Never keys. */
+/* DRIVELEVEL sets the attenuation, rounded to a whole dB, without keying. */
 void test_cmd_drivelevel(void)
 {
-    char a[] = "DRIVELEVEL -12";
-    execute_control_command(a);
-    assert_ok_response();
-    /* Attenuation on the tuning carrier, not its level: the level TUNE set
-     * stays, and the carrier goes 12 dB below it. */
+    static const struct { const char *line; float db; } cases[] = {
+        { "DRIVELEVEL -12", -12.0f }, { "DRIVELEVEL -9.5", -10.0f },
+        { "DRIVELEVEL 0", 0.0f },     /* a full slider: the set levels, no more */
+        { "DRIVELEVEL -30.4", -30.0f }, { "DRIVELEVEL 0.4", 0.0f },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", cases[i].line);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        assert_ok_response();
+        TEST_ASSERT_EQUAL_FLOAT_MESSAGE(cases[i].db, mock_drive_db, cases[i].line);
+    }
+    /* attenuation on the tuning carrier, not its level: TUNE's stays */
     TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
-    TEST_ASSERT_EQUAL_FLOAT(-12.0f, mock_tune_drive_db);
-
-    tcp_write_call_count = 0;
-    char b[] = "DRIVELEVEL -9.5";
-    execute_control_command(b);
-    assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
-    TEST_ASSERT_EQUAL_FLOAT(-10.0f, mock_tune_drive_db);
-    /* Data frames follow too, as attenuation below the TX gain. */
-    TEST_ASSERT_EQUAL_FLOAT(-10.0f, mock_drive_db);
-
-    TEST_ASSERT_EQUAL(2, mock_tune_drive_calls);
     TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }
 
-/* DRIVELEVEL 0 is a full drive slider, not a command to key a carrier at
- * 0 dBFS: it leaves the tuning carrier's level alone. */
-void test_cmd_drivelevel_zero_leaves_the_tune_level(void)
-{
-    char cmd[] = "DRIVELEVEL 0";
-    execute_control_command(cmd);
-
-    assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, mock_tune_drive_db);
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, mock_drive_db);
-    TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
-    TEST_ASSERT_EQUAL(0, captured_cmd_count);
-}
-
-/* The number rounds first, then [-30, 0] is checked: a fractional value at
- * the edge is taken when it rounds into the range, where the
- * check-before-rounding order refused it. */
-void test_cmd_drivelevel_rounds_before_range(void)
-{
-    char a[] = "DRIVELEVEL -30.4";
-    execute_control_command(a);
-    assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
-    TEST_ASSERT_EQUAL_FLOAT(-30.0f, mock_tune_drive_db);
-    TEST_ASSERT_EQUAL_FLOAT(-30.0f, mock_drive_db);
-
-    tcp_write_call_count = 0;
-    char b[] = "DRIVELEVEL 0.4";
-    execute_control_command(b);
-    assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, mock_tune_drive_db);
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, mock_drive_db);
-
-    tcp_write_call_count = 0;
-    char c[] = "DRIVELEVEL -0.4";
-    execute_control_command(c);
-    assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
-    TEST_ASSERT_EQUAL_FLOAT(-0.0f, mock_tune_drive_db);
-    TEST_ASSERT_EQUAL_FLOAT(-0.0f, mock_drive_db);
-
-    TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
-    TEST_ASSERT_EQUAL(0, captured_cmd_count);
-}
-
-void test_cmd_drivelevel_junk_is_ok_and_ignored(void)
+/* Anything but one number from -30 to 0 is WRONG and changes nothing. */
+void test_cmd_drivelevel_bad_is_wrong(void)
 {
     static const char *lines[] = {
-        "DRIVELEVEL abc", "DRIVELEVEL 3", "DRIVELEVEL -31", "DRIVELEVEL nan",
-        "DRIVELEVEL -inf",
+        "DRIVELEVEL", "DRIVELEVEL abc", "DRIVELEVEL 3", "DRIVELEVEL -31",
+        "DRIVELEVEL nan", "DRIVELEVEL -inf", "DRIVELEVEL -5dB", "DRIVELEVEL - 7",
+        "DRIVELEVEL -5 -6",
     };
     for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
     {
@@ -1027,47 +930,10 @@ void test_cmd_drivelevel_junk_is_ok_and_ignored(void)
         tcp_write_call_count = 0;
         execute_control_command(cmd);
         TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
-        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("OK\r", (char *)last_tcp_write_buf, 3, lines[i]);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("WRONG\r", (char *)last_tcp_write_buf, 6, lines[i]);
     }
-    TEST_ASSERT_EQUAL(0, mock_tune_drive_calls);
-    TEST_ASSERT_EQUAL(1.0f, mock_drive_db);          /* never set */
-    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL(0, mock_drive_calls);
     TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
-}
-
-/* VARA reads the number at the front, as VB's Val() does. */
-void test_cmd_drivelevel_reads_the_leading_number(void)
-{
-    char cmd[] = "DRIVELEVEL -5dB";
-    execute_control_command(cmd);
-
-    assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-5.0f, mock_tune_drive_db);
-    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
-    TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
-
-    /* Blanks inside the number, and an argument past the word limits. */
-    tcp_write_call_count = 0;
-    char spaced[] = "DRIVELEVEL - 7";
-    execute_control_command(spaced);
-    assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-7.0f, mock_tune_drive_db);
-
-    tcp_write_call_count = 0;
-    char longer[] = "DRIVELEVEL -12.00000000000000";
-    execute_control_command(longer);
-    assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-12.0f, mock_tune_drive_db);
-    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
-}
-
-void test_cmd_drivelevel_bare_is_wrong(void)
-{
-    char cmd[] = "DRIVELEVEL";
-    execute_control_command(cmd);
-
-    assert_wrong_response();
-    TEST_ASSERT_EQUAL(0, mock_tune_drive_calls);
 }
 
 /* ---- Whole-word arguments: LISTEN, PUBLIC and CHAT used to decide on the
@@ -3030,7 +2896,6 @@ int main(void)
     RUN_TEST(test_cmd_connect_after_uncodable_mycall);
     RUN_TEST(test_cmd_refused_mycall_keeps_connect_state);
     RUN_TEST(test_split_words_limits);
-    RUN_TEST(test_vb_val_number);
     RUN_TEST(test_cmd_mycall_secondary_any_characters);
     RUN_TEST(test_cmd_mycall_needs_a_word_boundary);
     RUN_TEST(test_cmd_mycall_over_15_is_wrong);
@@ -3040,14 +2905,8 @@ int main(void)
     RUN_TEST(test_cmd_connect_rejects_extra_words_and_long_calls);
     RUN_TEST(test_cmd_cqframe_rejects_malformed);
     RUN_TEST(test_cmd_gateway);
-    RUN_TEST(test_cmd_gateway_bare_is_wrong);
-    RUN_TEST(test_cmd_gateway_any_argument);
     RUN_TEST(test_cmd_drivelevel);
-    RUN_TEST(test_cmd_drivelevel_zero_leaves_the_tune_level);
-    RUN_TEST(test_cmd_drivelevel_rounds_before_range);
-    RUN_TEST(test_cmd_drivelevel_junk_is_ok_and_ignored);
-    RUN_TEST(test_cmd_drivelevel_reads_the_leading_number);
-    RUN_TEST(test_cmd_drivelevel_bare_is_wrong);
+    RUN_TEST(test_cmd_drivelevel_bad_is_wrong);
     RUN_TEST(test_cmd_listen_decides_on_the_whole_word);
     RUN_TEST(test_cmd_public_off);
     RUN_TEST(test_cmd_public_bad_arg_is_wrong);

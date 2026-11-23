@@ -60,8 +60,8 @@ All control commands and responses are **CR-terminated ASCII** (`\r`).
 Command names are matched as **whole words**: `ABORTX` is not `ABORT`, and
 `MONITORING` is not `MONITOR`.  Extra words where a command takes none, or a
 word after its last argument, are `WRONG` (`ABORT SESSION`, `DISCONNECT
-NOW`, `MONITOR ON junk`); the VARA no-ops `COMPRESSION` and
-`IGNOREKISSDCD`, and `GATEWAY`, take whatever follows without checking it.
+NOW`, `MONITOR ON junk`); the no-ops `COMPRESSION`, `IGNOREKISSDCD` and
+`GATEWAY` take whatever follows without checking it.
 
 ---
 
@@ -101,9 +101,8 @@ answer calls, since an `ACCEPT` carries only CRC16s of the callsigns, but it
 cannot make them: Mercury logs a warning saying so, and every `CONNECT`
 after it answers `WRONG` until a `MYCALL` gives a primary a `CALL` can
 carry.  (A callsign set only in the ini is not checked.)  Secondary callsigns
-go on the air only as a CRC16 and have no such limit.  This is Mercury's
-rule, wider than VARA's (a base of at most 7 characters): longer station
-names work.
+go on the air only as a CRC16 and have no such limit.  Long station names and
+any SSID work.
 
 Examples:
 
@@ -129,7 +128,7 @@ LISTEN CQ\r
 When enabled, Mercury enters the LISTENING state and will accept incoming
 CALL frames addressed to the local callsign (or any callsign if PUBLIC is ON).
 
-`LISTEN CQ` is treated as `LISTEN ON` (VARA compatibility).  Any other
+`LISTEN CQ` is treated as `LISTEN ON`.  Any other
 argument is `WRONG`: the argument is compared as a whole word, in upper case,
 as it is for `PUBLIC` and `CHAT` (`CWID` takes either case).
 
@@ -279,37 +278,32 @@ backlog to be sent.
 
 ### CWID
 
-Accepted for VARA client compatibility.
+Accepted so a host's start-up does not fail.  Mercury sends no CW ID and no
+periodic ID.  A `CALL` or `CQ` frame carries the sending station's callsign;
+other frames do not (an `ACCEPT` carries only CRC16s of the callsigns, data
+and `DISCONNECT` frames only the session id).  Identifying the station as
+your licence requires is up to the operator or the host program.
 
 ```
 CWID ON\r
 CWID OFF\r
 ```
 
-**Response:** `OK\r` for `ON` or `OFF`, `WRONG\r` otherwise; the argument is
-matched in either case.  `CWID ON` logs an info line that no CW ID is sent.
-Pat sends `CWID ON` at every VARA HF start.
-
-Mercury sends no CW ID and no periodic ID.  A `CALL` or `CQ` frame carries
-the sending station's callsign; other frames do not (an `ACCEPT` carries only
-CRC16s of the callsigns, data and `DISCONNECT` frames only the session id).
-Identifying the station as your licence requires is up to the operator or
-the host program.
+**Response:** `OK\r` for `ON` or `OFF`, in either case, `WRONG\r` otherwise.
+`CWID ON` logs an info line that no CW ID is sent.  Pat sends `CWID ON` at
+every start.
 
 ---
 
 ### GATEWAY
 
-Accepted for VARA HF compatibility, and ignored.
+Accepted and ignored: Mercury runs a gateway and a client the same way.
 
 ```
-GATEWAY <argument>\r
+GATEWAY [<argument>]\r
 ```
 
-**Response:** `OK\r` for `GATEWAY` followed by a space and anything at all;
-`WRONG\r` for a bare `GATEWAY`.
-Mercury runs a gateway and a client the same way.  VARA HF answers `OK`
-and VARA FM refuses it.
+**Response:** `OK\r`, whatever follows.
 
 ---
 
@@ -321,12 +315,9 @@ Set the drive level without keying the transmitter.
 DRIVELEVEL <-dB>\r
 ```
 
-**Response:** `OK\r` whatever the argument, as VARA does; `WRONG\r` for a
-bare `DRIVELEVEL` with no space after it.  The number is read the way
-VARA's `Val()` reads it: blanks are skipped and reading stops at the first
-other character (`-5dB` is -5).  The number is rounded to a whole dB first
-(`-9.5` gives `-10`), and a value from `-30` to `0` then sets the level;
-anything else is logged and leaves the level as it was.
+**Response:** `OK\r` for a number from `-30` to `0` (a fraction is rounded
+to a whole dB: `-9.5` gives `-10`), `WRONG\r` for anything else, which
+leaves the level as it was.
 
 The value is attenuation, never gain, for both transmissions:
 
@@ -361,9 +352,8 @@ reported back in `CONNECTED`.  When the last `MYCALL` gave a primary a
 was sent).
 
 The digipeated form, `CONNECT <mycall> <theircall> VIA <digi1> [<digi2>]`,
-is `WRONG`: Mercury has no relay, and VARA HF refuses it too (only VARA FM
-digipeats).  Before, it was answered `OK` and connected direct, the path
-dropped.
+is `WRONG`: Mercury has no relay.  Before, it was answered `OK` and
+connected direct, the path dropped.
 
 Mercury will transmit CALL frames on DATAC16 (the control mode) -- the first
 two, then MFSK and DATAC16 alternately, so a station that cannot hear DATAC16
@@ -388,9 +378,8 @@ Transmit a compact CQ frame on the control mode (DATAC16).
 CQFRAME <sourcecall> <bandwidth>\r
 ```
 
-`<bandwidth>` must be one of `500`, `2300`, or `2750`, and nothing may
-follow it.  It is not optional: VARA HF refuses a bare `CQFRAME <sourcecall>`
-too (VARA FM takes it).  `<sourcecall>` is coded into the CQ frame over the
+`<bandwidth>` must be one of `500`, `2300`, or `2750`; it is not optional,
+and nothing may follow it.  `<sourcecall>` is coded into the CQ frame over the
 same alphabet as [`MYCALL`](#mycall)'s primary (`A`–`Z`, digits and `-`);
 a CQ has room for 15 characters, one more than a `CALL`.
 

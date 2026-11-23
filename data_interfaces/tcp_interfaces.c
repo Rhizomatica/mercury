@@ -520,66 +520,8 @@ static bool single_int_word(const char *word, long *out)
  * (10 bytes for it, ARQ_CONNECT_SRC_MAX_ENCODED) carries at most 14 and a CQ
  * (13, ARQ_CQ_SRC_MAX_ENCODED) all 15.  Measured with arith.c itself.
  *
- * Mercury's own rule, not VARA's: VARA allows a base of at most 7 characters,
- * and Mercury stations use longer names.  A called station or a secondary
+ * Long station names and any SSID pass.  A called station or a secondary
  * callsign goes as a CRC16 and has no alphabet. */
-/* The number at the front of S as VARA, a Visual Basic program, reads it
- * with Val(): blanks anywhere are skipped ("- 5" is -5), then an optional
- * sign, digits, an optional fraction and an optional exponent written E or D;
- * reading stops at the first other character ("-5dB" is -5, "-0x5" is -0).
- * False when there is no digit at all ("abc").  VB's &H / &O hexadecimal and
- * octal forms are not taken, so such a line is ignored. */
-static bool vb_val_number(const char *s, double *out)
-{
-    char b[64];
-    size_t n = 0;
-    for (; *s && n < sizeof(b) - 1; s++)
-        if (*s != ' ' && *s != '\t' && *s != '\r' && *s != '\n')
-            b[n++] = *s;
-    b[n] = '\0';
-    /* Too long to read whole: no number, rather than a cut one ("-000...05"
-     * cut short would read as -0, the loudest level). */
-    s += strspn(s, " \t\r\n");
-    if (*s != '\0')
-        return false;
-
-    char num[64];
-    size_t i = 0, k = 0;
-    if (b[i] == '-' || b[i] == '+')
-        num[k++] = b[i++];
-    size_t digits = 0;
-    while (b[i] >= '0' && b[i] <= '9')
-        num[k++] = b[i++], digits++;
-    if (b[i] == '.')
-    {
-        num[k++] = b[i++];
-        while (b[i] >= '0' && b[i] <= '9')
-            num[k++] = b[i++], digits++;
-    }
-    if (digits == 0)
-        return false;
-    if (b[i] == 'E' || b[i] == 'e' || b[i] == 'D' || b[i] == 'd')
-    {
-        size_t j = i + 1;
-        if (b[j] == '-' || b[j] == '+')
-            j++;
-        if (b[j] >= '0' && b[j] <= '9')
-        {
-            num[k++] = 'e';
-            for (size_t m = i + 1; m < j; m++)
-                num[k++] = b[m];
-            while (b[j] >= '0' && b[j] <= '9' && k < sizeof(num) - 1)
-                num[k++] = b[j++];
-        }
-    }
-    num[k] = '\0';
-    double v = strtod(num, NULL);
-    if (!isfinite(v))
-        return false;
-    *out = v;
-    return true;
-}
-
 #define CALL_FRAME_MAX_CALLSIGN 14
 #define CQ_FRAME_MAX_CALLSIGN   15
 
@@ -708,7 +650,7 @@ static void execute_control_command(char *buffer)
 
     if (command_args(buffer, "LISTEN"))
     {
-        /* LISTEN ON | LISTEN OFF | LISTEN CQ (VARA's CHAT ON).  The whole
+        /* LISTEN ON | LISTEN OFF | LISTEN CQ (taken as ON).  The whole
          * word: deciding on its second letter took "LISTEN NO" for ON. */
         memset(&cmd, 0, sizeof(cmd));
         char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
@@ -837,9 +779,8 @@ static void execute_control_command(char *buffer)
 
     if (command_args(buffer, "COMPRESSION"))
     {
-        /* Compatibility no-op: VARA-style clients expect this command, with
-         * any argument (BPQ32 sends "COMPRESSION 1").  "COMPRESSIONX" is not
-         * the command. */
+        /* No-op, with any argument: hosts send it at start ("COMPRESSION 1"
+         * from BPQ32).  "COMPRESSIONX" is not the command. */
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
@@ -1119,9 +1060,8 @@ static void execute_control_command(char *buffer)
     {
         /* CONNECT <mycall> <remote>, and nothing after.  The digipeated form,
          * CONNECT <mycall> <remote> VIA <v1> [v2], is WRONG: Mercury has no
-         * relay, and VARA HF refuses it too (only VARA FM digipeats).  It
-         * used to be answered OK and connected direct, the path dropped
-         * without a word. */
+         * relay.  It used to be answered OK and connected direct, the path
+         * dropped without a word. */
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_CONNECT;
         char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
@@ -1160,9 +1100,8 @@ static void execute_control_command(char *buffer)
 
     if (command_args(buffer, "CQFRAME"))
     {
-        /* CQFRAME <call> <bw>.  The bandwidth stays mandatory: VARA HF
-         * refuses a bare CQFRAME <call> (only VARA FM takes it), so Mercury
-         * answers WRONG as VARA HF does.  Extra words used to be ignored. */
+        /* CQFRAME <call> <bw>, the bandwidth mandatory and nothing after it
+         * (extra words used to be ignored). */
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SEND_CQ;
         char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
@@ -1315,10 +1254,7 @@ static void execute_control_command(char *buffer)
      * start, without waiting for the answer.  Mercury sends no CW ID and no
      * periodic ID: a CALL or CQ carries the sending station's callsign, other
      * frames do not (arq_protocol.h).  Accepted so the host's init does not
-     * fail, and ON says so in the log.  The argument is matched in either
-     * case, as it was before this change: VARA itself matches "CWID ON"
-     * exactly, but Pat and BPQ32 send upper case and a lowercase "cwid on"
-     * has no reason to fail the init. */
+     * fail, and ON says so in the log.  The argument in either case. */
     if (command_args(buffer, "CWID"))
     {
         char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
@@ -1334,64 +1270,43 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    /* GATEWAY <arg>: accepted and ignored, as VARA HF does (VARA FM refuses
-     * it).  Mercury runs a gateway and a client the same way.  Any line
-     * starting "GATEWAY " is taken, whatever its length; bare GATEWAY, with
-     * no space, is not a command. */
-    const char *gateway_args = command_args(buffer, "GATEWAY");
-    if (gateway_args)
+    /* GATEWAY [<arg>]: a no-op, with any argument.  Mercury runs a gateway
+     * and a client the same way. */
+    if (command_args(buffer, "GATEWAY"))
     {
-        if (*gateway_args == '\0')
-            reply_wrong(received);
-        else
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
 
-    /* DRIVELEVEL <-dB>: the drive level, without keying.  VARA answers OK
-     * whatever follows, and takes the number rounded to a whole dB in
-     * [-30, 0] (round first, then check the range); anything else leaves
-     * the level as it was.  The value is attenuation, never gain: the
-     * tuning carrier keeps the level TUNE set (default -15 dBFS, TUNE ?
-     * still reports it) lowered by this many dB, and data frames keep the
-     * operator's TX gain lowered the same way.  A host can lower the drive
-     * to protect an amplifier but can never raise it past what the operator
-     * set. */
-    const char *drive_args = command_args(buffer, "DRIVELEVEL");
-    if (drive_args)
+    /* DRIVELEVEL <dB>: a whole number of dB from -30 to 0 (a fraction is
+     * rounded), set without keying.  Attenuation, never gain: data frames go
+     * that many dB below the operator's TX gain and the tuning carrier below
+     * the level TUNE set (modem_set_drive_db), so a host can lower the drive,
+     * to protect an amplifier, but never raise it past what the operator
+     * set.  Anything else is WRONG and changes nothing. */
+    if (command_args(buffer, "DRIVELEVEL"))
     {
-        if (*drive_args == '\0')
+        char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+        char *end = NULL;
+        double db = 0.0;
+        if (split_words(buffer, words) == 2)
+            db = rint(strtod(words[1], &end));
+        if (!end || end == words[1] || *end != '\0' || !(db >= -30.0 && db <= 0.0) ||
+            modem_set_drive_db((float)db) != 0)
         {
             reply_wrong(received);
             return;
         }
-        double db = 0.0;
-        if (vb_val_number(drive_args, &db))
-        {
-            double rounded = rint(db);
-            if (rounded >= -30.0 && rounded <= 0.0)
-            {
-                modem_tune_set_drive_db((float)rounded);
-                modem_set_drive_db((float)rounded);
-                HLOGI("tcp-ctl", "DRIVELEVEL %.0f: TUNE carrier %.0f dB below its "
-                      "set level, data frames %.0f dB below the TX gain",
-                      rounded, -rounded, -rounded);
-            }
-            else
-                HLOGW("tcp-ctl", "DRIVELEVEL '%s' ignored: want a number from -30 to 0",
-                      drive_args + strspn(drive_args, " \t"));
-        }
-        else
-            HLOGW("tcp-ctl", "DRIVELEVEL '%s' ignored: want a number from -30 to 0",
-                  drive_args + strspn(drive_args, " \t"));
+        HLOGI("tcp-ctl", "DRIVELEVEL %.0f: data and the tuning carrier %.0f dB below "
+              "their set levels", db, -db);
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
 
     if (command_args(buffer, "IGNOREKISSDCD"))
     {
-        /* VARA compatibility no-op, with whatever argument (hosts send
-         * "IGNOREKISSDCD ON").  "IGNOREKISSDCDX" is not the command. */
+        /* No-op, with any argument (hosts send "IGNOREKISSDCD ON").
+         * "IGNOREKISSDCDX" is not the command. */
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }

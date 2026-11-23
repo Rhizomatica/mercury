@@ -92,8 +92,9 @@ bool modem_channel_busy(void);
 void  modem_set_tx_gain(float linear);
 float modem_get_tx_gain(void);
 
-/* Host DRIVELEVEL (VARA): MODEM_DRIVE_MIN_DB..0 dB of attenuation applied on
- * top of the TX gain.  Returns -1 (and changes nothing) out of range. */
+/* Host DRIVELEVEL: MODEM_DRIVE_MIN_DB..0 dB of attenuation on everything
+ * keyed: data frames below the TX gain, the tuning carrier below the level
+ * TUNE set.  Returns -1 (and changes nothing) out of range. */
 #define MODEM_DRIVE_MIN_DB (-30.0f)
 int   modem_set_drive_db(float db);
 
@@ -164,12 +165,6 @@ void  modem_tune_stop(void);
 bool  modem_tune_active(void);
 // Most recently requested tuning level in dBFS (what "TUNE ?" reports).
 float modem_tune_level_dbfs(void);
-// Host DRIVELEVEL as attenuation on the tuning carrier, like the data path:
-// the carrier goes out at the level TUNE set plus this value, so a host can
-// only lower it, never raise it.  A carrier already on follows it.  -1 when
-// db is outside [-30, 0].
-#define MODEM_TUNE_DRIVE_MIN_DB (-30.0f)
-int   modem_tune_set_drive_db(float db);
 
 // Monitor mode: decode EVERY Mercury mode in parallel and report each decoded
 // frame to the host as a "MONITOR ..." line on the control port.  Passive by
