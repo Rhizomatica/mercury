@@ -197,11 +197,12 @@ int modem_tune_start(float dbfs)
 void  modem_tune_stop(void)        { mock_tune_stop_calls++; }
 bool  modem_tune_active(void)      { return false; }
 float modem_tune_level_dbfs(void)  { return mock_tune_level_dbfs; }
-static int mock_tune_set_level_calls = 0;
-int modem_tune_set_level_dbfs(float dbfs)
+static float mock_tune_drive_db = 1.0f;   /* 1.0: never set */
+static int   mock_tune_drive_calls = 0;
+int modem_tune_set_drive_db(float db)
 {
-    mock_tune_set_level_calls++;
-    mock_tune_level_dbfs = dbfs;
+    mock_tune_drive_calls++;
+    mock_tune_drive_db = db;
     return 0;
 }
 static float mock_drive_db = 1.0f;      /* 1.0: never set */
@@ -443,7 +444,9 @@ void setUp(void)
     mock_tune_start_rc    = 0;
     mock_tune_stop_calls  = 0;
     mock_tune_level_dbfs  = -15.0f;
-    mock_tune_set_level_calls = 0;
+    mock_tune_drive_db    = 1.0f;      /* 1.0: never set */
+    mock_tune_drive_calls = 0;
+    mock_drive_db         = 1.0f;      /* 1.0: never set */
     atomic_store(&mycall_cannot_call, false);
 
     /* Listen mode */
@@ -898,7 +901,7 @@ void test_cmd_cqframe_rejects_malformed(void)
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }
 
-/* ---- GATEWAY and DRIVELEVEL (XARA's HF station) */
+/* ---- GATEWAY and DRIVELEVEL */
 
 void test_cmd_gateway(void)
 {
@@ -917,8 +920,8 @@ void test_cmd_gateway_bare_is_wrong(void)
     assert_wrong_response();
 }
 
-/* XARA takes any line starting "GATEWAY ", however long, even a bare space
- * after it: no word limits here. */
+/* VARA HF takes any line starting "GATEWAY ", however long, even a bare
+ * space after it: no word limits here. */
 void test_cmd_gateway_any_argument(void)
 {
     static const char *lines[] = {
@@ -937,52 +940,74 @@ void test_cmd_gateway_any_argument(void)
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }
 
-/* XARA's tune_and_drivelevel_follow_vara: OK whatever follows; a number in
- * [-30, 0] sets the level rounded to a whole dB (ties to even), anything
- * else leaves it.  Never keys. */
+/* DRIVELEVEL, as VARA's tune_and_drivelevel behaviour: OK whatever follows;
+ * a number in [-30, 0] sets the attenuation rounded to a whole dB (ties to
+ * even), anything else leaves it.  Never keys. */
 void test_cmd_drivelevel(void)
 {
     char a[] = "DRIVELEVEL -12";
     execute_control_command(a);
     assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-12.0f, mock_tune_level_dbfs);
+    /* Attenuation on the tuning carrier, not its level: the level TUNE set
+     * stays, and the carrier goes 12 dB below it. */
+    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-12.0f, mock_tune_drive_db);
 
     tcp_write_call_count = 0;
     char b[] = "DRIVELEVEL -9.5";
     execute_control_command(b);
     assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-10.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-10.0f, mock_tune_drive_db);
     /* Data frames follow too, as attenuation below the TX gain. */
     TEST_ASSERT_EQUAL_FLOAT(-10.0f, mock_drive_db);
 
-    TEST_ASSERT_EQUAL(2, mock_tune_set_level_calls);
+    TEST_ASSERT_EQUAL(2, mock_tune_drive_calls);
     TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }
 
-/* XARA rounds first, then checks [-30, 0]: a fractional value at the edge
- * is taken when it rounds into the range, where the check-before-rounding
- * order refused it. */
+/* DRIVELEVEL 0 is a full drive slider, not a command to key a carrier at
+ * 0 dBFS: it leaves the tuning carrier's level alone. */
+void test_cmd_drivelevel_zero_leaves_the_tune_level(void)
+{
+    char cmd[] = "DRIVELEVEL 0";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, mock_tune_drive_db);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, mock_drive_db);
+    TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* The number rounds first, then [-30, 0] is checked: a fractional value at
+ * the edge is taken when it rounds into the range, where the
+ * check-before-rounding order refused it. */
 void test_cmd_drivelevel_rounds_before_range(void)
 {
     char a[] = "DRIVELEVEL -30.4";
     execute_control_command(a);
     assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-30.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-30.0f, mock_tune_drive_db);
     TEST_ASSERT_EQUAL_FLOAT(-30.0f, mock_drive_db);
 
     tcp_write_call_count = 0;
     char b[] = "DRIVELEVEL 0.4";
     execute_control_command(b);
     assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, mock_tune_drive_db);
     TEST_ASSERT_EQUAL_FLOAT(0.0f, mock_drive_db);
 
     tcp_write_call_count = 0;
     char c[] = "DRIVELEVEL -0.4";
     execute_control_command(c);
     assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-0.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-0.0f, mock_tune_drive_db);
     TEST_ASSERT_EQUAL_FLOAT(-0.0f, mock_drive_db);
 
     TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
@@ -1004,7 +1029,8 @@ void test_cmd_drivelevel_junk_is_ok_and_ignored(void)
         TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
         TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("OK\r", (char *)last_tcp_write_buf, 3, lines[i]);
     }
-    TEST_ASSERT_EQUAL(0, mock_tune_set_level_calls);
+    TEST_ASSERT_EQUAL(0, mock_tune_drive_calls);
+    TEST_ASSERT_EQUAL(1.0f, mock_drive_db);          /* never set */
     TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
     TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
 }
@@ -1016,7 +1042,8 @@ void test_cmd_drivelevel_reads_the_leading_number(void)
     execute_control_command(cmd);
 
     assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-5.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-5.0f, mock_tune_drive_db);
+    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
     TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
 
     /* Blanks inside the number, and an argument past the word limits. */
@@ -1024,13 +1051,14 @@ void test_cmd_drivelevel_reads_the_leading_number(void)
     char spaced[] = "DRIVELEVEL - 7";
     execute_control_command(spaced);
     assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-7.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-7.0f, mock_tune_drive_db);
 
     tcp_write_call_count = 0;
     char longer[] = "DRIVELEVEL -12.00000000000000";
     execute_control_command(longer);
     assert_ok_response();
-    TEST_ASSERT_EQUAL_FLOAT(-12.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL_FLOAT(-12.0f, mock_tune_drive_db);
+    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
 }
 
 void test_cmd_drivelevel_bare_is_wrong(void)
@@ -1039,7 +1067,7 @@ void test_cmd_drivelevel_bare_is_wrong(void)
     execute_control_command(cmd);
 
     assert_wrong_response();
-    TEST_ASSERT_EQUAL(0, mock_tune_set_level_calls);
+    TEST_ASSERT_EQUAL(0, mock_tune_drive_calls);
 }
 
 /* ---- Whole-word arguments: LISTEN, PUBLIC and CHAT used to decide on the
@@ -3015,6 +3043,7 @@ int main(void)
     RUN_TEST(test_cmd_gateway_bare_is_wrong);
     RUN_TEST(test_cmd_gateway_any_argument);
     RUN_TEST(test_cmd_drivelevel);
+    RUN_TEST(test_cmd_drivelevel_zero_leaves_the_tune_level);
     RUN_TEST(test_cmd_drivelevel_rounds_before_range);
     RUN_TEST(test_cmd_drivelevel_junk_is_ok_and_ignored);
     RUN_TEST(test_cmd_drivelevel_reads_the_leading_number);

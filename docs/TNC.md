@@ -308,9 +308,8 @@ GATEWAY <argument>\r
 
 **Response:** `OK\r` for `GATEWAY` followed by a space and anything at all;
 `WRONG\r` for a bare `GATEWAY`.
-Mercury runs a gateway and a client the same way.  (XARA, a VARA
-reimplementation tested against VARA HF 4.9.0, answers `OK` on HF and
-refuses it on FM.)
+Mercury runs a gateway and a client the same way.  VARA HF answers `OK`
+and VARA FM refuses it.
 
 ---
 
@@ -329,12 +328,19 @@ other character (`-5dB` is -5).  The number is rounded to a whole dB first
 (`-9.5` gives `-10`), and a value from `-30` to `0` then sets the level;
 anything else is logged and leaves the level as it was.
 
-The [tuning carrier](#tune) takes the level as its dBFS: `TUNE ?` reports it
-and a carrier already on changes to it.  Data frames take it as attenuation
-on top of the TX gain set in the GUI or `audio:tx_gain_db`: `DRIVELEVEL -6`
-sends data 6 dB below that gain, and `DRIVELEVEL 0` sends it at that gain, so
-a host can lower data power but never raise it past what the operator set.
-It is not saved: each start begins at 0 dB.
+The value is attenuation, never gain, for both transmissions:
+
+- The [tuning carrier](#tune) keeps the level `TUNE` set (`TUNE ?` still
+  reports that level, −15 dBFS by default) and goes out that many dB below
+  it: `DRIVELEVEL -6` puts it 6 dB lower, and `DRIVELEVEL 0` leaves it as
+  it is.  A carrier already on changes to it.
+- Data frames take it as attenuation on top of the TX gain set in the GUI
+  or `audio:tx_gain_db`: `DRIVELEVEL -6` sends data 6 dB below that gain,
+  and `DRIVELEVEL 0` sends it at that gain.
+
+So a host can lower the drive, to protect an amplifier for example, but can
+never raise it past what the operator set.  It is not saved: each start
+begins at 0 dB.
 
 ---
 

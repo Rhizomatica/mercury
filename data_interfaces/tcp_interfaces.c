@@ -527,8 +527,7 @@ static bool single_int_word(const char *word, long *out)
  * with Val(): blanks anywhere are skipped ("- 5" is -5), then an optional
  * sign, digits, an optional fraction and an optional exponent written E or D;
  * reading stops at the first other character ("-5dB" is -5, "-0x5" is -0).
- * False when there is no digit at all ("abc").  Modelled on XARA's vb_num
- * (crates/xara-host/src/command.rs, MIT); VB's &H / &O hexadecimal and
+ * False when there is no digit at all ("abc").  VB's &H / &O hexadecimal and
  * octal forms are not taken, so such a line is ignored. */
 static bool vb_val_number(const char *s, double *out)
 {
@@ -1120,9 +1119,9 @@ static void execute_control_command(char *buffer)
     {
         /* CONNECT <mycall> <remote>, and nothing after.  The digipeated form,
          * CONNECT <mycall> <remote> VIA <v1> [v2], is WRONG: Mercury has no
-         * relay, and VARA HF refuses it too (XARA's HF station: VIAS = false;
-         * only VARA FM digipeats).  It used to be answered OK and connected
-         * direct, the path dropped without a word. */
+         * relay, and VARA HF refuses it too (only VARA FM digipeats).  It
+         * used to be answered OK and connected direct, the path dropped
+         * without a word. */
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_CONNECT;
         char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
@@ -1161,10 +1160,9 @@ static void execute_control_command(char *buffer)
 
     if (command_args(buffer, "CQFRAME"))
     {
-        /* CQFRAME <call> <bw>.  The bandwidth stays mandatory: XARA accepts a
-         * bare CQFRAME <call> at the parser, but its HF station refuses it
-         * (station/hf.rs cq_frame: no bw, false), so VARA HF answers WRONG
-         * as Mercury does.  Extra words used to be ignored. */
+        /* CQFRAME <call> <bw>.  The bandwidth stays mandatory: VARA HF
+         * refuses a bare CQFRAME <call> (only VARA FM takes it), so Mercury
+         * answers WRONG as VARA HF does.  Extra words used to be ignored. */
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SEND_CQ;
         char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
@@ -1319,8 +1317,8 @@ static void execute_control_command(char *buffer)
      * frames do not (arq_protocol.h).  Accepted so the host's init does not
      * fail, and ON says so in the log.  The argument is matched in either
      * case, as it was before this change: VARA itself matches "CWID ON"
-     * exactly (XARA's parser), but Pat and BPQ32 send upper case and a
-     * lowercase "cwid on" has no reason to fail the init. */
+     * exactly, but Pat and BPQ32 send upper case and a lowercase "cwid on"
+     * has no reason to fail the init. */
     if (command_args(buffer, "CWID"))
     {
         char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
@@ -1336,10 +1334,10 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    /* GATEWAY <arg>: accepted and ignored, as XARA's HF station does
-     * (CWID_GATEWAY = true; VARA FM refuses it).  Mercury runs a gateway and
-     * a client the same way.  XARA takes any line starting "GATEWAY ",
-     * whatever its length; bare GATEWAY, with no space, is not a command. */
+    /* GATEWAY <arg>: accepted and ignored, as VARA HF does (VARA FM refuses
+     * it).  Mercury runs a gateway and a client the same way.  Any line
+     * starting "GATEWAY " is taken, whatever its length; bare GATEWAY, with
+     * no space, is not a command. */
     const char *gateway_args = command_args(buffer, "GATEWAY");
     if (gateway_args)
     {
@@ -1352,11 +1350,13 @@ static void execute_control_command(char *buffer)
 
     /* DRIVELEVEL <-dB>: the drive level, without keying.  VARA answers OK
      * whatever follows, and takes the number rounded to a whole dB in
-     * [-30, 0] (XARA: tune_and_drivelevel_follow_vara rounds first, then
-     * checks the range); anything else leaves the level as it was.  The
-     * tuning carrier takes it as its dBFS level (TUNE ? reports it); data
-     * frames take it as attenuation below the operator's TX gain, so a host
-     * can lower data power but never raise it. */
+     * [-30, 0] (round first, then check the range); anything else leaves
+     * the level as it was.  The value is attenuation, never gain: the
+     * tuning carrier keeps the level TUNE set (default -15 dBFS, TUNE ?
+     * still reports it) lowered by this many dB, and data frames keep the
+     * operator's TX gain lowered the same way.  A host can lower the drive
+     * to protect an amplifier but can never raise it past what the operator
+     * set. */
     const char *drive_args = command_args(buffer, "DRIVELEVEL");
     if (drive_args)
     {
@@ -1371,10 +1371,11 @@ static void execute_control_command(char *buffer)
             double rounded = rint(db);
             if (rounded >= -30.0 && rounded <= 0.0)
             {
-                modem_tune_set_level_dbfs((float)rounded);
+                modem_tune_set_drive_db((float)rounded);
                 modem_set_drive_db((float)rounded);
-                HLOGI("tcp-ctl", "DRIVELEVEL %.0f: TUNE carrier at %.0f dBFS, data "
-                      "frames %.0f dB below the TX gain", rounded, rounded, -rounded);
+                HLOGI("tcp-ctl", "DRIVELEVEL %.0f: TUNE carrier %.0f dB below its "
+                      "set level, data frames %.0f dB below the TX gain",
+                      rounded, -rounded, -rounded);
             }
             else
                 HLOGW("tcp-ctl", "DRIVELEVEL '%s' ignored: want a number from -30 to 0",
