@@ -25,8 +25,9 @@
 (*                                                                         *)
 (*   C, out of CALLs, may hear an ACCEPT of its session: it sends a       *)
 (*   DISCONNECT, and E listens again.  Connected, C gives up on an E that *)
-(*   never answers after ARQ_CAR_PEER_LOST_MS, when E's kept seed, kept   *)
-(*   as long, also lapses (one step here: PeerLost).                       *)
+(*   never answers after ARQ_CAR_PEER_LOST_MS (PeerLost).  E's kept seed  *)
+(*   lapses as long after its last ACCEPT, so later (EExpire): C may      *)
+(*   CONNECT again meanwhile, and E answer from its fallback.             *)
 (*                                                                         *)
 (*   Both connected, C's lost-peer watchdog may fire first (it last heard *)
 (*   E earlier than E heard it): C is idle, E still connected until its   *)
@@ -244,8 +245,9 @@ EFallback ==
     /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw, sent>>
     /\ UNCHANGED <<eLeft, deaf, cPast>> /\ UNCHANGED cryptoVars
 
-\* The kept seed lapses (ARQ_CAR_PEER_LOST_MS) -- with no caller connected on
-\* it; one that is gives up at the same time (PeerLost).
+\* The kept seed lapses (ARQ_CAR_PEER_LOST_MS after E's last ACCEPT) -- with
+\* no caller connected on it: C took the ACCEPT before E sent its last, so
+\* its own watchdog (PeerLost) fires first.
 EExpire ==
     /\ eSt = "fallback" /\ ~(cSt = "connected" /\ cSid = eSid)
     /\ eSt' = "listening"
@@ -278,14 +280,16 @@ FirstFrame ==
     /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw, sent>>
     /\ UNCHANGED <<eLeft, deaf, cPast>> /\ UNCHANGED cryptoVars
 
-\* C connected, E never: both give up (ARQ_CAR_PEER_LOST_MS each).
+\* C connected, E never: C's watchdog fires (ARQ_CAR_PEER_LOST_MS after the
+\* ACCEPT it took).  E's kept seed lapses later (EExpire); until then C may
+\* CONNECT again and E answer it from the fallback -- the same ACCEPT if C
+\* picked the same id (trace validation found the code doing this, sim
+\* seed 7: the two lapsed in one step here before 2026-11-23).
 PeerLost ==
     /\ cSt = "connected" /\ eSt # "connected"
     /\ cSt' = "idle"
     /\ cPast' = cPast \cup {cSid}
-    /\ eSt' = (IF eSt = "fallback" /\ eSid = cSid THEN "listening" ELSE eSt)
-    /\ sent' = (IF eSt' = "listening" THEN {} ELSE sent)
-    /\ UNCHANGED <<cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw>>
+    /\ UNCHANGED <<cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSt, eSid, eNonce, eLevel, eBw, sent>>
     /\ UNCHANGED <<eLeft, deaf>> /\ UNCHANGED cryptoVars
 
 \* Both connected, C's watchdog fires first: E stays connected, in a session

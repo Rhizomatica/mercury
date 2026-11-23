@@ -31,7 +31,11 @@ What it models:
 - The callee connects on the caller's first frame only on the rung it named
   and with its nonce (the CRC is seeded).  A caller that gave up and hears an
   ACCEPT sends a DISCONNECT; a connected caller whose callee never answers
-  gives up when the callee's kept seed lapses (`PeerLost`, one step).
+  gives up after its lost-peer watchdog (`PeerLost`).  The callee's kept
+  seed lapses later, as long after its last ACCEPT (`EExpire`): meanwhile
+  the caller may CONNECT again, and the callee answers from its fallback.
+  (The two lapsed in one step before 2026-11-23; trace validation, below,
+  found the code doing otherwise.)
 
 - Encryption (`arq_crypto.h`, `crypto_negotiate`): a CONNECT's CALLs offer
   it or not, in the session id's low bit (`Offers`: odd ids offer; reserved
@@ -141,6 +145,45 @@ Results:
   that a repeated CALL must keep the session's bandwidth, as it keeps the
   nonce and rung: a caller that re-CONNECTs with another bandwidth and, by
   chance, the same session id may decode an older ACCEPT.
+
+## Trace validation: is the code one of the spec's behaviours?
+
+    make -C tests connect_trace
+    TMPDIR=... specs/connect/trace_check.sh 1 100              # each seed its own loss
+    TMPDIR=... specs/connect/trace_check.sh 101 160 0.75 3 4   # 75 % loss, 3 CONNECTs, 4 CALLs
+
+The specs above say what the code should do; nothing so far checked that
+the code does it.  `tests/sim/connect_trace` runs the two real FSMs of the
+sim (tests/sim: the caller CONNECTs once or twice, every frame lost with a
+probability), reads both sessions after every dispatch, and writes each
+change of what `ConnectHandshake` sees as module `TraceData`: both ends'
+states (the callee's fallback is LISTENING with `accept_fallback`), session
+ids and nonces, numbered in order of appearance.  `TraceHandshake.tla` takes
+every step of the spec that goes to the trace's next row or keeps the one it
+is on (a step the trace cannot see: a CALL lost, an ACCEPT keyed again), and
+leaves the rest of the spec's state -- CALLs left, the ACCEPTs in the air,
+rungs, bandwidths, encryption -- to TLC.  The run is a behaviour of the
+spec iff TLC reaches the last row (`TraceNotDone` violated); otherwise TLC
+prints the furthest row matched, and the row after it is where code and
+spec part.
+
+Results:
+
+- The first run rejected seed 7 (47 % loss, 2 CONNECTs) after row 5 of 10:
+  the caller's watchdog fired while the callee was still in its fallback
+  with the session's seed, the caller CONNECTed again, and the callee
+  answered from there.  The spec had both lapse in one step (`PeerLost`), so
+  it never took that path -- nor its case where the new CONNECT picks the
+  same id and gets the old ACCEPT.  Split (`PeerLost`, `EExpire`): every
+  configuration above passes with the counts above (the states were all
+  reachable already, by a caller giving up while calling; the transition
+  was not), and every mutant still fails.
+- Since: seeds 1-100 (their own loss, 0-69 %, 1-2 CONNECTs, 2-4 CALLs):
+  100 of 100 accepted, up to 12 rows; seeds 101-160 at 75 % loss, 3
+  CONNECTs of 4 CALLs: 60 of 60, up to 18 rows.
+
+Not read yet: rungs, bandwidths and encryption (the sim has no crypto
+callback), and the stale CALL (the sim does not delay a decode).
 
 ## ConnectCarrier
 
