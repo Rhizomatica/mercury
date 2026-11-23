@@ -68,7 +68,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm test
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port test_net_probe \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
-            test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
+            test_mfsk_harq test_mfsk_modem test_rx_inflight test_pattern_ack_detection \
             test_message_store test_ui_history test_ws_protocol \
             test_monitor_frame test_hermes_log test_host test_api_host test_bcast_carousel test_bcast_rx_host
 
@@ -442,6 +442,9 @@ test_mfsk_harq: modem/test_mfsk_harq.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/m
 	$(CC) $(CFLAGS) -I../modem -o $@ $(filter %.c %.a %.o,$^) -lm
 
 # MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
+test_rx_inflight: modem/test_rx_inflight.c $(UNITY_SRC)
+	$(CC) $(CFLAGS) -I../modem -o $@ $(filter %.c,$^) $(LDFLAGS)
+
 test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC) $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 

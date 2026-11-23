@@ -31,6 +31,7 @@
 #include <limits.h>
 
 #include "modem.h"
+#include "rx_inflight.h"
 #include "ring_buffer_posix.h"
 #include "framer.h"
 #include "arq.h"
@@ -2091,6 +2092,7 @@ typedef struct {
     float snr_est;
     bool snr_valid;
     bool frame_decoded;
+    bool reported;      /* a decoder said its state: without it, sync 0 is no news */
 } rx_metrics_accum_t;
 
 static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, int rx_status, bool frame_decoded)
@@ -2098,6 +2100,7 @@ static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, 
     if (!metrics)
         return;
 
+    metrics->reported = true;
     if (sync)
         metrics->sync = 1;
     metrics->rx_status |= rx_status;
@@ -2458,6 +2461,7 @@ static void rx_worker_publish_metrics(rx_worker_t *w, const rx_metrics_accum_t *
         w->metrics.snr_valid = true;
     }
     if (m->frame_decoded) w->metrics.frame_decoded = true;
+    if (m->reported) w->metrics.reported = true;
     pthread_mutex_unlock(&w->mlock);
 }
 
@@ -2473,6 +2477,7 @@ static void rx_metrics_merge(rx_metrics_accum_t *out, const rx_metrics_accum_t *
         out->snr_valid = true;
     }
     if (in->frame_decoded) out->frame_decoded = true;
+    if (in->reported) out->reported = true;
 }
 
 static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
@@ -2486,6 +2491,7 @@ static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
         out->snr_valid = true;
     }
     if (w->metrics.frame_decoded) out->frame_decoded = true;
+    if (w->metrics.reported) out->reported = true;
     memset(&w->metrics, 0, sizeof(w->metrics));
     pthread_mutex_unlock(&w->mlock);
 }
@@ -2501,20 +2507,21 @@ static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
  * next. */
 enum { RX_INFLIGHT_CTRL, RX_INFLIGHT_LISTEN, RX_INFLIGHT_LISTEN_ALT, RX_INFLIGHT_SLOTS };
 static _Atomic uint64_t g_rx_inflight_since_ms[RX_INFLIGHT_SLOTS];
+static _Atomic uint64_t g_rx_inflight_heard_ms[RX_INFLIGHT_SLOTS];   /* its decoder's last report */
 static _Atomic int      g_rx_inflight_mode[RX_INFLIGHT_SLOTS];
 
 static void rx_inflight_note(int slot, int mode, const rx_metrics_accum_t *m, uint64_t now)
 {
-    if (m->sync && !m->frame_decoded)
-    {
-        if (atomic_load(&g_rx_inflight_since_ms[slot]) == 0)
-        {
-            atomic_store(&g_rx_inflight_mode[slot], mode);
-            atomic_store(&g_rx_inflight_since_ms[slot], now);
-        }
-    }
-    else
-        atomic_store(&g_rx_inflight_since_ms[slot], 0);
+    uint64_t since = atomic_load(&g_rx_inflight_since_ms[slot]);
+    uint64_t heard = atomic_load(&g_rx_inflight_heard_ms[slot]);
+    uint64_t next = rx_inflight_next(since, heard, m->reported, m->sync != 0, m->frame_decoded, now);
+    if (m->reported)
+        atomic_store(&g_rx_inflight_heard_ms[slot], now);
+    if (next == since)
+        return;
+    if (!since)
+        atomic_store(&g_rx_inflight_mode[slot], mode);
+    atomic_store(&g_rx_inflight_since_ms[slot], next);
 }
 
 /* A slot locked onto a frame that can hold a scanning host: any but the
