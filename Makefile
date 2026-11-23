@@ -943,7 +943,11 @@ fyne-ui-macos-universal:
 		-name $(MACOS_APP_NAME) -appID $(MACOS_APP_ID) -icon mercury-ui.png \
 		-executable $(abspath mercury-ui)
 	$(PLIST_BUDDY) -c "Add :NSMicrophoneUsageDescription string 'Mercury needs access to the radio audio to listen for data signals'" $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/Info.plist
-	plutil -replace LSMinimumSystemVersion -string $(MACOS_MIN) $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/Info.plist
+	@# fyne writes version 0.0.1 and 10.11; the app's own version and floor
+	P=$(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/Info.plist; \
+	plutil -replace CFBundleShortVersionString -string $(MERCURY_VERSION) $$P && \
+	plutil -replace CFBundleVersion -string $(MACOS_BUILD) $$P && \
+	plutil -replace LSMinimumSystemVersion -string $(MACOS_MIN) $$P
 	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app  (universal, macOS $(MACOS_MIN)+)"
 	@lipo -archs $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/MacOS/* || true
 
@@ -1046,8 +1050,6 @@ fyne-ui-macos-appstore-pkg:
 	rm -rf $(MACOS_STORE_STAGE) && mkdir -p $(MACOS_STORE_STAGE)
 	cp -R $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(MACOS_STORE_STAGE)/
 	P=$(MACOS_STORE_STAGE)/$(MACOS_APP_NAME).app/Contents/Info.plist; \
-	plutil -replace CFBundleShortVersionString -string $(MERCURY_VERSION) $$P && \
-	plutil -replace CFBundleVersion -string $(MACOS_BUILD) $$P && \
 	plutil -replace LSApplicationCategoryType -string public.app-category.utilities $$P && \
 	plutil -replace ITSAppUsesNonExemptEncryption -bool NO $$P
 	# Readable by all: a profile kept 0600 with the other secrets is refused at
