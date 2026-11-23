@@ -253,6 +253,9 @@ Which model covers the other 2.0 changes:
   rung, and agreement and delivery hold for whichever it names.
 - no direct probe while S's control goes on the floor (`choose_level`): it
   only narrows the rungs S names, which `RungAgreement` leaves free.
+- a small message drops the loss margin on a rung delivering under 60 %
+  (`short_rung`): it changes only which rung and how many frames a short
+  poll asks for, which `RungAgreement` leaves free.
 - a connect heard only on MFSK starts deaf to the control mode
   (`CAR_DEAF_HARD`, arq_fsm.c), and an MFSK reading does not clear that;
   a deaf S may then name, for one frame, the rung its ladder chose
