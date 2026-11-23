@@ -483,6 +483,15 @@ static uint8_t connect_ext(uint8_t bw_token, bool tx_mfsk)
                      (tx_mfsk ? ARQ_CONNECT_EXT_TXMFSK : 0));
 }
 
+bool arq_protocol_connect_crypto(const uint8_t *buf)
+{
+    if (!buf)
+        return false;
+    if (buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG)
+        return (buf[ARQ_ACCEPT_LEVEL_IDX] & ARQ_ACCEPT_CRYPTO_BIT) != 0;
+    return (buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CALL_CRYPTO_OFFER) != 0;
+}
+
 static void put_crc16(uint8_t *p, uint16_t crc) { p[0] = (uint8_t)crc; p[1] = (uint8_t)(crc >> 8); }
 static uint16_t get_crc16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
 
@@ -549,7 +558,7 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                               const char *called, const char *caller,
                               int bw_hz, int start_level, bool ctl_deaf,
                               float call_snr_db, uint16_t nonce,
-                              bool tx_mfsk)
+                              bool tx_mfsk, bool crypto)
 {
     if (!buf || !called || !caller || buf_len < ARQ_CONTROL_FRAME_SIZE ||
         start_level < 0 || start_level > ARQ_ACCEPT_LEVEL_MASK)
@@ -563,7 +572,8 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
     put_crc16(buf + ARQ_CONNECT_PAYLOAD_IDX, arq_protocol_callsign_crc16(caller));
     put_crc16(buf + ARQ_ACCEPT_CALLED_CRC_IDX, arq_protocol_callsign_crc16(called));
     put_crc16(buf + ARQ_ACCEPT_NONCE_IDX, nonce);
-    buf[ARQ_ACCEPT_LEVEL_IDX] = (uint8_t)(start_level | (ctl_deaf ? ARQ_ACCEPT_CTL_DEAF_BIT : 0));
+    buf[ARQ_ACCEPT_LEVEL_IDX] = (uint8_t)(start_level | (ctl_deaf ? ARQ_ACCEPT_CTL_DEAF_BIT : 0) |
+                                          (crypto ? ARQ_ACCEPT_CRYPTO_BIT : 0));
     buf[ARQ_ACCEPT_SNR_IDX] = snr_byte(call_snr_db);
     write_frame_header(buf, PACKET_TYPE_ARQ_CALL2, connect_ext(bw_token, tx_mfsk));
     return ARQ_CONTROL_FRAME_SIZE;
@@ -600,9 +610,10 @@ int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len, arq_accept_t *
     if (!out || !arq_protocol_connect_version_ok(buf, buf_len) ||
         !(buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG))
         return -1;
-    /* The rung (3 bits), the deaf bit and the encryption answer (ignored),
-     * the rest of byte 8 and bytes 10-13 zero: a frame that passed its CRC
-     * with any of them set is not an ACCEPT.  Rung 7 is off the ladder. */
+    /* The rung (3 bits), the deaf bit and the encryption answer
+     * (arq_protocol_connect_crypto), the rest of byte 8 and bytes 10-13
+     * zero: a frame that passed its CRC with any of them set is not an
+     * ACCEPT.  Rung 7 is off the ladder. */
     uint8_t lv = buf[ARQ_ACCEPT_LEVEL_IDX];
     if (lv & ~(ARQ_ACCEPT_LEVEL_MASK | ARQ_ACCEPT_CTL_DEAF_BIT | ARQ_ACCEPT_CRYPTO_BIT) ||
         (lv & ARQ_ACCEPT_LEVEL_MASK) == 7)

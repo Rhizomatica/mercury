@@ -43,6 +43,7 @@ jobs:
             libhamlib-dev \
             libhamlib-utils \
             libssl-dev \
+            libsodium-dev \
             openssl \
             pkg-config \
             python3 \
@@ -140,6 +141,7 @@ jobs:
             libasound2-dev \
             libhamlib-dev \
             libssl-dev \
+            libsodium-dev \
             pkg-config \
             golang-go
 

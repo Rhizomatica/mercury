@@ -127,7 +127,7 @@ void test_translate_older_minor_not_connected(void)
                            (uint8_t)(ARQ_BW_TOKEN_2300 | minor << ARQ_CONNECT_EXT_MINOR_SHIFT));
         TEST_ASSERT_FALSE(sim_translate_frame(frame, (size_t)fs, 3.0f, "B0BBB", &ev));
     }
-    fs = arq_protocol_build_accept(frame, sizeof(frame), 0x21, "B0BBB", "B0AAA", 2300, 3, false, NAN, 0x42, false);
+    fs = arq_protocol_build_accept(frame, sizeof(frame), 0x21, "B0BBB", "B0AAA", 2300, 3, false, NAN, 0x42, false, false);
     TEST_ASSERT_TRUE(fs > 0);
     TEST_ASSERT_TRUE(sim_translate_frame(frame, (size_t)fs, 3.0f, "B0AAA", &ev));
     TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_ACCEPT, ev.id);

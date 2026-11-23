@@ -483,6 +483,9 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     char my_call[CALLSIGN_MAX_SIZE];
     arq_conn_get_calls(my_call, NULL, NULL, sizeof(my_call));
     int bw_hz = is_accept ? arq_reported_bandwidth_hz() : arq_get_bw();
+    /* a CALL's offer is its session id's low bit (ARQ_EV_APP_CONNECT) */
+    bool crypto = is_accept && g_cbs.crypto_negotiate &&
+                  g_cbs.crypto_negotiate(ARQ_NEG_ACCEPT_OUT, sess->remote_call, sess->session_id, false);
     if (is_accept)
     {
         /* The callsign the caller dialed: a station answering on a secondary
@@ -492,7 +495,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
                                       called, sess->remote_call, bw_hz,
                                       accept_level(sess), sess->car_ctl_deaf,
                                       sess->car_call_snr != 0.0f ? sess->car_call_snr : NAN,
-                                      sess->car_nonce, ARQ_TX_MFSK_ONLY);
+                                      sess->car_nonce, ARQ_TX_MFSK_ONLY, crypto);
         /* The ACCEPT is the carousel's first poll: from here the caller's
          * frames carry the session seed, and its first round comes on the rung
          * the ACCEPT names. */
@@ -1318,8 +1321,12 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
          * incoming CALL dialed, which retry_deadline_from_s would otherwise
          * rank this call with. */
         sess->local_call[0] = '\0';
-        /* 2..126: never 0, the low bit (the encryption offer) clear */
+        /* 2..126: never 0; the low bit is the encryption offer, decided
+         * here once, so every CALL of the session offers the same */
         sess->session_id      = (uint8_t)((time_now_ms() % 63 + 1) << 1);
+        if (g_cbs.crypto_negotiate &&
+            g_cbs.crypto_negotiate(ARQ_NEG_CALL_OUT, ev->remote_call, sess->session_id, false))
+            sess->session_id |= ARQ_CALL_CRYPTO_OFFER;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->call_sends_done = 0;
         sess->call_carrier    = 0;
@@ -1371,6 +1378,12 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         log_accept_carrier(sess, ev);
         if (!same_session)
         {
+            /* The answer to its encryption offer, once for the session: a
+             * repeat gets the same, like the nonce (specs/connect, Agree:
+             * answered anew, a re-CONNECT now offering decoded the old
+             * answer's ACCEPT still in the air). */
+            if (g_cbs.crypto_negotiate)
+                g_cbs.crypto_negotiate(ARQ_NEG_CALL_IN, ev->remote_call, ev->session_id, ev->crypto);
             /* A new session takes the CALL's bandwidth; a repeat keeps the
              * session's, like its nonce and rung: the caller adopts whatever
              * an ACCEPT of it says (specs/connect/ConnectHandshake.tla). */
@@ -1532,6 +1545,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
                              (mercury_mode_is_mfsk(ev->mode) && mercury_mode_is_mfsk(sess->call_carrier));
         if (sess->car_ctl_deaf) sess->car_rx_level = 0;
         sess->car_my_snr   = ev->rx_snr;
+        if (g_cbs.crypto_negotiate)
+            g_cbs.crypto_negotiate(ARQ_NEG_ACCEPT_IN, sess->remote_call, sess->session_id, ev->crypto);
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call, true);
         if (g_timing)

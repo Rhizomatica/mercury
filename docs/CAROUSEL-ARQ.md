@@ -249,7 +249,10 @@ frame on MFSK.
   1.9.18 (MFSK at 1531-2500 Hz), 2 was 1.9.19 (MFSK centred on 1500 Hz), 3
   gave a BW500 session its own floor; 3 was the last value it held.
 - The encryption offer (the CALL's session id, low bit) and answer (ACCEPT
-  byte 8, bit 4) are reserved: a station sends both 0 and ignores them.
+  byte 8, bit 4), `[crypto]` (docs/TNC.md, off by default): the caller
+  decides the offer once per CONNECT, as it picks the session id, and the
+  callee answers it once per session.  A station with encryption off sends
+  both 0 and ignores them, so a pair with one end off connects in the clear.
   The offer is part of the session id, which the ACCEPT echoes, so an ACCEPT
   answers the offer of the CALLs of its id; a CONNECT that offers and one
   that does not never share an id.  specs/connect `Agree`.

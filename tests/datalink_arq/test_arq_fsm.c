@@ -42,6 +42,7 @@ FAKE_VALUE_FUNC(int, fake_tx_backlog);
 FAKE_VALUE_FUNC(bool, fake_channel_busy);
 FAKE_VALUE_FUNC(int, fake_tx_read, uint8_t *, size_t);
 FAKE_VOID_FUNC(fake_send_buffer_status, int);
+FAKE_VALUE_FUNC(bool, fake_crypto_negotiate, arq_neg_step_t, const char *, uint8_t, bool);
 
 static arq_fsm_callbacks_t test_callbacks = {
     .send_tx_frame       = fake_send_tx_frame,
@@ -177,8 +178,30 @@ void test_connect_transitions_to_calling(void)
     TEST_ASSERT_EQUAL_STRING("TEST1", sess.remote_call);
 }
 
+/* A CONNECT that offers encryption carries the offer in its session id's
+ * low bit, decided once: every CALL of the session offers the same. */
+void test_connect_offer_is_the_session_ids_low_bit(void)
+{
+    RESET_FAKE(fake_crypto_negotiate);
+    fake_crypto_negotiate_fake.return_val = true;
+    test_callbacks.crypto_negotiate = fake_crypto_negotiate;
+    arq_fsm_set_callbacks(&test_callbacks);
+
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "TEST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL(ARQ_CALL_CRYPTO_OFFER, sess.session_id & ARQ_CALL_CRYPTO_OFFER);
+    TEST_ASSERT_EQUAL_INT(1, fake_crypto_negotiate_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_NEG_CALL_OUT, fake_crypto_negotiate_fake.arg0_val);
+    TEST_ASSERT_EQUAL_HEX8(sess.session_id & ~ARQ_CALL_CRYPTO_OFFER, fake_crypto_negotiate_fake.arg2_val);
+
+    test_callbacks.crypto_negotiate = NULL;
+    arq_fsm_set_callbacks(&test_callbacks);
+}
+
 /* A CONNECT's session id is never 0, and its low bit (the encryption
- * offer, reserved) is clear */
+ * offer) is clear without an offer */
 void test_connect_session_id_offers_nothing(void)
 {
     for (uint64_t t = 1000; t < 1000 + 2 * 63; t++)
@@ -305,6 +328,44 @@ void test_accept_fallback_completes_on_first_frame(void)
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_EQUAL_INT(1, fake_notify_connected_fake.call_count);
+}
+
+/* The callee answers a session's encryption offer once: a repeat of its CALL,
+ * back in the ACCEPT fallback, gets the same answer, like the same nonce --
+ * its key or its client's ENCRYPT may have changed since, and the caller may
+ * decode an ACCEPT of the first answer still in the air (specs/connect,
+ * Agree, Mut_reanswer). */
+void test_repeat_call_keeps_the_encryption_answer(void)
+{
+    RESET_FAKE(fake_crypto_negotiate);
+    fake_crypto_negotiate_fake.return_val = true;
+    test_callbacks.crypto_negotiate = fake_crypto_negotiate;
+    arq_fsm_set_callbacks(&test_callbacks);
+
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42 | ARQ_CALL_CRYPTO_OFFER;
+    ev.crypto = true;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_crypto_negotiate_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_NEG_CALL_IN, fake_crypto_negotiate_fake.arg0_val);
+    TEST_ASSERT_TRUE(fake_crypto_negotiate_fake.arg3_val);
+
+    accept_until_fallback();
+    unsigned asked = fake_crypto_negotiate_fake.call_count;
+    uint16_t nonce = sess.car_nonce;
+
+    arq_fsm_dispatch(&sess, &ev);                      /* the same CALL again */
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_HEX16(nonce, sess.car_nonce);    /* the same session */
+    for (unsigned i = asked; i < fake_crypto_negotiate_fake.call_count; i++)
+        TEST_ASSERT_NOT_EQUAL(ARQ_NEG_CALL_IN, fake_crypto_negotiate_fake.arg0_history[i]);
+
+    test_callbacks.crypto_negotiate = NULL;
+    arq_fsm_set_callbacks(&test_callbacks);
 }
 
 /* The caller gave up while we were answering it: its host hung up while it
@@ -2687,6 +2748,7 @@ int main(void)
     RUN_TEST(test_listen_transitions_to_listening);
     RUN_TEST(test_connect_transitions_to_calling);
     RUN_TEST(test_connect_session_id_offers_nothing);
+    RUN_TEST(test_connect_offer_is_the_session_ids_low_bit);
     RUN_TEST(test_call_retry_deadline_anchored_to_ptt_off);
     RUN_TEST(test_call_after_a_repeat_waits_out_a_floor_accept);
     RUN_TEST(test_incoming_call_transitions_to_accepting);
@@ -2755,6 +2817,7 @@ int main(void)
     RUN_TEST(test_call_max_s_leaves_default_retries_alone);
     RUN_TEST(test_accepting_gives_up_after_budget);
     RUN_TEST(test_accept_fallback_completes_on_first_frame);
+    RUN_TEST(test_repeat_call_keeps_the_encryption_answer);
     RUN_TEST(test_accepting_releases_on_the_callers_disconnect);
     RUN_TEST(test_accepting_keeps_answering_past_another_sessions_disconnect);
     RUN_TEST(test_accept_fallback_ends_on_the_callers_disconnect);
