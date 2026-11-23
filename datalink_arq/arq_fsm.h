@@ -358,6 +358,9 @@ typedef struct
     /** The session's MFSK floor (arq_floor_mode), set with its seed: the
      *  geometry patterns are keyed and detected at.  Optional. */
     void (*set_floor_mode)(int mode);
+    /** Stop what the modem is keying: a session that ends with no peer left
+     *  to hear it does not play its keydown out.  Optional. */
+    void (*cut_tx)(void);
 } arq_fsm_callbacks_t;
 
 /**

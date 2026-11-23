@@ -1596,6 +1596,7 @@ int arq_init(size_t frame_size, int mode)
         .send_pattern        = cb_send_pattern,
         .set_crc_seed        = arq_modem_crc_seed,
         .set_floor_mode      = arq_modem_floor_mode,
+        .cut_tx              = arq_modem_cut_tx,
     };
     arq_fsm_set_callbacks(&cbs);
     arq_fsm_set_timing(&g_timing);
