@@ -22,7 +22,10 @@ What it models:
 - Either end, hearing the peer's DISCONNECT, ends.  A connected end replies
   one guard later.  An ending end replies only if its own had not gone out
   (the crossed case).
-- An ending end that hears its peer CALL again ends and takes the CALL.  A
+- An ending end that hears its peer CALL again ends and takes the CALL, and
+  so does a callee still in the session (connected, or answering) that
+  hears its caller CALL for another session: the caller gave up on it and
+  redials (`fsm_connected`, `fsm_accepting`, `RX_CALL`).  A
   callee whose DISCONNECT is out, waiting only for the answer, takes a CALL
   for it from any callsign: a station calls with another MYCALL per
   application (`CALLS`).
@@ -453,6 +456,48 @@ Two things the model showed:
   ended the session, up to `ARQ_CAR_PEER_LOST_MS` (240 s) after the
   caller's last frame.  A delay, not a safety violation (`Mutual` holds).
   Since 2026-10-18 a connected station takes its peer's CALL
-  (specs/connect, `NoDeafRedial`).
+  (specs/connect, `NoDeafRedial`).  This spec kept the old rule until
+  trace validation (below) caught the code taking the CALL, 2026-11-23.
+
+## Trace validation: is the code one of the spec's behaviours?
+
+    make -C tests teardown_trace
+    TMPDIR=... specs/teardown/trace_check.sh 1 160              # each seed its own
+    TMPDIR=... specs/teardown/trace_check.sh 201 210 0.5 M 2    # 50 % loss, M hangs up, 2 sessions
+
+As specs/connect's (its README has the method): `tests/sim/teardown_trace`
+runs the two real FSMs of the sim through a connect, a few bytes each way
+and a hang-up -- the caller's or the callee's host DISCONNECT, both, or
+either's ABORT -- with every frame lost with a probability, and the caller
+calling again once with 2 sessions.  It writes what this spec sees of each
+end: its state (the callee's ACCEPTING and its ACCEPT fallback are `conn`:
+the connect, one step here, is specs/connect's; DISCONNECTED with the reply
+to the peer's DISCONNECT still to key, `ARQ_TD_REPLYING`, is `reply`), its
+session id, its DISCONNECT out (`ARQ_TD_SENT`, read while ending: the code
+clears it as the session ends, the spec keeps it) and the caller's drain
+(`ARQ_TD_DRAINING`, read while connected).  `TraceTeardown.tla` checks it.
+
+Results:
+
+- The first runs rejected seeds 20 (31 % loss, the caller's ABORT, 2
+  sessions) and 36 (36 % loss, the caller hangs up, 2 sessions): the caller
+  left a session the callee was still in -- its CALLs or its DISCONNECTs
+  all lost -- and called again, and the callee, still in the old session,
+  took the new CALL.  The code does (`RX_CALL` in `fsm_connected` and
+  `fsm_accepting`, since 2026-10-18); this spec had such a callee drop the
+  CALL.  Added to `Takes`: the callee ends the session (`recall`, its host
+  told as for any end) and answers.  `SessionTeardown.cfg` passes with the
+  same 669 778 states (losslessly the caller never leaves a session the
+  callee is in), and so does every other configuration, with the counts
+  below unchanged: the lossy one (11 077 245) and the ABORT one (7 628 010)
+  among them -- the states were reachable already, the transition was not.
+  Every mutant fails as below; `Race.cfg` and `Foreign.cfg` are violated as
+  they should be.
+- With it, seeds 1-160 (each its own loss 0-39 %, hang-up and 1-2
+  sessions): all 160 accepted; seeds 201-210 at 50 % loss with 2 sessions,
+  for each of M, S, both, M's ABORT and S's ABORT: all 50 accepted.
+
+Not read yet: the frames on their way, the last words and the host's
+notices (`told`, `ToldOnce`), which the sim's callbacks could report.
 
 Give each TLC run its own `-metadir`.

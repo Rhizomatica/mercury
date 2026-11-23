@@ -466,9 +466,15 @@ SkipReply(e) == /\ Mutant = "skipreply" /\ st[e] = "reply"
 \* caller's callsign -- or from any once its DISCONNECT is out and it only
 \* waits for the answer.
 Waiting == st["S"] = "ending" /\ sent["S"]
+\* ...and in a session, its caller's CALL of another session: the caller has
+\* left this one (it gave up, its watchdog fired) and redials, so S ends it
+\* and answers (fsm_connected, fsm_accepting: RX_CALL; specs/connect).
+\* Trace validation found the code doing this, sim seeds 20 and 36: the spec
+\* had a connected S drop that CALL before 2026-11-23.
 Takes(f) == \/ st["S"] = "idle"
             \/ st["S"] = "ending" /\ f.c = scall
             \/ Waiting /\ Mutant # "samecall"
+            \/ st["S"] = "conn" /\ f.c = scall /\ f.g # gen["S"]
 \* e takes the frame at the head of its queue.
 Mine(e, f) == f.g = gen[e]                                   \* seeded: its session's
 HearDisc(e, f) ==
@@ -500,13 +506,14 @@ Receive(e) ==
     /\ LET f == Head(q[e]) IN
        \/ HearDisc(e, f) /\ Pop(e)
        \/ HearPat(e, f) /\ Pop(e)
-       \* S answers a CALL when idle, or when ending and its peer calls again
+       \* S answers a CALL when idle, or when in a session (ending, or not yet)
+       \* and its peer calls again
        \/ /\ e = "S" /\ f.k = "call" /\ Takes(f)
           /\ st' = [st EXCEPT !["S"] = "conn"] /\ gen' = [gen EXCEPT !["S"] = f.g]
           /\ scall' = f.c /\ wish' = (IF Mutant = "staleteardown" THEN wish ELSE 0) /\ word' = "none" /\ UNCHANGED <<dropped, unasked, lostword, mw, sw>>
           /\ sid' = [sid EXCEPT !["S"] = f.sid] /\ sent' = [sent EXCEPT !["S"] = FALSE]
           /\ slot' = FALSE
-          /\ IF st["S"] = "ending" THEN End("S", "recall") ELSE UNCHANGED how
+          /\ IF st["S"] \in {"ending", "conn"} THEN End("S", "recall") ELSE UNCHANGED how
           /\ Len(q["M"]) < QMAX
           /\ q' = [q EXCEPT !["S"] = Tail(@), !["M"] = Append(@, Frame("accept", f.sid, f.g))]
           /\ sab' = FALSE

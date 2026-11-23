@@ -1,0 +1,3 @@
+# trace_check.sh: the trace it checks, and the ones it rejected
+TraceData.tla
+TraceData_*.tla

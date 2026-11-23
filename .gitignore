@@ -65,6 +65,7 @@ tests/carousel_bound
 tests/ab_bench
 tests/conn_bench
 tests/connect_trace
+tests/teardown_trace
 tests/idle_drop
 tests/floor_idle
 tests/done_tail

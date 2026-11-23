@@ -243,6 +243,15 @@ connect_trace: sim/connect_trace.c $(ARQ_STUBS) $(SIM_SRC) \
           ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
+# The end of a session, as a trace of what specs/teardown/SessionTeardown.tla
+# models (specs/teardown/trace_check.sh; not run by `make test`):
+#   ./teardown_trace <seed> [per] [who] [sessions]
+teardown_trace: sim/teardown_trace.c $(ARQ_STUBS) $(SIM_SRC) \
+          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+          ../datalink_arq/arq_protocol.c \
+          ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 # Idle sessions under the full FSM: how often the lost-peer watchdog ends one
 # while frames are lost (a bench, not run by `make test`):
 #   ./idle_drop <snr_db> <per> <seeds> <idle_s> [fade_hz]
