@@ -393,6 +393,7 @@ static int hamlib_ptt(bool on)
  * stays the system resolver's to bound.  Caller holds g_radio_mutex. */
 #define HAMLIB_REOPEN_INTERVAL_MS 3000U
 #define HAMLIB_REOPEN_PROBE_MS 1500
+#define HAMLIB_REOPEN_SETTLE_MS 100
 static uint64_t g_hamlib_reopen_ms = 0;
 
 /* Is the rig's host there?  false only when a TCP rig's host was asked and
@@ -409,6 +410,15 @@ static bool hamlib_host_answers(void)
 
     uint64_t started = hermes_uptime_ms();
     net_probe_result_t r = net_probe_host(host, port, HAMLIB_REOPEN_PROBE_MS);
+    if (r == NET_PROBE_ANSWERED)
+    {
+        /* Let the server finish with the probe's connection first.
+         * rigctld up to 4.6.x closes a client's descriptor up to three
+         * times; a connection accepted meanwhile can get that descriptor
+         * and lose it, and rig_open() then fails with a broken pipe. */
+        hl_usleep(HAMLIB_REOPEN_SETTLE_MS * 1000);
+        return true;
+    }
     if (r != NET_PROBE_SILENT)
         return true;
     HLOGW(RADIO_LOG_TAG, "Hamlib reopen: %s not answering (%llu ms); not opening",
