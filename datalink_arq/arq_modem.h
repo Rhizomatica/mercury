@@ -92,8 +92,9 @@ void arq_modem_set_floor_mode_fn(void (*fn)(int mode));
 void arq_modem_floor_mode(int mode);
 /* Cut the keydown on the air short (ABORT): the modem drops the rest of its
  * audio and unkeys.  A keydown that starts later is not affected. */
-void arq_modem_set_cut_tx_fn(void (*fn)(void));
-void arq_modem_cut_tx(void);
+void arq_modem_set_cut_tx_fn(void (*fn)(const char *why));
+/* why: a string literal, for the modem's "keydown cut short" log line. */
+void arq_modem_cut_tx(const char *why);
 
 /**
  * @brief Notify ARQ that PTT has gone ON.

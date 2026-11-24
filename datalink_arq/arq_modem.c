@@ -193,17 +193,17 @@ void arq_modem_floor_mode(int mode)
         g_floor_mode_fn(mode);
 }
 
-static void (*g_cut_tx_fn)(void) = NULL;
+static void (*g_cut_tx_fn)(const char *why) = NULL;
 
-void arq_modem_set_cut_tx_fn(void (*fn)(void))
+void arq_modem_set_cut_tx_fn(void (*fn)(const char *why))
 {
     g_cut_tx_fn = fn;
 }
 
-void arq_modem_cut_tx(void)
+void arq_modem_cut_tx(const char *why)
 {
     if (g_cut_tx_fn)
-        g_cut_tx_fn();
+        g_cut_tx_fn(why);
 }
 
 void arq_modem_ptt_on(int mode, size_t frame_size)
