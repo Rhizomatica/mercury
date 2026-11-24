@@ -18,6 +18,22 @@
 #include "arq_protocol.h"
 #include "carousel.h"      /* car_t: the carousel data plane */
 
+/* How long after our last ACCEPT left the air the host stays held on PENDING,
+ * even once the ACCEPT retries have run out (the fallback, arq_fsm.c).
+ *
+ * The caller may have decoded that ACCEPT without our decoding any of its
+ * replies: it is connected and polling, and its next poll completes the
+ * session from LISTENING.  A CANCELPENDING at the start of that wait lets a
+ * scanning host (BPQ32) hop away, and the connect that follows lands on a
+ * channel the host has left.  On air (VE4KLM <- K7EK, 30 m, 2026-11-23) the
+ * caller's frame came 70 s and 51 s after our last ACCEPT, 31 s and 12 s
+ * after the CANCELPENDING.  A caller that heard us polls at once and then
+ * every 24-37 s at the floor: 90 s covers three of its polls.  It applies
+ * only when the ACCEPT retries ran out sooner than that -- with the default
+ * 4 slots, about 43 s after the last ACCEPT; a host's RETRIES 20 answers
+ * past it already, and is unchanged. */
+#define ARQ_ACCEPT_FALLBACK_HOLD_MS 90000
+
 /* ======================================================================
  * Level 1 — Connection FSM states
  * ====================================================================== */
@@ -41,6 +57,10 @@ typedef enum
     ARQ_TD_NONE = 0,
     ARQ_TD_LISTEN_OFF,   /* ACCEPTING: a LISTEN OFF inside the grace period,
                           * honoured when it expires or once connected     */
+    ARQ_TD_HOLDING,      /* LISTENING, the ACCEPT fallback: the host is still
+                          * held on PENDING, its CANCELPENDING owed when the
+                          * hold ends without a connect
+                          * (ARQ_ACCEPT_FALLBACK_HOLD_MS)                   */
     ARQ_TD_DRAINING,     /* CONNECTED: the application's DISCONNECT waits
                           * for delivery, until teardown_deadline_ms       */
     ARQ_TD_SENT,         /* DISCONNECTING: our DISCONNECT is on the air    */
