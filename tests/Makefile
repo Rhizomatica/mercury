@@ -68,7 +68,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm test
             test_mercury_prng test_bcast_file test_car_short_msg \
             test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port test_net_probe \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore test_car_poll_size \
-            test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
+            test_mfsk_harq test_mfsk_modem test_rx_inflight test_pattern_ack_detection \
             test_message_store test_ui_history test_ws_protocol \
             test_monitor_frame test_hermes_log test_host test_api_host test_bcast_carousel test_bcast_rx_host
 
@@ -448,6 +448,10 @@ MFSK_SRC = ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_syn
 # that individually fail actually decode?
 test_mfsk_harq: modem/test_mfsk_harq.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $(filter %.c %.a %.o,$^) -lm
+
+# The age of the frame a decoder is locked onto (a header-only rule)
+test_rx_inflight: modem/test_rx_inflight.c $(UNITY_SRC)
+	$(CC) $(CFLAGS) -I../modem -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
 test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC) $(FREEDV_LIB)
