@@ -519,7 +519,7 @@ BITRATE\r
 names the mode on the air: 1 DATAC1, 3 DATAC3, 4 DATAC4, 15 DATAC15,
 16 DATAC16 (the control mode, while calling only), 17 DATAC17, 25 QAM16C2,
 26 DATAC17W, 27 QAM16C2W, 28 DATAN1, 29 QAM16N1, 30 QAM16N2, 100 MFSK,
-103 MFSK at 500 Hz (MFSK500), 104 MFSK at 2 kHz (MFSK2K).
+103 MFSK at 500 Hz (MFSK500), 104 MFSK at 2 kHz (MFSK2K), 110 PSK3.
 
 Mercury also sends the line unprompted: in a session, for each frame on a
 payload mode keyed or decoded; and while a `CONNECT` is calling, on the
