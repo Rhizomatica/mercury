@@ -555,6 +555,13 @@ However many CALLs `RETRIES` allows, no new one is keyed after
 `arq:call_max_s` seconds of calling (default 300; 0 = no cap).  `RETRIES 20`
 alone is about 8 minutes on the frequency.
 
+After the fast CALLs, a caller at BW2300 or BW2750 calls on the 1 kHz MFSK
+floor and then twice on the 500 Hz MFSK (27 s), which reaches about 3 dB
+deeper.  A scanning gateway never catches a 27 s CALL, so a station that
+mostly calls scanning gateways can set `arq:call_mfsk500 = false`: its CALLs
+after the fast ones are then the 1 kHz MFSK and DATAC16 in turn.  See
+[Calling a scanning gateway](#calling-a-scanning-gateway).
+
 ```
 RETRIES 10\r
 ```
@@ -1100,6 +1107,37 @@ onto a frame it has not decoded yet, Mercury logs it:
 Either frame is lost to the `LISTEN OFF` itself.  A CALL cut off by a hop
 shows as one of these lines with no `RX_CALL` after it.  The lock can also be noise or another station's
 traffic, so read the line together with the caller's log.
+
+#### Calling a scanning gateway
+
+A gateway that scans visits each of its frequencies for a few seconds in
+turn: 4 s on an RMS Trimode, 10 to 17 s on BPQ32 scan lists seen on air.
+It stops on a frequency when Mercury sends it `PENDING`, which happens about
+a second into a CALL on DATAC16 or the 1 kHz MFSK, if the CALL starts while
+the gateway is listening there.  A 500 Hz MFSK CALL, at 27 s, never fits a
+stay and does not stop the scan: Mercury does not hold a scanner on that
+mode's lock, which false-locked on 40 m noise for whole frames.
+
+A caller at BW2300 or BW2750 sends, after its fast DATAC16 CALLs, the 1 kHz
+MFSK and then the 500 Hz MFSK twice.  On KG9NI's calls to K7EK (Nov 22,
+2026; four channels, 16.7 s each) the two 500 Hz CALLs and the waits after
+them took 133 s of the 300 a call lasts, and none could be caught.  With
+`arq:call_mfsk500 = false` the CALLs after the fast ones are the 1 kHz MFSK
+and DATAC16 in turn, as in 1.9.24:
+
+| CALL | default | `call_mfsk500 = false` |
+|---|---|---|
+| 1 to `F` | DATAC16 | DATAC16 |
+| then, repeating | 1 kHz MFSK, 500 Hz MFSK, 500 Hz MFSK | 1 kHz MFSK, DATAC16 |
+
+The cost is the deepest connects to a station that does not scan: the
+500 Hz MFSK reaches about 3 dB further (1.9.25 release notes, #618).  In the
+simulator, calling a station that listens on one frequency (40 seeds), every
+call at -14 to -16 dB connected with it on and none with it off, and under
+fading at -13 dB 39 of 40 against 15.  Turn it off on a station that mostly
+calls scanning gateways; leave it on for one that calls fixed stations on
+weak paths.  It changes nothing at BW500,
+where the 500 Hz MFSK is the floor, nor for the station called.
 
 ### DISCONNECTED
 

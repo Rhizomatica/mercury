@@ -334,7 +334,11 @@ int arq_call_carrier(const arq_session_t *sess)
      * and a BW500 station listens on the 500 Hz floor. */
     int floor = arq_floor_mode(arq_get_bw());
     int n = sess->call_sends_done - (mfsk_only ? 0 : ARQ_CALL_FAST_SLOTS);
-    if (floor == MERCURY_MODE_MFSK_N32)
+    /* At 500 Hz, or wider with arq:call_mfsk500 off: the floor and the
+     * control mode in turn.  On air (KG9NI calling K7EK, 2026-11-22) K7EK
+     * scanned four channels, 16.7 s on each; every 27 s CALL of KG9NI's fell
+     * where it could not be caught, and they took 133 s of the 300. */
+    if (floor == MERCURY_MODE_MFSK_N32 || !atomic_load(&arq_call_mfsk500))
         return mfsk_only || n % 2 == 0 ? floor : sess->control_mode;
     /* Wider than 500 Hz, the 500 Hz MFSK too, after the floor: every
      * listener decodes it (#451), ~3 dB below the 1 kHz floor, and a

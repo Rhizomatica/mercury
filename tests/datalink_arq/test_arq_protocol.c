@@ -128,6 +128,15 @@ void test_call_max_setter_clamps_to_default(void)
     arq_protocol_set_call_max_s(ARQ_CALL_MAX_S_DEFAULT);
 }
 
+void test_call_mfsk500_setter(void)
+{
+    TEST_ASSERT_EQUAL_INT(1, atomic_load(&arq_call_mfsk500));   /* on by default */
+    arq_protocol_set_call_mfsk500(false);
+    TEST_ASSERT_EQUAL_INT(0, atomic_load(&arq_call_mfsk500));
+    arq_protocol_set_call_mfsk500(true);
+    TEST_ASSERT_EQUAL_INT(1, atomic_load(&arq_call_mfsk500));
+}
+
 void test_retry_rank_is_antisymmetric_and_deterministic(void)
 {
     /* The two peers compare the SAME pair of callsigns, so exactly one defers
@@ -650,6 +659,7 @@ int main(void)
     /* Retry stagger */
     RUN_TEST(test_silence_fallback_setter_clamps_to_default);
     RUN_TEST(test_call_max_setter_clamps_to_default);
+    RUN_TEST(test_call_mfsk500_setter);
     RUN_TEST(test_retry_rank_is_antisymmetric_and_deterministic);
     RUN_TEST(test_retry_rank_degenerate_pair_falls_back);
     RUN_TEST(test_session_calls_follow_the_side);

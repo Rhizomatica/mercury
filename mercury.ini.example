@@ -227,6 +227,17 @@ silence_fallback_s = 150
 ; frequency; on air nearly every connect came within 5 minutes.
 call_max_s = 300
 
+; Wider than 500 Hz (BW2300, BW2750), also CALL on the 500 Hz MFSK (default:
+; true).  After the fast DATAC16 CALLs a call goes on the 1 kHz MFSK floor and
+; then twice on the 500 Hz MFSK, a 27 s frame that connects about 3 dB deeper
+; when the station called listens on one frequency.  A gateway that scans
+; never catches those 27 s CALLs: it stays only seconds on each frequency, and
+; it does not hold its scanner for one.  Set false if you mostly call scanning
+; gateways (Winlink RMS, BPQ32 with a scan list): the CALLs after the fast ones
+; are then the 1 kHz MFSK and DATAC16 in turn, as in 1.9.24.  At BW500 nothing
+; changes: its floor is the 500 Hz MFSK.
+call_mfsk500 = true
+
 ; Transmit MFSK only (default: false).  For radios that can only transmit FSK
 ; (not PSK/QAM) — the QRP Labs QDX, QRPguys AFSK III and similar — which can
 ; key constant-envelope MFSK but not the OFDM/QAM payload modes.  When set,
