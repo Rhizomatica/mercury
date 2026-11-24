@@ -407,11 +407,15 @@ static void cb_notify_pending_again(const char *remote_call)
     g_pending_ms = time_now_ms();
 }
 
+/* Not the session's bandwidth: a CANCELPENDING tells the host only, and the
+ * call it ends may still connect from the ACCEPT fallback, whose session must
+ * run at the bandwidth the ACCEPT named (min(ours, the CALL's)).  Cleared, it
+ * fell back to ours: a BW500 caller's late connect to a BW2300 callee ran the
+ * two ends on different rungs and floors.  The FSM clears it when the call
+ * ends without a session (arq_clear_session_bw), and a session's end does
+ * (cb_notify_disconnected). */
 static void cb_notify_cancelpending(void)
 {
-    pthread_mutex_lock(&g_conn_lock);
-    arq_conn.session_bw = 0;
-    pthread_mutex_unlock(&g_conn_lock);
     arq_tnc_send_cancelpending();
     HLOGI(LOG_COMP, "Incoming connection cancelled");
 }
@@ -1483,6 +1487,13 @@ void arq_set_session_bw(int bw_hz, bool from_call)
     int local_bw = normalize_bandwidth_hz(arq_conn.bw);
     /* the callee answers with min(its own, the CALL's); the caller takes it */
     arq_conn.session_bw = normalize_bandwidth_hz(from_call && local_bw < bw_hz ? local_bw : bw_hz);
+    pthread_mutex_unlock(&g_conn_lock);
+}
+
+void arq_clear_session_bw(void)
+{
+    pthread_mutex_lock(&g_conn_lock);
+    arq_conn.session_bw = 0;
     pthread_mutex_unlock(&g_conn_lock);
 }
 

@@ -1372,6 +1372,7 @@ static void end_accept_fallback(arq_session_t *sess)
     sess->accept_fallback = false;
     car_set_seed(sess, 0);
     sess->peer_tx_mode = sess->initial_payload_mode;   /* back to broadcast */
+    arq_clear_session_bw();   /* kept for a late connect until now */
 }
 
 /* The fallback's hold of the host ends without a connect: the CANCELPENDING
@@ -1473,6 +1474,8 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_APP_STOP_LISTEN:
         release_fallback_hold(sess);   /* as in ACCEPTING: the pending call is gone */
+        if (sess->accept_fallback && sess->crc_seed)
+            arq_clear_session_bw();    /* ...and its bandwidth with it */
         sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         break;
 
@@ -1894,6 +1897,11 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
                 g_cbs.notify_cancelpending();
             sess_enter(sess, ARQ_CONN_LISTENING, UINT64_MAX, ARQ_EV_TIMER_RETRY);
             sess->accept_fallback = true;
+            /* No ACCEPT went out (no seed): nothing can connect from here, and
+             * the CALL's bandwidth goes.  With one, it stays for the session a
+             * late connect starts (cb_notify_cancelpending). */
+            if (!seed)
+                arq_clear_session_bw();
             /* Keep hearing the caller's carousel frames: it may be connected
              * already, and its first round is what completes the session. */
             if (seed)

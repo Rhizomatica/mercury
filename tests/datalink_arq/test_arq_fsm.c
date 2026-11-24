@@ -61,6 +61,7 @@ static arq_fsm_callbacks_t test_callbacks = {
 
 static arq_session_t sess;
 static arq_timing_ctx_t timing;
+extern int arq_test_session_bw_clears;   /* arq_test_stubs.c */
 
 /* ---- Helper: create a minimal event ---- */
 static arq_event_t make_event(arq_event_id_t id)
@@ -120,6 +121,7 @@ void setUp(void)
     RESET_FAKE(fake_tx_read);
     RESET_FAKE(fake_send_buffer_status);
     FFF_RESET_HISTORY();
+    arq_test_session_bw_clears = 0;
 
     /* Init session and register callbacks */
     mock_set_uptime_ms(1000);
@@ -503,6 +505,63 @@ void test_accept_fallback_hold_hands_over_to_a_new_call(void)
     TEST_ASSERT_EQUAL_UINT64(0, sess.accept_tx_end_ms);
     TEST_ASSERT_EQUAL_INT(pendings + 1, fake_notify_pending_fake.call_count);
     TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
+}
+
+/* The session's bandwidth (min(ours, the CALL's), named in our ACCEPT) stays
+ * through the fallback, past the hold's CANCELPENDING, for the session a late
+ * connect starts: given up there, that session ran at our own bandwidth, on
+ * other rungs and another floor than a narrower caller's. */
+void test_accept_fallback_keeps_the_session_bandwidth_for_a_late_connect(void)
+{
+    accept_once_then_fall_back();
+    TEST_ASSERT_EQUAL_INT(0, arq_test_session_bw_clears);
+
+    mock_set_uptime_ms(1000 + ARQ_ACCEPT_FALLBACK_HOLD_MS);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);   /* the hold ends */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_cancelpending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, arq_test_session_bw_clears);
+
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id  = 0x42;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(0, arq_test_session_bw_clears);
+}
+
+/* ...and goes once the fallback ends without a session: at its end, on the
+ * caller's DISCONNECT, the host's DISCONNECT, or LISTEN OFF. */
+void test_accept_fallback_end_gives_the_session_bandwidth_up(void)
+{
+    accept_once_then_fall_back();
+    mock_set_uptime_ms(1000 + ARQ_ACCEPT_FALLBACK_HOLD_MS);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);                       /* hold over */
+    mock_set_uptime_ms(sess.accept_fallback_end_ms);
+    arq_fsm_dispatch(&sess, &ev);                       /* fallback over */
+    TEST_ASSERT_FALSE(sess.accept_fallback);
+    TEST_ASSERT_EQUAL_INT(1, arq_test_session_bw_clears);
+
+    setUp();
+    accept_once_then_fall_back();
+    ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = 0x42;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, arq_test_session_bw_clears);
+
+    setUp();
+    accept_once_then_fall_back();
+    ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, arq_test_session_bw_clears);
+
+    setUp();
+    accept_once_then_fall_back();
+    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, arq_test_session_bw_clears);
 }
 
 /* A session that has ENDED is not resurrected by a late frame from its peer.
@@ -2966,6 +3025,8 @@ int main(void)
     RUN_TEST(test_accept_fallback_hold_released_by_the_hosts_disconnect);
     RUN_TEST(test_accept_fallback_hold_released_by_listen_off_and_connect);
     RUN_TEST(test_accept_fallback_hold_hands_over_to_a_new_call);
+    RUN_TEST(test_accept_fallback_keeps_the_session_bandwidth_for_a_late_connect);
+    RUN_TEST(test_accept_fallback_end_gives_the_session_bandwidth_up);
     RUN_TEST(test_ended_session_is_not_resurrected_by_a_late_frame);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
     RUN_TEST(test_accepting_repeat_call_sends_pending_again);
