@@ -26,7 +26,7 @@
  * session from LISTENING.  A CANCELPENDING at the start of that wait lets a
  * scanning host (BPQ32) hop away, and the connect that follows lands on a
  * channel the host has left.  On air (VE4KLM <- K7EK, 30 m, 2026-11-23) the
- * caller's frame came 74 s and 55 s after our last ACCEPT, 31 s and 12 s
+ * caller's frame came 70 s and 51 s after our last ACCEPT, 31 s and 12 s
  * after the CANCELPENDING.  A caller that heard us polls at once and then
  * every 24-37 s at the floor: 90 s covers three of its polls.  It applies
  * only when the ACCEPT retries ran out sooner than that -- with the default
