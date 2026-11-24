@@ -552,22 +552,37 @@
 % =============================================================================
 \section{Formal methods: TLA+ and TLAPS}
 
-\begin{frame}{Formal models of the protocol layers}
+\begin{frame}{Formal models: data and turns}
   \centering\footnotesize
-  \begin{tabular}{@{}p{3.1cm} p{5.8cm} p{4.4cm}@{}}
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{3.1cm} >{\raggedright\arraybackslash}p{5.8cm} >{\raggedright\arraybackslash}p{4.4cm}@{}}
     \toprule
     \textbf{Model} & \textbf{What it proves} & \textbf{Checked} \\
     \midrule
     \textbf{CarouselBlocks} & InOrder, Integrity, RetireSafe, NoPhantom: delivery in order, nothing invented, nothing retired early & TLC up to \hl{63.4 M states}; an adversary config at 12.1 M \\
     \textbf{Liveness} & Completes: every block is delivered, under a lossy adversary & 2.58 M states, 14.2 h \\
     \textbf{CarouselProofs} & Spec $\Rightarrow$ $\Box$Safety for any number of blocks & \hl{TLAPS: 823 obligations} (Z3, Zenon) \\
-    \textbf{CarouselTurns} (timed) & NoOverlap: the two stations never key together; MNotShutOut & 18.5 M states; MFSK config 27.1 M \\
-    \textbf{RungAgreement} & Agree, WastedF, FallbacksAgree, Delivered: both ends agree on the rung & 3234 states; 17168 at 4 rungs \\
-    \textbf{ConnectHandshake} & NoDoom, NoHalfConnect, Settles: no connect the other end does not stand by & 9473 states; 34177 big \\
-    \textbf{SessionTeardown} & NoKill, NoLostWord, NoCut, Mutual: no end leaves on another session's frame or cuts the last word & 2.57 M states lossy; 15.6 M with foreign patterns \\
+    \textbf{DirDone} & Sound: the peer's direction is taken as done only once all it held is delivered & 71 states \\
+    \textbf{CarouselTurns} (timed) & NoOverlap: the two stations never key together; MNotShutOut; unanswered polls free their slots (MWatch) & 18.5 M states; MFSK 27.1 M; the BW500 floor's 26 s frame \hl{107 M} \\
     \bottomrule
   \end{tabular}
-  \src{Source: specs/carousel, specs/turns, specs/rungs, specs/connect, specs/teardown (README files)}
+  \src{Source: specs/carousel, specs/turns (README files)}
+\end{frame}
+
+\begin{frame}{Formal models: connect, rungs and teardown}
+  \centering\footnotesize
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{3.1cm} >{\raggedright\arraybackslash}p{5.8cm} >{\raggedright\arraybackslash}p{4.4cm}@{}}
+    \toprule
+    \textbf{Model} & \textbf{What it proves} & \textbf{Checked} \\
+    \midrule
+    \textbf{ConnectHandshake} & NoDoom, NoHalfConnect, NoDeafRedial, Settles; encryption agreed (Agree, ReqGate); no mixed-version ladder (SameLadder) & 10\,609 states; 52\,649 big \\
+    \textbf{ConnectCarrier} & NoOverlap: a CALL never keys over an ACCEPT, on DATAC16 or the MFSK floor & 149\,404 states; 297\,879 with sensing \\
+    \textbf{RungAgreement}, \textbf{PollRung} & Agree, WastedF, Delivered: both ends agree on the rung, both directions, rungs dying mid-session & 3234 / 17\,168 states; 12\,487 \\
+    \textbf{FloorFallback}, \textbf{FloorSilence} & Delivered, FloorHolds: a session below every mode but the floor stays alive & 3665 states; 696 \\
+    \textbf{CtlDeaf} & LossEnds, HardNeedsOfdm: when the caller takes itself deaf to the control mode, and that it ends & 524 states \\
+    \textbf{SessionTeardown} & NoKill, NoLostWord, NoCut, Confirmed, ToldOnce: no end leaves on another session's frame or cuts the last word & 11.1 M states lossy; \hl{65.3 M} with foreign patterns \\
+    \bottomrule
+  \end{tabular}
+  \src{Source: specs/connect, specs/rungs, specs/ctldeaf, specs/teardown (README files). In review: specs/turns/AbortKey.tla (\#628), specs/notices (\#657)}
 \end{frame}
 
 \begin{frame}{Validation of the models}
@@ -575,8 +590,8 @@
     \column{0.5\textwidth}
     \begin{block}{Mutation testing}
       \begin{itemize}
-        \item Turns: five mutants (no grid, late, long, blind, reuse) each violate NoOverlap
-        \item Rungs: five more (no request, no bind, deaf, unnamed, previous rung), and the code before \#448
+        \item \textbf{72 mutants}, one rule broken each; every one must violate its property
+        \item Many are a bug found on air, kept as its counterexample: a stale CALL answered (KG9NI $\leftarrow$ K7EK), a callee deaf to a redial (K7EK answering N3JXB), two polls holding the caller off the air 97 s
         \item Blocks: the no-check config violates Integrity, as it must
         \item Before the integrity work, the model found \textbf{two real bugs}, 9 steps each
       \end{itemize}
@@ -585,12 +600,12 @@
     \begin{block}{Conformance of the implementation}
       \begin{itemize}
         \item \texttt{car\_explore} runs the \textbf{real} \texttt{carousel.c} under every set of up to 3 losses or sensing failures, plus spurious BREAKs and corrupt frames
-        \item \textbf{58\,179 runs in about 10 s}, on every CI run; 9.09 M in the long sweep
+        \item \textbf{38\,025 runs in about 6 s}, on every CI run; 9.09 M in the long sweep
         \item Overrun and slot oracles in the simulator check the timed model's assumptions
       \end{itemize}
     \end{block}
   \end{columns}
-  \src{Source: specs/, tests/sim/car\_explore.c; PRs \#345--\#347}
+  \src{Source: specs/*/Mut\_*.cfg, tests/sim/car\_explore.c; PRs \#345--\#347}
 \end{frame}
 
 % =============================================================================
