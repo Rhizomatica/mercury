@@ -1477,6 +1477,20 @@ void test_cmd_p2p(void)
     assert_ok_response();
 }
 
+/* Pat sends P2P SESSION before a peer-to-peer CONNECT, without reading the
+ * answer: it is OK, as P2P alone is.  Any other word is WRONG. */
+void test_cmd_p2p_session(void)
+{
+    char cmd[] = "P2P SESSION";
+    execute_control_command(cmd);
+    assert_ok_response();
+
+    tcp_write_call_count = 0;
+    char other[] = "P2P NOW";
+    execute_control_command(other);
+    assert_wrong_response();
+}
+
 /* A command name needs a word boundary after it, for the rest of the parser
  * too: these used to be read as their head command ("ABORTX" aborted a live
  * session). */
@@ -2951,6 +2965,7 @@ int main(void)
     RUN_TEST(test_cmd_disconnect);
     RUN_TEST(test_cmd_cqframe);
     RUN_TEST(test_cmd_p2p);
+    RUN_TEST(test_cmd_p2p_session);
     RUN_TEST(test_cmd_word_boundary_for_the_rest);
     RUN_TEST(test_cmd_extra_words_after_a_valid_command);
     RUN_TEST(test_cmd_unknown);

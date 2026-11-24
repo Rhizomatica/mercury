@@ -223,13 +223,15 @@ differentiate chat and file-transfer timing.  Any other argument is `WRONG`.
 
 ### P2P
 
-No-op for VARA client compatibility.
+No-op for VARA client compatibility.  Pat sends `P2P SESSION` before a
+peer-to-peer `CONNECT`, as it sends `WINLINK SESSION` before a gateway one.
 
 ```
 P2P\r
+P2P SESSION\r
 ```
 
-**Response:** `OK\r` (always).
+**Response:** `OK\r`; `WRONG\r` with any other argument.
 
 ---
 

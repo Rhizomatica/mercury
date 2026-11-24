@@ -997,10 +997,13 @@ static void execute_control_command(char *buffer)
         return;
     }
 
+    /* P2P, or P2P SESSION: Pat sends the latter before a peer-to-peer
+     * CONNECT, as it sends WINLINK SESSION before a gateway one.  No-op. */
     if (command_args(buffer, "P2P"))
     {
         char words[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
-        if (split_words(buffer, words) != 1)
+        int n = split_words(buffer, words);
+        if (n != 1 && !(n == 2 && !strcmp(words[1], "SESSION")))
         {
             reply_wrong(received);
             return;
