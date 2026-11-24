@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -255,5 +256,54 @@ func TestHamlibPttOffIsNotPaced(t *testing.T) {
 	l.waitFor("the unkey", func() bool { return l.count("PTT OFF not sent")+l.count("PTT OFF failed") >= 1 })
 	if n := l.count("Hamlib reopen failed"); n < 2 {
 		l.fail("the PTT OFF was dropped by the reopen pace (%d failed reopens, want 2: key-up and unkey)", n)
+	}
+}
+
+// singleClientServer serves one client at a time, as SDR++'s rigctl server
+// does: the next connection is accepted only once the current one has ended.
+// Each client is forwarded to rigctld on its own connection, and closed when
+// rigctld goes away.
+func singleClientServer(ln net.Listener, upstream string) {
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			u, err := net.Dial("tcp", upstream)
+			if err != nil {
+				c.Close()
+				continue
+			}
+			done := make(chan struct{}, 2)
+			go func() { _, _ = io.Copy(u, c); u.Close(); done <- struct{}{} }()
+			go func() { _, _ = io.Copy(c, u); c.Close(); done <- struct{}{} }()
+			<-done
+			<-done
+		}
+	}()
+}
+
+// The reopen's probe must be gone before rig_open() connects: a server that
+// takes one client at a time would otherwise keep rig_open() waiting behind
+// it until Hamlib's timeout, at every retry (radio_io/net_probe.h).
+func TestHamlibReopenThroughASingleClientServer(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	l := newRigLabVia(t, 1, 126, func(rigPort int) string { // DATAC3
+		singleClientServer(ln, fmt.Sprintf("127.0.0.1:%d", rigPort))
+		return ln.Addr().String()
+	})
+	defer l.logRadioLines()
+
+	l.transmit("before the restart", 1, 1)
+	l.stopRig()
+	l.startRig()
+	l.transmit("after a rigctld restart", 2, 2)
+	if l.count("Hamlib session reopened") < 1 {
+		l.fail("no reopen logged")
 	}
 }

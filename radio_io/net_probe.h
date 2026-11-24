@@ -31,9 +31,19 @@
  * its write stream, then close), so a client accepted in between is given
  * the same descriptor number and has it closed under it: rig_open() sent
  * right after a probe fails with "Broken pipe" (and does again at every
- * retry while the machine is busy enough to keep losing that race).  So
- * net_probe_host_hold() hands the connected socket back, for the caller to
- * close only once its own session is open.
+ * retry while the machine is busy enough to keep losing that race).
+ *
+ * Holding the probe open until the session is up would avoid that, but not
+ * every server takes a second client while the first is connected: SDR++'s
+ * rigctl server (which answers \chk_vfo and \dump_state, so Hamlib model 2
+ * works against it) accepts the next one only when the current one ends, and
+ * rig_open() would wait behind an idle probe until it timed out.  So
+ * net_probe_host_hold() hands the connected socket back, and
+ * net_probe_close_settled() closes it the slow way: half-close, wait for the
+ * server's own close (rigctld sends its FIN from the first of its three
+ * closes, SDR++ when its handler ends), then give the server a moment for the
+ * rest of its teardown.  A client that connects after that finds the server
+ * done with the probe.
  *
  * Header-only, free of Hamlib and of Mercury's other headers, so it builds
  * wherever radio_io.c does and can be unit-tested against local sockets.
@@ -249,6 +259,71 @@ static inline net_probe_result_t net_probe_host(const char *host, const char *po
                                                 int timeout_ms)
 {
     return net_probe_host_hold(host, port, timeout_ms, NULL);
+}
+
+static inline void net_probe_sleep_ms(int ms)
+{
+#if defined(_WIN32)
+    Sleep((DWORD)ms);
+#else
+    struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000L };
+    while (nanosleep(&ts, &ts) != 0 && errno == EINTR)
+        ;
+#endif
+}
+
+/* Close a probe held by net_probe_host_hold() so that the server has let go
+ * of it before anyone connects again (see above): shut our side, wait up to
+ * wait_ms for the server to close its side, then settle_ms more.  Returns
+ * true when the server was seen to close.  Anything it sent is discarded. */
+static inline bool net_probe_close_settled(net_probe_sock_t s, int wait_ms, int settle_ms)
+{
+    bool closed = false;
+
+    if (s == NET_PROBE_BAD_SOCK)
+        return false;
+#if defined(_WIN32)
+    (void)shutdown(s, SD_SEND);
+#else
+    (void)shutdown(s, SHUT_WR);
+#endif
+    uint64_t deadline = net_probe_now_ms() + (uint64_t)(wait_ms > 0 ? wait_ms : 0);
+    for (;;)
+    {
+        uint64_t now = net_probe_now_ms();
+        if (now >= deadline)
+            break;
+        int left = (int)(deadline - now);
+        char buf[256];
+#if defined(_WIN32)
+        fd_set rd;
+        FD_ZERO(&rd);
+        FD_SET(s, &rd);
+        struct timeval tv = { left / 1000, (left % 1000) * 1000 };
+        if (select(0, &rd, NULL, NULL, &tv) <= 0)
+            break;
+        int n = recv(s, buf, (int)sizeof buf, 0);
+#else
+        struct pollfd pfd = { s, POLLIN, 0 };
+        int r = poll(&pfd, 1, left);
+        if (r < 0 && errno == EINTR)
+            continue;
+        if (r <= 0)
+            break;
+        ssize_t n = recv(s, buf, sizeof buf, 0);
+        if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
+            continue;
+#endif
+        if (n <= 0)
+        {
+            closed = true;          /* FIN (0) or reset (<0): it let go */
+            break;
+        }
+    }
+    net_probe_close(s);
+    if (closed && settle_ms > 0)
+        net_probe_sleep_ms(settle_ms);
+    return closed;
 }
 
 #endif /* NET_PROBE_H */

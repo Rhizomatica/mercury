@@ -30,6 +30,7 @@
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/wait.h>
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -150,6 +151,60 @@ void test_nothing_is_held_without_a_connection(void)
     TEST_ASSERT_EQUAL_INT(NET_PROBE_BAD_SOCK, held);
 }
 
+/* The server closes its side when ours ends, as rigctld and SDR++ do: the
+ * settled close sees it, then waits the settle time and no more. */
+void test_settled_close_sees_the_server_let_go(void)
+{
+    char port[8];
+    int s = listen_local(4, port);
+    net_probe_sock_t held = NET_PROBE_BAD_SOCK;
+
+    TEST_ASSERT_EQUAL_INT(NET_PROBE_ANSWERED,
+                          net_probe_host_hold("127.0.0.1", port, 1000, &held));
+    int c = accept(s, NULL, NULL);
+    TEST_ASSERT_TRUE(c >= 0);
+
+    pid_t pid = fork();
+    TEST_ASSERT_TRUE(pid >= 0);
+    if (pid == 0)                   /* the server: read to EOF, then close */
+    {
+        char b;
+        while (read(c, &b, 1) > 0)
+            ;
+        close(c);
+        _exit(0);
+    }
+    close(c);
+
+    uint64_t t0 = net_probe_now_ms();
+    TEST_ASSERT_TRUE(net_probe_close_settled(held, 2000, 50));
+    uint64_t took = net_probe_now_ms() - t0;
+    TEST_ASSERT_TRUE_MESSAGE(took >= 50 && took < 1000, "settle not kept, or waited the full bound");
+    waitpid(pid, NULL, 0);
+    close(s);
+}
+
+/* A server that keeps its side open costs the wait bound, not more. */
+void test_settled_close_is_bounded(void)
+{
+    char port[8];
+    int s = listen_local(4, port);
+    net_probe_sock_t held = NET_PROBE_BAD_SOCK;
+
+    TEST_ASSERT_EQUAL_INT(NET_PROBE_ANSWERED,
+                          net_probe_host_hold("127.0.0.1", port, 1000, &held));
+    int c = accept(s, NULL, NULL);
+    TEST_ASSERT_TRUE(c >= 0);
+
+    uint64_t t0 = net_probe_now_ms();
+    TEST_ASSERT_FALSE(net_probe_close_settled(held, 200, 50));
+    uint64_t took = net_probe_now_ms() - t0;
+    TEST_ASSERT_TRUE_MESSAGE(took >= 150 && took < 600, "wait bound not kept");
+    TEST_ASSERT_FALSE(net_probe_close_settled(NET_PROBE_BAD_SOCK, 200, 50));
+    close(c);
+    close(s);
+}
+
 void test_unresolvable_or_empty_host_has_no_opinion(void)
 {
     TEST_ASSERT_EQUAL_INT(NET_PROBE_UNKNOWN, net_probe_host("", "4532", 100));
@@ -166,5 +221,7 @@ int main(void)
     RUN_TEST(test_unresolvable_or_empty_host_has_no_opinion);
     RUN_TEST(test_held_probe_stays_connected_until_closed);
     RUN_TEST(test_nothing_is_held_without_a_connection);
+    RUN_TEST(test_settled_close_sees_the_server_let_go);
+    RUN_TEST(test_settled_close_is_bounded);
     return UNITY_END();
 }
