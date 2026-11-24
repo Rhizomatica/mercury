@@ -421,6 +421,14 @@ static float peer_hears_me_db(const car_t *c)
 static bool ctl_on_floor(const car_t *c)
 {
     if (!c->io.pattern || !c->peer_ctl_deaf) return false;
+    /* On my silence alone, the peer may still be hearing my control mode and
+     * is not on the floor until S_FALLBACK_MS after the last frame of mine it
+     * decoded: past my own watchdog, if that was the keydown I went silent
+     * on (150 + 90 >= 240 s).  A carrier in its slot after a keydown of mine
+     * on the control mode says it heard that one: stay there.  On air (KG9NI to
+     * K7EK, 2026-11-22) K7EK decoded every DATAC16 poll and neither MFSK
+     * poll after them; its decoder reached the floor at 90 s. */
+    if (c->silence_ofdm) return false;
     if (c->peer_ctl_deaf == CAR_DEAF_MFSK_TX) return true;
     /* A deaf peer whose own reading does not say so went deaf on silence
      * (nothing decoded for SILENT_MS: car_on_tx_done), and that reading is
@@ -681,7 +689,11 @@ uint64_t car_next_deadline(const car_t *c)
 static int peer_keyed(car_t *c, uint64_t now)
 {
     int k = c->io.peer_keyed ? c->io.peer_keyed(c->io.ctx) : 0;
-    if (k) c->last_carrier_ms = now;
+    if (k) {
+        c->last_carrier_ms = now;
+        /* An answer to a keydown on the control mode: it hears me there. */
+        if (c->silence_floor && c->silence_sent_ofdm) c->silence_ofdm = true;
+    }
     return k;
 }
 
@@ -1980,6 +1992,15 @@ static void m_watch(car_t *c, uint64_t now)
             car_trace(c, "rx: nothing on the air in the peer's answer slot -- its %d continuation slots are free", l->k);
             l->done = 0xFF;
             freed = true;
+        }
+    }
+    /* After silence, whether the peer answers is what picks my next control's
+     * mode (ctl_on_floor): watch its slot whatever the keydown's continuations. */
+    if (c->silence_floor && c->silence_sent_ofdm && !c->silence_ofdm && c->nmlog) {
+        uint64_t hi = mslot_hi(c, &c->mlog[c->nmlog - 1], 0);
+        if (now < hi) {
+            uint64_t t = now + WATCH_MS < hi ? now + WATCH_MS : hi;
+            if (!next || t < next) next = t;
         }
     }
     if (next) arm(c, CAR_T_W, next);
@@ -3470,6 +3491,7 @@ void car_start_receiver(car_t *c, uint64_t now)
 
 static void note_peer_ctl_deaf(car_t *c, bool deaf)
 {
+    c->silence_floor = c->silence_ofdm = c->silence_sent_ofdm = false;   /* its word replaces my guess */
     if (c->peer_ctl_deaf == CAR_DEAF_MFSK_TX) return;
     if (deaf != (c->peer_ctl_deaf != 0)) {
         c->peer_ctl_deaf = deaf;
@@ -3487,7 +3509,14 @@ static void note_peer_ctl_deaf(car_t *c, bool deaf)
     }
 }
 
-bool car_peer_ctl_deaf(const car_t *c) { return c && ctl_on_floor(c); }
+/* The session's own control (DISCONNECT) stays on the floor once silence put
+ * it there, whatever the carousel's next keydown does. */
+bool car_peer_ctl_deaf(const car_t *c)
+{
+    if (!c) return false;
+    if (c->silence_floor) return c->io.pattern && c->peer_ctl_deaf;
+    return ctl_on_floor(c);
+}
 
 /* The peer hears my control mode, but not by much: how it last said it hears
  * me, moved by my own readings since where I have them (peer_hears_me_db),
@@ -3662,11 +3691,15 @@ void car_on_tx_done(car_t *c, uint64_t now)
      * client of a Winlink exchange (#431) asked on DATAC16 for 150 s while
      * the RMS, deaf to it, already listened on MFSK (sim, stepa:0:-9:20:12:
      * 74 bytes in 213 s). */
+    bool sent_ofdm = !ctl_on_floor(c);       /* the keydown that just ended */
+    c->silence_ofdm = false;                 /* until the peer answers it */
     uint64_t silent = c->master && c->reqs >= 2 ? S_FALLBACK_MS : SILENT_MS;
     if (c->io.pattern && now >= c->heard_ms + silent && !(c->ctl_deaf && c->peer_ctl_deaf)) {
         car_trace(c, "nothing of the peer's decoded in %d s: control at the floor",
                   (int)((now - c->heard_ms) / 1000));
         if (c->ctl_deaf != CAR_DEAF_MFSK_TX) c->ctl_deaf = CAR_DEAF_SNR;
+        /* A guess, until the peer's next frame says (ctl_on_floor). */
+        if (!c->peer_ctl_deaf) c->silence_floor = true;
         if (c->peer_ctl_deaf != CAR_DEAF_MFSK_TX) c->peer_ctl_deaf = CAR_DEAF_SNR;
         /* Below the control mode is below DATAC15 too (CTL_DEAF_ON_DB): my
          * rounds go to the floor with my control, or the next went on the
@@ -3674,6 +3707,7 @@ void car_on_tx_done(car_t *c, uint64_t now)
          * more lost round, 22 s). */
         if (c->tx_level > 0) { c->tx_level = 0; c->tx_n = 1; }
     }
+    c->silence_sent_ofdm = sent_ofdm;
     if (!c->master) {                        /* S: its next slot is armed */
         c->s_tx_end = now;
         /* A poll moved my decoder to a rung M's rounds have not come on

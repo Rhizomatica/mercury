@@ -202,6 +202,7 @@ static double snr_bias(int mode)
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
 static bool ctl_step;                                  /* ctlloss:A:B:P:T: the step ends the loss */
 static double step_back = NAN;                         /* stepa: the way back, this much better */
+static double gap_from_s = -1.0, gap_to_s, gap_db;     /* gap:A:B:T:W: the way back at B dB for W s */
 
 /* What the delivered frames' estimates read: the control frames' and the
  * data frames', so a run can say how far apart the two read (#501's knob). */
@@ -680,6 +681,15 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
         asym = true;
         snr_db = snr_dir[0] < snr_dir[1] ? snr_dir[0] : snr_dir[1];
     }
+    else if (!strncmp(chan, "gap:", 4)) {    /* gap:A:B:T:W  A dB both ways, but B dB back from T s for W s */
+        double w = 0;
+        sscanf(chan + 4, "%lf:%lf:%lf:%lf", &snr_dir[0], &gap_db, &gap_from_s, &w);
+        gap_to_s = gap_from_s + w;
+        snr_dir[1] = snr_dir[0];
+        sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
+        asym = true;
+        snr_db = snr_dir[0];
+    }
     else if (!strncmp(chan, "ctlloss:", 8)) {   /* ctlloss:A:B:P[:T]  asym:A:B, and P of B's DATAC16
                                                  * lost; from T s on, A dB both ways and none lost */
         double p = 0, t = -1.0;
@@ -716,7 +726,7 @@ static void heard(station_t *s)
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res)
 {
     trace = getenv("CAR_TRACE") != NULL;
-    asym = false; step_back = NAN; ctl_step = false;
+    asym = false; step_back = NAN; ctl_step = false; gap_from_s = -1.0;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
     noise_from = noise_len = 0;
     noise_kind = CAR_KEYED_PREAMBLE;
@@ -846,6 +856,11 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                 sim_channel_set_snr(ch, step_to); snr_now = step_to;
             }
             step_at_s = -1.0;
+        }
+        if (gap_from_s >= 0) {
+            double back = now_ms >= (uint64_t)(gap_from_s * 1000.0) && now_ms < (uint64_t)(gap_to_s * 1000.0)
+                          ? gap_db : snr_dir[0];
+            if (back != snr_dir[1]) { snr_dir[1] = back; sim_channel_set_snr_asym(ch, snr_dir[0], back); }
         }
         event_t e;
         while (nev && next_event_time() <= now_ms && pop(&e)) {

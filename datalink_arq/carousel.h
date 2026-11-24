@@ -162,6 +162,12 @@ typedef struct {
                                      * on MFSK (reported) */
     uint8_t  peer_ctl_deaf;         /* ...and the peer, of me, as it reports
                                      * (or CAR_DEAF_MFSK_TX) */
+    bool     silence_floor;         /* peer_ctl_deaf is my guess from silence,
+                                     * not the peer's word (car_on_tx_done) */
+    bool     silence_ofdm;          /* ...but its carrier since my last keydown
+                                     * says it hears my control mode: stay */
+    bool     silence_sent_ofdm;     /* ...my last keydown went on the control
+                                     * mode, so a carrier now answers that */
     float    snr_ema;               /* SNR of what the peer sends us, smoothed */
     float    snr_last;              /* ...and its latest reading */
     uint64_t snr_ms;                /* ...and when it came */

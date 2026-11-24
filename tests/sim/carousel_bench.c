@@ -6,6 +6,7 @@
  *   CAR_TRACE=1  print every keydown
  *   SILENCE_S=n  arq:silence_fallback_s (default 150)
  *   SIM_STATS=1  frames and airtime per mode
+ *   CAR_SILENT=1 each station's longest silence (the FSM's watchdog ends a session at 240 s)
  *   CAR_CHAT, CAR_SCRIPT, CAR_KBD, CAR_PACE   application traffic (carousel_sim.c);
  *                each message's delay, written to delivered, is reported
  *
@@ -40,6 +41,7 @@ int main(int argc, char **argv)
            r.max_kd_ms[0] / 1000.0, r.max_kd_ms[1] / 1000.0,
            r.air_ms[0] / 1000.0, r.air_ms[1] / 1000.0, r.keydowns,
            r.stalled ? " STALLED" : "");
+    if (getenv("CAR_SILENT")) printf("silent_max=%.1f/%.1f\n", r.silent_ms[0] / 1000.0, r.silent_ms[1] / 1000.0);
     /* What the delivered frames' estimates read: the control frames' and the
      * data frames' (CAR_CTL_SNR_OFFSET moves the first). */
     if (r.ctl_frames && r.data_frames)
