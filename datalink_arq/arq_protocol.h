@@ -241,6 +241,15 @@ void arq_protocol_set_silence_fallback_s(int seconds);
 extern _Atomic int arq_call_max_s;
 void arq_protocol_set_call_max_s(int seconds);
 
+/* Whether a caller wider than 500 Hz also calls on the 500 Hz MFSK, the
+ * deep floor (arq_call_carrier).  Off, its CALLs after the fast ones are
+ * the floor and the control mode in turn, as in 1.9.24.  A scanning callee
+ * never catches a 27 s CALL: no stay on a channel is that long, and its
+ * lock does not hold the scanner (modem.c, rx_inflight_call). */
+#define ARQ_CALL_MFSK500_DEFAULT 1
+extern _Atomic int arq_call_mfsk500;
+void arq_protocol_set_call_mfsk500(bool on);
+
 /* Deterministic per-node retry rank from the exchanged callsign pair.
  * strcmp() is antisymmetric, so the two peers always disagree: one returns 0
  * (send first) and the other 1 (defer).  Returns -1 when the pair is

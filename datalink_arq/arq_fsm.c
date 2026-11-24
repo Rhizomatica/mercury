@@ -171,12 +171,20 @@ static int car_inflight_shown(const car_t *car)
  * report agree.  Written only here.  One per process: the runtime has one
  * session.  NULL: none in flight. */
 static _Atomic int g_tx_inflight_pub = 0;
+/* The peer's data is still on its way and the application is still there to
+ * take it: for the TCP reactor's BUFFER pulse (tnc_buffer_pulse_due), so also
+ * without the session lock.  Never set once the host has asked to hang up. */
+static _Atomic bool g_rx_open_pub = false;
 static void set_tx_inflight(arq_session_t *sess, const car_t *car)
 {
     sess->tx_inflight_bytes = car ? (int)car_tx_inflight(car) : 0;
     atomic_store(&g_tx_inflight_pub, car_inflight_shown(car));
+    atomic_store(&g_rx_open_pub, car && sess->conn_state == ARQ_CONN_CONNECTED &&
+                                 sess->teardown == ARQ_TD_NONE && !sess->host_released &&
+                                 car_peer_data_open(car));
 }
 int arq_fsm_tx_inflight_published(void) { return atomic_load(&g_tx_inflight_pub); }
+bool arq_fsm_rx_open_published(void) { return atomic_load(&g_rx_open_pub); }
 
 static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_teardown_t td,
                           uint64_t deadline_ms, arq_event_id_t deadline_event)
@@ -209,6 +217,8 @@ static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_t
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
         car_stop(sess);
     sess->conn_state     = new_state;
+    if (new_state != ARQ_CONN_CONNECTED)
+        atomic_store(&g_rx_open_pub, false);
     sess->state_enter_ms = time_now_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
@@ -324,7 +334,11 @@ int arq_call_carrier(const arq_session_t *sess)
      * and a BW500 station listens on the 500 Hz floor. */
     int floor = arq_floor_mode(arq_get_bw());
     int n = sess->call_sends_done - (mfsk_only ? 0 : ARQ_CALL_FAST_SLOTS);
-    if (floor == MERCURY_MODE_MFSK_N32)
+    /* At 500 Hz, or wider with arq:call_mfsk500 off: the floor and the
+     * control mode in turn.  On air (KG9NI calling K7EK, 2026-11-22) K7EK
+     * scanned four channels, 16.7 s on each; every 27 s CALL of KG9NI's fell
+     * where it could not be caught, and they took 133 s of the 300. */
+    if (floor == MERCURY_MODE_MFSK_N32 || !atomic_load(&arq_call_mfsk500))
         return mfsk_only || n % 2 == 0 ? floor : sess->control_mode;
     /* Wider than 500 Hz, the 500 Hz MFSK too, after the floor: every
      * listener decodes it (#451), ~3 dB below the 1 kHz floor, and a
@@ -1054,6 +1068,17 @@ static void car_stop(arq_session_t *sess)
         car_set_seed(sess, 0);
 }
 
+/* The session is over because the peer has gone, and the host is about to be
+ * told: what is on the air stops with it.  A floor keydown is up to 27 s, and
+ * the host goes back to scanning at DISCONNECTED and may retune under it: on
+ * air, KG9NI 22 Nov 2026, the watchdog fired 2.8 s into a 13.5 s poll and PTT
+ * stayed on for 10.8 s after DISCONNECTED, with the scanner already running. */
+static void cut_keydown(const char *why)
+{
+    if (g_cbs.cut_tx)
+        g_cbs.cut_tx(why);
+}
+
 /* The carousel can no longer trust the session (car_failed): a block failed
  * its check or did not decode.  Part of it may already be with the
  * application, so end the session -- as ABORT does, dropping what is not
@@ -1106,6 +1131,7 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
     {
         HLOGI(LOG_COMP, "Disconnect finalized (nothing from the caller in %llu s)",
               (unsigned long long)((now - sess->car_last_rx_ms) / 1000));
+        cut_keydown("caller silent");
         notify_session_ended(sess);
         if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
         enter_idle_after_call(sess);
@@ -1540,11 +1566,13 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         sess->car_my_snr   = ev->rx_snr;
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call, true);
-        if (g_timing)
-            arq_timing_record_connect(g_timing, sess->control_mode);
         sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_CAROUSEL);
         sess->car_nonce = ev->car_nonce;
         sess->call_rx_mode = ev->mode;   /* the ACCEPT's carrier: the session's floor */
+        /* That carrier, which a weak link's is not the control mode: the log
+         * said DATAC16 for a connect made on MFSK. */
+        if (g_timing)
+            arq_timing_record_connect(g_timing, sess->call_rx_mode > 0 ? sess->call_rx_mode : sess->control_mode);
         car_set_seed(sess, car_seed(sess, true));
         car_start(sess, true, time_now_ms());
         break;
@@ -1624,8 +1652,8 @@ static void car_connect_callee(arq_session_t *sess, const arq_event_t *ev)
     sess->car_tx_level = -1;          /* the caller's frames will say */
     if (g_cbs.notify_connected)
         g_cbs.notify_connected(sess->remote_call, sess->local_call, false);
-    if (g_timing)
-        arq_timing_record_connect(g_timing, sess->control_mode);
+    if (g_timing)   /* the carrier our ACCEPT went on */
+        arq_timing_record_connect(g_timing, sess->call_rx_mode > 0 ? sess->call_rx_mode : sess->control_mode);
     /* A LISTEN OFF deferred by the grace period is honoured here, read before
      * entering CONNECTED resets it: dropped on the way, the successful
      * handshake silently swallowed the host's channel release. */
@@ -2260,6 +2288,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         {
             HLOGW(LOG_COMP, "carousel: nothing from the peer in %d s%s — link lost",
                   (int)((now - sess->car_last_rx_ms) / 1000), car_is_idle(sess->car) ? "" : " with data in flight");
+            cut_keydown("link lost");
             if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
             notify_session_ended(sess);
             enter_idle_after_call(sess);

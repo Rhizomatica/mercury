@@ -22,6 +22,8 @@
  *              session: what its "Peer ended the session: N bytes of ours
  *              unconfirmed" warning says (#585)
  *   coll=      keydowns destroyed by overlap (SIM_HD)
+ *
+ * CALL_MFSK500=0: the caller's arq:call_mfsk500 off (no 500 Hz MFSK CALLs).
  */
 #include "sim_clock.h"
 #include "sim_channel.h"
@@ -88,6 +90,8 @@ int main(int argc, char **argv)
     if (getenv("SIM_CS"))
         sim_set_carrier_sense(s, true, (uint32_t)atoi(getenv("SIM_CS")));
 
+    /* CALL_MFSK500=0: the caller's arq:call_mfsk500 off */
+    if (getenv("CALL_MFSK500")) arq_protocol_set_call_mfsk500(atoi(getenv("CALL_MFSK500")) != 0);
     /* SIM_MFSK_TX=A, B or AB: that station transmits only MFSK */
     const char *mt = getenv("SIM_MFSK_TX");
     sim_endpoint_set_mfsk_tx(sim_a(s), mt && strchr(mt, 'A'));

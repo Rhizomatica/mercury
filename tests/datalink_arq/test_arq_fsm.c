@@ -42,6 +42,7 @@ FAKE_VALUE_FUNC(int, fake_tx_backlog);
 FAKE_VALUE_FUNC(bool, fake_channel_busy);
 FAKE_VALUE_FUNC(int, fake_tx_read, uint8_t *, size_t);
 FAKE_VOID_FUNC(fake_send_buffer_status, int);
+FAKE_VOID_FUNC(fake_cut_tx, const char *);
 
 static arq_fsm_callbacks_t test_callbacks = {
     .send_tx_frame       = fake_send_tx_frame,
@@ -55,6 +56,7 @@ static arq_fsm_callbacks_t test_callbacks = {
     .channel_busy        = fake_channel_busy,
     .tx_read             = fake_tx_read,
     .send_buffer_status  = fake_send_buffer_status,
+    .cut_tx              = fake_cut_tx,
 };
 
 static arq_session_t sess;
@@ -113,6 +115,7 @@ void setUp(void)
     RESET_FAKE(fake_notify_disconnected);
     RESET_FAKE(fake_deliver_rx_data);
     RESET_FAKE(fake_tx_backlog);
+    RESET_FAKE(fake_cut_tx);
     RESET_FAKE(fake_channel_busy);
     RESET_FAKE(fake_tx_read);
     RESET_FAKE(fake_send_buffer_status);
@@ -132,6 +135,7 @@ void tearDown(void)
 {
     atomic_store(&arq_call_retry_slots, ARQ_CALL_RETRY_SLOTS_DEFAULT);
     arq_protocol_set_call_max_s(ARQ_CALL_MAX_S_DEFAULT);
+    arq_protocol_set_call_mfsk500(ARQ_CALL_MFSK500_DEFAULT);
 }
 
 /* ---- Connection lifecycle tests ---- */
@@ -751,6 +755,42 @@ void test_accept_transitions_to_connected(void)
     TEST_ASSERT_TRUE(fake_notify_connected_fake.arg2_val);    /* we called */
 }
 
+/* The connect is logged on the carrier the ACCEPT came on, not the control
+ * mode: N3JXB's log said DATAC16 for an ACCEPT decoded on MFSK. */
+void test_caller_records_the_accept_carrier(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    ev.mode = MERCURY_MODE_MFSK;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, timing.connect_mode);
+}
+
+/* ...and on the callee, the carrier its ACCEPT went on. */
+void test_callee_records_the_accept_carrier(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    ev.mode = MERCURY_MODE_MFSK;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = 0x42;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, timing.connect_mode);
+}
+
 /* An outgoing call does not inherit the callsign the last incoming CALL
  * dialed: it fed the next outgoing call's retry rank, while the CALL itself
  * goes out from the primary. */
@@ -952,6 +992,42 @@ void test_wide_caller_also_calls_on_the_500_hz_mfsk(void)
     for (int i = 0; i < 4; i++) {
         sess.call_sends_done = i;
         TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, arq_call_carrier(&sess));
+    }
+    atomic_store(&arq_tx_mfsk_only, 0);
+    arq_conn.bw = 0;
+}
+
+/* arq:call_mfsk500 off: wider than 500 Hz, the CALLs after the fast ones are
+ * the floor and the control mode in turn, as in 1.9.24 -- none on the 500 Hz
+ * MFSK, which a scanning callee never catches.  At 500 Hz nothing changes. */
+void test_call_mfsk500_off_alternates_floor_and_control_mode(void)
+{
+    static const int wide[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK,
+                                FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK, FREEDV_MODE_DATAC16,
+                                MERCURY_MODE_MFSK, FREEDV_MODE_DATAC16 };
+    static const int narrow[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK_N32,
+                                  FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK_N32, FREEDV_MODE_DATAC16 };
+    arq_protocol_set_call_mfsk500(false);
+    sess.control_mode = FREEDV_MODE_DATAC16;
+    int bws[] = { ARQ_BANDWIDTH_FULL_HZ, ARQ_BANDWIDTH_TACTICAL_HZ };
+    for (size_t b = 0; b < 2; b++) {
+        arq_conn.bw = bws[b];
+        for (int i = 0; i < (int)(sizeof(wide) / sizeof(wide[0])); i++) {
+            sess.call_sends_done = i;
+            TEST_ASSERT_EQUAL_INT(wide[i], arq_call_carrier(&sess));
+        }
+    }
+    arq_conn.bw = ARQ_BANDWIDTH_NARROW_HZ;
+    for (int i = 0; i < (int)(sizeof(narrow) / sizeof(narrow[0])); i++) {
+        sess.call_sends_done = i;
+        TEST_ASSERT_EQUAL_INT(narrow[i], arq_call_carrier(&sess));
+    }
+    /* A station that transmits only MFSK: wide, its floor every time. */
+    atomic_store(&arq_tx_mfsk_only, 1);
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+    for (int i = 0; i < 6; i++) {
+        sess.call_sends_done = i;
+        TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, arq_call_carrier(&sess));
     }
     atomic_store(&arq_tx_mfsk_only, 0);
     arq_conn.bw = 0;
@@ -1802,6 +1878,40 @@ void test_watchdog_does_not_wait_for_a_keydown_after_the_mark(void)
     arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
+/* The watchdog ends the session with a keydown on the air: it is cut, and
+ * before the host hears DISCONNECTED and goes back to scanning (KG9NI, 22
+ * Nov 2026: PTT on for 10.8 s after it).  Before the mark nothing is cut. */
+static unsigned disconnected_at_cut;
+static void note_cut(const char *why) { (void)why; disconnected_at_cut = fake_notify_disconnected_fake.call_count; }
+
+void test_watchdog_cuts_the_keydown_on_the_air(void)
+{
+    goto_connected();
+    fake_notify_disconnected_fake.call_count = 0;
+    disconnected_at_cut = 99;
+    fake_cut_tx_fake.custom_fake = note_cut;
+    uint64_t mark = sess.car_last_rx_ms + 240000;
+    arq_event_t ev = make_event(ARQ_EV_TX_STARTED);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE(sess.tx_active);
+
+    mock_set_uptime_ms(mark - 1000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT(0, fake_cut_tx_fake.call_count);
+
+    uint64_t lost = mark + 1000;
+    mock_set_uptime_ms(lost);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT(1, fake_cut_tx_fake.call_count);
+    TEST_ASSERT_EQUAL_STRING("link lost", fake_cut_tx_fake.arg0_val);
+    TEST_ASSERT_EQUAL_UINT(1, fake_notify_disconnected_fake.call_count);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0, disconnected_at_cut, "cut before the host is told");
 }
 
 /* A deferred APP_DISCONNECT that never drains must still tear down once the
@@ -2699,6 +2809,7 @@ int main(void)
     RUN_TEST(test_floor_accept_to_a_control_mode_call_is_not_deafness);
     RUN_TEST(test_repeat_on_control_mode_is_answered_on_the_floor);
     RUN_TEST(test_wide_caller_also_calls_on_the_500_hz_mfsk);
+    RUN_TEST(test_call_mfsk500_off_alternates_floor_and_control_mode);
     RUN_TEST(test_connect_on_the_500_hz_mfsk_is_the_deep_floor);
     RUN_TEST(test_call_after_a_repeat_listens_on_the_floor_and_waits_for_a_frame);
     RUN_TEST(test_busy_detector_does_not_hold_a_call);
@@ -2741,6 +2852,7 @@ int main(void)
     RUN_TEST(test_silent_peer_without_hangup_waits_for_the_watchdog);
     RUN_TEST(test_watchdog_waits_for_an_answer_on_the_air);
     RUN_TEST(test_watchdog_does_not_wait_for_a_keydown_after_the_mark);
+    RUN_TEST(test_watchdog_cuts_the_keydown_on_the_air);
     RUN_TEST(test_disconnect_waits_out_a_long_keydown);
     RUN_TEST(test_disconnect_keyed_deferral_is_bounded);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
@@ -2775,5 +2887,7 @@ int main(void)
     RUN_TEST(test_timeout_ms_idle);
     RUN_TEST(test_accept_is_only_sent_in_answer_to_a_heard_call);
     RUN_TEST(test_accepting_silent_wait_gives_up_after_budget);
+    RUN_TEST(test_caller_records_the_accept_carrier);
+    RUN_TEST(test_callee_records_the_accept_carrier);
     return UNITY_END();
 }

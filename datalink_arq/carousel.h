@@ -475,5 +475,8 @@ bool     car_peer_ending(const car_t *c);
 size_t car_tx_inflight(const car_t *c);
 /* ...of them, those no floor BREAK has said are in: what BUFFER shows. */
 size_t car_tx_inflight_unstopped(const car_t *c);
+/* The peer still has data on its way to me: a block it opened is not all
+ * delivered, or it says it holds bytes it has not opened. */
+bool   car_peer_data_open(const car_t *c);
 
 #endif

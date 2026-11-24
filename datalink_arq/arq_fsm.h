@@ -358,6 +358,9 @@ typedef struct
     /** The session's MFSK floor (arq_floor_mode), set with its seed: the
      *  geometry patterns are keyed and detected at.  Optional. */
     void (*set_floor_mode)(int mode);
+    /** Stop what the modem is keying: a session that ends with no peer left
+     *  to hear it does not play its keydown out.  Optional. */
+    void (*cut_tx)(const char *why);
 } arq_fsm_callbacks_t;
 
 /**
@@ -433,7 +436,8 @@ int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now);
 
 /** The carrier the next CALL goes out on: the control mode for the first
  *  ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately -- or,
- *  wider than 500 Hz, the floor and then the 500 Hz MFSK twice. */
+ *  wider than 500 Hz with arq:call_mfsk500 on (the default), the floor and
+ *  then the 500 Hz MFSK twice. */
 int arq_call_carrier(const arq_session_t *sess);
 /** Whether a pattern can arrive now (the modem's detector runs only then). */
 bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now);
@@ -465,6 +469,9 @@ const char *arq_event_name(arq_event_id_t ev);
  * as last set with tx_inflight_bytes, readable without the session lock
  * (BUFFER from the TCP reactor). */
 int arq_fsm_tx_inflight_published(void);
+/* In a session the host has not ended, the peer's data is still on its way
+ * (car_peer_data_open); readable without the session lock. */
+bool arq_fsm_rx_open_published(void);
 /* What BUFFER counts of `inflight` unconfirmed bytes in the carousel's open
  * blocks, `unstopped` of them in blocks no floor BREAK has said are in: those,
  * but at least 1 while any is unconfirmed (0 means all acknowledged). */

@@ -45,7 +45,7 @@ bool arq_modem_channel_busy(void) { return false; }
 void arq_modem_crc_seed(uint16_t seed) { (void)seed; }
 void arq_modem_floor_mode(int mode) { (void)mode; }
 void arq_modem_ptt_off(void) { }
-void arq_modem_cut_tx(void) { }
+void arq_modem_cut_tx(const char *why) { (void)why; }
 int  arq_modem_preferred_rx_mode(const arq_session_t *sess) { (void)sess; return 0; }
 int  arq_modem_preferred_tx_mode(const arq_session_t *sess) { (void)sess; return 0; }
 

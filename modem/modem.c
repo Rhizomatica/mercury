@@ -31,6 +31,7 @@
 #include <limits.h>
 
 #include "modem.h"
+#include "rx_inflight.h"
 #include "ring_buffer_posix.h"
 #include "framer.h"
 #include "arq.h"
@@ -229,7 +230,7 @@ float modem_get_tx_peak_dbfs(void)
  * effect within ~one chunk instead of after the whole ring drains. */
 #define MODEM_TUNE_RING_HIGH_BYTES (4800 * (int)sizeof(int32_t))   /* 600 ms */
 
-static void modem_cut_tx(void);   /* ABORT stops the keydown (key_and_play) */
+static void modem_cut_tx(const char *why);   /* a session's end stops its keydown (key_and_play) */
 
 static _Atomic bool     g_tune_active      = false;
 static _Atomic bool     g_tune_stop        = false;
@@ -1449,7 +1450,8 @@ static void append_burst_audio(const modem_codec_t *codec, const uint8_t *bytes_
 
 /* Key the transmitter, play `total_samples` of pre-built audio, unkey.  ARQ's
  * TX_STARTED reports the modem's current mode, so set that first. */
-/* ABORT cuts what the TX worker took before it (arq_modem_cut_tx).  Each cut
+/* ABORT, and a session ended because the peer has gone, cut what the TX worker
+ * took before it (arq_modem_cut_tx).  Each cut
  * moves g_tx_cut_gen on; the worker notes the count as it takes each action
  * off the queue (g_tx_taken_gen, its thread only), and what it took before a
  * cut is cut -- on the air, or not keyed at all if the cut came while it was
@@ -1457,14 +1459,18 @@ static void append_burst_audio(const modem_codec_t *codec, const uint8_t *bytes_
  * whole 27 s).  The ABORT's own DISCONNECT is queued after the cut, so it is
  * taken at the new count and plays out whole. */
 static _Atomic unsigned g_tx_cut_gen = 0;
+/* Why the last cut was asked for: a string literal, for the log. */
+static _Atomic(const char *) g_tx_cut_why = "session over";
 static unsigned         g_tx_taken_gen = 0;
 /* Only the TX worker's transmissions are cut: another caller of key_and_play
  * (run_tests_tx, -t) never takes an action, and its count would be stale. */
 static pthread_t        g_tx_worker;
 static _Atomic bool     g_tx_worker_known = false;
 
-static void modem_cut_tx(void)
+static void modem_cut_tx(const char *why)
 {
+    if (why)
+        atomic_store(&g_tx_cut_why, why);
     atomic_fetch_add(&g_tx_cut_gen, 1);
 }
 
@@ -1553,7 +1559,7 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
         {
             if (tx_cut_now())
             {
-                HLOGI("modem-tx", "keydown cut short (ABORT)");
+                HLOGI("modem-tx", "keydown cut short (%s)", atomic_load(&g_tx_cut_why));
                 break;
             }
             uint64_t now = time_now_ms();
@@ -1603,7 +1609,8 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
         {
             if (tx_cut_now())
             {
-                HLOGI("modem-tx", "keydown cut short (ABORT) %llu of %llu ms in",
+                HLOGI("modem-tx", "keydown cut short (%s) %llu of %llu ms in",
+                      atomic_load(&g_tx_cut_why),
                       (unsigned long long)(waited_us / 1000ULL),
                       (unsigned long long)(playback_duration_us / 1000ULL));
                 break;
@@ -2100,6 +2107,7 @@ typedef struct {
     float snr_est;
     bool snr_valid;
     bool frame_decoded;
+    bool reported;      /* a decoder said its state: without it, sync 0 is no news */
 } rx_metrics_accum_t;
 
 static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, int rx_status, bool frame_decoded)
@@ -2107,6 +2115,7 @@ static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, 
     if (!metrics)
         return;
 
+    metrics->reported = true;
     if (sync)
         metrics->sync = 1;
     metrics->rx_status |= rx_status;
@@ -2473,6 +2482,7 @@ static void rx_worker_publish_metrics(rx_worker_t *w, const rx_metrics_accum_t *
         w->metrics.snr_valid = true;
     }
     if (m->frame_decoded) w->metrics.frame_decoded = true;
+    if (m->reported) w->metrics.reported = true;
     pthread_mutex_unlock(&w->mlock);
 }
 
@@ -2488,6 +2498,7 @@ static void rx_metrics_merge(rx_metrics_accum_t *out, const rx_metrics_accum_t *
         out->snr_valid = true;
     }
     if (in->frame_decoded) out->frame_decoded = true;
+    if (in->reported) out->reported = true;
 }
 
 static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
@@ -2501,6 +2512,7 @@ static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
         out->snr_valid = true;
     }
     if (w->metrics.frame_decoded) out->frame_decoded = true;
+    if (w->metrics.reported) out->reported = true;
     memset(&w->metrics, 0, sizeof(w->metrics));
     pthread_mutex_unlock(&w->mlock);
 }
@@ -2516,20 +2528,21 @@ static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
  * next. */
 enum { RX_INFLIGHT_CTRL, RX_INFLIGHT_LISTEN, RX_INFLIGHT_LISTEN_ALT, RX_INFLIGHT_SLOTS };
 static _Atomic uint64_t g_rx_inflight_since_ms[RX_INFLIGHT_SLOTS];
+static _Atomic uint64_t g_rx_inflight_heard_ms[RX_INFLIGHT_SLOTS];   /* its decoder's last report */
 static _Atomic int      g_rx_inflight_mode[RX_INFLIGHT_SLOTS];
 
 static void rx_inflight_note(int slot, int mode, const rx_metrics_accum_t *m, uint64_t now)
 {
-    if (m->sync && !m->frame_decoded)
-    {
-        if (atomic_load(&g_rx_inflight_since_ms[slot]) == 0)
-        {
-            atomic_store(&g_rx_inflight_mode[slot], mode);
-            atomic_store(&g_rx_inflight_since_ms[slot], now);
-        }
-    }
-    else
-        atomic_store(&g_rx_inflight_since_ms[slot], 0);
+    uint64_t since = atomic_load(&g_rx_inflight_since_ms[slot]);
+    uint64_t heard = atomic_load(&g_rx_inflight_heard_ms[slot]);
+    uint64_t next = rx_inflight_next(since, heard, m->reported, m->sync != 0, m->frame_decoded, now);
+    if (m->reported)
+        atomic_store(&g_rx_inflight_heard_ms[slot], now);
+    if (next == since)
+        return;
+    if (!since)
+        atomic_store(&g_rx_inflight_mode[slot], mode);
+    atomic_store(&g_rx_inflight_since_ms[slot], next);
 }
 
 /* A slot locked onto a frame that can hold a scanning host: any but the

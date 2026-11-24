@@ -287,9 +287,9 @@ make fyne-ui-macos-appstore-pkg \
 xcrun altool --upload-app -t macos -f Mercury-<version>.pkg ...
 ```
 
-- It targets macOS 15.0 (`MACOS_STORE_MIN`): the vendored Hamlib and libusb
-  are built for 15.0, and the store refuses a binary newer than
-  `LSMinimumSystemVersion`.
+- It targets macOS 15.0 (`MACOS_MIN`, as every universal build does): the
+  vendored Hamlib and libusb are built for 15.0, and the store refuses a
+  binary newer than `LSMinimumSystemVersion`.
 - `CFBundleVersion` takes at most three integers on macOS and must grow on
   every upload: `MACOS_BUILD` defaults to MAJOR.MINOR.PATCH×100 (1.9.21 ->
   1.9.2100); a re-upload of the same version passes 1.9.2101.

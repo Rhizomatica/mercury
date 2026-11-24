@@ -12,6 +12,7 @@
 
 #include "../common/hermes_log.h"
 #include "../common/virtual_clock.h"
+#include "../modem/modem_mfsk.h"
 
 #define LOG_COMP "arq-timing"
 
@@ -28,6 +29,9 @@ static const char *mode_name(int mode)
     case 18: return "DATAC4";
     case 12: return "DATAC3";
     case 10: return "DATAC1";
+    case MERCURY_MODE_MFSK:     return "MFSK";
+    case MERCURY_MODE_MFSK_N32: return "MFSK500";
+    case MERCURY_MODE_MFSK_W2:  return "MFSK2K";
     default: return "?";
     }
 }
@@ -55,6 +59,7 @@ void arq_timing_record_car_rx(arq_timing_ctx_t *ctx, int bytes)
 void arq_timing_record_connect(arq_timing_ctx_t *ctx, int mode)
 {
     arq_timing_init(ctx);  /* reset per-session counters */
+    ctx->connect_mode = mode;
     HLOGT(LOG_COMP, "connect mode=%s", mode_name(mode));
 }
 
