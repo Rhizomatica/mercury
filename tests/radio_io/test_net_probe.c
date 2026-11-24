@@ -107,6 +107,49 @@ void test_silent_host_is_reported_by_the_deadline(void)
 #endif
 }
 
+/* The held probe is the connection the server accepted, still open: the
+ * server sees no close until the caller makes it (rigctld's teardown race,
+ * net_probe.h). */
+void test_held_probe_stays_connected_until_closed(void)
+{
+    char port[8];
+    int s = listen_local(4, port);
+    net_probe_sock_t held = 12345;
+
+    TEST_ASSERT_EQUAL_INT(NET_PROBE_ANSWERED,
+                          net_probe_host_hold("127.0.0.1", port, 1000, &held));
+    TEST_ASSERT_TRUE(held != NET_PROBE_BAD_SOCK);
+
+    int c = accept(s, NULL, NULL);
+    TEST_ASSERT_TRUE(c >= 0);
+    struct pollfd pfd = { c, POLLIN, 0 };
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, poll(&pfd, 1, 100), "probe closed before the caller did");
+
+    net_probe_close(held);
+    char b;
+    TEST_ASSERT_EQUAL_INT(1, poll(&pfd, 1, 1000));
+    TEST_ASSERT_EQUAL_INT(0, (int)read(c, &b, 1));  /* EOF: closed now */
+    close(c);
+    close(s);
+}
+
+void test_nothing_is_held_without_a_connection(void)
+{
+    char port[8];
+    int s = listen_local(4, port);
+    close(s);
+    net_probe_sock_t held = 12345;
+
+    TEST_ASSERT_EQUAL_INT(NET_PROBE_ANSWERED,
+                          net_probe_host_hold("127.0.0.1", port, 1000, &held));
+    TEST_ASSERT_EQUAL_INT(NET_PROBE_BAD_SOCK, held);    /* refused */
+
+    held = 12345;
+    TEST_ASSERT_EQUAL_INT(NET_PROBE_UNKNOWN,
+                          net_probe_host_hold("host.invalid", "4532", 100, &held));
+    TEST_ASSERT_EQUAL_INT(NET_PROBE_BAD_SOCK, held);
+}
+
 void test_unresolvable_or_empty_host_has_no_opinion(void)
 {
     TEST_ASSERT_EQUAL_INT(NET_PROBE_UNKNOWN, net_probe_host("", "4532", 100));
@@ -121,5 +164,7 @@ int main(void)
     RUN_TEST(test_refused_port_is_a_live_host);
     RUN_TEST(test_silent_host_is_reported_by_the_deadline);
     RUN_TEST(test_unresolvable_or_empty_host_has_no_opinion);
+    RUN_TEST(test_held_probe_stays_connected_until_closed);
+    RUN_TEST(test_nothing_is_held_without_a_connection);
     return UNITY_END();
 }

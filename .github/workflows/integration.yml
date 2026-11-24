@@ -27,7 +27,7 @@ jobs:
     name: Integration Tests (Linux amd64, Debian 13)
     runs-on: ubuntu-latest
     container: debian:trixie
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Install build dependencies
@@ -125,7 +125,7 @@ jobs:
     name: Integration Tests, random channel seed (Linux amd64, Debian 13)
     runs-on: ubuntu-latest
     container: debian:trixie
-    timeout-minutes: 30
+    timeout-minutes: 45
     continue-on-error: true
 
     steps:

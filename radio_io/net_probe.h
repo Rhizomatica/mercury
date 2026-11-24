@@ -25,6 +25,16 @@
  * a live host saying no, and rig_open() will fail on it at once.  Only no
  * answer by the deadline, or an unreachable host or network, is "silent".
  *
+ * A probe that connects leaves the server a connection to tear down, and a
+ * server can get that wrong for whoever connects next.  rigctld up to Hamlib
+ * 4.7 closes a client's descriptor three times (fclose of its read stream, of
+ * its write stream, then close), so a client accepted in between is given
+ * the same descriptor number and has it closed under it: rig_open() sent
+ * right after a probe fails with "Broken pipe" (and does again at every
+ * retry while the machine is busy enough to keep losing that race).  So
+ * net_probe_host_hold() hands the connected socket back, for the caller to
+ * close only once its own session is open.
+ *
  * Header-only, free of Hamlib and of Mercury's other headers, so it builds
  * wherever radio_io.c does and can be unit-tested against local sockets.
  */
@@ -80,8 +90,10 @@ typedef int net_probe_sock_t;
 #define net_probe_close(s) close(s)
 #endif
 
-/* One address: 1 answered, 0 silent, -1 could not try. */
-static inline int net_probe_addr(const struct addrinfo *ai, int wait_ms)
+/* One address: 1 answered, 0 silent, -1 could not try.  A connected socket
+ * is handed to *held when held is not NULL, and closed otherwise. */
+static inline int net_probe_addr(const struct addrinfo *ai, int wait_ms,
+                                 net_probe_sock_t *held)
 {
     net_probe_sock_t s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
     if (s == NET_PROBE_BAD_SOCK)
@@ -96,7 +108,10 @@ static inline int net_probe_addr(const struct addrinfo *ai, int wait_ms)
     }
     if (connect(s, ai->ai_addr, (int)ai->ai_addrlen) == 0)
     {
-        net_probe_close(s);
+        if (held)
+            *held = s;
+        else
+            net_probe_close(s);
         return 1;
     }
     int err = WSAGetLastError();
@@ -121,7 +136,14 @@ static inline int net_probe_addr(const struct addrinfo *ai, int wait_ms)
     int n = select(0, NULL, &wr, &ex, &tv);
     int answered = 0;
     if (n > 0 && FD_ISSET(s, &wr))
+    {
+        if (held)
+        {
+            *held = s;
+            return 1;
+        }
         answered = 1;
+    }
     else if (n > 0)
     {
         int so = 0, len = (int)sizeof(so);
@@ -137,7 +159,15 @@ static inline int net_probe_addr(const struct addrinfo *ai, int wait_ms)
         net_probe_close(s);
         return -1;
     }
-    if (connect(s, ai->ai_addr, ai->ai_addrlen) == 0 || errno == ECONNREFUSED)
+    if (connect(s, ai->ai_addr, ai->ai_addrlen) == 0)
+    {
+        if (held)
+            *held = s;
+        else
+            net_probe_close(s);
+        return 1;
+    }
+    if (errno == ECONNREFUSED)
     {
         net_probe_close(s);
         return 1;
@@ -159,6 +189,11 @@ static inline int net_probe_addr(const struct addrinfo *ai, int wait_ms)
         socklen_t len = sizeof(so);
         if (getsockopt(s, SOL_SOCKET, SO_ERROR, &so, &len) == 0)
             answered = (so == 0 || so == ECONNREFUSED);
+        if (so == 0 && answered && held)
+        {
+            *held = s;
+            return 1;
+        }
     }
     net_probe_close(s);
     return answered;
@@ -169,10 +204,15 @@ static inline int net_probe_addr(const struct addrinfo *ai, int wait_ms)
  * network port, 4532, is asked; any answer, a refusal included, shows the
  * host is up).  Every address the name resolves to is tried, sharing the one
  * deadline.  Resolving a name, as opposed to a numeric address, is the
- * system resolver's to bound. */
-static inline net_probe_result_t net_probe_host(const char *host, const char *port,
-                                                int timeout_ms)
+ * system resolver's to bound.  When held is not NULL it is set to the
+ * connected socket, or to NET_PROBE_BAD_SOCK when none is left open (silent,
+ * refused, unknown); the caller closes it with net_probe_close(). */
+static inline net_probe_result_t net_probe_host_hold(const char *host, const char *port,
+                                                     int timeout_ms,
+                                                     net_probe_sock_t *held)
 {
+    if (held)
+        *held = NET_PROBE_BAD_SOCK;
     struct addrinfo hints, *res = NULL;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
@@ -190,7 +230,7 @@ static inline net_probe_result_t net_probe_host(const char *host, const char *po
     {
         uint64_t now = net_probe_now_ms();
         int left = now < deadline ? (int)(deadline - now) : 0;
-        int r = net_probe_addr(ai, left);
+        int r = net_probe_addr(ai, left, held);
         if (r == 1)
         {
             verdict = NET_PROBE_ANSWERED;
@@ -203,6 +243,12 @@ static inline net_probe_result_t net_probe_host(const char *host, const char *po
     }
     freeaddrinfo(res);
     return verdict;
+}
+
+static inline net_probe_result_t net_probe_host(const char *host, const char *port,
+                                                int timeout_ms)
+{
+    return net_probe_host_hold(host, port, timeout_ms, NULL);
 }
 
 #endif /* NET_PROBE_H */
