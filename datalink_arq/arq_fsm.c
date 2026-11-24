@@ -225,6 +225,9 @@ static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_t
     /* The right to complete a session from LISTENING is granted only by the
      * ACCEPT-exhaustion fallback, which sets it right after this call. */
     sess->accept_fallback = false;
+    /* Its hold of the host, likewise: a path out of the fallback that owes
+     * the host a CANCELPENDING sends it first (release_fallback_hold). */
+    sess->accept_fallback_held = false;
     /* The right to key an ACCEPT is earned by hearing a CALL, and it does not
      * survive leaving ACCEPTING. */
     if (new_state != ARQ_CONN_ACCEPTING)
@@ -1371,6 +1374,17 @@ static void end_accept_fallback(arq_session_t *sess)
     sess->peer_tx_mode = sess->initial_payload_mode;   /* back to broadcast */
 }
 
+/* The fallback's hold of the host ends without a connect: the CANCELPENDING
+ * the ACCEPTs' end deferred (fsm_accepting, TIMER_RETRY). */
+static void release_fallback_hold(arq_session_t *sess)
+{
+    if (!sess->accept_fallback_held)
+        return;
+    sess->accept_fallback_held = false;
+    if (g_cbs.notify_cancelpending)
+        g_cbs.notify_cancelpending();
+}
+
 static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
 {
     switch (ev->id)
@@ -1414,6 +1428,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             if (sess->car_ctl_deaf) sess->car_rx_level = 0;
             sess->car_call_snr = ev->rx_snr;
             sess->car_my_snr   = ev->rx_snr;
+            sess->accept_tx_end_ms = 0;   /* no ACCEPT of this session yet */
         }
         sess->car_peer_ctl_deaf = false;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
@@ -1451,11 +1466,13 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_APP_CONNECT:
+        release_fallback_hold(sess);   /* the host calls out: the call it held is gone */
         sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         fsm_disconnected(sess, ev);
         break;
 
     case ARQ_EV_APP_STOP_LISTEN:
+        release_fallback_hold(sess);   /* as in ACCEPTING: the pending call is gone */
         sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         break;
 
@@ -1465,6 +1482,17 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TIMER_RETRY:
+        if (sess->accept_fallback_held)
+        {
+            /* The hold is over and the caller has not come: let the host go
+             * (a scanner hops), but keep hearing the caller until a connected
+             * one would have given up on us, as before. */
+            HLOGI(LOG_COMP, "Nothing from %s in the %d s after our last ACCEPT: the host is released",
+                  sess->remote_call, ARQ_ACCEPT_FALLBACK_HOLD_MS / 1000);
+            release_fallback_hold(sess);
+            sess->deadline_ms = sess->accept_fallback_end_ms;
+            break;
+        }
         /* The ACCEPT-exhaustion fallback ran out: the caller never came. */
         end_accept_fallback(sess);
         break;
@@ -1475,6 +1503,19 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         if (sess->accept_fallback && sess->crc_seed && ev->session_id == sess->session_id)
         {
             HLOGI(LOG_COMP, "DISCONNECT from the caller we answered: no longer waiting for it");
+            release_fallback_hold(sess);
+            end_accept_fallback(sess);
+        }
+        break;
+
+    case ARQ_EV_APP_DISCONNECT:
+        /* The host's DISCONNECT or ABORT ends the call we answered, as it does
+         * in ACCEPTING: no CONNECTED is to follow it, and a host still held
+         * on PENDING is told it is gone (its DISCONNECTED came from arq.c). */
+        if (sess->accept_fallback && sess->crc_seed)
+        {
+            HLOGI(LOG_COMP, "The host hung up: no longer waiting for %s", sess->remote_call);
+            release_fallback_hold(sess);
             end_accept_fallback(sess);
         }
         break;
@@ -1791,6 +1832,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * a full ARQ_ACCEPT_RX_WINDOW_MS window (guard + DATAC15 frame +
          * margin) measured from the moment our TX actually ends. */
         sess->deadline_ms = time_now_ms() + accept_rx_window_ms(sess->call_rx_mode);
+        sess->accept_tx_end_ms = time_now_ms();   /* the fallback's hold counts from it */
         /* This deadline is a LISTENING window, not a retransmission timer.  An
          * ACCEPT is only ever correct one channel guard after a CALL we heard,
          * because that is the only moment we know the caller has dropped PTT
@@ -1840,10 +1882,16 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         }
         else
         {
-            if (g_cbs.notify_cancelpending)
-                g_cbs.notify_cancelpending();
             uint16_t seed = sess->crc_seed;
             int rx_mode = sess->peer_tx_mode;
+            uint64_t now = time_now_ms();
+            /* The host stays held while a caller that took our last ACCEPT
+             * may still be on its way (ARQ_ACCEPT_FALLBACK_HOLD_MS): a
+             * CANCELPENDING now lets a scanner hop before the connect. */
+            uint64_t hold_until = sess->accept_tx_end_ms ? sess->accept_tx_end_ms + ARQ_ACCEPT_FALLBACK_HOLD_MS : 0;
+            bool hold = seed && hold_until > now;
+            if (!hold && g_cbs.notify_cancelpending)
+                g_cbs.notify_cancelpending();
             sess_enter(sess, ARQ_CONN_LISTENING, UINT64_MAX, ARQ_EV_TIMER_RETRY);
             sess->accept_fallback = true;
             /* Keep hearing the caller's carousel frames: it may be connected
@@ -1855,7 +1903,17 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
                 /* ...but not past the point where a connected caller would
                  * have given up on us: a seed left set drops every plain
                  * frame, broadcast included. */
-                sess->deadline_ms = time_now_ms() + ARQ_CAR_PEER_LOST_MS;
+                sess->accept_fallback_end_ms = now + ARQ_CAR_PEER_LOST_MS;
+                sess->deadline_ms = sess->accept_fallback_end_ms;
+            }
+            if (hold)
+            {
+                /* PENDING goes on every 20 s meanwhile (arq.c, pending_hold);
+                 * the TIMER_RETRY at the hold's end releases the host. */
+                sess->accept_fallback_held = true;
+                sess->deadline_ms = hold_until;
+                HLOGI(LOG_COMP, "ACCEPT retries spent: still holding the host for %s, %d s more",
+                      sess->remote_call, (int)((hold_until - now + 999) / 1000));
             }
         }
         break;

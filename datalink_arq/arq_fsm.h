@@ -18,6 +18,22 @@
 #include "arq_protocol.h"
 #include "carousel.h"      /* car_t: the carousel data plane */
 
+/* How long after our last ACCEPT left the air the host stays held on PENDING,
+ * even once the ACCEPT retries have run out (the fallback, arq_fsm.c).
+ *
+ * The caller may have decoded that ACCEPT without our decoding any of its
+ * replies: it is connected and polling, and its next poll completes the
+ * session from LISTENING.  A CANCELPENDING at the start of that wait lets a
+ * scanning host (BPQ32) hop away, and the connect that follows lands on a
+ * channel the host has left.  On air (VE4KLM <- K7EK, 30 m, 2026-11-23) the
+ * caller's frame came 74 s and 55 s after our last ACCEPT, 31 s and 12 s
+ * after the CANCELPENDING.  A caller that heard us polls at once and then
+ * every 24-37 s at the floor: 90 s covers three of its polls.  It applies
+ * only when the ACCEPT retries ran out sooner than that -- with the default
+ * 4 slots, about 43 s after the last ACCEPT; a host's RETRIES 20 answers
+ * past it already, and is unchanged. */
+#define ARQ_ACCEPT_FALLBACK_HOLD_MS 90000
+
 /* ======================================================================
  * Level 1 — Connection FSM states
  * ====================================================================== */
@@ -238,6 +254,14 @@ typedef struct
                                         * not the RX-window timer.  Only the
                                         * former may key the transmitter -- see
                                         * fsm_accepting's TIMER_RETRY.        */
+    uint64_t accept_tx_end_ms;         /* when our last ACCEPT of this call left
+                                        * the air (0: none yet)                */
+    bool     accept_fallback_held;     /* in the fallback, the host is still
+                                        * held on PENDING: CANCELPENDING is
+                                        * owed when the hold ends without a
+                                        * connect (ARQ_ACCEPT_FALLBACK_HOLD_MS) */
+    uint64_t accept_fallback_end_ms;   /* when the fallback's seed is dropped,
+                                        * once the hold is over                */
 
     /* --- Teardown --- */
     arq_teardown_t teardown;           /* the step reached (arq_teardown_t)   */
