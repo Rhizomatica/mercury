@@ -1201,6 +1201,12 @@ static uint64_t channel_clear_at(const arq_session_t *sess)
         clear_at = sess->last_tx_end_ms + window;
     if (sess->last_rx_sync_ms && sess->last_rx_sync_ms + guard > clear_at)
         clear_at = sess->last_rx_sync_ms + guard;
+    /* ...and a round on a PSK rung, asked for by that keydown, raises no
+     * sync: the callee's ABORT keyed 2.8 s into one (sim, -1 dB, #628
+     * review).  The channel is the caller's until the round could be over. */
+    uint32_t unsensed = sess->car_session ? car_unsensed_round_ms(sess->car) : 0;
+    if (unsensed && sess->last_tx_end_ms && sess->last_tx_end_ms + window + unsensed > clear_at)
+        clear_at = sess->last_tx_end_ms + window + unsensed;
     return clear_at;
 }
 

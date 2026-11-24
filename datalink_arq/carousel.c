@@ -3835,6 +3835,12 @@ uint64_t car_answer_due_ms(const car_t *c, uint64_t keyed_by)
     return due;
 }
 
+uint32_t car_unsensed_round_ms(const car_t *c)
+{
+    if (!c || c->master || c->poll_n <= 0 || !mercury_mode_is_psk(lmode(c, c->poll_level))) return 0;
+    return s_round_ms(c, c->poll_level, c->poll_n);
+}
+
 bool car_is_master(const car_t *c) { return c && c->master; }
 bool car_peer_ending(const car_t *c) { return c && c->master && c->end_req == CAR_END_WISH; }
 
