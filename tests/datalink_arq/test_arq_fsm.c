@@ -552,7 +552,7 @@ void test_accept_fallback_end_gives_the_session_bandwidth_up(void)
     mock_set_uptime_ms(1000 + ARQ_ACCEPT_FALLBACK_HOLD_MS);
     arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
     arq_fsm_dispatch(&sess, &ev);                       /* hold over */
-    mock_set_uptime_ms(sess.accept_fallback_end_ms);
+    mock_set_uptime_ms(sess.deadline_ms);               /* the fallback's end */
     arq_fsm_dispatch(&sess, &ev);                       /* fallback over */
     TEST_ASSERT_FALSE(sess.accept_fallback);
     TEST_ASSERT_EQUAL_INT(1, arq_test_session_bw_clears);
