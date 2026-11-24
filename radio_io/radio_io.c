@@ -393,14 +393,22 @@ static int hamlib_ptt(bool on)
  * stays the system resolver's to bound.  Caller holds g_radio_mutex. */
 #define HAMLIB_REOPEN_INTERVAL_MS 3000U
 #define HAMLIB_REOPEN_PROBE_MS 1500
+#define HAMLIB_PROBE_CLOSE_WAIT_MS 500  /* for the server to close the probe */
+#define HAMLIB_PROBE_SETTLE_MS 50       /* ...and finish its teardown */
 static uint64_t g_hamlib_reopen_ms = 0;
 
 /* Is the rig's host there?  false only when a TCP rig's host was asked and
- * did not answer; anything the probe cannot judge is left to rig_open(). */
-static bool hamlib_host_answers(void)
+ * did not answer; anything the probe cannot judge is left to rig_open().
+ * A probe that connected leaves its socket in *held, for the caller to close
+ * with net_probe_close_settled() before rig_open(): closed at once, rigctld
+ * (to 4.7) can still be tearing it down when rig_open() connects, and close
+ * the new session's socket in passing; held open, a single-client server
+ * (SDR++) would make rig_open() wait behind it (net_probe.h). */
+static bool hamlib_host_answers(net_probe_sock_t *held)
 {
     char host[256], port[8];
 
+    *held = NET_PROBE_BAD_SOCK;
     if ((rig_port_t)rig_get_caps_int(g_config.hamlib_model, RIG_CAPS_PORT_TYPE) !=
         RIG_PORT_NETWORK)
         return true;                /* UDP: nothing to connect to */
@@ -408,7 +416,7 @@ static bool hamlib_host_answers(void)
         return true;
 
     uint64_t started = hermes_uptime_ms();
-    net_probe_result_t r = net_probe_host(host, port, HAMLIB_REOPEN_PROBE_MS);
+    net_probe_result_t r = net_probe_host_hold(host, port, HAMLIB_REOPEN_PROBE_MS, held);
     if (r != NET_PROBE_SILENT)
         return true;
     HLOGW(RADIO_LOG_TAG, "Hamlib reopen: %s not answering (%llu ms); not opening",
@@ -450,7 +458,11 @@ static bool hamlib_reopen(bool paced)
         rig_cleanup(g_radio);
         g_radio = NULL;
     }
-    if (!hamlib_host_answers() || hamlib_open(&g_config) != 0)
+    net_probe_sock_t probe;
+    bool answers = hamlib_host_answers(&probe);
+    (void)net_probe_close_settled(probe, HAMLIB_PROBE_CLOSE_WAIT_MS,
+                                  HAMLIB_PROBE_SETTLE_MS);
+    if (!answers || hamlib_open(&g_config) != 0)
     {
         HLOGW(RADIO_LOG_TAG, "Hamlib reopen failed; next attempt at the next "
               "PTT change, or within %u ms while a PTT OFF is pending",
