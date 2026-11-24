@@ -109,6 +109,7 @@ void car_set_short_rung(bool on) { g_short_rung = on; }
 enum { BL_NONE, BL_SMALL, BL_MEDIUM, BL_LARGE };
 #define BL_SMALL_BYTES  90    /* one DATAC3 frame's pieces, with the check and a margin */
 #define BL_MEDIUM_BYTES 460   /* ...one DATAC1 frame's */
+#define SHORT_RUNG_FAILING 0.6 /* a rung delivering less is no place for a small message */
 static float g_nav_below_db = 99.0f;
 static double g_nav_loss = 0.3;
 void car_set_nav_below_db(float db) { g_nav_below_db = db; }
@@ -1644,7 +1645,14 @@ static void stamp_hint(const car_t *c, msg_t *m)
 static int short_rung(const car_t *c, int lv, size_t bytes, int *pn)
 {
     if (lv <= 1 || !bytes) return lv;
-    double margin = c->loss_est * 1.3 + 0.05;
+    /* A small message on a rung that is failing: no loss margin.  With one, a
+     * 3-byte command priced as two DATAC3 frames and stayed on a failing
+     * DATAC1: lost twice, its third try decoded 4 s after the BBS had hung up
+     * (N3JXB-K7EK, 2026-11-19).  Only there: on a rung that delivers, the
+     * margin's second frame is what carries a short message over a lossy link
+     * (sim, NVIS chat of 3-byte messages: +13 % without it). */
+    bool failing = bytes <= BL_SMALL_BYTES && level_delivery(c, lv) < SHORT_RUNG_FAILING;
+    double margin = failing ? 0.0 : c->loss_est * 1.3 + 0.05;
     int P = piece_of(c);
     int pieces = (int)ceil((double)(bytes + BLOCK_CHECK) / P * (1.0 + margin));
     int best = lv, best_n = 0;
