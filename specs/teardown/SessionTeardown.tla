@@ -33,7 +33,7 @@
 (*   again while ending, it ends and takes the CALL; a callee whose      *)
 (*   DISCONNECT is out takes a CALL from any callsign (a station calls    *)
 (*   with another MYCALL per application).  Silence ends a connected      *)
-(*   session (ARQ_CAR_PEER_LOST_MS).                                       *)
+(*   session (ARQ_CAR_PEER_LOST_MS), the peer told once, as at ABORT.     *)
 (*   ABORT (the host's, with ABORT = TRUE): the peer is told once.  M     *)
 (*   sends one DISCONNECT, no retries, also when one is already out; S's  *)
 (*   goes in its next slot, or out of turn before its host's scan takes  *)
@@ -448,9 +448,21 @@ SGiveUp == /\ st["S"] = "ending" /\ TimerOK("S")
            /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw, sw, mdrain, asked, forced, mend, cut, wordgone, sab>>
 
 \* ---- either end ----
+\* The lost-peer watchdog (car_end_lost): nothing heard, but the path may be
+\* one way, so e tells its peer once, as at ABORT: M one DISCONNECT, no
+\* retries (MDisc, then MGiveUp); S out of turn or in a slot (SAbortKey,
+\* SSlotDisc).  What is undelivered is dropped.  The host hears DISCONNECTED
+\* at the end (FSMNotice), not at the watchdog.
+\* Mutant "lostsilent": the rule before #648, idle at once and nothing sent.
 Lost(e) == /\ st[e] = "conn" /\ TimerOK(e)
-           /\ st' = [st EXCEPT ![e] = "idle"] /\ End(e, "lost")
-           /\ UNCHANGED <<gen, sid, sent, tries, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw, sw, mdrain, asked, forced, mend, cut, wordgone, sab>>
+           /\ IF Mutant = "lostsilent"
+              THEN /\ st' = [st EXCEPT ![e] = "idle"] /\ End(e, "lost")
+                   /\ UNCHANGED <<sent, tries, mdrain, forced, sab>>
+              ELSE /\ st' = [st EXCEPT ![e] = "ending"] /\ sent' = [sent EXCEPT ![e] = FALSE]
+                   /\ forced' = TRUE /\ UNCHANGED how
+                   /\ IF e = "M" THEN tries' = 0 /\ mdrain' = FALSE /\ UNCHANGED sab
+                                ELSE sab' = TRUE /\ UNCHANGED <<tries, mdrain>>
+           /\ UNCHANGED <<gen, sid, slot, q, placed, mcall, scall, dropped, wish, unasked, word, lostword, mw, sw, asked, mend, cut, wordgone>>
 Reply(e) == /\ st[e] = "reply"
             /\ st' = [st EXCEPT ![e] = "idle"]
             /\ Send(Other(e), Pattern(gen[e]))
@@ -672,6 +684,9 @@ NoKill == \A h \in how : h.why # "killed"
 \* another station's pattern.
 NoStale == \A h \in how : h.why # "stale"
 NoForeign == \A h \in how : h.why # "foreign"
+\* No end leaves a session on its watchdog alone: it keys its DISCONNECT
+\* first, for a peer that may still hear it (one-way path, #648).
+NoSilentEnd == \A h \in how : h.why # "lost"
 Answered == ~dropped
 NoUnasked == ~unasked
 \* M ending on an M_END while S held its word.  Not M ending on silence after
