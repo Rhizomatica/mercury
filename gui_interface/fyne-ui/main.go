@@ -187,6 +187,7 @@ type uiBindings struct {
 	pttInvertSelect  *widget.Select
 	cm108GPIOSelect  *widget.Select
 	txGainLabel      *widget.Label
+	txGainSlider     *widget.Slider
 	txPeakLabel      *widget.Label
 	bitrateLabel     *widget.Label
 	snrLabel         *widget.Label
@@ -612,7 +613,12 @@ func main() {
 	txGainSlider := widget.NewSlider(-20.0, 20.0)
 	txGainSlider.Step = 0.5
 	txGainSlider.SetValue(0)
-	txGainLabel := widget.NewLabel("TX gain: 0.0 dB")
+	// Until the engine has said what gain it runs at (txGainControl), a move
+	// would send a value measured from 0 dB, not from the engine's.
+	txGainSlider.Disable()
+	bindings.txGainSlider = txGainSlider
+	txGain := newTxGainControl()
+	txGainLabel := widget.NewLabel("TX gain: --")
 	bindings.txGainLabel = txGainLabel
 	txPeakLabel := widget.NewLabel("TX peak: --")
 	bindings.txPeakLabel = txPeakLabel
@@ -913,7 +919,15 @@ func main() {
 				bindings.freqOffsetText.Text, bindings.freqOffsetText.Color = freqOffsetDisplay(telemetry)
 				bindings.freqOffsetText.Refresh()
 			}
-			bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", telemetry.TXGainDB))
+			// The slider and its label follow the engine's gain, except
+			// while the user is moving the slider (txGainControl).
+			if txGain.engineGain(bindings.txGainSlider.Value, telemetry.TXGainDB) {
+				txGain.setSlider(bindings.txGainSlider.SetValue, telemetry.TXGainDB)
+				bindings.txGainSlider.Enable()
+			}
+			if !txGain.userActive() {
+				bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", telemetry.TXGainDB))
+			}
 			bindings.txPeakLabel.SetText(fmt.Sprintf("TX peak: %.1f dBFS", telemetry.TXPeakDBFS))
 			if bindings.waterfallCard != nil {
 				if telemetry.Waterfall {
@@ -1220,6 +1234,9 @@ func main() {
 	})
 
 	txGainSlider.OnChanged = func(value float64) {
+		if !txGain.userMoved() {
+			return // the engine's own value, set by refreshTelemetry
+		}
 		bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", value))
 		if err := sendWSCommand("set_tx_gain", fmt.Sprintf("%.2f", value), "", "", "", "", "", ""); err != nil {
 			appendLog(fmt.Sprintf("Failed to send TX gain: %v\n", err))
