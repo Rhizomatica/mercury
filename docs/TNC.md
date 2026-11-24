@@ -1122,6 +1122,13 @@ poll; if the poll says it is not in after all, its bytes go back on `BUFFER`.
 `0` itself is only ever sent once every byte has been acknowledged: while any
 is not, `BUFFER` says at least `1`.
 
+While the peer's data is still on its way and neither data nor a `BUFFER`
+above `0` has passed for 50 s, Mercury sends `BUFFER 1` followed at once by
+the true count.  BPQ32 closes a Winlink session after about 130 s with neither,
+even when an upload is only stalled, and a receiving station has nothing of
+its own to report (#392).  Treat a `BUFFER 1` immediately followed by `BUFFER 0`
+as no change.
+
 ### IAMALIVE
 
 Sent periodically on the control port as a keepalive to detect broken

@@ -1614,6 +1614,14 @@ static bool peer_direction_done(const car_t *c)
     return c->status_seen || (!c->peer_unopened && peer_outstanding(c) == 0);
 }
 
+bool car_peer_data_open(const car_t *c)
+{
+    /* What the peer has said, and only that: not peer_direction_done, which
+     * is false too before it has said anything (an idle session), and true
+     * after a round with nothing heard (a stall). */
+    return c && c->peer_hi_known && (c->peer_unopened || peer_outstanding(c) > 0);
+}
+
 /* M heard S's M_END: S's application has hung up.  M ends the session on it
  * only holding everything S has, as that poll says it (its latest block and
  * whether bytes wait unopened) -- not on status_seen, which a round with

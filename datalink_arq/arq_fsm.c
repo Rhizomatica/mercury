@@ -171,12 +171,20 @@ static int car_inflight_shown(const car_t *car)
  * report agree.  Written only here.  One per process: the runtime has one
  * session.  NULL: none in flight. */
 static _Atomic int g_tx_inflight_pub = 0;
+/* The peer's data is still on its way and the application is still there to
+ * take it: for the TCP reactor's BUFFER pulse (tnc_buffer_pulse_due), so also
+ * without the session lock.  Never set once the host has asked to hang up. */
+static _Atomic bool g_rx_open_pub = false;
 static void set_tx_inflight(arq_session_t *sess, const car_t *car)
 {
     sess->tx_inflight_bytes = car ? (int)car_tx_inflight(car) : 0;
     atomic_store(&g_tx_inflight_pub, car_inflight_shown(car));
+    atomic_store(&g_rx_open_pub, car && sess->conn_state == ARQ_CONN_CONNECTED &&
+                                 sess->teardown == ARQ_TD_NONE && !sess->host_released &&
+                                 car_peer_data_open(car));
 }
 int arq_fsm_tx_inflight_published(void) { return atomic_load(&g_tx_inflight_pub); }
+bool arq_fsm_rx_open_published(void) { return atomic_load(&g_rx_open_pub); }
 
 static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_teardown_t td,
                           uint64_t deadline_ms, arq_event_id_t deadline_event)
@@ -209,6 +217,8 @@ static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_t
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
         car_stop(sess);
     sess->conn_state     = new_state;
+    if (new_state != ARQ_CONN_CONNECTED)
+        atomic_store(&g_rx_open_pub, false);
     sess->state_enter_ms = time_now_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
