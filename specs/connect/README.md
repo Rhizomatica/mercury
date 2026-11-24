@@ -320,7 +320,9 @@ few hundred states differently with the same results.
 
 ## The notice that holds a scanning host while a CALL arrives (`arrival_hold`, #527)
 
-Not modelled: it adds no state to the connect.  LISTENING says `PENDING` when
+Not modelled here: it adds no state to the connect.  It is modelled, with the
+ACCEPT fallback's hold and every other notice a callee gives its host about an
+incoming call, in `specs/notices` (`CalleeNotices`).  LISTENING says `PENDING` when
 a CALL decoder (the control plane's, or the 1 kHz MFSK listener's) has locked
 onto a frame, again every `ARQ_PENDING_HOLD_MS` while the lock lasts, and
 `CANCELPENDING` `ARQ_ARRIVAL_GRACE_MS` after it is gone when the FSM has not

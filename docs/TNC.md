@@ -864,6 +864,15 @@ with `CANCELPENDING`. A repeated CALL is not enough on a weak path: on
 2026-11-12 K7EK decoded 2 of a caller's 13 CALLs, and BPQ32 hopped 66 s after
 the one `PENDING` while the caller went on calling for 2 minutes.
 
+When the `ACCEPT` retries run out less than 90 s after the last `ACCEPT` went
+out (the default 4 slots: about 43 s), the hold goes on until those 90 s are
+up: a caller that decoded that `ACCEPT` is connected and polling, and its
+next poll completes the connect after the retries have ended.  On 2026-11-23
+(VE4KLM answering K7EK on 30 m) the `CANCELPENDING` came first and the
+`CONNECTED` 31 s and 12 s later; a scanning host would have hopped in
+between.  A host's `DISCONNECT`, `ABORT`, `LISTEN OFF` or `CONNECT`, or the
+caller's DISCONNECT, ends the hold at once with `CANCELPENDING`.
+
 Mercury sends it as soon as a decoder has locked onto a frame while LISTENING,
 about a second into a CALL, not when the CALL has decoded: a scanning host
 that stays 4 s on a frequency (RMS Trimode, with 0.5 s deaf while it changes)
@@ -889,7 +898,8 @@ apart from the answering hold above; both repeat `PENDING\r` every 20 s.
 ### CANCELPENDING
 
 Sent when a previously pending incoming connect request does not complete and
-Mercury returns to the idle/listening state: its `ACCEPT`s ran out, the host
+Mercury returns to the idle/listening state: its `ACCEPT`s ran out (and 90 s
+have passed since the last one, see `PENDING`), the host
 sent `DISCONNECT` or `LISTEN OFF`, or the caller sent a `DISCONNECT` for that
 call (it gave up calling before our `ACCEPT` reached it).  A scanning host
 then resumes its scan at once rather than holding the channel.
