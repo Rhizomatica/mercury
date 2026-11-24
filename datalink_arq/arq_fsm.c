@@ -571,8 +571,9 @@ static int session_ctl_mode(const arq_session_t *sess)
     /* The watchdog's DISCONNECT goes where the peer is sure to be listening:
      * its control decoder always runs, and it reaches the floor only after 90 s
      * of silence of its own.  On the floor, a peer still hearing our polls
-     * never decoded it (one-way link, real engines). */
-    if (sess->lost_end)
+     * never decoded it (one-way link, real engines).  A station that
+     * transmits MFSK only keeps to its floor. */
+    if (sess->lost_end && !ARQ_TX_MFSK_ONLY)
         return sess->control_mode;
 
     if (!sess->car)

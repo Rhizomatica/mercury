@@ -2110,6 +2110,36 @@ void test_watchdog_sends_one_disconnect_then_tells_the_host(void)
     TEST_ASSERT_EQUAL_UINT(1, fake_notify_disconnected_fake.call_count);
 }
 
+/* A station set to transmit MFSK only (arq:mfsk_tx_only) keys the
+ * watchdog's DISCONNECT on its floor too, not on the control mode. */
+void test_watchdog_disconnect_mfsk_only(void)
+{
+    goto_connected();
+    atomic_store(&arq_tx_mfsk_only, 1);
+    arq_event_t ev = make_event(ARQ_EV_TX_STARTED);
+    arq_fsm_dispatch(&sess, &ev);
+    uint64_t lost = sess.car_last_rx_ms + 241000;
+    mock_set_uptime_ms(lost);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    for (int i = 0; i < 200 && sess.teardown != ARQ_TD_SENT; i++)
+    {
+        lost += 100;
+        mock_set_uptime_ms(lost);
+        if (lost >= sess.deadline_ms)
+        {
+            ev = make_event(sess.deadline_event);
+            arq_fsm_dispatch(&sess, &ev);
+        }
+    }
+    int mode = fake_send_tx_frame_fake.arg1_val;
+    atomic_store(&arq_tx_mfsk_only, 0);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_SENT, sess.teardown);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sess.floor_mode, mode, "MFSK only");
+}
+
 /* A deferred APP_DISCONNECT that never drains must still tear down once the
  * drain deadline elapses — guarantees the rig is not keyed indefinitely
  * after the host disconnects (the "Mercury kept hanging on" report). */
@@ -3049,6 +3079,7 @@ int main(void)
     RUN_TEST(test_watchdog_does_not_wait_for_a_keydown_after_the_mark);
     RUN_TEST(test_watchdog_cuts_the_keydown_on_the_air);
     RUN_TEST(test_watchdog_sends_one_disconnect_then_tells_the_host);
+    RUN_TEST(test_watchdog_disconnect_mfsk_only);
     RUN_TEST(test_disconnect_waits_out_a_long_keydown);
     RUN_TEST(test_disconnect_keyed_deferral_is_bounded);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
