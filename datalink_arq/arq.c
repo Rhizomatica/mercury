@@ -1187,7 +1187,12 @@ static void arrival_hold(uint64_t now)
 {
     uint64_t seen = atomic_load(&g_call_seen_ms);
     bool on = seen && now - seen < ARQ_ARRIVAL_STALE_MS;
-    bool idle = g_sess.conn_state == ARQ_CONN_LISTENING && !g_sess.tx_active;
+    /* Not while the ACCEPT fallback holds the host (accept_fallback_held):
+     * its PENDING repeats already, and a lock on a poll of the caller's that
+     * does not decode would end in a CANCELPENDING here, letting a scanner
+     * hop before the late connect the hold is for. */
+    bool idle = g_sess.conn_state == ARQ_CONN_LISTENING && !g_sess.tx_active &&
+                !g_sess.accept_fallback_held;
 
     if (!on)
         g_arrival_noise = false;
