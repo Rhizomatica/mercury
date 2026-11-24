@@ -3587,7 +3587,11 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
                 car_trace(c, "I hear the peer well above the control mode (%.1f dB): control on it again",
                           ema);
             }
-        } else if (c->ctl_deaf != CAR_DEAF_MFSK_TX && !(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
+        } else if (c->ctl_deaf != CAR_DEAF_MFSK_TX &&
+                   !(c->ctl_deaf == CAR_DEAF_HARD && (mercury_mode_is_mfsk(mode) || mercury_mode_is_psk(mode)))) {
+            /* Deaf by evidence, only an OFDM frame decoded says the control
+             * mode works again: a PSK3 frame, differential, gets through a
+             * Doppler spread DATAC16 does not (#628 review). */
             bool was = c->ctl_deaf != 0;
             /* An MFSK frame's reading alone says I went deaf: 13.8 s of
              * tones average a fade out, and after the channel fell below

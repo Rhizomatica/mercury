@@ -12,7 +12,8 @@ it sends, and the callee's control goes on the MFSK floor.
 The smoothed reading is abstracted to four bands against `CTL_DEAF_ON_DB`
 (-7.5), `CTL_DEAF_OFF_DB` (-6.0) and `CTL_LOSS_OFF_DB` (-3.0), and any frame
 may read any band.  The states are `none`, `snr` (the reading's hysteresis),
-`hard` (connect heard only on MFSK: only an OFDM frame clears it), `mfsktx`
+`hard` (connect heard only on MFSK: only an OFDM frame clears it, not an
+MFSK or a PSK3 one), `mfsktx`
 (for good) and `loss` (#538: two asks unanswered while the callee is heard
 and the reading is below -3.0 dB).  Time passes under weak fairness; nothing
 else is owed.
@@ -31,9 +32,10 @@ Not modelled: what the callee does with the report (it only picks the mode
 of its control frames), the reading's arithmetic, the rungs (`specs/rungs`),
 the silence rule (`specs/rungs/FloorSilence.tla`).
 
-Results (`Hold = 2` ticks; `Hold = 5`: 740 states, no error):
+Results (`Hold = 2` ticks; `Hold = 5`: 1110 states, no error):
 
-- `CtlDeaf.cfg`, the code: no error, 524 distinct states.
+- `CtlDeaf.cfg`, the code: no error, 786 distinct states (524 before the
+  PSK frames).
 - `Mut_nohold.cfg`, LOSS held until a reading of -3.0 dB or more (#538
   before review): `LossEnds` violated.  The counterexample is the sim's
   BW500 `cliff:-5` stall: LOSS set, the reading stays in the hysteresis band,
@@ -41,3 +43,6 @@ Results (`Hold = 2` ticks; `Hold = 5`: 740 states, no error):
 - `Mut_fellback.cfg`, an unanswered round counted as a missed answer (#538
   before review): `LossNeedsAsks` violated, LOSS set after one ask.  A round
   lost on its way to the callee says nothing about the callee's control.
+- `Mut_pskclears.cfg`, a PSK frame's reading ends HARD (#628 before
+  review): `HardNeedsOfdm` violated.  A PSK3 probe decoded put control back
+  on a DATAC16 the peer still could not decode.
