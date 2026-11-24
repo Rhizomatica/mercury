@@ -1036,7 +1036,7 @@ static void pending_hold(uint64_t now)
     /* ...and on into the fallback while it still holds the host (arq_fsm.h,
      * ARQ_ACCEPT_FALLBACK_HOLD_MS): the caller may have taken our last ACCEPT. */
     bool answering = g_sess.conn_state == ARQ_CONN_ACCEPTING ||
-                     (g_sess.conn_state == ARQ_CONN_LISTENING && g_sess.accept_fallback_held);
+                     (g_sess.conn_state == ARQ_CONN_LISTENING && g_sess.teardown == ARQ_TD_HOLDING);
     if (!answering || g_sess.teardown == ARQ_TD_LISTEN_OFF)
         return;
     if (g_pending_ms && now - g_pending_ms < ARQ_PENDING_HOLD_MS)
@@ -1191,7 +1191,12 @@ static void arrival_hold(uint64_t now)
 {
     uint64_t seen = atomic_load(&g_call_seen_ms);
     bool on = seen && now - seen < ARQ_ARRIVAL_STALE_MS;
-    bool idle = g_sess.conn_state == ARQ_CONN_LISTENING && !g_sess.tx_active;
+    /* Not while the ACCEPT fallback holds the host (ARQ_TD_HOLDING):
+     * its PENDING repeats already, and a lock on a poll of the caller's that
+     * does not decode would end in a CANCELPENDING here, letting a scanner
+     * hop before the late connect the hold is for. */
+    bool idle = g_sess.conn_state == ARQ_CONN_LISTENING && !g_sess.tx_active &&
+                g_sess.teardown != ARQ_TD_HOLDING;
 
     if (!on)
         g_arrival_noise = false;

@@ -57,6 +57,10 @@ typedef enum
     ARQ_TD_NONE = 0,
     ARQ_TD_LISTEN_OFF,   /* ACCEPTING: a LISTEN OFF inside the grace period,
                           * honoured when it expires or once connected     */
+    ARQ_TD_HOLDING,      /* LISTENING, the ACCEPT fallback: the host is still
+                          * held on PENDING, its CANCELPENDING owed when the
+                          * hold ends without a connect
+                          * (ARQ_ACCEPT_FALLBACK_HOLD_MS)                   */
     ARQ_TD_DRAINING,     /* CONNECTED: the application's DISCONNECT waits
                           * for delivery, until teardown_deadline_ms       */
     ARQ_TD_SENT,         /* DISCONNECTING: our DISCONNECT is on the air    */
@@ -254,14 +258,6 @@ typedef struct
                                         * not the RX-window timer.  Only the
                                         * former may key the transmitter -- see
                                         * fsm_accepting's TIMER_RETRY.        */
-    uint64_t accept_tx_end_ms;         /* when our last ACCEPT of this call left
-                                        * the air (0: none yet)                */
-    bool     accept_fallback_held;     /* in the fallback, the host is still
-                                        * held on PENDING: CANCELPENDING is
-                                        * owed when the hold ends without a
-                                        * connect (ARQ_ACCEPT_FALLBACK_HOLD_MS) */
-    uint64_t accept_fallback_end_ms;   /* when the fallback's seed is dropped,
-                                        * once the hold is over                */
 
     /* --- Teardown --- */
     arq_teardown_t teardown;           /* the step reached (arq_teardown_t)   */

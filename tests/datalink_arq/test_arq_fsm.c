@@ -366,7 +366,7 @@ static void accept_once_then_fall_back(void)
     enter_accepting();
     mock_set_uptime_ms(1000);
     TEST_ASSERT_EQUAL_INT(1, accepts_after_guard());
-    TEST_ASSERT_EQUAL_UINT64(1000, sess.accept_tx_end_ms);
+    TEST_ASSERT_EQUAL_UINT64(1000, sess.last_tx_end_ms);   /* our ACCEPT's end */
     accept_until_fallback();
     TEST_ASSERT_TRUE(sess.accept_fallback);
     TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
@@ -380,7 +380,7 @@ static void accept_once_then_fall_back(void)
 void test_accept_fallback_holds_the_host_until_the_late_connect(void)
 {
     accept_once_then_fall_back();
-    TEST_ASSERT_TRUE(sess.accept_fallback_held);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_HOLDING, sess.teardown);
     TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
     TEST_ASSERT_EQUAL_UINT64(1000 + ARQ_ACCEPT_FALLBACK_HOLD_MS, sess.deadline_ms);
 
@@ -393,7 +393,7 @@ void test_accept_fallback_holds_the_host_until_the_late_connect(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_EQUAL_INT(1, fake_notify_connected_fake.call_count);
     TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
-    TEST_ASSERT_FALSE(sess.accept_fallback_held);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_HOLDING, sess.teardown);
 }
 
 /* No caller by the hold's end: CANCELPENDING then, once, and the seed stays
@@ -402,17 +402,18 @@ void test_accept_fallback_holds_the_host_until_the_late_connect(void)
 void test_accept_fallback_hold_ends_with_one_cancelpending(void)
 {
     accept_once_then_fall_back();
-    uint64_t fallback_end = sess.accept_fallback_end_ms;
-    TEST_ASSERT_TRUE(fallback_end > 1000 + ARQ_ACCEPT_FALLBACK_HOLD_MS);
 
     mock_set_uptime_ms(1000 + ARQ_ACCEPT_FALLBACK_HOLD_MS);
     arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(1, fake_notify_cancelpending_fake.call_count);
-    TEST_ASSERT_FALSE(sess.accept_fallback_held);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_HOLDING, sess.teardown);
     TEST_ASSERT_TRUE(sess.accept_fallback);
     TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
-    TEST_ASSERT_EQUAL_UINT64(fallback_end, sess.deadline_ms);
+    /* The fallback runs on to the caller's watchdog, counted, as the hold
+     * is, from our last ACCEPT (t = 1 s): ARQ_CAR_PEER_LOST_MS, 240 s. */
+    uint64_t fallback_end = sess.deadline_ms;
+    TEST_ASSERT_EQUAL_UINT64(1000 + 240000, fallback_end);
 
     mock_set_uptime_ms(fallback_end);
     arq_fsm_dispatch(&sess, &ev);
@@ -435,7 +436,21 @@ void test_accept_fallback_no_hold_past_the_last_accept(void)
     }
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
     TEST_ASSERT_TRUE(sess.accept_fallback);
-    TEST_ASSERT_FALSE(sess.accept_fallback_held);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_HOLDING, sess.teardown);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_cancelpending_fake.call_count);
+    /* The fallback, too, counts from that ACCEPT (the caller's watchdog,
+     * 240 s), not from the retries' end. */
+    TEST_ASSERT_EQUAL_UINT64(1000 + 240000, sess.deadline_ms);
+}
+
+/* No ACCEPT keyed (nothing transmitted): nothing for a caller to have taken,
+ * so no hold -- CANCELPENDING at once, as before. */
+void test_accept_fallback_no_hold_without_a_keyed_accept(void)
+{
+    enter_accepting();
+    accept_until_fallback();          /* ACCEPTs queued, never TX_COMPLETE */
+    TEST_ASSERT_EQUAL_UINT64(0, sess.last_tx_end_ms);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_HOLDING, sess.teardown);
     TEST_ASSERT_EQUAL_INT(1, fake_notify_cancelpending_fake.call_count);
 }
 
@@ -447,7 +462,7 @@ void test_accept_fallback_hold_released_by_the_callers_disconnect(void)
     ev.session_id = 0x42;
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(1, fake_notify_cancelpending_fake.call_count);
-    TEST_ASSERT_FALSE(sess.accept_fallback_held);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_HOLDING, sess.teardown);
     TEST_ASSERT_FALSE(sess.accept_fallback);
     TEST_ASSERT_EQUAL(0, sess.crc_seed);
 }
@@ -501,8 +516,7 @@ void test_accept_fallback_hold_hands_over_to_a_new_call(void)
     strncpy(ev.remote_call, "OTHER1", CALLSIGN_MAX_SIZE);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
-    TEST_ASSERT_FALSE(sess.accept_fallback_held);
-    TEST_ASSERT_EQUAL_UINT64(0, sess.accept_tx_end_ms);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_TD_HOLDING, sess.teardown);
     TEST_ASSERT_EQUAL_INT(pendings + 1, fake_notify_pending_fake.call_count);
     TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
 }
@@ -3021,6 +3035,7 @@ int main(void)
     RUN_TEST(test_accept_fallback_holds_the_host_until_the_late_connect);
     RUN_TEST(test_accept_fallback_hold_ends_with_one_cancelpending);
     RUN_TEST(test_accept_fallback_no_hold_past_the_last_accept);
+    RUN_TEST(test_accept_fallback_no_hold_without_a_keyed_accept);
     RUN_TEST(test_accept_fallback_hold_released_by_the_callers_disconnect);
     RUN_TEST(test_accept_fallback_hold_released_by_the_hosts_disconnect);
     RUN_TEST(test_accept_fallback_hold_released_by_listen_off_and_connect);
