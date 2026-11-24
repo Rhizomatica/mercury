@@ -118,6 +118,12 @@ bool   tnc_rx_reader_attached(void);
  * TNC_BUFFER_REPEAT_MS (50 s)?  (#397) */
 bool tnc_buffer_report_due(int buffered, int last_reported, bool connected,
                            uint64_t now_ms, uint64_t last_sent_ms);
+/* Is a BUFFER 1 pulse due: in a session, nothing of ours to confirm, the
+ * peer's data still on its way, and no data or BUFFER above 0 for
+ * TNC_BUFFER_REPEAT_MS?  It keeps BPQ32's idle timer off a stalled upload
+ * (#392). */
+bool tnc_buffer_pulse_due(int buffered, bool connected, bool rx_open,
+                          uint64_t now_ms, uint64_t last_traffic_ms);
 void tnc_send_registered(const char *callsign);
 void tnc_send_sn(float snr);
 void tnc_send_busy(bool busy);

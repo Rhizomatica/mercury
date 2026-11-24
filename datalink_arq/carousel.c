@@ -109,6 +109,7 @@ void car_set_short_rung(bool on) { g_short_rung = on; }
 enum { BL_NONE, BL_SMALL, BL_MEDIUM, BL_LARGE };
 #define BL_SMALL_BYTES  90    /* one DATAC3 frame's pieces, with the check and a margin */
 #define BL_MEDIUM_BYTES 460   /* ...one DATAC1 frame's */
+#define SHORT_RUNG_FAILING 0.6 /* a rung delivering less is no place for a small message */
 static float g_nav_below_db = 99.0f;
 static double g_nav_loss = 0.3;
 void car_set_nav_below_db(float db) { g_nav_below_db = db; }
@@ -1613,6 +1614,14 @@ static bool peer_direction_done(const car_t *c)
     return c->status_seen || (!c->peer_unopened && peer_outstanding(c) == 0);
 }
 
+bool car_peer_data_open(const car_t *c)
+{
+    /* What the peer has said, and only that: not peer_direction_done, which
+     * is false too before it has said anything (an idle session), and true
+     * after a round with nothing heard (a stall). */
+    return c && c->peer_hi_known && (c->peer_unopened || peer_outstanding(c) > 0);
+}
+
 /* M heard S's M_END: S's application has hung up.  M ends the session on it
  * only holding everything S has, as that poll says it (its latest block and
  * whether bytes wait unopened) -- not on status_seen, which a round with
@@ -1639,12 +1648,22 @@ static void stamp_hint(const car_t *c, msg_t *m)
 }
 
 /* The rung at or below lv whose round carrying bytes is shortest, and that
- * round's frames in *pn; lv itself (and *pn untouched) when none beats it.
- * Never the floor: MFSK is the longest frame there is. */
+ * round's frames in *pn.  On lv itself *pn only shrinks to what the bytes need
+ * (it may be less, what the rung has earned): a poll nobody answers holds its
+ * whole slot, and one for 7 DATAC3 frames kept the caller silent for 30 s
+ * while the peer held a short reply (N3JXB-K7EK, 2026-11-19).  Never the
+ * floor: MFSK is the longest frame there is. */
 static int short_rung(const car_t *c, int lv, size_t bytes, int *pn)
 {
     if (lv <= 1 || !bytes) return lv;
-    double margin = c->loss_est * 1.3 + 0.05;
+    /* A small message on a rung that is failing: no loss margin.  With one, a
+     * 3-byte command priced as two DATAC3 frames and stayed on a failing
+     * DATAC1: lost twice, its third try decoded 4 s after the BBS had hung up
+     * (N3JXB-K7EK, 2026-11-19).  Only there: on a rung that delivers, the
+     * margin's second frame is what carries a short message over a lossy link
+     * (sim, NVIS chat of 3-byte messages: +13 % without it). */
+    bool failing = bytes <= BL_SMALL_BYTES && level_delivery(c, lv) < SHORT_RUNG_FAILING;
+    double margin = failing ? 0.0 : c->loss_est * 1.3 + 0.05;
     int P = piece_of(c);
     int pieces = (int)ceil((double)(bytes + BLOCK_CHECK) / P * (1.0 + margin));
     int best = lv, best_n = 0;
@@ -1658,7 +1677,7 @@ static int short_rung(const car_t *c, int lv, size_t bytes, int *pn)
         uint64_t a = round_air(c, l, n);
         if (a < best_air) { best_air = a; best = l; best_n = n; }
     }
-    if (best != lv) *pn = best_n;
+    if (best != lv || (best_n > 0 && best_n < *pn)) *pn = best_n;
     return best;
 }
 /* The peer's next message, before it says: as long as its last one -- a

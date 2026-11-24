@@ -878,7 +878,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
          * dropped.  The modem unkeys within its tail time, the FSM sees the
          * keydown end as it would any other, and the one DISCONNECT goes out
          * after it.  A CALL being sent is cut too: the call is over. */
-        arq_modem_cut_tx();
+        arq_modem_cut_tx("ABORT");
         ev.id = ARQ_EV_APP_DISCONNECT;
         ev.abort = true;
         break;
@@ -1596,6 +1596,7 @@ int arq_init(size_t frame_size, int mode)
         .send_pattern        = cb_send_pattern,
         .set_crc_seed        = arq_modem_crc_seed,
         .set_floor_mode      = arq_modem_floor_mode,
+        .cut_tx              = arq_modem_cut_tx,
     };
     arq_fsm_set_callbacks(&cbs);
     arq_fsm_set_timing(&g_timing);
@@ -1761,6 +1762,11 @@ int arq_buffer_bytes_nowait(void)
     if (!g_initialized)
         return 0;
     return arq_get_tx_backlog_bytes() + arq_fsm_tx_inflight_published();
+}
+
+bool arq_rx_open_nowait(void)
+{
+    return g_initialized && arq_fsm_rx_open_published();
 }
 
 /* g_sess_lock for the TCP reactor: never waits on it for long, since the

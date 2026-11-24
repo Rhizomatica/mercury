@@ -152,6 +152,27 @@ bool tnc_buffer_report_due(int buffered, int last_reported, bool connected,
     return connected && buffered > 0 && now_ms - last_sent_ms >= TNC_BUFFER_REPEAT_MS;
 }
 
+/* BPQ32 closes a Winlink (CMS) session after about 120 of its timer ticks, 130
+ * s on air, with no data either way and no BUFFER above 0 from the modem
+ * (VARA.c resets its L4KILLTIMER on those; BUFFER 0 does not).  A station
+ * receiving an upload has nothing of its own to confirm, so a stall in the
+ * upload ended the session with the sender still on the link and 110 s left
+ * on Mercury's own watchdog: K7EK-10, 19 Nov 2026, three uploads from KE9BPC
+ * cut 129.6 s after their last delivered byte (#392).
+ *
+ * So while the peer's data is still on its way and nothing has passed for
+ * TNC_BUFFER_REPEAT_MS, BUFFER goes to 1 and straight back to the true count.
+ * The link's own watchdog still ends a dead session, and a session with
+ * nothing arriving (an idle BBS user) keeps the host's idle timeout. */
+static _Atomic uint64_t tnc_last_host_traffic_ms = 0;
+
+bool tnc_buffer_pulse_due(int buffered, bool connected, bool rx_open,
+                          uint64_t now_ms, uint64_t last_traffic_ms)
+{
+    return connected && rx_open && buffered == 0 &&
+           now_ms >= last_traffic_ms && now_ms - last_traffic_ms >= TNC_BUFFER_REPEAT_MS;
+}
+
 void tnc_set_intervals(int keepalive_s, int buffer_report_ms)
 {
     if (keepalive_s >= 5 && keepalive_s <= 600)
@@ -1662,6 +1683,7 @@ void *arq_reactor_thread(void *port)
                 {
                     HLOGD("tcp-data", "recv %zd bytes from data client", n);
                     atomic_store(&tnc_last_data_rx_ms, monotonic_ms());
+                    atomic_store(&tnc_last_host_traffic_ms, monotonic_ms());
                     int queued = arq_submit_tcp_payload(rx_buf, (size_t)n);
                     if (queued == 0)
                         tnc_send_buffer((uint32_t)arq_buffered_bytes_snapshot());
@@ -1761,6 +1783,15 @@ void *arq_reactor_thread(void *port)
                         tnc_send_buffer((uint32_t)buffered);
                         last_buffer_report = buffered;
                     }
+                    else if (tnc_buffer_pulse_due(buffered, link_connected_cached(), arq_rx_open_nowait(),
+                                                  now_ms, atomic_load(&tnc_last_host_traffic_ms)))
+                    {
+                        tnc_send_buffer(1);
+                        tnc_send_buffer((uint32_t)arq_buffered_bytes_snapshot());
+                        /* the next pass compares afresh, should the second
+                         * line not have been queued */
+                        last_buffer_report = -1;
+                    }
                     next_buffer_report_ms = now_ms + atomic_load_explicit(&tnc_buffer_report_interval_ms, memory_order_relaxed);
                 }
             }
@@ -1783,6 +1814,8 @@ void *arq_reactor_thread(void *port)
                          * partial write must not drop them — loop until the
                          * kernel takes everything (or the socket dies). */
                         ssize_t sent = tcp_write_all(DATA_TCP_PORT, tx_buf, available);
+                        if (sent > 0)
+                            atomic_store(&tnc_last_host_traffic_ms, monotonic_ms());
                         if (sent < (ssize_t)available)
                             HLOGW("tcp-data", "DATA write failed (%zd/%zu), socket restarting",
                                   sent, available);
@@ -2528,6 +2561,7 @@ void tnc_send_connected()
     int bw = arq_reported_bandwidth_hz();   /* separate locked call, AFTER the getter returns */
     /* a new session: its idle time counts from now, no DISCONNECT yet */
     atomic_store(&tnc_last_data_rx_ms, monotonic_ms());
+    atomic_store(&tnc_last_host_traffic_ms, monotonic_ms());
     atomic_store(&tnc_last_disconnect_ms, 0);
     atomic_store(&tnc_disconnect_passed, false);
     atomic_store(&tnc_session_up, true);
@@ -2602,6 +2636,8 @@ void tnc_send_buffer(uint32_t bytes)
     {
         atomic_store_explicit(&tnc_last_buffer_sent, (int)bytes, memory_order_relaxed);
         atomic_store_explicit(&tnc_last_buffer_ms, monotonic_ms(), memory_order_relaxed);
+        if (bytes > 0)
+            atomic_store(&tnc_last_host_traffic_ms, monotonic_ms());
     }
 }
 

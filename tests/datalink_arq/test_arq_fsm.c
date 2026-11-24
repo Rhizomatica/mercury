@@ -42,6 +42,7 @@ FAKE_VALUE_FUNC(int, fake_tx_backlog);
 FAKE_VALUE_FUNC(bool, fake_channel_busy);
 FAKE_VALUE_FUNC(int, fake_tx_read, uint8_t *, size_t);
 FAKE_VOID_FUNC(fake_send_buffer_status, int);
+FAKE_VOID_FUNC(fake_cut_tx, const char *);
 
 static arq_fsm_callbacks_t test_callbacks = {
     .send_tx_frame       = fake_send_tx_frame,
@@ -55,6 +56,7 @@ static arq_fsm_callbacks_t test_callbacks = {
     .channel_busy        = fake_channel_busy,
     .tx_read             = fake_tx_read,
     .send_buffer_status  = fake_send_buffer_status,
+    .cut_tx              = fake_cut_tx,
 };
 
 static arq_session_t sess;
@@ -113,6 +115,7 @@ void setUp(void)
     RESET_FAKE(fake_notify_disconnected);
     RESET_FAKE(fake_deliver_rx_data);
     RESET_FAKE(fake_tx_backlog);
+    RESET_FAKE(fake_cut_tx);
     RESET_FAKE(fake_channel_busy);
     RESET_FAKE(fake_tx_read);
     RESET_FAKE(fake_send_buffer_status);
@@ -732,6 +735,42 @@ void test_accept_transitions_to_connected(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
     TEST_ASSERT_TRUE(fake_notify_connected_fake.arg2_val);    /* we called */
+}
+
+/* The connect is logged on the carrier the ACCEPT came on, not the control
+ * mode: N3JXB's log said DATAC16 for an ACCEPT decoded on MFSK. */
+void test_caller_records_the_accept_carrier(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    ev.mode = MERCURY_MODE_MFSK;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, timing.connect_mode);
+}
+
+/* ...and on the callee, the carrier its ACCEPT went on. */
+void test_callee_records_the_accept_carrier(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    ev.mode = MERCURY_MODE_MFSK;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = 0x42;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, timing.connect_mode);
 }
 
 /* An outgoing call does not inherit the callsign the last incoming CALL
@@ -1780,6 +1819,40 @@ void test_watchdog_does_not_wait_for_a_keydown_after_the_mark(void)
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 }
 
+/* The watchdog ends the session with a keydown on the air: it is cut, and
+ * before the host hears DISCONNECTED and goes back to scanning (KG9NI, 22
+ * Nov 2026: PTT on for 10.8 s after it).  Before the mark nothing is cut. */
+static unsigned disconnected_at_cut;
+static void note_cut(const char *why) { (void)why; disconnected_at_cut = fake_notify_disconnected_fake.call_count; }
+
+void test_watchdog_cuts_the_keydown_on_the_air(void)
+{
+    goto_connected();
+    fake_notify_disconnected_fake.call_count = 0;
+    disconnected_at_cut = 99;
+    fake_cut_tx_fake.custom_fake = note_cut;
+    uint64_t mark = sess.car_last_rx_ms + 240000;
+    arq_event_t ev = make_event(ARQ_EV_TX_STARTED);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE(sess.tx_active);
+
+    mock_set_uptime_ms(mark - 1000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT(0, fake_cut_tx_fake.call_count);
+
+    uint64_t lost = mark + 1000;
+    mock_set_uptime_ms(lost);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT(1, fake_cut_tx_fake.call_count);
+    TEST_ASSERT_EQUAL_STRING("link lost", fake_cut_tx_fake.arg0_val);
+    TEST_ASSERT_EQUAL_UINT(1, fake_notify_disconnected_fake.call_count);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0, disconnected_at_cut, "cut before the host is told");
+}
+
 /* A deferred APP_DISCONNECT that never drains must still tear down once the
  * drain deadline elapses — guarantees the rig is not keyed indefinitely
  * after the host disconnects (the "Mercury kept hanging on" report). */
@@ -2716,6 +2789,7 @@ int main(void)
     RUN_TEST(test_silent_peer_without_hangup_waits_for_the_watchdog);
     RUN_TEST(test_watchdog_waits_for_an_answer_on_the_air);
     RUN_TEST(test_watchdog_does_not_wait_for_a_keydown_after_the_mark);
+    RUN_TEST(test_watchdog_cuts_the_keydown_on_the_air);
     RUN_TEST(test_disconnect_waits_out_a_long_keydown);
     RUN_TEST(test_disconnect_keyed_deferral_is_bounded);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
@@ -2750,5 +2824,7 @@ int main(void)
     RUN_TEST(test_timeout_ms_idle);
     RUN_TEST(test_accept_is_only_sent_in_answer_to_a_heard_call);
     RUN_TEST(test_accepting_silent_wait_gives_up_after_budget);
+    RUN_TEST(test_caller_records_the_accept_carrier);
+    RUN_TEST(test_callee_records_the_accept_carrier);
     return UNITY_END();
 }

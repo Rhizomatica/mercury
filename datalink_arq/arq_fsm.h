@@ -358,6 +358,9 @@ typedef struct
     /** The session's MFSK floor (arq_floor_mode), set with its seed: the
      *  geometry patterns are keyed and detected at.  Optional. */
     void (*set_floor_mode)(int mode);
+    /** Stop what the modem is keying: a session that ends with no peer left
+     *  to hear it does not play its keydown out.  Optional. */
+    void (*cut_tx)(const char *why);
 } arq_fsm_callbacks_t;
 
 /**
@@ -465,6 +468,9 @@ const char *arq_event_name(arq_event_id_t ev);
  * as last set with tx_inflight_bytes, readable without the session lock
  * (BUFFER from the TCP reactor). */
 int arq_fsm_tx_inflight_published(void);
+/* In a session the host has not ended, the peer's data is still on its way
+ * (car_peer_data_open); readable without the session lock. */
+bool arq_fsm_rx_open_published(void);
 /* What BUFFER counts of `inflight` unconfirmed bytes in the carousel's open
  * blocks, `unstopped` of them in blocks no floor BREAK has said are in: those,
  * but at least 1 while any is unconfirmed (0 means all acknowledged). */

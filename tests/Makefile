@@ -65,9 +65,9 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm test
             test_tcp_interfaces test_resampler test_pcm24 test_cap_recover test_play_recover test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_rtp_wire test_hl2_wire test_hl2_dsp test_virtual_clock test_watterson \
-            test_mercury_prng test_bcast_file \
+            test_mercury_prng test_bcast_file test_car_short_msg \
             test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port test_net_probe \
-            test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
+            test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore test_car_poll_size \
             test_mfsk_harq test_mfsk_modem test_rx_inflight test_pattern_ack_detection \
             test_message_store test_ui_history test_ws_protocol \
             test_monitor_frame test_hermes_log test_host test_api_host test_bcast_carousel test_bcast_rx_host
@@ -174,6 +174,10 @@ test_rs_erasure: sim/test_rs_erasure.c ../datalink_arq/rs_erasure.c ../datalink_
 CAROUSEL_SIM_SRC = sim/carousel_sim.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c \
                    sim/sim_channel.c $(ARQ_STUBS) \
                    ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c ../common/virtual_clock.c
+# The rung a short message is asked on, on carousel.c's own static functions
+test_car_short_msg: sim/test_car_short_msg.c ../datalink_arq/carousel.c $(filter-out sim/carousel_sim.c ../datalink_arq/carousel.c,$(CAROUSEL_SIM_SRC)) $(UNITY_SRC)
+	$(CC) $(CFLAGS) -Isim -I../datalink_arq -I../modem/freedv -o $@ $(filter-out ../datalink_arq/carousel.c,$(filter %.c %.a %.o,$^)) $(LDFLAGS)
+
 # Every loss and sensing-failure pattern up to k on a short transfer
 # (sim/car_explore.c); CAR_EXPLORE_BYTES=4000 make -B test_car_explore for a
 # longer one.
@@ -201,6 +205,10 @@ floor_idle: sim/floor_idle.c $(CAROUSEL_SIM_SRC)
 # The carousel's invariants: completes, delivers intact, never keys over the peer
 test_carousel: sim/test_carousel.c $(CAROUSEL_SIM_SRC) $(UNITY_SRC)
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# The size of a poll, on carousel.c's own static functions
+test_car_poll_size: sim/test_car_poll_size.c ../datalink_arq/carousel.c $(filter-out sim/carousel_sim.c ../datalink_arq/carousel.c,$(CAROUSEL_SIM_SRC)) $(UNITY_SRC)
+	$(CC) $(CFLAGS) -Isim -I../datalink_arq -I../modem/freedv -o $@ $(filter-out ../datalink_arq/carousel.c,$(filter %.c %.a %.o,$^)) $(LDFLAGS)
 
 # Two-FSM ARQ simulation harness
 SIM_SRC = sim/sim_clock.c sim/sim_channel.c sim/sim_endpoint.c \
