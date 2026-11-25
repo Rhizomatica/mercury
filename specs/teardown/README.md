@@ -364,6 +364,13 @@ Results:
 - `Mut_abortsilent.cfg`: lossless, the callee's ABORT ends it without
   keying its DISCONNECT.  It violates `Clean`: the caller is left to its
   watchdog (#218).
+- An ABORT while our DISCONNECT is on the air (#665): the model's keydowns are
+  atomic, so its ABORT has always let that keydown finish ("M sends one
+  DISCONNECT ... also when one is already out"), and the code, which cut it
+  since #592, drifted from it; #665 brings the code back.  A second ABORT
+  within 30 s cuts it at once (the operator's stop button): to the model that
+  is one lost keydown, which the lossy configurations cover -- the peer then
+  ends on its own silence, not on the frame.
 - `Mut_ignorepattern.cfg`: the end waiting for the answer to its
   DISCONNECT does not take the pattern.  It violates `Clean`: it retries
   and times out.

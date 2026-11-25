@@ -102,6 +102,15 @@ func TestMercuryARQAbortLeavesTheDisconnect(t *testing.T) {
 	TestMercuryARQTransfer(t)
 }
 
+// ...and a second ABORT while it plays out stops it at once: ABORT is also
+// the operator's stop button, and a DISCONNECT at the floor is 26.5 s.
+func TestMercuryARQSecondAbortCutsTheDisconnect(t *testing.T) {
+	t.Setenv("MERCURY_TEST_DISCONNECT_BY", "A")
+	t.Setenv("MERCURY_TEST_ABORT_IN_DISCONNECT", "2")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "64")
+	TestMercuryARQTransfer(t)
+}
+
 // An engine stopped with a session up ends it on the air first: the other
 // station's host hears DISCONNECTED, as it would from a host's ABORT.  On air
 // (N3JXB-KG9NI, 2026-11-15) Mercury closed mid-session said nothing, and the
@@ -820,6 +829,24 @@ func TestMercuryARQTransfer(t *testing.T) {
 			}
 			if err := hangRW.Flush(); err != nil {
 				t.Fatalf("flush ABORT: %v", err)
+			}
+			// =2: the host ABORTs again 0.5 s later, and the keydown stops.
+			if os.Getenv("MERCURY_TEST_ABORT_IN_DISCONNECT") == "2" {
+				time.Sleep(500 * time.Millisecond)
+				if _, err := hangRW.WriteString("ABORT\r"); err != nil {
+					t.Fatalf("write second ABORT: %v", err)
+				}
+				if err := hangRW.Flush(); err != nil {
+					t.Fatalf("flush second ABORT: %v", err)
+				}
+				time.Sleep(3 * time.Second) // the cut, and the async logger
+				b, _ := os.ReadFile(timingLogs[by])
+				if !strings.Contains(string(b), "ABORT again: our DISCONNECT stops now") ||
+					!strings.Contains(string(b), "keydown cut short (ABORT)") {
+					failWithLogs("%s's second ABORT did not cut its DISCONNECT", by)
+				}
+				t.Logf("%s's second ABORT cut its DISCONNECT", by)
+				return
 			}
 			_ = hang.SetDeadline(time.Time{})
 			tAbort := time.Now()

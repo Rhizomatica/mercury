@@ -114,6 +114,11 @@ static bool g_host_told;
 
 static bool notice_owed(void);
 static bool keydown_tells_peer(void);
+/* When an ABORT last left our DISCONNECT on the air (0: none).  Another ABORT
+ * within ABORT_AGAIN_MS, longer than any keydown, cuts it.  Reactor thread
+ * only.  Left stale, it can only make a later ABORT cut, as before #665. */
+#define ABORT_AGAIN_MS 30000
+static uint64_t g_abort_left_ms;
 
 /* Internal event queue */
 #define ARQ_EV_QUEUE_CAP 64
@@ -890,10 +895,27 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
          * 30 s after a DISCONNECT that has not been answered, and at the
          * floor ours can still be on the air then (arq_fsm_keydown_tells_peer).
          * The scanner is held on PENDING until it is over (abort_hold). */
-        if (keydown_tells_peer())
-            HLOGI(LOG_COMP, "ABORT: our DISCONNECT is on the air -- left to finish, it tells the peer");
-        else
-            arq_modem_cut_tx("ABORT");
+        /* ...unless the host ABORTs again while it plays out: then it stops
+         * at once.  ABORT is also the stop button (a wrong frequency, a
+         * complaint of interference, a keydown that looks stuck), and a
+         * DISCONNECT at the floor is 26.5 s.  BPQ32 sends one ABORT. */
+        {
+            uint64_t now_ms = time_now_ms();
+            bool again = g_abort_left_ms && now_ms - g_abort_left_ms < ABORT_AGAIN_MS;
+            if (keydown_tells_peer() && !again)
+            {
+                g_abort_left_ms = now_ms;
+                HLOGI(LOG_COMP, "ABORT: our DISCONNECT is on the air -- left to finish, it tells the peer "
+                      "(ABORT again to stop it)");
+            }
+            else
+            {
+                if (again)
+                    HLOGI(LOG_COMP, "ABORT again: our DISCONNECT stops now");
+                g_abort_left_ms = 0;
+                arq_modem_cut_tx("ABORT");
+            }
+        }
         ev.id = ARQ_EV_APP_DISCONNECT;
         ev.abort = true;
         break;
