@@ -259,6 +259,11 @@ Which model covers the other 2.0 changes:
 - a small message drops the loss margin on a rung delivering under 60 %
   (`short_rung`): it changes only which rung and how many frames a short
   poll asks for, which `RungAgreement` leaves free.
+- no probe of a rung within half the gate of its threshold for a short
+  message (`no_marginal_probe`, from `rx_next`): S asks on the best measured
+  rung instead.  It only narrows the rungs S names, which `RungAgreement`
+  leaves free (any rung).  Rerun 2026-11-25: `RungAgreement.cfg` and
+  `PollRung.cfg`, no error.
 - a connect heard only on MFSK starts deaf to the control mode
   (`CAR_DEAF_HARD`, arq_fsm.c), and an MFSK reading does not clear that;
   a deaf S may then name, for one frame, the rung its ladder chose

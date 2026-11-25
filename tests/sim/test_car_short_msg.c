@@ -1,5 +1,5 @@
 /* tests/sim/test_car_short_msg.c -- the rung a short message is asked on when
- * the link has been losing frames.  Includes carousel.c for its statics.
+ * the link has been losing frames, and no probe near a threshold for one.  Includes carousel.c for its statics.
  *
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -63,6 +63,32 @@ void test_larger_message_keeps_the_loss_margin(void)
     TEST_ASSERT_EQUAL_INT(4, short_rung(&car, 4, 100, &n));
 }
 
+/* A short message is not asked on a rung probed within half the gate of
+ * its threshold: QAM16C2 at 12 dB, DATAC17 delivering (sBitx bench,
+ * 2026-11-25). */
+static void short_backlog_at(float snr)
+{
+    car.snr_valid = true; car.snr_ema = car.snr_last = snr; car.snr_ms = 1;
+    car.rung[5].rounds = 3; score(5, 10.0, 0.0);
+    car.peer_short = true; car.peer_backlog = BL_SMALL;
+}
+
+void test_short_message_does_not_probe_a_marginal_rung(void)
+{
+    short_backlog_at(12.0f);
+    TEST_ASSERT_EQUAL_INT(5, no_marginal_probe(&car, 6));
+}
+
+/* With room to spare, or with a backlog that is not short, the probe stays. */
+void test_probe_stays_with_room_or_a_long_backlog(void)
+{
+    short_backlog_at(14.0f);
+    TEST_ASSERT_EQUAL_INT(6, no_marginal_probe(&car, 6));
+    short_backlog_at(12.0f);
+    car.peer_backlog = BL_LARGE;
+    TEST_ASSERT_EQUAL_INT(6, no_marginal_probe(&car, 6));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -70,5 +96,7 @@ int main(void)
     RUN_TEST(test_small_message_stays_on_a_rung_that_delivers);
     RUN_TEST(test_small_message_skips_a_gated_rung);
     RUN_TEST(test_larger_message_keeps_the_loss_margin);
+    RUN_TEST(test_short_message_does_not_probe_a_marginal_rung);
+    RUN_TEST(test_probe_stays_with_room_or_a_long_backlog);
     return UNITY_END();
 }
