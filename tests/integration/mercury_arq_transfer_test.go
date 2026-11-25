@@ -90,6 +90,18 @@ func TestMercuryARQAbortCutsTheFloorRound(t *testing.T) {
 	TestMercuryARQTransfer(t)
 }
 
+// The caller's host ABORTs 1 s into its DISCONNECT (BPQ32 does, 30 s after
+// a DISCONNECT not yet answered): that keydown is the peer's word that the
+// session is over, so it plays out and the callee ends on it, not on its
+// 240 s watchdog (on air, K7EK 2026-11-24 20:30:34Z, cut 3.7 s into a 26.5 s
+// MFSK500 DISCONNECT).
+func TestMercuryARQAbortLeavesTheDisconnect(t *testing.T) {
+	t.Setenv("MERCURY_TEST_DISCONNECT_BY", "A")
+	t.Setenv("MERCURY_TEST_ABORT_IN_DISCONNECT", "1")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "64")
+	TestMercuryARQTransfer(t)
+}
+
 // An engine stopped with a session up ends it on the air first: the other
 // station's host hears DISCONNECTED, as it would from a host's ABORT.  On air
 // (N3JXB-KG9NI, 2026-11-15) Mercury closed mid-session said nothing, and the
@@ -778,6 +790,63 @@ func TestMercuryARQTransfer(t *testing.T) {
 				break
 			}
 			after = append(after, line)
+		}
+		// MERCURY_TEST_ABORT_IN_DISCONNECT=1: the host ABORTs while the
+		// DISCONNECT is on the air, as BPQ32 does 30 s after a DISCONNECT
+		// not yet answered.  That keydown is the one that tells the peer:
+		// it must play out, and the peer end on it, not on its watchdog
+		// (on air, K7EK 2026-11-24 20:30:34Z: cut 3.7 s into a 26.5 s
+		// MFSK500 DISCONNECT, and KG9NI sat out its 240 s).
+		if os.Getenv("MERCURY_TEST_ABORT_IN_DISCONNECT") != "" {
+			_ = hang.SetDeadline(time.Now().Add(3 * time.Minute))
+			tearing := func() bool {
+				b, _ := os.ReadFile(timingLogs[by])
+				return strings.Contains(string(b), "Teardown starts")
+			}
+			for {
+				line, err := hangRW.ReadString('\r')
+				if err != nil {
+					failWithLogs("%s's DISCONNECT never keyed: %v (%q)", by, err, after)
+				}
+				line = strings.TrimSpace(line)
+				after = append(after, line)
+				if line == "PTT ON" && tearing() {
+					break
+				}
+			}
+			time.Sleep(time.Second)
+			if _, err := hangRW.WriteString("ABORT\r"); err != nil {
+				t.Fatalf("write ABORT: %v", err)
+			}
+			if err := hangRW.Flush(); err != nil {
+				t.Fatalf("flush ABORT: %v", err)
+			}
+			_ = hang.SetDeadline(time.Time{})
+			tAbort := time.Now()
+			_ = other.SetReadDeadline(tAbort.Add(4 * time.Minute))
+			heard := false
+			for !heard {
+				line, err := otherRW.ReadString('\r')
+				if err != nil {
+					break
+				}
+				heard = strings.HasPrefix(strings.TrimSpace(line), "DISCONNECTED")
+			}
+			waited := time.Since(tAbort)
+			time.Sleep(time.Second) // the async logger
+			b, _ := os.ReadFile(timingLogs[by])
+			if strings.Contains(string(b), "keydown cut short (ABORT)") {
+				failWithLogs("%s's ABORT cut its own DISCONNECT", by)
+			}
+			if !strings.Contains(string(b), "left to finish") {
+				failWithLogs("%s's log never said its DISCONNECT was left to finish", by)
+			}
+			if !heard || waited > 60*time.Second {
+				failWithLogs("%s heard %s's DISCONNECT %v after the ABORT (heard=%v): its watchdog, not the frame",
+					name, by, waited.Round(time.Second), heard)
+			}
+			t.Logf("%s heard %s's DISCONNECT %.1f s after the ABORT", name, by, waited.Seconds())
+			return
 		}
 		if abort {
 			// DISCONNECTED, then PENDING (the scan held), then CANCELPENDING

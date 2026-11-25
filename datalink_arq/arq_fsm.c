@@ -666,6 +666,19 @@ static int peer_is_transmitting(const arq_session_t *sess)
 
 int arq_fsm_channel_keyed(const arq_session_t *sess) { return peer_is_transmitting(sess); }
 
+/* The keydown on the air now, if any, is the one that tells the peer the
+ * session is over: our DISCONNECT, its teardown having keyed it (a retry of
+ * the caller's is one too), or our reply to the peer's.  ABORT leaves it to
+ * finish (arq.c): cut, it was the session's last word lost.  On air, K7EK
+ * 2026-11-24 20:30:34Z, BPQ32's ABORT came 3.7 s into a 26.5 s MFSK500
+ * DISCONNECT, the cut left nothing KG9NI could decode, and KG9NI, which had
+ * heard K7EK's application hang up, sat out its 240 s watchdog. */
+bool arq_fsm_keydown_tells_peer(const arq_session_t *sess)
+{
+    return (sess->conn_state == ARQ_CONN_DISCONNECTING && sess->teardown == ARQ_TD_SENT) ||
+           sess->teardown == ARQ_TD_NOTIFYING;
+}
+
 bool arq_fsm_notice_owed(const arq_session_t *sess)
 {
     switch (sess->conn_state)
