@@ -19,8 +19,9 @@ const txGainHold = 1500 * time.Millisecond
 // touch then sent the slider's position: on air (N3JXB, 2026-11-22) the engine
 // started at -9.5 dB and the first move sent +0.5 dB, 10 dB louder.
 //
-// Setting a Fyne slider's value fires its OnChanged, so the engine's value
-// written to the slider is marked (syncing) and not sent back as the user's.
+// Setting a Fyne slider's value fires its OnChanged and OnChangeEnded, so
+// the engine's value written to the slider is marked (syncing) and not
+// sent back as the user's.
 type txGainControl struct {
 	now     func() time.Time
 	syncing bool      // the engine's value is being written to the slider
@@ -30,8 +31,11 @@ type txGainControl struct {
 
 func newTxGainControl() *txGainControl { return &txGainControl{now: time.Now} }
 
-// userMoved is the slider's OnChanged: whether value goes to the engine.
-func (g *txGainControl) userMoved() bool {
+// userGesture is the slider's OnChanged and OnChangeEnded.  It marks the
+// user's move, which keeps telemetry off the slider and its label for
+// txGainHold, and reports whether the callback came from the user rather
+// than from setSlider: Fyne fires both callbacks on SetValue.
+func (g *txGainControl) userGesture() bool {
 	if g.syncing {
 		return false
 	}
