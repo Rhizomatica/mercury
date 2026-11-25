@@ -1100,7 +1100,7 @@ static void abort_hold(uint64_t now)
     bool told = g_host_told;
     pthread_mutex_unlock(&g_conn_lock);
     bool owed = told && g_sess.conn_state == ARQ_CONN_DISCONNECTING &&
-                !(g_sess.teardown == ARQ_TD_SENT && !g_sess.tx_active);
+                !(arq_td_sent(&g_sess) && !g_sess.tx_active);
     if (owed && g_abort_hold_ms && now - g_abort_hold_ms >= ARQ_ABORT_SCAN_HOLD_MS)
     {
         /* Not reached while the FSM's ABORT bounds hold (~30 s). */
@@ -1728,7 +1728,7 @@ int arq_goodbye_progress(void)
 {
     pthread_mutex_lock(&g_sess_lock);
     int p = !arq_conn_state_has_peer(g_sess.conn_state) ? 0
-          : (g_sess.conn_state == ARQ_CONN_DISCONNECTING && g_sess.teardown == ARQ_TD_SENT) ? 2 : 1;
+          : (g_sess.conn_state == ARQ_CONN_DISCONNECTING && arq_td_sent(&g_sess)) ? 2 : 1;
     pthread_mutex_unlock(&g_sess_lock);
     return p;
 }

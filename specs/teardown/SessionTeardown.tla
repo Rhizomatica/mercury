@@ -165,7 +165,8 @@ VARIABLES
              \*   "reply": ended, its reply to the peer's DISCONNECT still to key
     gen,     \* [E -> 0..NS]: the session it is (or last was) in -- the nonce
     sid,     \* [E -> SIDS \cup {0}]: that session's id on the air
-    sent,    \* [E -> BOOLEAN]: its DISCONNECT went out (ARQ_TD_SENT)
+    sent,    \* [E -> BOOLEAN]: its DISCONNECT went out (arq_td_sent: ARQ_TD_SENT,
+             \* or ARQ_TD_LOST_SENT for the watchdog's)
     tries,   \* M's DISCONNECT retries left
     slot,    \* S holds a slot (heard an M poll since its last keydown)
     q,       \* [E -> Seq(frame)]: frames on their way to e

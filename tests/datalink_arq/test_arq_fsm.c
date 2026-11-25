@@ -2069,12 +2069,13 @@ void test_watchdog_sends_one_disconnect_then_tells_the_host(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
     TEST_ASSERT_EQUAL_INT(0, sess.tx_retries_left);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_TD_LOST, sess.teardown, "the watchdog's teardown");
     TEST_ASSERT_EQUAL_UINT(0, fake_notify_disconnected_fake.call_count);
 
     ev = make_event(ARQ_EV_TX_COMPLETE);
     arq_fsm_dispatch(&sess, &ev);
     unsigned sent = fake_send_tx_frame_fake.call_count;
-    for (int i = 0; i < 200 && sess.teardown != ARQ_TD_SENT; i++)
+    for (int i = 0; i < 200 && !arq_td_sent(&sess); i++)
     {
         lost += 100;
         mock_set_uptime_ms(lost);
@@ -2084,7 +2085,7 @@ void test_watchdog_sends_one_disconnect_then_tells_the_host(void)
             arq_fsm_dispatch(&sess, &ev);
         }
     }
-    TEST_ASSERT_EQUAL_INT(ARQ_TD_SENT, sess.teardown);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LOST_SENT, sess.teardown);   /* out, and still the watchdog's */
     TEST_ASSERT_EQUAL_UINT_MESSAGE(sent + 2, fake_send_tx_frame_fake.call_count, "two copies");
     TEST_ASSERT_EQUAL_INT_MESSAGE(sess.control_mode, fake_send_tx_frame_fake.arg1_val,
                                   "on the mode the peer's control decoder always hears");
@@ -2110,6 +2111,60 @@ void test_watchdog_sends_one_disconnect_then_tells_the_host(void)
     TEST_ASSERT_EQUAL_UINT(1, fake_notify_disconnected_fake.call_count);
 }
 
+/* The callee's watchdog: no slot of the caller's is coming, so its one
+ * DISCONNECT goes out of turn on a clear channel, on the control mode, and
+ * the host hears DISCONNECTED as it goes off the air -- the teardown the
+ * watchdog's from start to end (ARQ_TD_LOST, then ARQ_TD_LOST_SENT), never
+ * retried. */
+void test_callee_watchdog_sends_one_disconnect_out_of_turn(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "PU2UIT", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = 0x21;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    RESET_FAKE(fake_notify_disconnected);
+
+    uint64_t t = sess.car_last_rx_ms + 241000;
+    mock_set_uptime_ms(t);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LOST, sess.teardown);
+    TEST_ASSERT_EQUAL_UINT(0, fake_notify_disconnected_fake.call_count);
+
+    unsigned sent = fake_send_tx_frame_fake.call_count;
+    for (int i = 0; i < 400 && !arq_td_sent(&sess); i++)
+    {
+        t += 100;
+        mock_set_uptime_ms(t);
+        if (t >= sess.deadline_ms)
+        {
+            ev = make_event(sess.deadline_event);
+            arq_fsm_dispatch(&sess, &ev);
+        }
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LOST_SENT, sess.teardown);
+    TEST_ASSERT_TRUE_MESSAGE(fake_send_tx_frame_fake.call_count > sent, "no DISCONNECT keyed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sess.control_mode, fake_send_tx_frame_fake.arg1_val,
+                                  "on the mode the peer's control decoder always hears");
+    TEST_ASSERT_EQUAL_UINT(0, fake_notify_disconnected_fake.call_count);
+
+    sent = fake_send_tx_frame_fake.call_count;
+    ev = make_event(ARQ_EV_TX_STARTED);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(sent, fake_send_tx_frame_fake.call_count, "never retried");
+    TEST_ASSERT_EQUAL_UINT(1, fake_notify_disconnected_fake.call_count);
+}
+
 /* A station set to transmit MFSK only (arq:mfsk_tx_only) keys the
  * watchdog's DISCONNECT on its floor too, not on the control mode. */
 void test_watchdog_disconnect_mfsk_only(void)
@@ -2124,7 +2179,7 @@ void test_watchdog_disconnect_mfsk_only(void)
     arq_fsm_dispatch(&sess, &ev);
     ev = make_event(ARQ_EV_TX_COMPLETE);
     arq_fsm_dispatch(&sess, &ev);
-    for (int i = 0; i < 200 && sess.teardown != ARQ_TD_SENT; i++)
+    for (int i = 0; i < 200 && !arq_td_sent(&sess); i++)
     {
         lost += 100;
         mock_set_uptime_ms(lost);
@@ -2136,7 +2191,7 @@ void test_watchdog_disconnect_mfsk_only(void)
     }
     int mode = fake_send_tx_frame_fake.arg1_val;
     atomic_store(&arq_tx_mfsk_only, 0);
-    TEST_ASSERT_EQUAL_INT(ARQ_TD_SENT, sess.teardown);
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LOST_SENT, sess.teardown);   /* out, and still the watchdog's */
     TEST_ASSERT_EQUAL_INT_MESSAGE(sess.floor_mode, mode, "MFSK only");
 }
 
@@ -3080,6 +3135,7 @@ int main(void)
     RUN_TEST(test_watchdog_cuts_the_keydown_on_the_air);
     RUN_TEST(test_watchdog_sends_one_disconnect_then_tells_the_host);
     RUN_TEST(test_watchdog_disconnect_mfsk_only);
+    RUN_TEST(test_callee_watchdog_sends_one_disconnect_out_of_turn);
     RUN_TEST(test_disconnect_waits_out_a_long_keydown);
     RUN_TEST(test_disconnect_keyed_deferral_is_bounded);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
