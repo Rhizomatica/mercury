@@ -145,6 +145,8 @@ typedef struct {
     uint8_t  done;                  /* slots I heard S's keydown in, end to end */
     uint8_t  mk;                    /* its id */
     bool     pat;                   /* a pattern: S's answers name no id */
+    bool     after_round;           /* keyed after a round of S's heard since my keydown
+                                       before it: S is mid-stream (m_watch) */
 } car_mlog_t;
 
 typedef struct {

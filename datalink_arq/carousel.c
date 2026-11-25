@@ -1866,6 +1866,10 @@ static uint64_t mslot_hi(const car_t *c, const car_mlog_t *l, int i) { return ms
 
 static void m_log_add(car_t *c, uint64_t e)
 {
+    /* My keydown before this one ended at prev_e: data of S's heard since is
+     * a round this keydown answers (m_watch). */
+    uint64_t prev_e = c->nmlog ? c->mlog[c->nmlog - 1].e : 0;
+    bool after_round = c->peer_data_ms && c->peer_data_ms > prev_e;
     int keep = 0;
     for (int j = 0; j < c->nmlog; j++)
         if (mslot_hi(c, &c->mlog[j], c->mlog[j].k) + TURN_G_MS > e) c->mlog[keep++] = c->mlog[j];
@@ -1878,6 +1882,7 @@ static void m_log_add(car_t *c, uint64_t e)
     *l = c->m_kd;
     l->e = e; l->done = 0; l->tg = TG_MS;
     l->pat = c->m_kind == KD_PATTERN_ACK || c->m_kind == KD_PATTERN_BREAK;
+    l->after_round = after_round;
 }
 
 /* The earliest time from s at which M may key for len ms: clear, with a guard
@@ -1981,6 +1986,16 @@ static void m_watch(car_t *c, uint64_t now)
             uint64_t t = now < lo ? lo : now + WATCH_MS;
             if (t > hi) t = hi;
             if (!next || t < next) next = t;
+        } else if (c->last_carrier_ms < lo && l->after_round) {
+            /* After a round of S's I heard: S is mid-stream, and its
+             * silence is no sign it has stopped.  It missed this poll, and
+             * continues the round I heard; or it answered and I missed that,
+             * and continues this one -- a continuation either way.  Freed, my
+             * next keydown went over it (on air, VE4KLM <- K7EK 2026-11-24
+             * 23:51Z and 23:52Z: a floor round neither decoded nor sensed,
+             * and the poll after it keyed 1.3 s into K7EK's continuation). */
+            car_trace(c, "rx: nothing on the air in the peer's answer slot -- after its round, its %d continuation slots are kept", l->k);
+            l->done |= 1u;                   /* the answer slot only: it is over */
         } else if (c->last_carrier_ms < lo) {
             car_trace(c, "rx: nothing on the air in the peer's answer slot -- its %d continuation slots are free", l->k);
             l->done = 0xFF;
