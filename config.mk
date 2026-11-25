@@ -261,7 +261,14 @@ ifeq ($(WS_TLS_CROSS_SAFE),1)
 endif
 endif
 
-GIT_HASH ?= $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo unknown000)
+# The commit the build is from.  A source archive (GitHub's "Download ZIP" of a
+# branch, a release's tarball) has no .git, and a build from one said
+# "unknown000"; git archive writes the commit into .git_archive_hash
+# (export-subst in .gitattributes), and that comes first: an archive unpacked
+# inside another repository would otherwise take that repository's HEAD.  In a
+# checkout the file still holds its Format placeholder, which is no hash.
+GIT_ARCHIVE_HASH := $(shell sed -n 's/^\([0-9a-f]\{8\}\)[0-9a-f]*$$/\1/p' $(MERCURY_TOP)/.git_archive_hash 2>/dev/null)
+GIT_HASH ?= $(or $(GIT_ARCHIVE_HASH),$(shell git rev-parse --short=8 HEAD 2>/dev/null || echo unknown000))
 COMMON_CFLAGS += -DGIT_HASH=\"$(GIT_HASH)\"
 
 # Optional: enable DIAG I/O debug logging (default: off)

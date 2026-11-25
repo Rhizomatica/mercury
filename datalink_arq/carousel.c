@@ -1447,8 +1447,13 @@ static int choose_level(const car_t *c, uint64_t now)
      * only while that one is delivering: after DATAC1 lost a frame at 8 dB,
      * probing DATAC17 and QAM16C2 cost a round each and delivered nothing.
      * Not stricter than half: flat 25 % loss holds every rung near 75 %, and
-     * a 0.7 bar stopped the climb there. */
-    if (level_delivery(c, best) < PROBE_UP_DELIVERY)
+     * a 0.7 bar stopped the climb there.  Nor from a rung that has delivered
+     * nothing yet: there the optimistic prior alone makes a lost first round
+     * score 0.5, the bar itself.  On air (KG9NI to K7EK, 2026-11-23) K7EK
+     * lost the one DATAC3 round it had at 3.1 dB, asked for DATAC1, which
+     * needs 8 dB to start on, lost that too, and the BBS gave up on a 28-byte
+     * reply that never arrived. */
+    if (level_delivery(c, best) < PROBE_UP_DELIVERY || c->rung[best].sent - c->rung[best].lost < 0.5)
         return best;
     /* A probe that came whole is followed by a second round there before
      * the argmax judges the rung: near its threshold one frame scores 1/2,

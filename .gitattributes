@@ -1,2 +1,5 @@
 # GitHub writes the commit into the spec of each release archive (%{commit})
 sailfish/mercury.spec export-subst
+# ...and into .git_archive_hash of every archive, a branch's "Download ZIP"
+# included: a build from one has no .git to ask (config.mk, GIT_HASH)
+.git_archive_hash export-subst
