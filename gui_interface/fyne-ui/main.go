@@ -1233,11 +1233,19 @@ func main() {
 		}
 	})
 
+	// While the user drags, the label follows their finger.  The value goes
+	// to the engine once, when they let go: OnChanged fires on every 0.5 dB
+	// step, and the engine rewrites mercury.ini on each set_tx_gain.
 	txGainSlider.OnChanged = func(value float64) {
-		if !txGain.userMoved() {
+		if !txGain.userGesture() {
 			return // the engine's own value, set by refreshTelemetry
 		}
 		bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", value))
+	}
+	txGainSlider.OnChangeEnded = func(value float64) {
+		if !txGain.userGesture() {
+			return // SetValue from refreshTelemetry fires OnChangeEnded too
+		}
 		if err := sendWSCommand("set_tx_gain", fmt.Sprintf("%.2f", value), "", "", "", "", "", ""); err != nil {
 			appendLog(fmt.Sprintf("Failed to send TX gain: %v\n", err))
 		}
