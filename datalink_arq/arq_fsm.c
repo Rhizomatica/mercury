@@ -1172,7 +1172,10 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now, bool lost)
  * hang-up on a caller already quiet (car_begin_disconnect). */
 static const char *lost_why(const arq_session_t *sess)
 {
-    return sess->disc_req_ms ? "caller silent" : "link lost";
+    /* The host's hang-up started it only if the caller was already quiet
+     * then: a hang-up still draining when the link died is the watchdog's. */
+    bool quiet_at_hangup = sess->disc_req_ms && sess->disc_req_ms >= sess->car_last_rx_ms + ARQ_CAR_PEER_QUIET_MS;
+    return quiet_at_hangup ? "caller silent" : "link lost";
 }
 
 /* The lost-peer watchdog has fired.  I hear nothing, but the path can be one
@@ -2161,7 +2164,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                 if (!sess->tx_active && !peer_is_transmitting(sess) && now >= channel_clear_at(sess))
                 {
                     HLOGI(LOG_COMP, "%s: DISCONNECT keyed out of turn on a clear channel",
-                          arq_td_lost(sess) ? (sess->disc_req_ms ? "Caller silent" : "Link lost") : "ABORT");
+                          arq_td_lost(sess) ? (strcmp(lost_why(sess), "link lost") ? "Caller silent" : "Link lost") : "ABORT");
                     /* Its copies were timed to be off the air a margin
                      * before the host's scan (abort_key_by); held past that
                      * for a clear channel (a deferral step or more), the
