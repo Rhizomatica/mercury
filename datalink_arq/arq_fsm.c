@@ -1140,22 +1140,39 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now, bool lost)
         return;
     }
     /* The callee keys only in slots of the caller's keydowns: with none heard
-     * in this long there is no slot to wait for.  The watchdog's end still
-     * tells it, out of turn (car_end_lost). */
+     * in this long there is no slot to wait for.  It still tells the caller,
+     * as the watchdog's end does (car_end_lost): I hear nothing, but the path
+     * can be one way.  On air (K7EK -> VE4KLM, 2026-11-24 21:58): JNOS hung
+     * up VE4KLM 130 s into K7EK's silence, VE4KLM ended without a word, and
+     * K7EK, which had decoded VE4KLM's ACKs 2 min before, kept sending until
+     * its own watchdog 128 s later.  So it is the watchdog's teardown: one
+     * DISCONNECT on the control mode, out of turn on a clear channel, or in
+     * a slot of the caller's if one comes first, and the host told as it
+     * goes off the air. */
     if (quiet && !lost)
     {
-        HLOGI(LOG_COMP, "Disconnect finalized (nothing from the caller in %llu s)",
+        HLOGI(LOG_COMP, "nothing from the caller in %llu s: one DISCONNECT, out of turn, no retries",
               (unsigned long long)((now - sess->car_last_rx_ms) / 1000));
         cut_keydown("caller silent");
-        notify_session_ended(sess);
-        if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
-        enter_idle_after_call(sess);
-        return;
+        lost = true;
     }
     sess->teardown_deadline_ms = now + ARQ_CAR_END_WAIT_MS;
     car_request_end(sess->car);
     sess_enter_td(sess, ARQ_CONN_DISCONNECTING, lost ? ARQ_TD_LOST : ARQ_TD_NONE,
                   sess->teardown_deadline_ms, ARQ_EV_TIMER_CAROUSEL);
+    if (quiet)
+    {
+        /* No slot of the caller's is coming: key out of turn from now. */
+        sess->teardown_deadline_ms = now;
+        sess->defer_count = 0;
+    }
+}
+
+/* The log's words for an ARQ_TD_LOST teardown: the watchdog's, or the host's
+ * hang-up on a caller already quiet (car_begin_disconnect). */
+static const char *lost_why(const arq_session_t *sess)
+{
+    return sess->disc_req_ms ? "caller silent" : "link lost";
 }
 
 /* The lost-peer watchdog has fired.  I hear nothing, but the path can be one
@@ -2124,7 +2141,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
             if (arq_td_sent(sess) && sess->tx_retries_left == 0)
             {
                 HLOGI(LOG_COMP, "Disconnect finalized (%s: my one DISCONNECT is out)",
-                      arq_td_lost(sess) ? "link lost" : "ABORT");
+                      arq_td_lost(sess) ? lost_why(sess) : "ABORT");
                 notify_session_ended(sess);
                 if (g_timing) arq_timing_record_disconnect(g_timing, arq_td_lost(sess) ? "timeout" : "abort");
                 enter_idle_after_call(sess);
@@ -2144,7 +2161,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                 if (!sess->tx_active && !peer_is_transmitting(sess) && now >= channel_clear_at(sess))
                 {
                     HLOGI(LOG_COMP, "%s: DISCONNECT keyed out of turn on a clear channel",
-                          arq_td_lost(sess) ? "Link lost" : "ABORT");
+                          arq_td_lost(sess) ? (sess->disc_req_ms ? "Caller silent" : "Link lost") : "ABORT");
                     /* Its copies were timed to be off the air a margin
                      * before the host's scan (abort_key_by); held past that
                      * for a clear channel (a deferral step or more), the
@@ -2165,7 +2182,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                 if (!sess->tx_active && sess->defer_count++ >= ARQ_ABORT_HOLD_MAX)
                 {
                     HLOGI(LOG_COMP, "Disconnect finalized (%s: the channel never came clear, the caller not told)",
-                          arq_td_lost(sess) ? "link lost" : "ABORT");
+                          arq_td_lost(sess) ? lost_why(sess) : "ABORT");
                     notify_session_ended(sess);
                     if (g_timing) arq_timing_record_disconnect(g_timing, arq_td_lost(sess) ? "timeout" : "abort");
                     enter_idle_after_call(sess);

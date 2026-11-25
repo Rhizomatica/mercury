@@ -2165,6 +2165,87 @@ void test_callee_watchdog_sends_one_disconnect_out_of_turn(void)
     TEST_ASSERT_EQUAL_UINT(1, fake_notify_disconnected_fake.call_count);
 }
 
+/* The callee's host hangs up with the caller quiet ARQ_CAR_PEER_QUIET_MS: no
+ * slot of the caller's is coming, but the path can be one way, so it is the
+ * watchdog's teardown -- one DISCONNECT out of turn, on the control mode,
+ * never retried, the host told as it goes off the air.  It used to end at
+ * once without a word (on air, K7EK -> VE4KLM 2026-11-24: K7EK, still
+ * hearing VE4KLM, sent on for 128 s). */
+void test_callee_hangup_on_a_quiet_caller_tells_it_once(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "PU2UIT", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = 0x21;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    RESET_FAKE(fake_notify_disconnected);
+
+    uint64_t t = sess.car_last_rx_ms + 130000;
+    mock_set_uptime_ms(t);
+    ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_DISCONNECTING, sess.conn_state, "not ended without a word");
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LOST, sess.teardown);
+    TEST_ASSERT_EQUAL_UINT(0, fake_notify_disconnected_fake.call_count);
+
+    unsigned sent = fake_send_tx_frame_fake.call_count;
+    for (int i = 0; i < 400 && !arq_td_sent(&sess); i++)
+    {
+        t += 100;
+        mock_set_uptime_ms(t);
+        if (t >= sess.deadline_ms)
+        {
+            ev = make_event(sess.deadline_event);
+            arq_fsm_dispatch(&sess, &ev);
+        }
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LOST_SENT, sess.teardown);
+    TEST_ASSERT_TRUE_MESSAGE(fake_send_tx_frame_fake.call_count > sent, "no DISCONNECT keyed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sess.control_mode, fake_send_tx_frame_fake.arg1_val,
+                                  "on the mode the peer's control decoder always hears");
+    TEST_ASSERT_TRUE_MESSAGE(t - (sess.car_last_rx_ms + 130000) < 10000, "out of turn, not after a slot");
+    TEST_ASSERT_EQUAL_UINT(0, fake_notify_disconnected_fake.call_count);
+
+    sent = fake_send_tx_frame_fake.call_count;
+    ev = make_event(ARQ_EV_TX_STARTED);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(sent, fake_send_tx_frame_fake.call_count, "never retried");
+    TEST_ASSERT_EQUAL_UINT(1, fake_notify_disconnected_fake.call_count);
+}
+
+/* ...and a caller heard recently is hung up on as before (the drain, then the
+ * DISCONNECT in its slot, with retries): the quiet rule is only for a caller
+ * quiet ARQ_CAR_PEER_QUIET_MS. */
+void test_callee_hangup_on_a_live_caller_waits_for_its_slot(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "PU2UIT", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = 0x21;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+
+    mock_set_uptime_ms(sess.car_last_rx_ms + 30000);
+    ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE_MESSAGE(sess.conn_state == ARQ_CONN_CONNECTED || sess.conn_state == ARQ_CONN_DISCONNECTING,
+                             "still in the session");
+    TEST_ASSERT_FALSE_MESSAGE(arq_td_lost(&sess), "not the quiet caller's teardown");
+    TEST_ASSERT_EQUAL_UINT(0, fake_cut_tx_fake.call_count);
+}
+
 /* A station set to transmit MFSK only (arq:mfsk_tx_only) keys the
  * watchdog's DISCONNECT on its floor too, not on the control mode. */
 void test_watchdog_disconnect_mfsk_only(void)
@@ -3136,6 +3217,8 @@ int main(void)
     RUN_TEST(test_watchdog_sends_one_disconnect_then_tells_the_host);
     RUN_TEST(test_watchdog_disconnect_mfsk_only);
     RUN_TEST(test_callee_watchdog_sends_one_disconnect_out_of_turn);
+    RUN_TEST(test_callee_hangup_on_a_quiet_caller_tells_it_once);
+    RUN_TEST(test_callee_hangup_on_a_live_caller_waits_for_its_slot);
     RUN_TEST(test_disconnect_waits_out_a_long_keydown);
     RUN_TEST(test_disconnect_keyed_deferral_is_bounded);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);

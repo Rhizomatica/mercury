@@ -69,8 +69,9 @@ typedef enum
     ARQ_TD_NOTIFYING,    /* DISCONNECTED: the reply is out; the host hears
                           * DISCONNECTED when it has finished (TX_COMPLETE),
                           * so data_rx_buffer_arq drains to it first       */
-    ARQ_TD_LOST,         /* DISCONNECTING: the lost-peer watchdog fired; its
-                          * one DISCONNECT, on the control mode, is due    */
+    ARQ_TD_LOST,         /* DISCONNECTING: the lost-peer watchdog fired, or
+                          * the host hung up a callee whose caller is quiet;
+                          * its one DISCONNECT, on the control mode, is due */
     ARQ_TD_LOST_SENT,    /* DISCONNECTING: ...and is on the air: ARQ_TD_SENT
                           * for every rule that asks whether it is out     */
 } arq_teardown_t;
