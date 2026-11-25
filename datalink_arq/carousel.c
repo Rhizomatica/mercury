@@ -3709,14 +3709,23 @@ void car_on_tx_done(car_t *c, uint64_t now)
  * after a keydown made S send a round into M's (car_explore, cliff:-5 and
  * cliff:-9 both ways). */
 #define PAT_MIN_MS (110 + PATTERN_AIR_MS)
+/* ...less this much: my keydown's end is when I learn of it (TX_COMPLETE,
+ * once the sound card has played out), and that is late on the air by its
+ * playback latency, where the peer dates it from its decode.  With no
+ * allowance but the detector's own ~0.24 s, a pattern keyed on time came in
+ * early: on air (N3JXB to KG9NI, 1.9.25, 2026-11-23) 6 of 12 were ignored,
+ * detected 1.41-1.45 s after KG9NI's PTT OFF against a bound of 1.45 s --
+ * KG9NI's TX_COMPLETE ~0.25 s after its audio ended.  Still above 1.2 s,
+ * where the explorer's spurious BREAK made S send a round into M's. */
+#define PAT_LATE_END_MS 200
 static bool pattern_in_time(const car_t *c, uint64_t now)
 {
     if (c->master) {
         if (!c->nmlog) return false;
         const car_mlog_t *l = &c->mlog[c->nmlog - 1];
-        return now >= l->e + TG_MS + PAT_MIN_MS && now <= mslot_hi(c, l, 0) + D_PAT_MS;
+        return now + PAT_LATE_END_MS >= l->e + TG_MS + PAT_MIN_MS && now <= mslot_hi(c, l, 0) + D_PAT_MS;
     }
-    if (!c->s_tx_end || now < c->s_tx_end + TURN_G_MS + PAT_MIN_MS) return false;
+    if (!c->s_tx_end || now + PAT_LATE_END_MS < c->s_tx_end + TURN_G_MS + PAT_MIN_MS) return false;
     /* ...and before my next slot, where I would have gone on regardless */
     return !c->anc.on || now < c->anc.eh + TG_MS + (uint64_t)c->anc.i * c->anc.p;
 }
