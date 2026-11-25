@@ -150,8 +150,33 @@ fallback) does not take a fallen-back S off the floor.
         -metadir /tmp/tlc-floor -config FloorSilence.cfg FloorSilence.tla
 
 - `FloorSilence.cfg`: the code's rules.  `Delivered` and `FloorHolds`
-  hold: no error, 696 distinct states; also for every `FM`, `FS` in 1..3
-  (436-1184 states).
+  hold: no error, 3800 distinct states; also for every `FM`, `FS` in 1..4
+  (2846-7154 states).
+- **The silence is M's guess** (#653).  S may still be decoding M's DATAC16
+  when M's silence ends, and it reaches the floor only `FS` exchanges after
+  the last keydown of M's it decoded.  So after the silence M's control
+  goes back to DATAC16 for one keydown when a carrier answered its last one
+  there, never two in a row (`mCtl` "probe", "heard", "alt", then "floor";
+  `CAR_DEAF_SILENT_*` in carousel.h).  The carrier is anyone's: every
+  exchange may show one or not (`MDeaf`'s `car`), the peer's answer or QRM.
+  A frame of S's replaces the guess with S's word.
+  - The carrier is the adversary's: `tick` flips every exchange, so a run of
+    carriers that changes nothing else is still progress, and fairness never
+    makes the carrier stop.  Without it the unbounded rule passed, because
+    a carrier forever was a stutter the fairness ruled out.
+  - `lossM` counts only the keydowns the channel could carry: an
+    undecodable DATAC16 with the channel down does not reset the run.  With
+    the alternation it otherwise let every floor keydown be lost, the
+    DATAC16 between them resetting the count.
+  - The numbers above are with both.  The 1..62 x 1..37 sweep below was run
+    before them and not repeated: the 1..4 x 1..4 square was.
+- `Mut_fs_unbounded.cfg`: #653's first version, where a carrier answering
+  M's DATAC16 after the silence bought the next keydown there too.
+  Violates `Delivered`: down for good, a carrier after every exchange keeps
+  M on DATAC16 while S listens at the floor (every `FM`, `FS` in 1..4).  In
+  the sim (`CAR_PHANTOM_CARRIER`, a carrier in the caller's carrier sense
+  after each of its keydowns), step:10:-12:60 both ways: 29 sessions of 40
+  silent 240 s or more, against 0 before #653 and 1 with the bound.
 - `arq:silence_fallback_s` (#442) sets `SILENT_MS`, 110..600 s, and
   `S_FALLBACK_MS` follows at 60 %.  The model counts both in exchanges, so
   the range has to map to whole exchanges:

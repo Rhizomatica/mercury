@@ -168,6 +168,7 @@ static bool cs_decodable;              /* CAR_CS_DECODABLE: carrier sense needs 
  * 2026-11-16: 116 s held, then link lost) -- nav a NAV header, sync a
  * decoder in sync, busy the energy detector: another station on the air. */
 static uint64_t noise_from, noise_len;
+static bool phantom_carrier;              /* CAR_PHANTOM_CARRIER */
 static int noise_kind = CAR_KEYED_PREAMBLE;
 static int nav_mode;                   /* CAR_NAV: 0 off, 1 modelled header, 2 always heard */
 static uint32_t nav_air;               /* CAR_NAV_AIR: the header's lead, header + gap */
@@ -451,6 +452,13 @@ static int io_peer_keyed(void *ctx)
     const station_t *l = ctx, *p = &S[l->id ^ 1];
     if (l->id == 0 && noise_len && now_ms >= noise_from && now_ms < noise_from + noise_len)
         return noise_kind;
+    /* CAR_PHANTOM_CARRIER: after each of the caller's keydowns its carrier
+     * sense reads busy for a second, 2 s after the end -- a carrier in the
+     * peer's answer slot that is not the peer's answer (QRM, another
+     * station): what the silence rule's control-mode probe must not trust
+     * without bound (#653 review). */
+    if (l->id == 0 && phantom_carrier && l->tx_end && now_ms >= l->tx_end + 2000 && now_ms < l->tx_end + 3000)
+        return CAR_KEYED_PREAMBLE;
     /* CAR_CS_DECODABLE: carrier sense is a decoder in sync, so a keydown the
      * listener cannot decode is not sensed (on air: a DATAC1 probe at 4.5 dB,
      * and patterns, which no OFDM decoder syncs on) -- nor the part of it
@@ -726,7 +734,8 @@ static void heard(station_t *s)
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res)
 {
     trace = getenv("CAR_TRACE") != NULL;
-    asym = false; step_back = NAN; ctl_step = false; gap_from_s = -1.0;
+    asym = false; step_back = NAN; ctl_step = false;
+    phantom_carrier = getenv("CAR_PHANTOM_CARRIER") != NULL; gap_from_s = -1.0;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
     noise_from = noise_len = 0;
     noise_kind = CAR_KEYED_PREAMBLE;

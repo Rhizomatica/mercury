@@ -162,12 +162,6 @@ typedef struct {
                                      * on MFSK (reported) */
     uint8_t  peer_ctl_deaf;         /* ...and the peer, of me, as it reports
                                      * (or CAR_DEAF_MFSK_TX) */
-    bool     silence_floor;         /* peer_ctl_deaf is my guess from silence,
-                                     * not the peer's word (car_on_tx_done) */
-    bool     silence_ofdm;          /* ...but its carrier since my last keydown
-                                     * says it hears my control mode: stay */
-    bool     silence_sent_ofdm;     /* ...my last keydown went on the control
-                                     * mode, so a carrier now answers that */
     float    snr_ema;               /* SNR of what the peer sends us, smoothed */
     float    snr_last;              /* ...and its latest reading */
     uint64_t snr_ms;                /* ...and when it came */
@@ -343,7 +337,20 @@ uint32_t car_decode_bound_ms(int mode);
  * sits in the band DATAC16 decodes only part of.  Only M sets it.  It ends
  * after LOSS_HOLD_MS (60 s), back to what the reading says, or sooner on a
  * reading well above that band. */
-enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2, CAR_DEAF_MFSK_TX = 3, CAR_DEAF_LOSS = 4 };
+/* SILENT_* (peer_ctl_deaf only, M or S) are my guess from my own silence, not
+ * the peer's word, which replaces it with its first frame.  The peer may still
+ * hear my control mode, and reaches the floor only S_FALLBACK_MS after the
+ * last frame of mine it decoded; a carrier answering a control-mode keydown
+ * of mine says it heard that one.  So, never two in a row on the control
+ * mode:
+ *   SILENT_PROBE  my last keydown went on the control mode; a carrier in its
+ *                 slot answers it.  The next goes on the floor.
+ *   SILENT_HEARD  ...and one did.  The next still goes on the floor.
+ *   SILENT_ALT    that floor keydown is out: the next goes on the control
+ *                 mode, then PROBE again.
+ *   SILENT        no carrier answered: the floor until the peer's word. */
+enum { CAR_DEAF_SNR = 1, CAR_DEAF_HARD = 2, CAR_DEAF_MFSK_TX = 3, CAR_DEAF_LOSS = 4,
+       CAR_DEAF_SILENT = 5, CAR_DEAF_SILENT_PROBE = 6, CAR_DEAF_SILENT_HEARD = 7, CAR_DEAF_SILENT_ALT = 8 };
 /* Seed, from the connect exchange, whether each end hears the other below the
  * control mode (CAR_DEAF_*; see ctl_on_floor in carousel.c).  Frames keep
  * both current, all but MFSK_TX. */
