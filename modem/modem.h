@@ -92,6 +92,12 @@ bool modem_channel_busy(void);
 void  modem_set_tx_gain(float linear);
 float modem_get_tx_gain(void);
 
+/* Host DRIVELEVEL: MODEM_DRIVE_MIN_DB..0 dB of attenuation on everything
+ * keyed: data frames below the TX gain, the tuning carrier below the level
+ * TUNE set.  Returns -1 (and changes nothing) out of range. */
+#define MODEM_DRIVE_MIN_DB (-30.0f)
+int   modem_set_drive_db(float db);
+
 /* TX keying delay (ms, clamped 0..2000) waited after PTT ON before audio is
  * written to the playback device. Default 10ms covers the local radio
  * relay's switch time; raise it for a slower external PTT path. */
