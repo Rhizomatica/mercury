@@ -1662,6 +1662,16 @@ bool mfsk_pattern_set_session(uint32_t key)
     return bound;
 }
 
+static _Atomic float g_pat_rx_offset_hz = 0.0f;
+
+void mfsk_pattern_set_rx_offset(float hz)
+{
+    if (!isfinite(hz)) hz = 0.0f;
+    atomic_store(&g_pat_rx_offset_hz, hz);
+}
+
+float mfsk_pattern_rx_offset(void) { return atomic_load(&g_pat_rx_offset_hz); }
+
 int mfsk_pattern_nsymb(void)
 {
     const pat_geom_t *G = pat_geom();
@@ -1898,6 +1908,20 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
         w->gen = gen;
     }
 
+    /* The peer off frequency: rotate its baseband back by its offset.  The
+     * downmix mirrors the spectrum (MFSK_FC), so a burst df above nominal
+     * sits at -df here and comes back by e^(+j 2 pi df t).  The detector is
+     * non-coherent, so a new offset may start the rotation at any phase. */
+    float off = atomic_load(&g_pat_rx_offset_hz);
+    if (off != w->rot_hz || (off != 0.0f && w->rot_re == 0.0 && w->rot_im == 0.0))
+    {
+        double ph = 2.0 * M_PI * (double)off / MFSK_FS;
+        w->rot_hz = off;
+        w->rot_re = 1.0; w->rot_im = 0.0;
+        w->rot_dre = cos(ph); w->rot_dim = sin(ph);
+    }
+    bool rotate = off != 0.0f;
+
     /* Downmix and low-pass, one sample at a time: the filter
      * mfsk_pattern_detect() applies to a whole buffer, causal here, so the
      * stream runs MFSK_LPF_TAPS/2 samples late. */
@@ -1905,6 +1929,13 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
     for (int i = 0; i < n; i++)
     {
         double complex x = 2.0 * (double)pcm[i] * fc_phasor_g(G->fcg, w->n++);
+        if (rotate)
+        {
+            x *= w->rot_re + I * w->rot_im;
+            double re = w->rot_re * w->rot_dre - w->rot_im * w->rot_dim;
+            double im = w->rot_re * w->rot_dim + w->rot_im * w->rot_dre;
+            w->rot_re = re; w->rot_im = im;
+        }
         w->hist_re[w->hist_pos] = creal(x);
         w->hist_im[w->hist_pos] = cimag(x);
         double ar = 0.0, ai = 0.0;
@@ -1953,6 +1984,11 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
             w->npend--;
             q--;
         }
+    }
+    if (rotate)
+    {
+        double mag = sqrt(w->rot_re * w->rot_re + w->rot_im * w->rot_im);   /* rounding drift */
+        if (mag > 0.0) { w->rot_re /= mag; w->rot_im /= mag; }
     }
     return nout;
 }

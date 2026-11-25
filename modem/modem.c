@@ -636,6 +636,31 @@ static void note_rx_freq_offset(const modem_codec_t *codec)
     atomic_store(&g_rx_foff_ms, now ? now : 1);
 }
 
+/* Carousel session seed (see arq_modem_set_crc_seed_fn).  While set, HARQ is
+ * off: consecutive carousel frames are different codewords, never copies. */
+static _Atomic bool g_crc_seed_active = false;
+
+/* The peer's offset, for the pattern detectors (mfsk_pattern_set_rx_offset):
+ * from its own MFSK frames only, those that carry the session's seed -- not a
+ * CALL from another station, nor an OFDM frame, which decodes only within the
+ * patterns' own search anyway.  The MFSK decoders search +/-94 Hz at every
+ * geometry; the pattern detector, centred, about 90 at the floor's and 45 at
+ * the 500 Hz floor's (BW500): a link between the two moved data and lost
+ * every ACK and BREAK (N3JXB and KG9NI, 2026-11-23: ~100 Hz apart, 0 of 13
+ * patterns heard).  The offset is in Hz whichever MFSK measured it.  Cleared when a session's seed is set or dropped
+ * (modem_apply_crc_seed).  Caller holds the codec instance's lock. */
+static void note_peer_pattern_offset(const modem_codec_t *codec, int mode, bool seeded)
+{
+    float hz;
+    if (!seeded || !atomic_load(&g_crc_seed_active) || !mercury_mode_is_mfsk(mode) ||
+        !codec->be->get_freq_offset || !codec->be->get_freq_offset(codec->ctx, &hz))
+        return;
+    float was = mfsk_pattern_rx_offset();
+    mfsk_pattern_set_rx_offset(hz);
+    if (fabsf(hz - was) >= 15.0f)
+        HLOGI("modem-rx", "the peer's MFSK arrives %+.0f Hz off: its patterns are looked for there", (double)hz);
+}
+
 bool modem_get_rx_freq_offset(float *hz, uint64_t *age_ms)
 {
     uint64_t at = atomic_load(&g_rx_foff_ms);
@@ -2170,15 +2195,14 @@ static int harq_enabled(void)
     return !(e && e[0] == '0');
 }
 
-/* Carousel session seed (see arq_modem_set_crc_seed_fn).  While set, HARQ is
- * off: consecutive carousel frames are different codewords, never copies. */
-static _Atomic bool g_crc_seed_active = false;
 
 static void modem_apply_crc_seed(uint16_t seed)
 {
     atomic_store(&g_crc_seed_active, seed != 0);
-    /* The session's patterns, too: only its peer's ACK/BREAK count. */
+    /* The session's patterns, too: only its peer's ACK/BREAK count -- at
+     * nominal until its first MFSK frame says where it is. */
     mfsk_pattern_set_session(seed);
+    mfsk_pattern_set_rx_offset(0.0f);
     pthread_mutex_lock(&modem_pool_lock);
     for (int i = 0; i < modem_mode_pool_n; i++)
     {
@@ -2859,6 +2883,8 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         rx_status = be->get_rx_status(ctx);
         be->get_stats(ctx, &sync, &snr_est);
         bool seeded = nbytes_out > 0 && be->rx_crc_seeded && be->rx_crc_seeded(ctx);
+        if (nbytes_out > 0 && !monitor)
+            note_peer_pattern_offset(&state->codec, state->mode, seeded);
         pthread_mutex_unlock(ilock);
 
         /* Diagnosis: what the decoder actually saw.  sync, the status bits and
