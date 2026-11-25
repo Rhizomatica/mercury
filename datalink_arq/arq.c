@@ -115,8 +115,9 @@ static bool g_host_told;
 static bool notice_owed(void);
 static bool keydown_tells_peer(void);
 /* When an ABORT last left our DISCONNECT on the air (0: none).  Another ABORT
- * within ABORT_AGAIN_MS, longer than any keydown, cuts it.  Reactor thread
- * only.  Left stale, it can only make a later ABORT cut, as before #665. */
+ * within ABORT_AGAIN_MS, longer than any keydown, cuts it.  The command
+ * bridge worker's alone (handle_cmd).  Left stale, it can only make a later
+ * ABORT cut, as before #665. */
 #define ABORT_AGAIN_MS 30000
 static uint64_t g_abort_left_ms;
 
