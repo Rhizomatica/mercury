@@ -137,6 +137,7 @@ void tearDown(void)
 {
     atomic_store(&arq_call_retry_slots, ARQ_CALL_RETRY_SLOTS_DEFAULT);
     arq_protocol_set_call_max_s(ARQ_CALL_MAX_S_DEFAULT);
+    arq_protocol_set_call_mfsk500(ARQ_CALL_MFSK500_DEFAULT);
 }
 
 /* ---- Connection lifecycle tests ---- */
@@ -1199,6 +1200,42 @@ void test_wide_caller_also_calls_on_the_500_hz_mfsk(void)
     for (int i = 0; i < 4; i++) {
         sess.call_sends_done = i;
         TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK_N32, arq_call_carrier(&sess));
+    }
+    atomic_store(&arq_tx_mfsk_only, 0);
+    arq_conn.bw = 0;
+}
+
+/* arq:call_mfsk500 off: wider than 500 Hz, the CALLs after the fast ones are
+ * the floor and the control mode in turn, as in 1.9.24 -- none on the 500 Hz
+ * MFSK, which a scanning callee never catches.  At 500 Hz nothing changes. */
+void test_call_mfsk500_off_alternates_floor_and_control_mode(void)
+{
+    static const int wide[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK,
+                                FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK, FREEDV_MODE_DATAC16,
+                                MERCURY_MODE_MFSK, FREEDV_MODE_DATAC16 };
+    static const int narrow[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK_N32,
+                                  FREEDV_MODE_DATAC16, MERCURY_MODE_MFSK_N32, FREEDV_MODE_DATAC16 };
+    arq_protocol_set_call_mfsk500(false);
+    sess.control_mode = FREEDV_MODE_DATAC16;
+    int bws[] = { ARQ_BANDWIDTH_FULL_HZ, ARQ_BANDWIDTH_TACTICAL_HZ };
+    for (size_t b = 0; b < 2; b++) {
+        arq_conn.bw = bws[b];
+        for (int i = 0; i < (int)(sizeof(wide) / sizeof(wide[0])); i++) {
+            sess.call_sends_done = i;
+            TEST_ASSERT_EQUAL_INT(wide[i], arq_call_carrier(&sess));
+        }
+    }
+    arq_conn.bw = ARQ_BANDWIDTH_NARROW_HZ;
+    for (int i = 0; i < (int)(sizeof(narrow) / sizeof(narrow[0])); i++) {
+        sess.call_sends_done = i;
+        TEST_ASSERT_EQUAL_INT(narrow[i], arq_call_carrier(&sess));
+    }
+    /* A station that transmits only MFSK: wide, its floor every time. */
+    atomic_store(&arq_tx_mfsk_only, 1);
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+    for (int i = 0; i < 6; i++) {
+        sess.call_sends_done = i;
+        TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, arq_call_carrier(&sess));
     }
     atomic_store(&arq_tx_mfsk_only, 0);
     arq_conn.bw = 0;
@@ -2972,6 +3009,7 @@ int main(void)
     RUN_TEST(test_floor_accept_to_a_control_mode_call_is_not_deafness);
     RUN_TEST(test_repeat_on_control_mode_is_answered_on_the_floor);
     RUN_TEST(test_wide_caller_also_calls_on_the_500_hz_mfsk);
+    RUN_TEST(test_call_mfsk500_off_alternates_floor_and_control_mode);
     RUN_TEST(test_connect_on_the_500_hz_mfsk_is_the_deep_floor);
     RUN_TEST(test_call_after_a_repeat_listens_on_the_floor_and_waits_for_a_frame);
     RUN_TEST(test_busy_detector_does_not_hold_a_call);

@@ -78,6 +78,7 @@
 #define CFG_KEY_ARQ_RETRY_STAGGER_MS          "arq:retry_stagger_ms"
 #define CFG_KEY_ARQ_SILENCE_FALLBACK_S        "arq:silence_fallback_s"
 #define CFG_KEY_ARQ_CALL_MAX_S                "arq:call_max_s"
+#define CFG_KEY_ARQ_CALL_MFSK500              "arq:call_mfsk500"
 #define CFG_KEY_ARQ_MFSK_TX_ONLY              "arq:mfsk_tx_only"
 #define CFG_KEY_ARQ_MAX_KEYDOWN_S             "arq:max_keydown_s"
 #define CFG_KEY_BUSY_DETECT                   "channel:busy_detect"
@@ -139,6 +140,10 @@ typedef struct {
     int      call_max_s;                /* ARQ: the longest a station calls,
                                          * seconds, whatever RETRIES says.
                                          * Default 300, 0 = no cap, max 3600. */
+    bool     call_mfsk500;              /* ARQ: wider than 500 Hz, also CALL
+                                         * on the 500 Hz MFSK (27 s frames).
+                                         * Default true; false suits calling
+                                         * scanning gateways.                */
     bool     mfsk_tx_only;              /* ARQ: transmit MFSK only (FSK-only
                                          * radios).  Default false.          */
     int      max_keydown_s;             /* ARQ: longest carousel round asked

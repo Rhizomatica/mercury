@@ -175,6 +175,27 @@ float modem_get_tx_gain(void)
     return atomic_load(&g_tx_gain);
 }
 
+/* Host DRIVELEVEL: attenuation, MODEM_DRIVE_MIN_DB..0 dB, on everything the
+ * modem keys -- data frames below the operator's TX gain, the tuning carrier
+ * below the level TUNE set -- so a host can lower the drive but never raise
+ * it past what the operator set.  Not saved: each start is at 0 dB. */
+static _Atomic int   g_drive_milli  = 0;      /* dB * 1000 */
+static _Atomic float g_drive_linear = 1.0f;
+
+int modem_set_drive_db(float db)
+{
+    if (!isfinite(db) || db < MODEM_DRIVE_MIN_DB || db > 0.0f)
+        return -1;
+    atomic_store(&g_drive_milli, (int)lrintf(db * 1000.0f));
+    atomic_store(&g_drive_linear, powf(10.0f, db / 20.0f));
+    return 0;
+}
+
+static float tx_gain_now(void)
+{
+    return atomic_load(&g_tx_gain) * atomic_load(&g_drive_linear);
+}
+
 /* --- TX keying delay (ms), waited after PTT ON before audio is handed to
  * the playback device. Covers the local radio relay's switch time and,
  * beyond that, gives a slow external PTT (host app driving a serial/CAT
@@ -248,6 +269,15 @@ float modem_tune_level_dbfs(void)
     return (float)atomic_load(&g_tune_dbfs_milli) / 1000.0f;
 }
 
+/* The level the carrier is generated at: what TUNE set, lowered by the
+ * host's DRIVELEVEL.  tune_thread reads it for every chunk, so a carrier
+ * already on follows a change within ~100 ms. */
+static float modem_tune_effective_dbfs(void)
+{
+    float eff = (float)(atomic_load(&g_tune_dbfs_milli) + atomic_load(&g_drive_milli)) / 1000.0f;
+    return eff < MODEM_TUNE_MIN_DBFS ? MODEM_TUNE_MIN_DBFS : eff;
+}
+
 static void *tune_thread(void *unused)
 {
     (void)unused;
@@ -275,7 +305,7 @@ static void *tune_thread(void *unused)
             continue;
         }
 
-        float dbfs = modem_tune_level_dbfs();
+        float dbfs = modem_tune_effective_dbfs();
         double amp = pow(10.0, (double)dbfs / 20.0) * 2147483648.0;
         for (int i = 0; i < MODEM_TUNE_CHUNK_SAMPLES; i++)
         {
@@ -1688,7 +1718,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     }
 
     size_t total_samples = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;  /* pre-saturation peak magnitude across this burst */
 
     for (int i = 0; i < samples_head; i++)
@@ -1774,7 +1804,7 @@ static int send_modulated_keydown(generic_modem_t *g_modem, const arq_keydown_t 
     }
 
     size_t total = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;
     for (int i = 0; i < FREEDV_FS_8000 * TX_HEAD_SILENCE_MS / 1000; i++)
         tx_buffer[total++] = 0;
@@ -1902,7 +1932,7 @@ static int send_pattern_ack(generic_modem_t *g_modem, int mode, int pattern_kind
     }
 
     size_t k = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;
     for (int i = 0; i < samples_head; i++) tx_buffer[k++] = 0;
     /* MFSK generator emits int16 passband; scale up to int32 with tx_gain. */

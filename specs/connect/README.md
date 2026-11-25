@@ -281,7 +281,8 @@ Results:
   deep, and a fast repeat on the floor unless its last ACCEPT went there.
   Every config above has `Deep` FALSE (a 500 Hz caller, or the rotation
   before) and gives the counts above: the model with `Deep` FALSE is the
-  one before.  With `Deep` TRUE:
+  one before, and also a caller wider than 500 Hz with
+  `arq:call_mfsk500 = false` (#654).  With `Deep` TRUE:
   - `ConnectCarrier_deep.cfg` (every path "any", `H` 700 so the rotation
     reaches both deep CALLs): no error, 294649 states; `_deep_sense`
     (`Sense` "any"), `NoOverlap` holds, 588005; `_deep_f4` (`F` = 4, `R` =

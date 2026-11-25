@@ -106,7 +106,13 @@ func TestAnsweringHoldsTheHostChannel(t *testing.T) {
 	setup(connA, rwA, "TESTA")
 	setup(connB, rwB, "TESTB", "RETRIES 8", "LISTEN ON")
 
-	send := func(rw *bufio.ReadWriter, line string) {
+	// sendControlCommand leaves its 2 s deadline on A's connection; B's setup
+	// and the first PENDING can outlast it on a busy runner, so each send sets
+	// its own.
+	send := func(conn net.Conn, rw *bufio.ReadWriter, line string) {
+		if err := conn.SetWriteDeadline(time.Now().Add(commandTimeout)); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := rw.WriteString(line + "\r"); err != nil {
 			t.Fatal(err)
 		}
@@ -114,7 +120,7 @@ func TestAnsweringHoldsTheHostChannel(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	send(rwA, "CONNECT TESTA TESTB")
+	send(connA, rwA, "CONNECT TESTA TESTB")
 
 	// B's control lines from here on; A hangs up at B's first PENDING.
 	const watch = 150 * time.Second
@@ -137,7 +143,7 @@ func TestAnsweringHoldsTheHostChannel(t *testing.T) {
 		switch {
 		case line == "PENDING":
 			if len(pendings) == 0 {
-				send(rwA, "DISCONNECT")
+				send(connA, rwA, "DISCONNECT")
 			}
 			pendings = append(pendings, at)
 		case line == "CANCELPENDING":
