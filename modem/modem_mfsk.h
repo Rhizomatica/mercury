@@ -74,8 +74,9 @@ bool mfsk_pattern_set_session(uint32_t key);
 /* Where the peer's patterns arrive: its carrier offset in Hz as this receiver
  * hears it (positive: above nominal), as its MFSK frames measured it.  The
  * detectors search +/-2.5 tone bins around it -- 78 Hz at the floor's 31.25 Hz
- * spacing, ~90 Hz with the half bin either side -- where the MFSK frame
- * decoder searches +/-94 Hz and decodes to ~100.  Centred on 0, a link
+ * spacing, ~90 Hz with the half bin either side; 39 Hz, ~45, at the 500 Hz
+ * floor's 15.625 Hz (MFSK_N32, BW500) -- where every MFSK frame decoder
+ * searches +/-94 Hz and decodes to ~100.  Centred on 0, a link
  * 90-100 Hz off moved data and lost every pattern (on air, N3JXB and KG9NI,
  * 2026-11-23: about 100 Hz apart, 0 of 13 patterns heard).  0: centred, as
  * before.  Taken by every window at its next chunk. */
