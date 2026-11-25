@@ -2731,7 +2731,15 @@ static void m_decide_idle(car_t *c, uint64_t now)
 #define OFFER_RECENT_MS 120000
 static bool offer_both(car_t *c, uint64_t now)
 {
-    if (!inline_poll(c)) return false;
+    /* Not only with the poll inline: on a rung S has just asked me onto
+     * (ok_lv not yet confirmed there) the poll goes in a control frame in
+     * front, which both_ok checks fits under my cap.  With the short control
+     * frame that is 1.9 s against an exchange: on air (sBitx bench,
+     * 2026-11-25) a UUCP reply ready 0.9 s before the callee answered the
+     * file's last round, on the QAM16C2 its probe had asked for, went only
+     * after my poll for it, ~5 s later.  Sim (UUCP-like script, 30 seeds):
+     * cliff:12 -10 %, cliff:8..15 -4 %, fade:10/15 -4 %; fade:0 and
+     * step:3:10 +3 %; one way, both ways and chat unchanged. */
     /* ...to a peer that sends: a lost answer costs the wait for the round S
      * might have sent, and offered to a peer with nothing, every probe lost
      * on a cliff cost it (sim, cliff:5 one way 155 -> 181 s).  And that has
