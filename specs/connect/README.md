@@ -141,6 +141,12 @@ Results:
   that a repeated CALL must keep the session's bandwidth, as it keeps the
   nonce and rung: a caller that re-CONNECTs with another bandwidth and, by
   chance, the same session id may decode an older ACCEPT.
+- `Mut_fallbackbw.cfg`: the callee's ACCEPT fallback loses the session
+  bandwidth its ACCEPTs named, as the code did before #658:
+  `cb_notify_cancelpending` zeroed `session_bw` when the retries ran out, so
+  a late connect from the fallback ran at the callee's own bandwidth (a
+  narrower caller's: other rungs and floor).  Violates `NoDoom`.  The model
+  had always kept it (`EFallback` left `eBw` alone); the code had drifted.
 
 ## ConnectCarrier
 
@@ -289,7 +295,8 @@ Results:
   deep, and a fast repeat on the floor unless its last ACCEPT went there.
   Every config above has `Deep` FALSE (a 500 Hz caller, or the rotation
   before) and gives the counts above: the model with `Deep` FALSE is the
-  one before.  With `Deep` TRUE:
+  one before, and also a caller wider than 500 Hz with
+  `arq:call_mfsk500 = false` (#654).  With `Deep` TRUE:
   - `ConnectCarrier_deep.cfg` (every path "any", `H` 700 so the rotation
     reaches both deep CALLs): no error, 294649 states; `_deep_sense`
     (`Sense` "any"), `NoOverlap` holds, 588005; `_deep_f4` (`F` = 4, `R` =
@@ -319,7 +326,9 @@ few hundred states differently with the same results.
 
 ## The notice that holds a scanning host while a CALL arrives (`arrival_hold`, #527)
 
-Not modelled: it adds no state to the connect.  LISTENING says `PENDING` when
+Not modelled here: it adds no state to the connect.  It is modelled, with the
+ACCEPT fallback's hold and every other notice a callee gives its host about an
+incoming call, in `specs/notices` (`CalleeNotices`).  LISTENING says `PENDING` when
 a CALL decoder (the control plane's, or the 1 kHz MFSK listener's) has locked
 onto a frame, again every `ARQ_PENDING_HOLD_MS` while the lock lasts, and
 `CANCELPENDING` `ARQ_ARRIVAL_GRACE_MS` after it is gone when the FSM has not

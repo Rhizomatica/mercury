@@ -408,11 +408,15 @@ static void cb_notify_pending_again(const char *remote_call)
     g_pending_ms = time_now_ms();
 }
 
+/* Not the session's bandwidth: a CANCELPENDING tells the host only, and the
+ * call it ends may still connect from the ACCEPT fallback, whose session must
+ * run at the bandwidth the ACCEPT named (min(ours, the CALL's)).  Cleared, it
+ * fell back to ours: a BW500 caller's late connect to a BW2300 callee ran the
+ * two ends on different rungs and floors.  The FSM clears it when the call
+ * ends without a session (arq_clear_session_bw), and a session's end does
+ * (cb_notify_disconnected). */
 static void cb_notify_cancelpending(void)
 {
-    pthread_mutex_lock(&g_conn_lock);
-    arq_conn.session_bw = 0;
-    pthread_mutex_unlock(&g_conn_lock);
     arq_tnc_send_cancelpending();
     HLOGI(LOG_COMP, "Incoming connection cancelled");
 }
@@ -879,7 +883,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
          * dropped.  The modem unkeys within its tail time, the FSM sees the
          * keydown end as it would any other, and the one DISCONNECT goes out
          * after it.  A CALL being sent is cut too: the call is over. */
-        arq_modem_cut_tx();
+        arq_modem_cut_tx("ABORT");
         ev.id = ARQ_EV_APP_DISCONNECT;
         ev.abort = true;
         break;
@@ -1021,15 +1025,20 @@ static void call_progress(uint64_t now)
  * 30 m, 2026-11-12 20:49) K7EK decoded 2 of the caller's 13 CALLs, answered
  * the second, and BPQ32 hopped 66 s later while the caller called on for
  * another 2 minutes; also 06:23 (63 s).  Held this way, the host keeps the
- * channel exactly as long as we answer: when the ACCEPT retries run out, or
- * the caller's DISCONNECT ends it, the FSM's CANCELPENDING releases it.
+ * channel exactly as long as we answer: when the ACCEPT retries run out and
+ * ARQ_ACCEPT_FALLBACK_HOLD_MS has passed since our last ACCEPT, or the
+ * caller's DISCONNECT ends it, the FSM's CANCELPENDING releases it.
  * Not after a LISTEN OFF we are deferring (ARQ_TD_LISTEN_OFF): the host has
  * asked for the radio back. */
 #define ARQ_PENDING_HOLD_MS 20000
 
 static void pending_hold(uint64_t now)
 {
-    if (g_sess.conn_state != ARQ_CONN_ACCEPTING || g_sess.teardown == ARQ_TD_LISTEN_OFF)
+    /* ...and on into the fallback while it still holds the host (arq_fsm.h,
+     * ARQ_ACCEPT_FALLBACK_HOLD_MS): the caller may have taken our last ACCEPT. */
+    bool answering = g_sess.conn_state == ARQ_CONN_ACCEPTING ||
+                     (g_sess.conn_state == ARQ_CONN_LISTENING && g_sess.teardown == ARQ_TD_HOLDING);
+    if (!answering || g_sess.teardown == ARQ_TD_LISTEN_OFF)
         return;
     if (g_pending_ms && now - g_pending_ms < ARQ_PENDING_HOLD_MS)
         return;
@@ -1096,7 +1105,7 @@ static void abort_hold(uint64_t now)
     bool told = g_host_told;
     pthread_mutex_unlock(&g_conn_lock);
     bool owed = told && g_sess.conn_state == ARQ_CONN_DISCONNECTING &&
-                !(g_sess.teardown == ARQ_TD_SENT && !g_sess.tx_active);
+                !(arq_td_sent(&g_sess) && !g_sess.tx_active);
     if (owed && g_abort_hold_ms && now - g_abort_hold_ms >= ARQ_ABORT_SCAN_HOLD_MS)
     {
         /* Not reached while the FSM's ABORT bounds hold (~30 s). */
@@ -1183,7 +1192,12 @@ static void arrival_hold(uint64_t now)
 {
     uint64_t seen = atomic_load(&g_call_seen_ms);
     bool on = seen && now - seen < ARQ_ARRIVAL_STALE_MS;
-    bool idle = g_sess.conn_state == ARQ_CONN_LISTENING && !g_sess.tx_active;
+    /* Not while the ACCEPT fallback holds the host (ARQ_TD_HOLDING):
+     * its PENDING repeats already, and a lock on a poll of the caller's that
+     * does not decode would end in a CANCELPENDING here, letting a scanner
+     * hop before the late connect the hold is for. */
+    bool idle = g_sess.conn_state == ARQ_CONN_LISTENING && !g_sess.tx_active &&
+                g_sess.teardown != ARQ_TD_HOLDING;
 
     if (!on)
         g_arrival_noise = false;
@@ -1483,6 +1497,13 @@ void arq_set_session_bw(int bw_hz, bool from_call)
     pthread_mutex_unlock(&g_conn_lock);
 }
 
+void arq_clear_session_bw(void)
+{
+    pthread_mutex_lock(&g_conn_lock);
+    arq_conn.session_bw = 0;
+    pthread_mutex_unlock(&g_conn_lock);
+}
+
 bool arq_handle_incoming_cq_frame(uint8_t *data, size_t frame_size)
 {
     char source_call[CALLSIGN_MAX_SIZE] = {0};
@@ -1598,6 +1619,7 @@ int arq_init(size_t frame_size, int mode)
         .send_pattern        = cb_send_pattern,
         .set_crc_seed        = arq_modem_crc_seed,
         .set_floor_mode      = arq_modem_floor_mode,
+        .cut_tx              = arq_modem_cut_tx,
     };
     arq_fsm_set_callbacks(&cbs);
     arq_fsm_set_timing(&g_timing);
@@ -1719,7 +1741,7 @@ int arq_goodbye_progress(void)
 {
     pthread_mutex_lock(&g_sess_lock);
     int p = !arq_conn_state_has_peer(g_sess.conn_state) ? 0
-          : (g_sess.conn_state == ARQ_CONN_DISCONNECTING && g_sess.teardown == ARQ_TD_SENT) ? 2 : 1;
+          : (g_sess.conn_state == ARQ_CONN_DISCONNECTING && arq_td_sent(&g_sess)) ? 2 : 1;
     pthread_mutex_unlock(&g_sess_lock);
     return p;
 }
@@ -1763,6 +1785,11 @@ int arq_buffer_bytes_nowait(void)
     if (!g_initialized)
         return 0;
     return arq_get_tx_backlog_bytes() + arq_fsm_tx_inflight_published();
+}
+
+bool arq_rx_open_nowait(void)
+{
+    return g_initialized && arq_fsm_rx_open_published();
 }
 
 /* g_sess_lock for the TCP reactor: never waits on it for long, since the

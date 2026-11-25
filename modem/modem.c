@@ -31,6 +31,7 @@
 #include <limits.h>
 
 #include "modem.h"
+#include "rx_inflight.h"
 #include "ring_buffer_posix.h"
 #include "framer.h"
 #include "arq.h"
@@ -178,6 +179,27 @@ float modem_get_tx_gain(void)
     return atomic_load(&g_tx_gain);
 }
 
+/* Host DRIVELEVEL: attenuation, MODEM_DRIVE_MIN_DB..0 dB, on everything the
+ * modem keys -- data frames below the operator's TX gain, the tuning carrier
+ * below the level TUNE set -- so a host can lower the drive but never raise
+ * it past what the operator set.  Not saved: each start is at 0 dB. */
+static _Atomic int   g_drive_milli  = 0;      /* dB * 1000 */
+static _Atomic float g_drive_linear = 1.0f;
+
+int modem_set_drive_db(float db)
+{
+    if (!isfinite(db) || db < MODEM_DRIVE_MIN_DB || db > 0.0f)
+        return -1;
+    atomic_store(&g_drive_milli, (int)lrintf(db * 1000.0f));
+    atomic_store(&g_drive_linear, powf(10.0f, db / 20.0f));
+    return 0;
+}
+
+static float tx_gain_now(void)
+{
+    return atomic_load(&g_tx_gain) * atomic_load(&g_drive_linear);
+}
+
 /* --- TX keying delay (ms), waited after PTT ON before audio is handed to
  * the playback device. Covers the local radio relay's switch time and,
  * beyond that, gives a slow external PTT (host app driving a serial/CAT
@@ -231,7 +253,7 @@ float modem_get_tx_peak_dbfs(void)
  * effect within ~one chunk instead of after the whole ring drains. */
 #define MODEM_TUNE_RING_HIGH_BYTES (4800 * (int)sizeof(int32_t))   /* 600 ms */
 
-static void modem_cut_tx(void);   /* ABORT stops the keydown (key_and_play) */
+static void modem_cut_tx(const char *why);   /* a session's end stops its keydown (key_and_play) */
 
 static _Atomic bool     g_tune_active      = false;
 static _Atomic bool     g_tune_stop        = false;
@@ -249,6 +271,15 @@ bool modem_tune_active(void)
 float modem_tune_level_dbfs(void)
 {
     return (float)atomic_load(&g_tune_dbfs_milli) / 1000.0f;
+}
+
+/* The level the carrier is generated at: what TUNE set, lowered by the
+ * host's DRIVELEVEL.  tune_thread reads it for every chunk, so a carrier
+ * already on follows a change within ~100 ms. */
+static float modem_tune_effective_dbfs(void)
+{
+    float eff = (float)(atomic_load(&g_tune_dbfs_milli) + atomic_load(&g_drive_milli)) / 1000.0f;
+    return eff < MODEM_TUNE_MIN_DBFS ? MODEM_TUNE_MIN_DBFS : eff;
 }
 
 static void *tune_thread(void *unused)
@@ -278,7 +309,7 @@ static void *tune_thread(void *unused)
             continue;
         }
 
-        float dbfs = modem_tune_level_dbfs();
+        float dbfs = modem_tune_effective_dbfs();
         double amp = pow(10.0, (double)dbfs / 20.0) * 2147483648.0;
         for (int i = 0; i < MODEM_TUNE_CHUNK_SAMPLES; i++)
         {
@@ -607,6 +638,31 @@ static void note_rx_freq_offset(const modem_codec_t *codec)
     uint64_t now = monotonic_ms();
     atomic_store(&g_rx_foff_hz, hz);
     atomic_store(&g_rx_foff_ms, now ? now : 1);
+}
+
+/* Carousel session seed (see arq_modem_set_crc_seed_fn).  While set, HARQ is
+ * off: consecutive carousel frames are different codewords, never copies. */
+static _Atomic bool g_crc_seed_active = false;
+
+/* The peer's offset, for the pattern detectors (mfsk_pattern_set_rx_offset):
+ * from its own MFSK frames only, those that carry the session's seed -- not a
+ * CALL from another station, nor an OFDM frame, which decodes only within the
+ * patterns' own search anyway.  The MFSK decoders search +/-94 Hz at every
+ * geometry; the pattern detector, centred, about 90 at the floor's and 45 at
+ * the 500 Hz floor's (BW500): a link between the two moved data and lost
+ * every ACK and BREAK (N3JXB and KG9NI, 2026-11-23: ~100 Hz apart, 0 of 13
+ * patterns heard).  The offset is in Hz whichever MFSK measured it.  Cleared when a session's seed is set or dropped
+ * (modem_apply_crc_seed).  Caller holds the codec instance's lock. */
+static void note_peer_pattern_offset(const modem_codec_t *codec, int mode, bool seeded)
+{
+    float hz;
+    if (!seeded || !atomic_load(&g_crc_seed_active) || !mercury_mode_is_mfsk(mode) ||
+        !codec->be->get_freq_offset || !codec->be->get_freq_offset(codec->ctx, &hz))
+        return;
+    float was = mfsk_pattern_rx_offset();
+    mfsk_pattern_set_rx_offset(hz);
+    if (fabsf(hz - was) >= 15.0f)
+        HLOGI("modem-rx", "the peer's MFSK arrives %+.0f Hz off: its patterns are looked for there", (double)hz);
 }
 
 bool modem_get_rx_freq_offset(float *hz, uint64_t *age_ms)
@@ -1456,7 +1512,8 @@ static void append_burst_audio(const modem_codec_t *codec, const uint8_t *bytes_
 
 /* Key the transmitter, play `total_samples` of pre-built audio, unkey.  ARQ's
  * TX_STARTED reports the modem's current mode, so set that first. */
-/* ABORT cuts what the TX worker took before it (arq_modem_cut_tx).  Each cut
+/* ABORT, and a session ended because the peer has gone, cut what the TX worker
+ * took before it (arq_modem_cut_tx).  Each cut
  * moves g_tx_cut_gen on; the worker notes the count as it takes each action
  * off the queue (g_tx_taken_gen, its thread only), and what it took before a
  * cut is cut -- on the air, or not keyed at all if the cut came while it was
@@ -1464,14 +1521,18 @@ static void append_burst_audio(const modem_codec_t *codec, const uint8_t *bytes_
  * whole 27 s).  The ABORT's own DISCONNECT is queued after the cut, so it is
  * taken at the new count and plays out whole. */
 static _Atomic unsigned g_tx_cut_gen = 0;
+/* Why the last cut was asked for: a string literal, for the log. */
+static _Atomic(const char *) g_tx_cut_why = "session over";
 static unsigned         g_tx_taken_gen = 0;
 /* Only the TX worker's transmissions are cut: another caller of key_and_play
  * (run_tests_tx, -t) never takes an action, and its count would be stale. */
 static pthread_t        g_tx_worker;
 static _Atomic bool     g_tx_worker_known = false;
 
-static void modem_cut_tx(void)
+static void modem_cut_tx(const char *why)
 {
+    if (why)
+        atomic_store(&g_tx_cut_why, why);
     atomic_fetch_add(&g_tx_cut_gen, 1);
 }
 
@@ -1560,7 +1621,7 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
         {
             if (tx_cut_now())
             {
-                HLOGI("modem-tx", "keydown cut short (ABORT)");
+                HLOGI("modem-tx", "keydown cut short (%s)", atomic_load(&g_tx_cut_why));
                 break;
             }
             uint64_t now = time_now_ms();
@@ -1610,7 +1671,8 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
         {
             if (tx_cut_now())
             {
-                HLOGI("modem-tx", "keydown cut short (ABORT) %llu of %llu ms in",
+                HLOGI("modem-tx", "keydown cut short (%s) %llu of %llu ms in",
+                      atomic_load(&g_tx_cut_why),
                       (unsigned long long)(waited_us / 1000ULL),
                       (unsigned long long)(playback_duration_us / 1000ULL));
                 break;
@@ -1697,7 +1759,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     }
 
     size_t total_samples = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;  /* pre-saturation peak magnitude across this burst */
 
     for (int i = 0; i < samples_head; i++)
@@ -1783,7 +1845,7 @@ static int send_modulated_keydown(generic_modem_t *g_modem, const arq_keydown_t 
     }
 
     size_t total = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;
     for (int i = 0; i < FREEDV_FS_8000 * TX_HEAD_SILENCE_MS / 1000; i++)
         tx_buffer[total++] = 0;
@@ -1911,7 +1973,7 @@ static int send_pattern_ack(generic_modem_t *g_modem, int mode, int pattern_kind
     }
 
     size_t k = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;
     for (int i = 0; i < samples_head; i++) tx_buffer[k++] = 0;
     /* MFSK generator emits int16 passband; scale up to int32 with tx_gain. */
@@ -2107,6 +2169,7 @@ typedef struct {
     float snr_est;
     bool snr_valid;
     bool frame_decoded;
+    bool reported;      /* a decoder said its state: without it, sync 0 is no news */
 } rx_metrics_accum_t;
 
 static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, int rx_status, bool frame_decoded)
@@ -2114,6 +2177,7 @@ static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, 
     if (!metrics)
         return;
 
+    metrics->reported = true;
     if (sync)
         metrics->sync = 1;
     metrics->rx_status |= rx_status;
@@ -2147,15 +2211,14 @@ static int harq_enabled(void)
     return !(e && e[0] == '0');
 }
 
-/* Carousel session seed (see arq_modem_set_crc_seed_fn).  While set, HARQ is
- * off: consecutive carousel frames are different codewords, never copies. */
-static _Atomic bool g_crc_seed_active = false;
 
 static void modem_apply_crc_seed(uint16_t seed)
 {
     atomic_store(&g_crc_seed_active, seed != 0);
-    /* The session's patterns, too: only its peer's ACK/BREAK count. */
+    /* The session's patterns, too: only its peer's ACK/BREAK count -- at
+     * nominal until its first MFSK frame says where it is. */
     mfsk_pattern_set_session(seed);
+    mfsk_pattern_set_rx_offset(0.0f);
     pthread_mutex_lock(&modem_pool_lock);
     for (int i = 0; i < modem_mode_pool_n; i++)
     {
@@ -2214,7 +2277,12 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
              * here.  UNSYNC also zeroes its rxbuf, which once starved the
              * preamble normaliser (the was_tx regression); it cost no burst
              * in the test, down to one starting at once, and a decoder not
-             * synced is left exactly as it was. */
+             * synced is left exactly as it was.
+             *
+             * PSK never reports a sync, so it always loses what it holds:
+             * 60 % of a frame heard before the decoder left its rung, and
+             * the first 1.5 s of audio after its return completed it, every
+             * time (#628 review), a stale frame taken as fresh. */
             state->demod_count = 0;
 
             /* HARQ Chase soft-combining on the RX decoder.  Every ARQ burst
@@ -2235,7 +2303,7 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
             float snr_unused;
             if (codec.be->get_stats)
                 codec.be->get_stats(codec.ctx, &held, &snr_unused);
-            if (held && codec.be->unsync)
+            if ((held || mercury_mode_is_psk(mode)) && codec.be->unsync)
                 codec.be->unsync(codec.ctx);
             if (codec.be->harq_reset)
                 codec.be->harq_reset(codec.ctx);
@@ -2401,6 +2469,7 @@ static const int monitor_modes[] = {
     FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC13,
     FREEDV_MODE_DATAC4,  FREEDV_MODE_DATAC3,  FREEDV_MODE_DATAC1,
     FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2, MERCURY_MODE_MFSK,
+    MERCURY_MODE_PSK3,                         /* BW2300/BW2750 rung 2 */
 };
 #define MONITOR_MODE_COUNT (sizeof(monitor_modes) / sizeof(monitor_modes[0]))
 
@@ -2474,6 +2543,7 @@ static void rx_worker_publish_metrics(rx_worker_t *w, const rx_metrics_accum_t *
         w->metrics.snr_valid = true;
     }
     if (m->frame_decoded) w->metrics.frame_decoded = true;
+    if (m->reported) w->metrics.reported = true;
     pthread_mutex_unlock(&w->mlock);
 }
 
@@ -2489,6 +2559,7 @@ static void rx_metrics_merge(rx_metrics_accum_t *out, const rx_metrics_accum_t *
         out->snr_valid = true;
     }
     if (in->frame_decoded) out->frame_decoded = true;
+    if (in->reported) out->reported = true;
 }
 
 static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
@@ -2502,6 +2573,7 @@ static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
         out->snr_valid = true;
     }
     if (w->metrics.frame_decoded) out->frame_decoded = true;
+    if (w->metrics.reported) out->reported = true;
     memset(&w->metrics, 0, sizeof(w->metrics));
     pthread_mutex_unlock(&w->mlock);
 }
@@ -2517,20 +2589,21 @@ static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
  * next. */
 enum { RX_INFLIGHT_CTRL, RX_INFLIGHT_LISTEN, RX_INFLIGHT_LISTEN_ALT, RX_INFLIGHT_SLOTS };
 static _Atomic uint64_t g_rx_inflight_since_ms[RX_INFLIGHT_SLOTS];
+static _Atomic uint64_t g_rx_inflight_heard_ms[RX_INFLIGHT_SLOTS];   /* its decoder's last report */
 static _Atomic int      g_rx_inflight_mode[RX_INFLIGHT_SLOTS];
 
 static void rx_inflight_note(int slot, int mode, const rx_metrics_accum_t *m, uint64_t now)
 {
-    if (m->sync && !m->frame_decoded)
-    {
-        if (atomic_load(&g_rx_inflight_since_ms[slot]) == 0)
-        {
-            atomic_store(&g_rx_inflight_mode[slot], mode);
-            atomic_store(&g_rx_inflight_since_ms[slot], now);
-        }
-    }
-    else
-        atomic_store(&g_rx_inflight_since_ms[slot], 0);
+    uint64_t since = atomic_load(&g_rx_inflight_since_ms[slot]);
+    uint64_t heard = atomic_load(&g_rx_inflight_heard_ms[slot]);
+    uint64_t next = rx_inflight_next(since, heard, m->reported, m->sync != 0, m->frame_decoded, now);
+    if (m->reported)
+        atomic_store(&g_rx_inflight_heard_ms[slot], now);
+    if (next == since)
+        return;
+    if (!since)
+        atomic_store(&g_rx_inflight_mode[slot], mode);
+    atomic_store(&g_rx_inflight_since_ms[slot], next);
 }
 
 /* A slot locked onto a frame that can hold a scanning host: any but the
@@ -2603,8 +2676,12 @@ static void *rx_worker_thread(void *arg)
     {
         if (atomic_load(&w->flush_req))
         {
-            if (atomic_exchange(&w->unsync_req, false) &&
-                modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync)
+            /* A PSK decoder always drops its frame here: it reports no sync
+             * for anything else to drop it by, and the audio after the flush
+             * (our own keydown's end) would complete it as a fresh one. */
+            bool unsync = atomic_exchange(&w->unsync_req, false) ||
+                          mercury_mode_is_psk(w->state.mode);
+            if (unsync && modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync)
             {
                 pthread_mutex_t *rl = modem_inst_lock_for(w->state.codec.ctx);
                 pthread_mutex_lock(rl);
@@ -2832,6 +2909,8 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         rx_status = be->get_rx_status(ctx);
         be->get_stats(ctx, &sync, &snr_est);
         bool seeded = nbytes_out > 0 && be->rx_crc_seeded && be->rx_crc_seeded(ctx);
+        if (nbytes_out > 0 && !monitor)
+            note_peer_pattern_offset(&state->codec, state->mode, seeded);
         pthread_mutex_unlock(ilock);
 
         /* Diagnosis: what the decoder actually saw.  sync, the status bits and

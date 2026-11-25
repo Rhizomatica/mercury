@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "freedv_api.h"                  /* freedv_gen_crc16 */
 #include "ldpc_codes.h"
 #include "mpdecode_core.h"
 #include "kiss_fftr.h"
@@ -53,6 +54,13 @@ struct mpsk {
     int st[MPSK_MAXC];                        /* TX stagger, 8 kHz samples    */
     int stmax;                                /* the largest, receiver samples */
     int flush;
+    /* TX scratch, sized once: a frame's samples, its codeword, and the
+     * clipping filter's spectrum and FFT plans */
+    int ntx, nclip;
+    unsigned char *tib, *tpb, *tcw;
+    double *tacc; double complex *tbb;
+    kiss_fftr_cfg clip_fw, clip_bw;
+    kiss_fft_cpx *clip_H, *clip_X; float *clip_t;
     /* streaming receiver (mpsk_rx) */
     double complex nco[MPSK_MAXC], nrot[MPSK_MAXC];
     double complex u[MPSK_MAXC][2 * LPF_N];   /* mixed input, doubled ring    */
@@ -60,7 +68,9 @@ struct mpsk {
     double complex *zr[MPSK_MAXC], *dr[MPSK_MAXC], *d4[MPSK_MAXC];
     double complex qa[MPSK_MAXC][400], q4[MPSK_MAXC][400];
     int np, nd, upos, zmask;
-    long nin, ny, zn, nextT, bT;
+    /* sample counts since the reset: 64 bits, as a 32-bit long (Windows)
+     * would wrap after 75 h of audio and leave the receiver deaf */
+    int64_t nin, ny, zn, nextT, bT;
     double best;
     float *llr; uint8_t *cw;
     uint16_t seed; int accept_plain, seeded;
@@ -71,15 +81,6 @@ static const double complex CST[4] = { 1.0, I, -I, -1.0 };
 
 static uint32_t xs32(uint32_t *s) { uint32_t x = *s; x ^= x << 13; x ^= x >> 17; x ^= x << 5; return *s = x; }
 
-static uint16_t crc16(const uint8_t *d, int n)
-{
-    uint16_t c = 0xFFFF;
-    for (int i = 0; i < n; i++) {
-        c ^= (uint16_t)d[i] << 8;
-        for (int b = 0; b < 8; b++) c = (c & 0x8000) ? (uint16_t)((c << 1) ^ 0x1021) : (uint16_t)(c << 1);
-    }
-    return c;
-}
 
 /* The pulse at sps samples a symbol: a raised cosine one symbol long, or
  * the root raised cosine (roll-off 1) over +/- span symbols. */
@@ -109,6 +110,9 @@ static int pulse(int sps, int span, double *h)
 
 
 static void rx_free(mpsk_t *m);
+static int  rx_alloc(mpsk_t *m);
+static void tx_free(mpsk_t *m);
+static int  tx_alloc(mpsk_t *m);
 
 mpsk_t *mpsk_open(int level)
 {
@@ -156,6 +160,7 @@ mpsk_t *mpsk_open(int level)
             if (!m->pil[c][k]) m->cell[c][k] = m->ncell++;
     if (2 * m->ncell != m->N) { free(m); return NULL; }
     m->perm = malloc(sizeof(int) * (size_t)m->N);
+    if (!m->perm) { mpsk_close(m); return NULL; }
     /* A fixed pseudo-random permutation.  An arithmetic one (i p mod N) put a
      * fade's run of symbols on a regular pattern of codeword positions, and
      * the repeat-accumulate code failed about one frame in twenty with 3 %
@@ -168,6 +173,7 @@ mpsk_t *mpsk_open(int level)
     }
 
     m->txp = malloc(sizeof(double) * (size_t)(2 * MPSK_SPS * (l->rrc_span ? l->rrc_span : 1) + 2));
+    if (!m->txp) { mpsk_close(m); return NULL; }
     m->ntxp = pulse(MPSK_SPS, l->rrc_span, m->txp);
     m->nmf = pulse(MPSK_RSPS, l->rrc_span, m->mf);
     double sum = 0.0;
@@ -209,6 +215,7 @@ mpsk_t *mpsk_open(int level)
         }
     m->llr = malloc(sizeof(float) * (size_t)m->N);
     m->cw = malloc((size_t)m->N);
+    if (!m->llr || !m->cw || tx_alloc(m) || rx_alloc(m)) { mpsk_close(m); return NULL; }
     mpsk_rx_reset(m);
     return m;
 }
@@ -220,6 +227,7 @@ void mpsk_close(mpsk_t *m)
     free(m->txp);
     free(m->dbg_llr);
     free(m->llr); free(m->cw);
+    tx_free(m);
     rx_free(m);
     free(m);
 }
@@ -251,27 +259,55 @@ int mpsk_tx_samples(const mpsk_t *m)
 #define CLIP_TAPS    129             /* odd */
 #define CLIP_MARGIN  400.0           /* Hz each side of the outer carriers */
 
-static void tx_clip(const mpsk_level_t *l, double *x, int n)
+/* The filter runs as a product of spectra: one FFT each way a round against
+ * 129 multiplies a sample (8x less work), on a length that holds the whole
+ * convolution, so nothing wraps.  Its spectrum and the plans are made once,
+ * in mpsk_open: a frame is always ntx samples. */
+static int tx_alloc(mpsk_t *m)
 {
-    double h[CLIP_TAPS];
+    const mpsk_level_t *l = m->lv;
+    m->ntx = mpsk_tx_samples(m);
+    int N = 1;
+    while (N < m->ntx + CLIP_TAPS) N <<= 1;
+    m->nclip = N;
+    m->tib = malloc((size_t)m->K);
+    m->tpb = malloc((size_t)(m->N - m->K));
+    m->tcw = malloc((size_t)m->N);
+    m->tacc = malloc(sizeof(double) * (size_t)m->ntx);
+    m->tbb = malloc(sizeof(double complex) * (size_t)m->ntx);
+    m->clip_fw = kiss_fftr_alloc(N, 0, NULL, NULL);
+    m->clip_bw = kiss_fftr_alloc(N, 1, NULL, NULL);
+    m->clip_t = calloc((size_t)N, sizeof(float));
+    m->clip_X = malloc(sizeof(kiss_fft_cpx) * (size_t)(N / 2 + 1));
+    m->clip_H = malloc(sizeof(kiss_fft_cpx) * (size_t)(N / 2 + 1));
+    if (!m->tib || !m->tpb || !m->tcw || !m->tacc || !m->tbb ||
+        !m->clip_fw || !m->clip_bw || !m->clip_t || !m->clip_X || !m->clip_H)
+        return -1;
     const int hc = CLIP_TAPS / 2;
     double f1 = (l->fc[0] - CLIP_MARGIN) / MPSK_FS, f2 = (l->fc[l->nc - 1] + CLIP_MARGIN) / MPSK_FS;
     for (int i = 0; i < CLIP_TAPS; i++) {
         double t = i - hc, w = 0.54 - 0.46 * cos(2.0 * M_PI * i / (CLIP_TAPS - 1));
-        h[i] = w * (t == 0 ? 2.0 * (f2 - f1)
-                           : (sin(2.0 * M_PI * f2 * t) - sin(2.0 * M_PI * f1 * t)) / (M_PI * t));
+        double h = w * (t == 0 ? 2.0 * (f2 - f1)
+                               : (sin(2.0 * M_PI * f2 * t) - sin(2.0 * M_PI * f1 * t)) / (M_PI * t));
+        m->clip_t[i] = (float)(h / N);                  /* 1/N: the inverse is unscaled */
     }
-    /* The filter runs as a product of spectra: one FFT each way a round
-     * against 129 multiplies a sample (8x less work), on a length that
-     * holds the whole convolution, so nothing wraps. */
-    int N = 1;
-    while (N < n + CLIP_TAPS) N <<= 1;
-    kiss_fftr_cfg fw = kiss_fftr_alloc(N, 0, NULL, NULL), bw = kiss_fftr_alloc(N, 1, NULL, NULL);
-    float *t = calloc((size_t)N, sizeof(float));
-    kiss_fft_cpx *X = malloc(sizeof(kiss_fft_cpx) * (size_t)(N / 2 + 1)), *H = malloc(sizeof(kiss_fft_cpx) * (size_t)(N / 2 + 1));
-    if (!fw || !bw || !t || !X || !H) goto out;
-    for (int i = 0; i < CLIP_TAPS; i++) t[i] = (float)(h[i] / N);   /* 1/N: the inverse is unscaled */
-    kiss_fftr(fw, t, H);
+    kiss_fftr(m->clip_fw, m->clip_t, m->clip_H);
+    return 0;
+}
+
+static void tx_free(mpsk_t *m)
+{
+    free(m->tib); free(m->tpb); free(m->tcw); free(m->tacc); free(m->tbb);
+    free(m->clip_t); free(m->clip_X); free(m->clip_H);
+    kiss_fftr_free(m->clip_fw); kiss_fftr_free(m->clip_bw);
+}
+
+static void tx_clip(mpsk_t *m, double *x, int n)
+{
+    const int N = m->nclip, hc = CLIP_TAPS / 2;
+    float *t = m->clip_t;
+    kiss_fft_cpx *X = m->clip_X;
+    const kiss_fft_cpx *H = m->clip_H;
     const double over = pow(10.0, CLIP_DB / 20.0);
     for (int r = 0; r < CLIP_ROUNDS; r++) {
         double pk = 0.0;
@@ -280,23 +316,20 @@ static void tx_clip(const mpsk_level_t *l, double *x, int n)
         double lim = pk / over;                    /* the peak, CLIP_DB down */
         for (int i = 0; i < n; i++) t[i] = (float)(x[i] > lim ? lim : x[i] < -lim ? -lim : x[i]);
         for (int i = n; i < N; i++) t[i] = 0.0f;
-        kiss_fftr(fw, t, X);
+        kiss_fftr(m->clip_fw, t, X);
         for (int k = 0; k <= N / 2; k++) {
             kiss_fft_cpx a = X[k], b = H[k];
             X[k].r = a.r * b.r - a.i * b.i;
             X[k].i = a.r * b.i + a.i * b.r;
         }
-        kiss_fftri(bw, X, t);
+        kiss_fftri(m->clip_bw, X, t);
         for (int i = 0; i < n; i++) x[i] = t[i + hc];       /* the filter's delay */
     }
-out:
-    free(t); free(X); free(H);
-    kiss_fftr_free(fw); kiss_fftr_free(bw);
 }
 
 int mpsk_modulate(mpsk_t *m, uint8_t *frame, int16_t *out, double peak)
 {
-    uint16_t crc = crc16(frame, m->nbytes - 2);
+    uint16_t crc = freedv_gen_crc16(frame, m->nbytes - 2);
     frame[m->nbytes - 2] = (uint8_t)(crc >> 8);
     frame[m->nbytes - 1] = (uint8_t)crc;
     return mpsk_modulate_raw(m, frame, out, peak);
@@ -305,15 +338,16 @@ int mpsk_modulate(mpsk_t *m, uint8_t *frame, int16_t *out, double peak)
 int mpsk_modulate_raw(mpsk_t *m, const uint8_t *frame, int16_t *out, double peak)
 {
     const mpsk_level_t *l = m->lv;
-    unsigned char *ib = malloc((size_t)m->K), *pb = malloc((size_t)(m->N - m->K)), *cw = malloc((size_t)m->N);
+    unsigned char *ib = m->tib, *pb = m->tpb, *cw = m->tcw;
     for (int i = 0; i < m->K; i++) ib[i] = (frame[i >> 3] >> (7 - (i & 7))) & 1;
     encode(&m->ldpc, ib, pb);
     memcpy(cw, ib, (size_t)m->K);
     memcpy(cw + m->K, pb, (size_t)(m->N - m->K));
 
-    int n = mpsk_tx_samples(m);
-    double *acc = calloc((size_t)n, sizeof(double));
-    double complex *bb = malloc(sizeof(double complex) * (size_t)n);
+    int n = m->ntx;
+    double *acc = m->tacc;
+    double complex *bb = m->tbb;
+    memset(acc, 0, sizeof(double) * (size_t)n);
     uint32_t s = 0xC0FFEEu ^ (uint32_t)m->lvi;
     for (int c = 0; c < l->nc; c++) {
         memset(bb, 0, sizeof(double complex) * (size_t)n);
@@ -338,12 +372,11 @@ int mpsk_modulate_raw(mpsk_t *m, const uint8_t *frame, int16_t *out, double peak
         double w = 2.0 * M_PI * l->fc[c] / MPSK_FS;
         for (int i = 0; i < n; i++) acc[i] += creal(bb[i] * cexp(I * w * i));
     }
-    tx_clip(l, acc, n);
+    tx_clip(m, acc, n);
     double pk = 0.0;
     for (int i = 0; i < n; i++) if (fabs(acc[i]) > pk) pk = fabs(acc[i]);
     double g = pk > 0 ? peak / pk : 0.0;
     for (int i = 0; i < n; i++) out[i] = (int16_t)lrint(acc[i] * g);
-    free(acc); free(bb); free(ib); free(pb); free(cw);
     return n;
 }
 
@@ -367,19 +400,24 @@ static void rx_free(mpsk_t *m)
     }
 }
 
+static int rx_alloc(mpsk_t *m)
+{
+    const mpsk_level_t *l = m->lv;
+    int need = (l->nsym + 4) * MPSK_RSPS + m->stmax + 2 * RX_LAG + 8, sz = 1;
+    while (sz < need) sz <<= 1;
+    m->zmask = sz - 1;
+    for (int c = 0; c < l->nc; c++) {
+        m->zr[c] = calloc((size_t)sz, sizeof(double complex));
+        m->dr[c] = calloc((size_t)sz, sizeof(double complex));
+        m->d4[c] = calloc((size_t)sz, sizeof(double complex));
+        if (!m->zr[c] || !m->dr[c] || !m->d4[c]) return -1;
+    }
+    return 0;
+}
+
 void mpsk_rx_reset(mpsk_t *m)
 {
     const mpsk_level_t *l = m->lv;
-    if (!m->zr[0]) {
-        int need = (l->nsym + 4) * MPSK_RSPS + m->stmax + 2 * RX_LAG + 8, sz = 1;
-        while (sz < need) sz <<= 1;
-        m->zmask = sz - 1;
-        for (int c = 0; c < l->nc; c++) {
-            m->zr[c] = calloc((size_t)sz, sizeof(double complex));
-            m->dr[c] = calloc((size_t)sz, sizeof(double complex));
-            m->d4[c] = calloc((size_t)sz, sizeof(double complex));
-        }
-    }
     for (int c = 0; c < l->nc; c++) {
         m->nco[c] = 1.0;
         m->nrot[c] = cexp(-I * 2.0 * M_PI * l->fc[c] / MPSK_FS);
@@ -395,7 +433,7 @@ void mpsk_rx_reset(mpsk_t *m)
 
 /* Decode the frame starting at z index T.  1 with frame[] filled and its CRC
  * good (seeded or, if allowed, plain). */
-static int decode_at(mpsk_t *m, long T, uint8_t *frame, float *snr_db)
+static int decode_at(mpsk_t *m, int64_t T, uint8_t *frame, float *snr_db)
 {
     const mpsk_level_t *l = m->lv;
     const int R = MPSK_RSPS;
@@ -403,11 +441,11 @@ static int decode_at(mpsk_t *m, long T, uint8_t *frame, float *snr_db)
     static __thread double complex ds[MPSK_MAXC][400];
     static __thread double pw[MPSK_MAXC][400];            /* |z|^2 of each symbol      */
     for (int c = 0; c < l->nc; c++) {
-        long b0 = T + m->st[c] / MPSK_DEC;
+        int64_t b0 = T + m->st[c] / MPSK_DEC;
         pw[c][0] = creal(ZI(zr, c, b0) * conj(ZI(zr, c, b0)));
         for (int k = 1; k < l->nsym; k++) {
-            double complex a = ZI(zr, c, b0 + (long)k * R) * m->ph[c][k];
-            double complex b = ZI(zr, c, b0 + (long)(k - 1) * R) * m->ph[c][k - 1];
+            double complex a = ZI(zr, c, b0 + (int64_t)k * R) * m->ph[c][k];
+            double complex b = ZI(zr, c, b0 + (int64_t)(k - 1) * R) * m->ph[c][k - 1];
             ds[c][k] = a * conj(b);
             pw[c][k] = creal(a * conj(a));
             if (m->pil[c][k]) acc += unitc(ds[c][k]);
@@ -468,7 +506,7 @@ static int decode_at(mpsk_t *m, long T, uint8_t *frame, float *snr_db)
     memset(frame, 0, (size_t)m->nbytes);
     for (int i = 0; i < m->K; i++) if (cw[i]) frame[i >> 3] |= (uint8_t)(1 << (7 - (i & 7)));
     if (pcc != m->ldpc.NumberParityBits) return 0;
-    uint16_t crc = crc16(frame, m->nbytes - 2);
+    uint16_t crc = freedv_gen_crc16(frame, m->nbytes - 2);
     uint16_t got = (uint16_t)(frame[m->nbytes - 2] << 8 | frame[m->nbytes - 1]);
     if (m->seed && (uint16_t)(crc ^ m->seed) == got) { m->seeded = 1; return 1; }
     if ((!m->seed || m->accept_plain) && crc == got) { m->seeded = 0; return 1; }
@@ -481,20 +519,20 @@ static int rx_step(mpsk_t *m, uint8_t *frame, int *found, float *snr_db)
 {
     const mpsk_level_t *l = m->lv;
     const int R = MPSK_RSPS;
-    long j = m->zn - 1;
+    int64_t j = m->zn - 1;
     for (int c = 0; c < l->nc; c++) {
         double complex v = j >= R ? unitc(ZI(zr, c, j) * conj(ZI(zr, c, j - R))) : 0;
         double complex v2 = v * v;
         ZI(dr, c, j) = v;
         ZI(d4, c, j) = v2 * v2;
     }
-    long T = j - m->stmax - (long)(l->nsym - 1) * R;
+    int64_t T = j - m->stmax - (int64_t)(l->nsym - 1) * R;
     if (T < m->nextT) return 0;
     double complex A = 0, B = 0;
     for (int c = 0; c < l->nc; c++) {
-        long b0 = T + m->st[c] / MPSK_DEC;
+        int64_t b0 = T + m->st[c] / MPSK_DEC;
         for (int k = 1; k < l->nsym; k++) {
-            long i = b0 + (long)k * R;
+            int64_t i = b0 + (int64_t)k * R;
             if (m->pil[c][k]) A += ZI(dr, c, i) * m->qa[c][k];
             else              B += ZI(d4, c, i) * m->q4[c][k];
         }
@@ -511,7 +549,7 @@ static int rx_step(mpsk_t *m, uint8_t *frame, int *found, float *snr_db)
     int ok = 0;
     for (int tryi = 0; !ok && tryi < 3; tryi++)
         ok = decode_at(m, m->bT + (tryi == 1 ? -1 : tryi == 2 ? 1 : 0), frame, snr_db);
-    m->nextT = ok ? m->bT + (long)l->nsym * R : m->bT + RX_LAG;
+    m->nextT = ok ? m->bT + (int64_t)l->nsym * R : m->bT + RX_LAG;
     m->best = -1.0; m->bT = -1;
     return ok;
 }
@@ -569,15 +607,14 @@ int  mpsk_rx_seeded(const mpsk_t *m) { return m->seeded; }
  * receiver's last soft bits. */
 int mpsk_debug_codeword(mpsk_t *m, uint8_t *frame, uint8_t *cwout)
 {
-    uint16_t crc = crc16(frame, m->nbytes - 2);
+    uint16_t crc = freedv_gen_crc16(frame, m->nbytes - 2);
     frame[m->nbytes - 2] = (uint8_t)(crc >> 8);
     frame[m->nbytes - 1] = (uint8_t)crc;
-    unsigned char *ib = malloc((size_t)m->K), *pb = malloc((size_t)(m->N - m->K));
+    unsigned char *ib = m->tib, *pb = m->tpb;
     for (int i = 0; i < m->K; i++) ib[i] = (frame[i >> 3] >> (7 - (i & 7))) & 1;
     encode(&m->ldpc, ib, pb);
     memcpy(cwout, ib, (size_t)m->K);
     memcpy(cwout + m->K, pb, (size_t)(m->N - m->K));
-    free(ib); free(pb);
     return m->N;
 }
 const float *mpsk_debug_llr(const mpsk_t *m) { return m->llr; }
@@ -594,14 +631,14 @@ void mpsk_debug_errmap(const mpsk_t *m, const uint8_t *cw, char *out, int cap)
             for (int b = 0; b < 2; b++) {
                 int i = m->perm[2 * j + b];
                 float L = m->llr[i];
-                if ((L < 0) != (cw[i] != 0)) { ec[c]++; et[k * 8 / l->nsym]++; if (fabsf(L) > 5) big++; }
+                if ((L < 0) != (cw[i] != 0)) { ec[c]++; et[k * 8 / l->nsym]++; if (fabsf(L) > 4) big++; }
             }
         }
     int o = snprintf(out, (size_t)cap, "by carrier:");
     for (int c = 0; c < l->nc; c++) o += snprintf(out + o, (size_t)(cap - o), " %d", ec[c]);
     o += snprintf(out + o, (size_t)(cap - o), " | by eighth:");
     for (int t = 0; t < 8; t++) o += snprintf(out + o, (size_t)(cap - o), " %d", et[t]);
-    snprintf(out + o, (size_t)(cap - o), " | confident wrong (|llr|>5): %d", big);
+    snprintf(out + o, (size_t)(cap - o), " | confident wrong (|llr|>4, clipped at 5): %d", big);
 }
 
 /* Debug: where the last search locked, and the z index frame symbol 0 of

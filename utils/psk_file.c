@@ -25,7 +25,8 @@ static void payload(uint8_t *p, int nb, unsigned seed, int idx)
         s ^= s << 13; s ^= s >> 17; s ^= s << 5;
         p[i] = (uint8_t)s;
     }
-    p[0] = (uint8_t)idx;                         /* the index, for the count */
+    p[0] = (uint8_t)(idx >> 8);                  /* the index, for the count */
+    p[1] = (uint8_t)idx;
 }
 
 static int level_of(const char *name)
@@ -45,7 +46,7 @@ int main(int argc, char **argv)
     int lv = level_of(argv[2]), nf = atoi(argv[3]);
     unsigned seed = (unsigned)strtoul(argv[4], NULL, 10);
     mpsk_t *m = lv >= 0 ? mpsk_open(lv) : NULL;
-    if (!m || nf <= 0) { fprintf(stderr, "bad level or count\n"); return 1; }
+    if (!m || nf <= 0 || nf > 65536) { fprintf(stderr, "bad level or count\n"); return 1; }
     int nb = mpsk_frame_bytes(m), ns = mpsk_tx_samples(m);
     uint8_t *pl = malloc((size_t)nb), *got = malloc((size_t)nb), *want = malloc((size_t)nb);
 
@@ -85,7 +86,7 @@ int main(int argc, char **argv)
             float snr = 0.0f;
             if (!mpsk_demod(m, in + a, win, got, &f0, &snr)) continue;
             found++;
-            int idx = got[0];
+            int idx = got[0] << 8 | got[1];
             if (idx >= nf || seen[idx]) continue;
             payload(want, nb, seed, idx);
             if (memcmp(got, want, (size_t)(nb - 2))) continue;

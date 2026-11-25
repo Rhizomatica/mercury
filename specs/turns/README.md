@@ -59,6 +59,17 @@ With `CLOSE = TRUE`, M may take a slot as over before its time is up, as
   sooner than `Tg + PMIN` after that keydown, and no later than `DP` past its
   response slot.
 
+`PMIN` is in the model's units (a unit is ~4.4 s: the BW500 floor's 26.2 s
+frame is 6), so it stands for the code's whole lower bound, `TG_MS +
+PAT_MIN_MS` less `PAT_LATE_END_MS`; a change of a few hundred ms stays inside
+one unit.  Checked 2026-11-25 for #663 (the bound 200 ms sooner):
+`CarouselTurns_close.cfg` with `H = 14` gives the same 686 711 distinct
+states, no error, with `PMIN = 1` and with `PMIN = 0`.  What the lower bound
+guards against is below the model's resolution: a spurious BREAK 1.2 s after
+a keydown made S send a round into M's (`car_explore`, cliff:-5 and cliff:-9
+both ways), and the explorer is what checks it, at ms resolution.  The code's
+earliest pattern taken is 1.25 s after a keydown.
+
 With `DISC = TRUE`, M also keys the FSM's DISCONNECT.  It keys it clear of
 S's slots (`car_disconnect_must_wait`) and logs it (`car_log_ctl`).  S
 answers it `TgD` after decoding it, in a single slot, and the carousel
@@ -133,3 +144,26 @@ change here: M's keydowns may have any length in `ML`, and an S keydown is
 at most the length M allowed, which the peer's slots still size for the
 control mode (DATAC16); a shorter control keydown is one of the lengths the
 model already covers.
+
+## The callee's out-of-turn DISCONNECT (`AbortKey.tla`)
+
+An ABORTed callee whose slot does not come by the host's key-by time keys
+its one DISCONNECT out of turn, on a clear channel (`abort_must_key`,
+`channel_clear_at` in `datalink_arq/arq_fsm.c`).  The model starts at the
+end of the callee's last keydown, which asked the caller for a round on an
+OFDM or MFSK rung (a decoder syncs on it), on a PSK rung (none does: the
+PSK decoder finds a frame once it has ended), or for nothing.  The caller
+answers within the reply window, with that round or with control, or not
+at all, and does not hear the callee's keydown.  `NoOverlap`: the
+DISCONNECT never meets the caller's keydown.
+
+    java -cp tla2tools.jar tlc2.TLC -workers 4 \
+        -metadir /tmp/tlc-abortkey -config AbortKey.cfg AbortKey.tla
+
+- `AbortKey.cfg`: the clear time waits out the PSK round asked for
+  (`car_unsensed_round_ms`).  No error, 4910 distinct states.
+- `Mut_pskblind.cfg`: without that term (#628 before review).  Violates
+  `NoOverlap`: the caller keys a PSK round at the end of its window, and the
+  callee keys over it once its reply window and the acquisition time are
+  over.  The sim showed the same at -1 dB, 2.8 s into a PSK3 round
+  (`test_car_callee_abort_keeps_off_a_psk_round`).

@@ -176,6 +176,11 @@ static uint32_t nav_air;               /* CAR_NAV_AIR: the header's lead, header
  * DATAC16 frames about 3.5 dB below DATAC3 and DATAC1 on the same link. */
 static bool snr_biased;
 static bool asym;                                      /* an asym:A:B channel */
+/* CAR_TXEND_LATE_MS: a station learns its keydown has ended this long after
+ * its audio left the air -- as Mercury does, at TX_COMPLETE, once the sound
+ * card has played out its buffer (on air, KG9NI: ~0.25 s).  Its peer, which
+ * dates the end from its decode, sees it on time. */
+static uint64_t txend_late_ms;
 static double snr_dir[2];                              /* its SNR, by sender */
 /* Never exactly 0.0: car_on_frame takes that for "no estimate", which a
  * decoded frame always has -- at 0 dB (cliff:0, fade:0) the sim ran with no
@@ -323,7 +328,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     if (s->tx_end - s->tx_start > s->max_kd_ms) s->max_kd_ms = s->tx_end - s->tx_start;
     if (trace) printf("  until %.1f\n", s->tx_end / 1000.0);
     check_slot(s);
-    event_t e = { .t = s->tx_end, .type = EV_TXEND, .st = s->id };
+    event_t e = { .t = s->tx_end + txend_late_ms, .type = EV_TXEND, .st = s->id };
     push(e);
 }
 
@@ -442,7 +447,7 @@ static void io_pattern(void *ctx, int kind)
     }
     s->tx_end = t + air + TAIL_MS;
     check_slot(s);
-    event_t e = { .t = s->tx_end, .type = EV_TXEND, .st = s->id };
+    event_t e = { .t = s->tx_end + txend_late_ms, .type = EV_TXEND, .st = s->id };
     push(e);
 }
 
@@ -721,6 +726,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
 {
     trace = getenv("CAR_TRACE") != NULL;
     asym = false; step_back = NAN; ctl_step = false;
+    txend_late_ms = getenv("CAR_TXEND_LATE_MS") ? (uint64_t)atoll(getenv("CAR_TXEND_LATE_MS")) : 0;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
     noise_from = noise_len = 0;
     noise_kind = CAR_KEYED_PREAMBLE;

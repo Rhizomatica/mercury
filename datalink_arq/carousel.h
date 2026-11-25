@@ -463,6 +463,11 @@ uint64_t car_drain_budget_ms(const car_t *c);
  * over, for an answer not heard yet -- it may be on the air until then.  0
  * when no such answer is due (only to a later keydown, or none). */
 uint64_t car_answer_due_ms(const car_t *c, uint64_t keyed_by);
+/* The callee: how long after my last keydown the round it asked for may be
+ * on the air unsensed -- a PSK rung's, whose decoder finds a frame only
+ * once it has ended and reports no sync (modem_psk.c).  0 for any other
+ * rung, or when I asked for nothing. */
+uint32_t car_unsensed_round_ms(const car_t *c);
 /* The caller has heard the callee say its application has hung up (M_END),
  * whether or not everything of the callee's has arrived since. */
 bool     car_peer_ending(const car_t *c);
@@ -470,5 +475,8 @@ bool     car_peer_ending(const car_t *c);
 size_t car_tx_inflight(const car_t *c);
 /* ...of them, those no floor BREAK has said are in: what BUFFER shows. */
 size_t car_tx_inflight_unstopped(const car_t *c);
+/* The peer still has data on its way to me: a block it opened is not all
+ * delivered, or it says it holds bytes it has not opened. */
+bool   car_peer_data_open(const car_t *c);
 
 #endif

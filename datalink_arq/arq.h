@@ -237,6 +237,9 @@ bool arq_link_connected_now(bool *connected);
 /** @brief BUFFER: the application's queue plus the carousel's unconfirmed
  *         bytes, without the session lock (the TCP reactor's figure). */
 int arq_buffer_bytes_nowait(void);
+/** @brief In a session the host has not ended, the peer's data is still on
+ *         its way to us; without the session lock (the TCP reactor). */
+bool arq_rx_open_nowait(void);
 /** A session is up or starting, either way (CALLING, ACCEPTING, CONNECTED,
  *  DISCONNECTING): what stops a broadcast carousel. */
 bool arq_session_active(void);
@@ -278,6 +281,9 @@ int arq_reported_bandwidth_hz(void);
 /* The FSM took a CALL (from_call: the session gets min(ours, its)) or an
  * ACCEPT (the session gets its) advertising bw_hz. */
 void arq_set_session_bw(int bw_hz, bool from_call);
+/* The call the FSM was answering is over without a session (the ACCEPT
+ * fallback ended, or there was none): back to our own bandwidth. */
+void arq_clear_session_bw(void);
 
 /**
  * @brief Queue outbound payload bytes for ARQ transmission.

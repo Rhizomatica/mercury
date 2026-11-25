@@ -1,6 +1,7 @@
 /* PSK modem-backend round trip: a frame through the vtable, its audio fed to
  * the receiver in nin-sized chunks (as the modem's RX funnel does), the exact
- * frame back; the session CRC seed; noise never decodes.
+ * frame back; the session CRC seed; a reset drops a cut frame; noise never
+ * decodes.
  *
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -109,6 +110,35 @@ void test_psk_crc_seed(void)
     free(pb);
 }
 
+/* 70 % of a frame, then 2 s of noise: the receiver completes the frame from
+ * the noise (#628 review: cut at 60-95 %, 10 of 10), so a decoder whose
+ * audio breaks off -- a rebind, our own keydown -- must drop what it holds
+ * (modem.c resets it), and after the reset the same audio decodes nothing.
+ * The reset costs the next frame nothing. */
+void test_psk_reset_drops_a_cut_frame(void)
+{
+    uint8_t f[256], got[256];
+    int total, nin = be->nin(ctx);
+    make_frame(f, 0);
+    int16_t *pb = air(f, 300.0, &total);
+    int cut = (3000 + be->n_tx_samples(ctx) * 7 / 10) / nin * nin, nn = 16000;
+    int16_t *noise = malloc(sizeof(int16_t) * (size_t)nn);
+    for (int i = 0; i < nn; i++) noise[i] = (int16_t)lrint(300.0 * gauss());
+
+    TEST_ASSERT_EQUAL_INT(0, feed(pb, cut, got));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(135, feed(noise, nn, got), "a cut frame is completed from what follows");
+    be->unsync(ctx);
+
+    TEST_ASSERT_EQUAL_INT(0, feed(pb, cut, got));
+    be->unsync(ctx);
+    TEST_ASSERT_EQUAL_INT(0, feed(noise, nn, got));
+
+    TEST_ASSERT_EQUAL_INT(135, feed(pb, total, got));
+    TEST_ASSERT_EQUAL_MEMORY(f, got, 135);
+    free(noise);
+    free(pb);
+}
+
 void test_psk_noise_never_decodes(void)
 {
     int total = 8000 * 60;
@@ -125,6 +155,7 @@ int main(void)
     RUN_TEST(test_psk_roundtrip);
     RUN_TEST(test_psk_peak);
     RUN_TEST(test_psk_crc_seed);
+    RUN_TEST(test_psk_reset_drops_a_cut_frame);
     RUN_TEST(test_psk_noise_never_decodes);
     return UNITY_END();
 }

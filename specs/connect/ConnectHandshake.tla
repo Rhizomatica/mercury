@@ -96,6 +96,10 @@ CONSTANTS Sids,     \* session ids C may pick
                     \*   "remeasure": a repeated CALL gets a re-measured start rung
                     \*   "bwleak":    another station's CALL sets the session
                     \*                bandwidth (arq.c before the FSM owned it)
+                    \*   "fallbackbw": E's fallback loses the session bandwidth
+                    \*                its ACCEPTs named (the CANCELPENDING
+                    \*                cleared it before #658): a late connect
+                    \*                runs E at another bandwidth
                     \*   "ignorecall": E connected ignores every CALL (the code
                     \*                before 2026-10-18): a redial waits out E's
                     \*                watchdog
@@ -237,11 +241,14 @@ CallGiveUp ==
     /\ UNCHANGED <<cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSt, eSid, eNonce, eLevel, eBw, sent>>
     /\ UNCHANGED <<eLeft, deaf>> /\ UNCHANGED cryptoVars
 
-\* Out of ACCEPT retries: E listens again, keeping the seed.
+\* Out of ACCEPT retries: E listens again, keeping the seed -- and the
+\* session's bandwidth, which its ACCEPTs named and a late connect runs at
+\* (Mutant "fallbackbw": cb_notify_cancelpending cleared it before #658).
 EFallback ==
     /\ eSt = "accepting"
     /\ eSt' = "fallback"
-    /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, eBw, sent>>
+    /\ \E b \in Bws : eBw' = (IF Mutant = "fallbackbw" THEN b ELSE eBw)
+    /\ UNCHANGED <<cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw, eSid, eNonce, eLevel, sent>>
     /\ UNCHANGED <<eLeft, deaf, cPast>> /\ UNCHANGED cryptoVars
 
 \* The kept seed lapses (ARQ_CAR_PEER_LOST_MS) -- with no caller connected on

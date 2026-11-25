@@ -23,6 +23,7 @@ typedef struct
     uint64_t frames_tx;         /* carousel frames keyed                        */
     uint64_t frames_rx;         /* frames decoded from the peer                 */
     uint64_t data_rx_ms;        /* when the last bytes were delivered           */
+    int      connect_mode;      /* the carrier the handshake completed on       */
 } arq_timing_ctx_t;
 
 /* ======================================================================

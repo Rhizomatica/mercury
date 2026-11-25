@@ -111,6 +111,7 @@ void car_set_short_rung(bool on) { g_short_rung = on; }
 enum { BL_NONE, BL_SMALL, BL_MEDIUM, BL_LARGE };
 #define BL_SMALL_BYTES  90    /* one DATAC3 frame's pieces, with the check and a margin */
 #define BL_MEDIUM_BYTES 460   /* ...one DATAC1 frame's */
+#define SHORT_RUNG_FAILING 0.6 /* a rung delivering less is no place for a small message */
 static float g_nav_below_db = 99.0f;
 static double g_nav_loss = 0.3;
 void car_set_nav_below_db(float db) { g_nav_below_db = db; }
@@ -1448,8 +1449,13 @@ static int choose_level(const car_t *c, uint64_t now)
      * only while that one is delivering: after DATAC1 lost a frame at 8 dB,
      * probing DATAC17 and QAM16C2 cost a round each and delivered nothing.
      * Not stricter than half: flat 25 % loss holds every rung near 75 %, and
-     * a 0.7 bar stopped the climb there. */
-    if (level_delivery(c, best) < PROBE_UP_DELIVERY)
+     * a 0.7 bar stopped the climb there.  Nor from a rung that has delivered
+     * nothing yet: there the optimistic prior alone makes a lost first round
+     * score 0.5, the bar itself.  On air (KG9NI to K7EK, 2026-11-23) K7EK
+     * lost the one DATAC3 round it had at 3.1 dB, asked for DATAC1, which
+     * needs 8 dB to start on, lost that too, and the BBS gave up on a 28-byte
+     * reply that never arrived. */
+    if (level_delivery(c, best) < PROBE_UP_DELIVERY || c->rung[best].sent - c->rung[best].lost < 0.5)
         return best;
     /* A probe that came whole is followed by a second round there before
      * the argmax judges the rung: near its threshold one frame scores 1/2,
@@ -1627,6 +1633,14 @@ static bool peer_direction_done(const car_t *c)
     return c->status_seen || (!c->peer_unopened && peer_outstanding(c) == 0);
 }
 
+bool car_peer_data_open(const car_t *c)
+{
+    /* What the peer has said, and only that: not peer_direction_done, which
+     * is false too before it has said anything (an idle session), and true
+     * after a round with nothing heard (a stall). */
+    return c && c->peer_hi_known && (c->peer_unopened || peer_outstanding(c) > 0);
+}
+
 /* M heard S's M_END: S's application has hung up.  M ends the session on it
  * only holding everything S has, as that poll says it (its latest block and
  * whether bytes wait unopened) -- not on status_seen, which a round with
@@ -1653,12 +1667,22 @@ static void stamp_hint(const car_t *c, msg_t *m)
 }
 
 /* The rung at or below lv whose round carrying bytes is shortest, and that
- * round's frames in *pn; lv itself (and *pn untouched) when none beats it.
- * Never the floor: MFSK is the longest frame there is. */
+ * round's frames in *pn.  On lv itself *pn only shrinks to what the bytes need
+ * (it may be less, what the rung has earned): a poll nobody answers holds its
+ * whole slot, and one for 7 DATAC3 frames kept the caller silent for 30 s
+ * while the peer held a short reply (N3JXB-K7EK, 2026-11-19).  Never the
+ * floor: MFSK is the longest frame there is. */
 static int short_rung(const car_t *c, int lv, size_t bytes, int *pn)
 {
     if (lv <= 1 || !bytes) return lv;
-    double margin = c->loss_est * 1.3 + 0.05;
+    /* A small message on a rung that is failing: no loss margin.  With one, a
+     * 3-byte command priced as two DATAC3 frames and stayed on a failing
+     * DATAC1: lost twice, its third try decoded 4 s after the BBS had hung up
+     * (N3JXB-K7EK, 2026-11-19).  Only there: on a rung that delivers, the
+     * margin's second frame is what carries a short message over a lossy link
+     * (sim, NVIS chat of 3-byte messages: +13 % without it). */
+    bool failing = bytes <= BL_SMALL_BYTES && level_delivery(c, lv) < SHORT_RUNG_FAILING;
+    double margin = failing ? 0.0 : c->loss_est * 1.3 + 0.05;
     int P = piece_of(c);
     int pieces = (int)ceil((double)(bytes + BLOCK_CHECK) / P * (1.0 + margin));
     int best = lv, best_n = 0;
@@ -1672,7 +1696,7 @@ static int short_rung(const car_t *c, int lv, size_t bytes, int *pn)
         uint64_t a = round_air(c, l, n);
         if (a < best_air) { best_air = a; best = l; best_n = n; }
     }
-    if (best != lv) *pn = best_n;
+    if (best != lv || (best_n > 0 && best_n < *pn)) *pn = best_n;
     return best;
 }
 /* The peer's next message, before it says: as long as its last one -- a
@@ -3599,7 +3623,11 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
                 car_trace(c, "I hear the peer well above the control mode (%.1f dB): control on it again",
                           ema);
             }
-        } else if (c->ctl_deaf != CAR_DEAF_MFSK_TX && !(c->ctl_deaf == CAR_DEAF_HARD && mercury_mode_is_mfsk(mode))) {
+        } else if (c->ctl_deaf != CAR_DEAF_MFSK_TX &&
+                   !(c->ctl_deaf == CAR_DEAF_HARD && (mercury_mode_is_mfsk(mode) || mercury_mode_is_psk(mode)))) {
+            /* Deaf by evidence, only an OFDM frame decoded says the control
+             * mode works again: a PSK3 frame, differential, gets through a
+             * Doppler spread DATAC16 does not (#628 review). */
             bool was = c->ctl_deaf != 0;
             /* An MFSK frame's reading alone says I went deaf: 13.8 s of
              * tones average a fade out, and after the channel fell below
@@ -3699,14 +3727,23 @@ void car_on_tx_done(car_t *c, uint64_t now)
  * after a keydown made S send a round into M's (car_explore, cliff:-5 and
  * cliff:-9 both ways). */
 #define PAT_MIN_MS (110 + PATTERN_AIR_MS)
+/* ...less this much: my keydown's end is when I learn of it (TX_COMPLETE,
+ * once the sound card has played out), and that is late on the air by its
+ * playback latency, where the peer dates it from its decode.  With no
+ * allowance but the detector's own ~0.24 s, a pattern keyed on time came in
+ * early: on air (N3JXB to KG9NI, 1.9.25, 2026-11-23) 6 of 12 were ignored,
+ * detected 1.41-1.45 s after KG9NI's PTT OFF against a bound of 1.45 s --
+ * KG9NI's TX_COMPLETE ~0.25 s after its audio ended.  Still above 1.2 s,
+ * where the explorer's spurious BREAK made S send a round into M's. */
+#define PAT_LATE_END_MS 200
 static bool pattern_in_time(const car_t *c, uint64_t now)
 {
     if (c->master) {
         if (!c->nmlog) return false;
         const car_mlog_t *l = &c->mlog[c->nmlog - 1];
-        return now >= l->e + TG_MS + PAT_MIN_MS && now <= mslot_hi(c, l, 0) + D_PAT_MS;
+        return now + PAT_LATE_END_MS >= l->e + TG_MS + PAT_MIN_MS && now <= mslot_hi(c, l, 0) + D_PAT_MS;
     }
-    if (!c->s_tx_end || now < c->s_tx_end + TURN_G_MS + PAT_MIN_MS) return false;
+    if (!c->s_tx_end || now + PAT_LATE_END_MS < c->s_tx_end + TURN_G_MS + PAT_MIN_MS) return false;
     /* ...and before my next slot, where I would have gone on regardless */
     return !c->anc.on || now < c->anc.eh + TG_MS + (uint64_t)c->anc.i * c->anc.p;
 }
@@ -3841,6 +3878,12 @@ uint64_t car_answer_due_ms(const car_t *c, uint64_t keyed_by)
         if (hi > due) due = hi;
     }
     return due;
+}
+
+uint32_t car_unsensed_round_ms(const car_t *c)
+{
+    if (!c || c->master || c->poll_n <= 0 || !mercury_mode_is_psk(lmode(c, c->poll_level))) return 0;
+    return s_round_ms(c, c->poll_level, c->poll_n);
 }
 
 bool car_is_master(const car_t *c) { return c && c->master; }
