@@ -133,6 +133,12 @@ Results:
   that a repeated CALL must keep the session's bandwidth, as it keeps the
   nonce and rung: a caller that re-CONNECTs with another bandwidth and, by
   chance, the same session id may decode an older ACCEPT.
+- `Mut_fallbackbw.cfg`: the callee's ACCEPT fallback loses the session
+  bandwidth its ACCEPTs named, as the code did before #658:
+  `cb_notify_cancelpending` zeroed `session_bw` when the retries ran out, so
+  a late connect from the fallback ran at the callee's own bandwidth (a
+  narrower caller's: other rungs and floor).  Violates `NoDoom`.  The model
+  had always kept it (`EFallback` left `eBw` alone); the code had drifted.
 
 ## ConnectCarrier
 
