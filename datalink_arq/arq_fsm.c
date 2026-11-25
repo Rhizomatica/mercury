@@ -135,7 +135,7 @@ int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now)
 
 static void car_stop(arq_session_t *sess);
 static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev);
-static void car_begin_disconnect(arq_session_t *sess, uint64_t now);
+static void car_begin_disconnect(arq_session_t *sess, uint64_t now, bool lost);
 static bool abort_teardown(arq_session_t *sess, uint64_t now);
 
 /* The station enters a connection state, at teardown step td (ARQ_TD_NONE
@@ -566,6 +566,14 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
  * its uucico was killed. */
 static int session_ctl_mode(const arq_session_t *sess)
 {
+    /* The watchdog's DISCONNECT goes where the peer is sure to be listening:
+     * its control decoder always runs, and it reaches the floor only after 90 s
+     * of silence of its own.  On the floor, a peer still hearing our polls
+     * never decoded it (one-way link, real engines).  A station that
+     * transmits MFSK only keeps to its floor. */
+    if (arq_td_lost(sess) && !ARQ_TX_MFSK_ONLY)
+        return sess->control_mode;
+
     if (!sess->car)
         return ARQ_TX_MFSK_ONLY ? sess->floor_mode : sess->control_mode;
     bool deaf = sess->car_active ? car_peer_ctl_deaf(sess->car) : sess->ctl_floor_at_stop;
@@ -615,6 +623,9 @@ static void send_disconnect_frame(arq_session_t *sess)
  * 13.5 s more (26 s at 500 Hz). */
 static int unretried_disconnect_copies(const arq_session_t *sess)
 {
+    /* The link has just failed: how well the peer hears us is not known. */
+    if (arq_td_lost(sess))
+        return 2;
     if (session_ctl_mode(sess) != sess->control_mode || !sess->car ||
         !car_peer_hears_ctl_marginal(sess->car))
         return 1;
@@ -758,7 +769,7 @@ bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now)
 {
     (void)now;
     /* My DISCONNECT is out: the answer is an ACK pattern (send_disconnect_reply). */
-    if (sess->conn_state == ARQ_CONN_DISCONNECTING && sess->teardown == ARQ_TD_SENT && !sess->tx_active)
+    if (sess->conn_state == ARQ_CONN_DISCONNECTING && arq_td_sent(sess) && !sess->tx_active)
         return true;
     return sess->car_active && sess->car && car_expect_pattern(sess->car);
 }
@@ -979,14 +990,14 @@ static void car_io_end(void *ctx)
 {
     arq_session_t *sess = ctx;
     /* ABORT's one DISCONNECT, keyed outside the slots, is out already. */
-    if (sess->tx_retries_left == 0 && sess->teardown == ARQ_TD_SENT)
+    if (sess->tx_retries_left == 0 && arq_td_sent(sess))
         return;
     HLOGI(LOG_COMP, "carousel: DISCONNECT in my slot");
     if (sess->tx_retries_left == 0)
         send_disconnect_frames(sess, unretried_disconnect_copies(sess));
     else
         send_disconnect_frame(sess);
-    sess->teardown = ARQ_TD_SENT;
+    sess->teardown = arq_td_lost(sess) ? ARQ_TD_LOST_SENT : ARQ_TD_SENT;
     /* ABORT's: it ends at its TX_COMPLETE, not at the key-by time left in
      * teardown_deadline_ms (abort_teardown); this is the fallback. */
     if (sess->tx_retries_left == 0)
@@ -1089,7 +1100,7 @@ static bool car_fail_closed(arq_session_t *sess, uint64_t now)
     const char *why = car_failed(sess->car);
     if (!why) return false;
     HLOGE(LOG_COMP, "carousel: %s -- ending the session", why);
-    car_begin_disconnect(sess, now);
+    car_begin_disconnect(sess, now, false);
     return true;
 }
 
@@ -1100,7 +1111,9 @@ static bool car_fail_closed(arq_session_t *sess, uint64_t now)
  * DISCONNECT goes in its next slot, again in the slots after any keydown of
  * the caller's that did not hear it, and it gives up silently at the end. */
 #define ARQ_CAR_END_WAIT_MS 180000
-static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
+/* lost: the lost-peer watchdog fired (car_end_lost), and the teardown is
+ * ARQ_TD_LOST, not ARQ_TD_NONE. */
+static void car_begin_disconnect(arq_session_t *sess, uint64_t now, bool lost)
 {
     /* disc_req_ms is 0 when the host has not hung up: the peer's
      * application did, a drain gave up, the link failed.  The line then
@@ -1122,24 +1135,70 @@ static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
         if (quiet)
             HLOGI(LOG_COMP, "nothing from the peer in %llu s: one DISCONNECT, no retries",
                   (unsigned long long)((now - sess->car_last_rx_ms) / 1000));
-        sess_enter(sess, ARQ_CONN_DISCONNECTING, now + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+        sess_enter_td(sess, ARQ_CONN_DISCONNECTING, lost ? ARQ_TD_LOST : ARQ_TD_NONE,
+                      now + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
         return;
     }
     /* The callee keys only in slots of the caller's keydowns: with none heard
-     * in this long there is no slot to wait for. */
-    if (quiet)
+     * in this long there is no slot to wait for.  It still tells the caller,
+     * as the watchdog's end does (car_end_lost): I hear nothing, but the path
+     * can be one way.  On air (K7EK -> VE4KLM, 2026-11-24 21:58): JNOS hung
+     * up VE4KLM 130 s into K7EK's silence, VE4KLM ended without a word, and
+     * K7EK, which had decoded VE4KLM's ACKs 2 min before, kept sending until
+     * its own watchdog 128 s later.  So it is the watchdog's teardown: one
+     * DISCONNECT on the control mode, out of turn on a clear channel, or in
+     * a slot of the caller's if one comes first, and the host told as it
+     * goes off the air. */
+    if (quiet && !lost)
     {
-        HLOGI(LOG_COMP, "Disconnect finalized (nothing from the caller in %llu s)",
+        HLOGI(LOG_COMP, "nothing from the caller in %llu s: one DISCONNECT, out of turn, no retries",
               (unsigned long long)((now - sess->car_last_rx_ms) / 1000));
         cut_keydown("caller silent");
-        notify_session_ended(sess);
-        if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
-        enter_idle_after_call(sess);
-        return;
+        lost = true;
     }
     sess->teardown_deadline_ms = now + ARQ_CAR_END_WAIT_MS;
     car_request_end(sess->car);
-    sess_enter(sess, ARQ_CONN_DISCONNECTING, sess->teardown_deadline_ms, ARQ_EV_TIMER_CAROUSEL);
+    sess_enter_td(sess, ARQ_CONN_DISCONNECTING, lost ? ARQ_TD_LOST : ARQ_TD_NONE,
+                  sess->teardown_deadline_ms, ARQ_EV_TIMER_CAROUSEL);
+    if (quiet)
+    {
+        /* No slot of the caller's is coming: key out of turn from now. */
+        sess->teardown_deadline_ms = now;
+        sess->defer_count = 0;
+    }
+}
+
+/* The log's words for an ARQ_TD_LOST teardown: the watchdog's, or the host's
+ * hang-up on a caller already quiet (car_begin_disconnect). */
+static const char *lost_why(const arq_session_t *sess)
+{
+    /* The host's hang-up started it only if the caller was already quiet
+     * then: a hang-up still draining when the link died is the watchdog's. */
+    bool quiet_at_hangup = sess->disc_req_ms && sess->disc_req_ms >= sess->car_last_rx_ms + ARQ_CAR_PEER_QUIET_MS;
+    return quiet_at_hangup ? "caller silent" : "link lost";
+}
+
+/* The lost-peer watchdog has fired.  I hear nothing, but the path can be one
+ * way: on air, KG9NI -> K7EK 22 Nov 2026, K7EK was still decoding KG9NI's polls
+ * 54 s before KG9NI gave up, KG9NI left without a word, and K7EK sat in the
+ * session for 186 s more.  So what is on the air stops, one DISCONNECT goes
+ * (never retried, nothing waited for past it), and the host hears
+ * DISCONNECTED only after it, so a scanner does not retune under it: the
+ * callee as it goes off the air (TX_COMPLETE), the caller one retry interval
+ * later, when its retries are found spent (TIMER_RETRY: "Disconnect finalized
+ * (timeout)", about 5 s on air, #648 review). */
+static void car_end_lost(arq_session_t *sess, uint64_t now)
+{
+    bool master = car_is_master(sess->car);
+    cut_keydown("link lost");
+    car_begin_disconnect(sess, now, true);
+    sess->tx_retries_left = 0;
+    if (!master)
+    {
+        /* No slot of the caller's is coming: out of turn, on a clear channel. */
+        sess->teardown_deadline_ms = now;
+        sess->defer_count = 0;
+    }
 }
 
 /* ABORT: VARA's "disconnect the link immediately".  The peer is still told
@@ -1208,7 +1267,7 @@ static void abort_fallback(arq_session_t *sess, uint64_t now)
 static bool abort_must_key(const arq_session_t *sess, uint64_t now)
 {
     return callee_ending(sess) && sess->tx_retries_left == 0 &&
-           sess->teardown != ARQ_TD_SENT && sess->teardown_deadline_ms != 0 &&
+           !arq_td_sent(sess) && sess->teardown_deadline_ms != 0 &&
            now >= sess->teardown_deadline_ms;
 }
 
@@ -1250,7 +1309,7 @@ static bool abort_teardown(arq_session_t *sess, uint64_t now)
     if (sess->conn_state != ARQ_CONN_DISCONNECTING)
         return false;
     sess->tx_retries_left = 0;
-    if (callee_ending(sess) && sess->teardown == ARQ_TD_SENT && !sess->tx_active)
+    if (callee_ending(sess) && arq_td_sent(sess) && !sess->tx_active)
     {
         HLOGI(LOG_COMP, "ABORT: our DISCONNECT is out -- ending now, the peer's answer not awaited");
         notify_session_ended(sess);
@@ -1258,7 +1317,7 @@ static bool abort_teardown(arq_session_t *sess, uint64_t now)
         enter_idle_after_call(sess);
         return true;
     }
-    if (sess->teardown == ARQ_TD_SENT)
+    if (arq_td_sent(sess))
     {
         /* On the air now (the callee), or waiting out its answer (the
          * caller): nothing more to key. */
@@ -2080,7 +2139,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
             /* My DISCONNECT went in a slot instead of an answer, so the
              * caller's ACK now is its answer to it: the caller acks only
              * rounds, and I send none while ending. */
-            if (sess->teardown == ARQ_TD_SENT && !ev->pattern_break)
+            if (arq_td_sent(sess) && !ev->pattern_break)
             {
                 disconnect_answered(sess);
                 return;
@@ -2090,11 +2149,12 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
             return;
         case ARQ_EV_TX_COMPLETE:
             /* ABORT's one DISCONNECT is off the air (abort_teardown). */
-            if (sess->teardown == ARQ_TD_SENT && sess->tx_retries_left == 0)
+            if (arq_td_sent(sess) && sess->tx_retries_left == 0)
             {
-                HLOGI(LOG_COMP, "Disconnect finalized (ABORT: my one DISCONNECT is out)");
+                HLOGI(LOG_COMP, "Disconnect finalized (%s: my one DISCONNECT is out)",
+                      arq_td_lost(sess) ? lost_why(sess) : "ABORT");
                 notify_session_ended(sess);
-                if (g_timing) arq_timing_record_disconnect(g_timing, "abort");
+                if (g_timing) arq_timing_record_disconnect(g_timing, arq_td_lost(sess) ? "timeout" : "abort");
                 enter_idle_after_call(sess);
                 return;
             }
@@ -2111,7 +2171,8 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                  * my slot, which carries it (car_io_end). */
                 if (!sess->tx_active && !peer_is_transmitting(sess) && now >= channel_clear_at(sess))
                 {
-                    HLOGI(LOG_COMP, "ABORT: DISCONNECT keyed out of turn on a clear channel, the host's scan due");
+                    HLOGI(LOG_COMP, "%s: DISCONNECT keyed out of turn on a clear channel",
+                          arq_td_lost(sess) ? (strcmp(lost_why(sess), "link lost") ? "Caller silent" : "Link lost") : "ABORT");
                     /* Its copies were timed to be off the air a margin
                      * before the host's scan (abort_key_by); held past that
                      * for a clear channel (a deferral step or more), the
@@ -2120,7 +2181,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                     if (copies > 1 && now >= sess->teardown_deadline_ms + ARQ_CHANNEL_DEFER_MS)
                         copies = 1;
                     send_disconnect_frames(sess, copies);
-                    sess->teardown = ARQ_TD_SENT;
+                    sess->teardown = arq_td_lost(sess) ? ARQ_TD_LOST_SENT : ARQ_TD_SENT;
                     abort_fallback(sess, now);
                     return;
                 }
@@ -2131,9 +2192,10 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                  * DATAC1 round). */
                 if (!sess->tx_active && sess->defer_count++ >= ARQ_ABORT_HOLD_MAX)
                 {
-                    HLOGI(LOG_COMP, "Disconnect finalized (ABORT: the channel never came clear, the caller not told)");
+                    HLOGI(LOG_COMP, "Disconnect finalized (%s: the channel never came clear, the caller not told)",
+                          arq_td_lost(sess) ? lost_why(sess) : "ABORT");
                     notify_session_ended(sess);
-                    if (g_timing) arq_timing_record_disconnect(g_timing, "abort");
+                    if (g_timing) arq_timing_record_disconnect(g_timing, arq_td_lost(sess) ? "timeout" : "abort");
                     enter_idle_after_call(sess);
                     return;
                 }
@@ -2163,7 +2225,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
          * may answer that on the floor, and the DISCONNECT keeps clear of
          * it (integration TestMercuryARQAbortCutsTheFloorRound). */
         if (sess->car_session && car_is_master(sess->car)) {
-            if (sess->teardown == ARQ_TD_SENT)
+            if (arq_td_sent(sess))
                 car_log_disconnect(sess->car, now, ARQ_CHANNEL_GUARD_MS);
             else
                 car_log_ctl(sess->car, now, ARQ_CHANNEL_GUARD_MS);
@@ -2240,7 +2302,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         }
         else
             send_disconnect_frame(sess);
-        sess->teardown = ARQ_TD_SENT;
+        sess->teardown = arq_td_lost(sess) ? ARQ_TD_LOST_SENT : ARQ_TD_SENT;
         sess->deadline_event = ARQ_EV_TIMER_RETRY;
         HLOGD(LOG_COMP, "Disconnect tx (initial, after guard)");
         break;
@@ -2252,7 +2314,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
          * it retrying for 21 s, deaf to the CALL that came next (on air, car24,
          * gateway <- IC-7100: the redial failed).  Answer it as CONNECTED
          * does, one reply guard later. */
-        if (sess->teardown != ARQ_TD_SENT)
+        if (!arq_td_sent(sess))
         {
             HLOGI(LOG_COMP, "Disconnect crossed the peer's before ours went out: replying");
             if (g_timing) arq_timing_record_disconnect(g_timing, "peer_ack");
@@ -2265,7 +2327,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_RX_PATTERN:
         /* The answer to my DISCONNECT (send_disconnect_reply). */
-        if (sess->teardown == ARQ_TD_SENT && !ev->pattern_break)
+        if (arq_td_sent(sess) && !ev->pattern_break)
             disconnect_answered(sess);
         break;
 
@@ -2282,7 +2344,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
          * that one goes out first. */
         if (!call_queued(sess) && sess->listen_enabled &&
             (strncmp(ev->remote_call, sess->remote_call, CALLSIGN_MAX_SIZE) == 0 ||
-             (callee_ending(sess) && sess->teardown == ARQ_TD_SENT)))
+             (callee_ending(sess) && arq_td_sent(sess))))
         {
             HLOGI(LOG_COMP, "Disconnect finalized (%s is calling)", ev->remote_call);
             notify_session_ended(sess);
@@ -2300,7 +2362,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                 break;
             sess->tx_retries_left--;
             send_disconnect_frame(sess);
-            sess->teardown = ARQ_TD_SENT;
+            sess->teardown = arq_td_lost(sess) ? ARQ_TD_LOST_SENT : ARQ_TD_SENT;
             tm = arq_protocol_mode_timing(session_ctl_mode(sess));
             sess->deadline_ms = retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f);
             HLOGD(LOG_COMP, "Disconnect tx retry=%d", sess->tx_retries_left);
@@ -2351,10 +2413,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         {
             HLOGW(LOG_COMP, "carousel: nothing from the peer in %d s%s — link lost",
                   (int)((now - sess->car_last_rx_ms) / 1000), car_is_idle(sess->car) ? "" : " with data in flight");
-            cut_keydown("link lost");
-            if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
-            notify_session_ended(sess);
-            enter_idle_after_call(sess);
+            car_end_lost(sess, now);
             return true;
         }
         if (car_peer_ending(sess->car) && now - sess->car_last_rx_ms >= car_peer_end_wait_ms(sess))
@@ -2367,7 +2426,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             HLOGW(LOG_COMP, "carousel: the peer hung up and has been silent %llu s -- "
                   "ending the session, its last data not received",
                   (unsigned long long)((now - sess->car_last_rx_ms) / 1000));
-            car_begin_disconnect(sess, now);
+            car_begin_disconnect(sess, now, false);
             sess->tx_retries_left = 0;
             return true;
         }
@@ -2433,7 +2492,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         }
         if (!ev->abort && !repeat)
             HLOGI(LOG_COMP, "DISCONNECT: nothing left to deliver, ending now");
-        car_begin_disconnect(sess, now);
+        car_begin_disconnect(sess, now, false);
         if (ev->abort)
             abort_teardown(sess, now);
         return true;
@@ -2450,7 +2509,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
      * never opened (#585). */
     if (sess->teardown == ARQ_TD_DRAINING && car_drained(sess) && !sess->tx_active &&
         !car_owes_ack(sess->car) && !car_keyed(sess->car))
-        car_begin_disconnect(sess, now);
+        car_begin_disconnect(sess, now, false);
     /* The callee's application has hung up (M_END), and everything is
      * delivered both ways: the caller ends the session now, its DISCONNECT
      * answered by a pattern.  Left to the callee, the DISCONNECT waited for a
@@ -2461,7 +2520,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     else if (peer_end && car_drained(sess) && !sess->tx_active)
     {
         HLOGI(LOG_COMP, "The peer's application has hung up: ending the session");
-        car_begin_disconnect(sess, now);
+        car_begin_disconnect(sess, now, false);
     }
     return true;
 }
@@ -2481,7 +2540,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         HLOGW(LOG_COMP,
               "Deferred DISCONNECT drain timeout (%llu s) — forcing teardown",
               (unsigned long long)((budget + 500) / 1000));
-        car_begin_disconnect(sess, time_now_ms());
+        car_begin_disconnect(sess, time_now_ms(), false);
         return;
     }
     /* ...nor while the peer is silent: past ARQ_CAR_PEER_QUIET_MS nothing
@@ -2495,7 +2554,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
     {
         HLOGI(LOG_COMP, "Deferred DISCONNECT: nothing from the peer in %llu s, not draining on",
               (unsigned long long)((time_now_ms() - sess->car_last_rx_ms) / 1000));
-        car_begin_disconnect(sess, time_now_ms());
+        car_begin_disconnect(sess, time_now_ms(), false);
         return;
     }
 
@@ -2581,7 +2640,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
              * has flushed the old session's TX queue already. */
             HLOGI(LOG_COMP, "Ending the old session's drain for the new call (%zu bytes undelivered)",
                   car_tx_inflight(sess->car) + (size_t)session_tx_backlog(sess));
-            car_begin_disconnect(sess, time_now_ms());
+            car_begin_disconnect(sess, time_now_ms(), false);
         }
         else
         {

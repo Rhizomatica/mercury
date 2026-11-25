@@ -26,7 +26,13 @@ What it models:
   callee whose DISCONNECT is out, waiting only for the answer, takes a CALL
   for it from any callsign: a station calls with another MYCALL per
   application (`CALLS`).
-- Silence ends a connected session.  A caller that has heard the callee's
+- Silence ends a connected session (the lost-peer watchdog), but the path
+  may be one way, so the end tells its peer once, as at ABORT: the caller
+  one DISCONNECT with no retries, the callee in its slot or out of turn on
+  a clear channel; its host hears DISCONNECTED at the end (#648).  A
+  callee whose application hangs up with the caller already quiet
+  (`ARQ_CAR_PEER_QUIET_MS`) tells it the same way, once, out of turn.  A
+  caller that has heard the callee's
   M_END and then hears nothing more, as long as the callee's own drain
   would last, ends it sooner, with one DISCONNECT.
 - The caller may call again once it has ended (a deferred CONNECT), up to
@@ -57,6 +63,9 @@ Properties:
 - `NoKill`: no end leaves a session on another session's frame.
 - `NoStale`, `NoForeign`: no end leaves on the pattern that answered an
   earlier session's DISCONNECT, nor on another station's.
+- `NoSilentEnd`: no end leaves a session on its lost-peer watchdog alone,
+  nor a callee on its application's hang-up with the caller quiet: it keys
+  its DISCONNECT first, for a peer that may still hear it.
 - `Clean`: on a lossless channel no end ever times out, so every teardown
   is answered.
 - `Mutual` (liveness): once one end has finished a session, eventually
@@ -333,7 +342,8 @@ Results:
   silence after an M_END, 21 317 before the caller's drain, 10 645 before the callee's owed ack, 4 957 before the
   last word, 2 069 before M_END).
 - `SessionTeardown_lossy.cfg`: the same with any frame lost.  No error,
-  11 077 245 distinct states (2 568 389 before the caller's owed ack,
+  14 024 981 distinct states (11 077 245 before the watchdog told the peer,
+  #648; 2 568 389 before the caller's owed ack,
   1 373 461 before the silence after an M_END,
   599 881 before the caller's drain, 264 149
   before the owed ack, 124 141 before the last word, 52 041 before M_END).  `Clean` does not apply
@@ -402,6 +412,14 @@ Results:
 - `Mut_redialwait.cfg`: lossless, a CONNECT while the caller drains waits
   behind the drain, the old session keying on (the rule before
   2026-11-05).  It violates `Released`.
+- `Mut_lostsilent.cfg`: lossy, the lost-peer watchdog ends the session at
+  once and sends nothing, as before #648.  It violates `NoSilentEnd`: a peer
+  that still hears us is not told, and sits in the session until its own
+  watchdog (on air, 1.9.25 on a one-way path: 214 s more).
+- `Mut_quietsilent.cfg`: lossy, the callee whose application hangs up
+  with the caller quiet ends at once and sends nothing, as before.  It
+  violates `NoSilentEnd`: a caller that still hears it is not told (on
+  air, K7EK -> VE4KLM 2026-11-24: K7EK sent on 128 s, until its watchdog).
 - `Mut_endsilence.cfg`: lossy, the caller ends on silence without having
   heard an M_END.  It violates `NoCut`: a fade in a live session, the
   callee's application still in it, ends the session.

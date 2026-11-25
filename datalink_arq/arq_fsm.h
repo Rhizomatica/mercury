@@ -69,6 +69,11 @@ typedef enum
     ARQ_TD_NOTIFYING,    /* DISCONNECTED: the reply is out; the host hears
                           * DISCONNECTED when it has finished (TX_COMPLETE),
                           * so data_rx_buffer_arq drains to it first       */
+    ARQ_TD_LOST,         /* DISCONNECTING: the lost-peer watchdog fired, or
+                          * the host hung up a callee whose caller is quiet;
+                          * its one DISCONNECT, on the control mode, is due */
+    ARQ_TD_LOST_SENT,    /* DISCONNECTING: ...and is on the air: ARQ_TD_SENT
+                          * for every rule that asks whether it is out     */
 } arq_teardown_t;
 
 /* ======================================================================
@@ -301,6 +306,18 @@ typedef struct
     uint64_t       deadline_ms;       /* absolute monotonic deadline           */
     arq_event_id_t deadline_event;   /* event to fire when deadline fires     */
 } arq_session_t;
+
+/* Our DISCONNECT is on the air, the watchdog's or any other. */
+static inline bool arq_td_sent(const arq_session_t *sess)
+{
+    return sess->teardown == ARQ_TD_SENT || sess->teardown == ARQ_TD_LOST_SENT;
+}
+/* The lost-peer watchdog ended the session: one DISCONNECT, to a peer that
+ * may still hear us (car_end_lost). */
+static inline bool arq_td_lost(const arq_session_t *sess)
+{
+    return sess->teardown == ARQ_TD_LOST || sess->teardown == ARQ_TD_LOST_SENT;
+}
 
 /* ======================================================================
  * FSM action callbacks
