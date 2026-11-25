@@ -46,10 +46,24 @@ void test_a_delivered_round_still_probes_up(void)
     TEST_ASSERT_TRUE(choose_level(&car, 10000) > 3);
 }
 
+/* A start misread low at the connect (on air, a CALL at -2.6 dB on a
+ * 12-17 dB link) moves up with my reading before anything is measured, and
+ * never down below the connect's. */
+void test_an_unmeasured_start_follows_a_higher_reading(void)
+{
+    car.snr_level = 1;
+    car.snr_ema = car.snr_last = 15.0f;
+    TEST_ASSERT_TRUE(choose_level(&car, 10000) > 1);
+    car.snr_level = 4;
+    car.snr_ema = car.snr_last = -5.0f;
+    TEST_ASSERT_EQUAL_INT(4, choose_level(&car, 10000));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_a_lost_first_round_does_not_probe_up);
     RUN_TEST(test_a_delivered_round_still_probes_up);
+    RUN_TEST(test_an_unmeasured_start_follows_a_higher_reading);
     return UNITY_END();
 }

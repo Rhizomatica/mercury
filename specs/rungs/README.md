@@ -259,6 +259,12 @@ Which model covers the other 2.0 changes:
 - a small message drops the loss margin on a rung delivering under 60 %
   (`short_rung`): it changes only which rung and how many frames a short
   poll asks for, which `RungAgreement` leaves free.
+- before anything is measured, the start follows my reading upward
+  (`choose_level`: the start rung of the lower of `snr_last` and `snr_ema`,
+  never below the connect's), and an ack's short rung may go up to where
+  the reading, less the gate, would start a session (`s_idle_rung`): both
+  change only which rung is named, which `RungAgreement` leaves free.
+  Rerun 2026-11-25: `RungAgreement.cfg` and `PollRung.cfg`, no error.
 - a connect heard only on MFSK starts deaf to the control mode
   (`CAR_DEAF_HARD`, arq_fsm.c), and an MFSK reading does not clear that;
   a deaf S may then name, for one frame, the rung its ladder chose
