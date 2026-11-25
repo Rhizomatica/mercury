@@ -70,6 +70,18 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind);
  * are not taken for the peer's.  Key 0: the global lists.  Returns whether
  * session lists are in use. */
 bool mfsk_pattern_set_session(uint32_t key);
+
+/* Where the peer's patterns arrive: its carrier offset in Hz as this receiver
+ * hears it (positive: above nominal), as its MFSK frames measured it.  The
+ * detectors search +/-2.5 tone bins around it -- 78 Hz at the floor's 31.25 Hz
+ * spacing, ~90 Hz with the half bin either side; 39 Hz, ~45, at the 500 Hz
+ * floor's 15.625 Hz (MFSK_N32, BW500) -- where every MFSK frame decoder
+ * searches +/-94 Hz and decodes to ~100.  Centred on 0, a link
+ * 90-100 Hz off moved data and lost every pattern (on air, N3JXB and KG9NI,
+ * 2026-11-23: about 100 Hz apart, 0 of 13 patterns heard).  0: centred, as
+ * before.  Taken by every window at its next chunk. */
+void  mfsk_pattern_set_rx_offset(float hz);
+float mfsk_pattern_rx_offset(void);
 /* The same with explicit lists (ack_pattern_len tones each; NULL: global). */
 void mfsk_pattern_set_lists(const int *ack, const int *brk);
 
@@ -119,6 +131,10 @@ typedef struct {
     int     npend;
     long long last_start;          /* the last event reported, and its score */
     int     last_score;
+    /* The rotation that brings a peer off frequency back to the tones the
+     * detector expects (mfsk_pattern_set_rx_offset): its phasor and step. */
+    float   rot_hz;
+    double  rot_re, rot_im, rot_dre, rot_dim;
 } mfsk_pattern_window_t;
 
 /* Push `n` samples; up to maxev events are written.  Returns how many. */

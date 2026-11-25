@@ -568,7 +568,7 @@
   \src{Source: specs/carousel, specs/turns (README files)}
 \end{frame}
 
-\begin{frame}{Formal models: connect, rungs and teardown}
+\begin{frame}{Formal models: connect and teardown}
   \centering\footnotesize
   \begin{tabular}{@{}>{\raggedright\arraybackslash}p{3.1cm} >{\raggedright\arraybackslash}p{5.8cm} >{\raggedright\arraybackslash}p{4.4cm}@{}}
     \toprule
@@ -576,13 +576,25 @@
     \midrule
     \textbf{ConnectHandshake} & NoDoom, NoHalfConnect, NoDeafRedial, Settles; encryption agreed (Agree, ReqGate); no mixed-version ladder (SameLadder) & 10\,609 states; 52\,649 big \\
     \textbf{ConnectCarrier} & NoOverlap: a CALL never keys over an ACCEPT, on DATAC16 or the MFSK floor & 149\,404 states; 297\,879 with sensing \\
-    \textbf{RungAgreement}, \textbf{PollRung} & Agree, WastedF, Delivered: both ends agree on the rung, both directions, rungs dying mid-session & 3234 / 17\,168 states; 12\,487 \\
-    \textbf{FloorFallback}, \textbf{FloorSilence} & Delivered, FloorHolds: a session below every mode but the floor stays alive & 3665 states; 696 \\
-    \textbf{CtlDeaf} & LossEnds, HardNeedsOfdm: when the caller takes itself deaf to the control mode, and that it ends & 524 states \\
+    \textbf{CalleeNotices} & Settled, LateHeld: the host is held exactly while the callee answers or may still connect late; each PENDING gets one end & 8 states; 3 mutants \\
     \textbf{SessionTeardown} & NoKill, NoLostWord, NoCut, Confirmed, ToldOnce: no end leaves on another session's frame or cuts the last word & 11.1 M states lossy; \hl{65.3 M} with foreign patterns \\
     \bottomrule
   \end{tabular}
-  \src{Source: specs/connect, specs/rungs, specs/ctldeaf, specs/teardown (README files). In review: specs/turns/AbortKey.tla (\#628), specs/notices (\#657)}
+  \src{Source: specs/connect, specs/notices, specs/teardown (README files). In review: specs/turns/AbortKey.tla (\#628)}
+\end{frame}
+
+\begin{frame}{Formal models: rungs and the floor}
+  \centering\footnotesize
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{3.1cm} >{\raggedright\arraybackslash}p{5.8cm} >{\raggedright\arraybackslash}p{4.4cm}@{}}
+    \toprule
+    \textbf{Model} & \textbf{What it proves} & \textbf{Checked} \\
+    \midrule
+    \textbf{RungAgreement}, \textbf{PollRung} & Agree, WastedF, Delivered: both ends agree on the rung, both directions, rungs dying mid-session & 3234 / 17\,168 states; 12\,487 \\
+    \textbf{FloorFallback}, \textbf{FloorSilence} & Delivered, FloorHolds: a session below every mode but the floor stays alive & 3665 states; 696 \\
+    \textbf{CtlDeaf} & LossEnds, HardNeedsOfdm: when the caller takes itself deaf to the control mode, and that it ends & 524 states \\
+    \bottomrule
+  \end{tabular}
+  \src{Source: specs/rungs, specs/ctldeaf (README files)}
 \end{frame}
 
 \begin{frame}{Validation of the models}
@@ -590,7 +602,7 @@
     \column{0.5\textwidth}
     \begin{block}{Mutation testing}
       \begin{itemize}
-        \item \textbf{72 mutants}, one rule broken each; every one must violate its property
+        \item \textbf{75 mutants}, one rule broken each; every one must violate its property
         \item Many are a bug found on air, kept as its counterexample: a stale CALL answered (KG9NI $\leftarrow$ K7EK), a callee deaf to a redial (K7EK answering N3JXB), two polls holding the caller off the air 97 s
         \item Blocks: the no-check config violates Integrity, as it must
         \item Before the integrity work, the model found \textbf{two real bugs}, 9 steps each

@@ -198,6 +198,9 @@ int modem_tune_start(float dbfs)
 void  modem_tune_stop(void)        { mock_tune_stop_calls++; }
 bool  modem_tune_active(void)      { return false; }
 float modem_tune_level_dbfs(void)  { return mock_tune_level_dbfs; }
+static float mock_drive_db = 1.0f;      /* 1.0: never set */
+static int   mock_drive_calls = 0;
+int modem_set_drive_db(float db) { mock_drive_calls++; mock_drive_db = db; return 0; }
 
 /* ---- modem listen-mode stubs ---- */
 
@@ -435,6 +438,9 @@ void setUp(void)
     mock_tune_start_rc    = 0;
     mock_tune_stop_calls  = 0;
     mock_tune_level_dbfs  = -15.0f;
+    mock_drive_db         = 1.0f;      /* 1.0: never set */
+    mock_drive_calls      = 0;
+    atomic_store(&mycall_cannot_call, false);
 
     /* Listen mode */
     mock_listen_mode_set   = -1;
@@ -649,6 +655,351 @@ void test_cmd_cwid_bad_arg_is_wrong(void)
     execute_control_command(cmd);
 
     assert_wrong_response();
+}
+
+/* Case-sensitive like every other command: "cwid on" was WRONG while
+ * "CWID on" was OK. */
+void test_cmd_cwid_lower_case_arg_is_ok(void)
+{
+    char cmd[] = "CWID on";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+}
+
+/* ---- Callsigns that can go on the air (arith.c's alphabet) */
+
+void test_callsign_encodable(void)
+{
+    /* Long names and any SSID pass. */
+    static const char *good[] = {
+        "A", "N0CALL", "kd0abc", "KD0ABCDE", "HERMES-GW-01", "N0CALL-20",
+        "N0CALL-100", "PU2UIT-10", "ABCDEFGHIJKLMN",             /* 14 */
+    };
+    static const char *bad[] = {
+        "", "N0CALL/P", "N0_CALL", "N0CALL!", "N0.CALL",
+        "ABCDEFGHIJKLMNO",          /* 15: 11 coded bytes, a CALL has 10 */
+    };
+    for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); i++)
+        TEST_ASSERT_TRUE_MESSAGE(callsign_encodable(good[i], CALL_FRAME_MAX_CALLSIGN), good[i]);
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+        TEST_ASSERT_FALSE_MESSAGE(callsign_encodable(bad[i], CALL_FRAME_MAX_CALLSIGN), bad[i]);
+    /* A CQ has 13 bytes for it: 15 characters fit, 16 do not. */
+    TEST_ASSERT_TRUE(callsign_encodable("ABCDEFGHIJKLMNO", CQ_FRAME_MAX_CALLSIGN));
+    TEST_ASSERT_FALSE(callsign_encodable("ABCDEFGHIJKLMNOP", CQ_FRAME_MAX_CALLSIGN));
+}
+
+/* A primary a CALL cannot carry is still taken: such a station can answer
+ * calls (an ACCEPT carries only CRC16s), so refusing it would break a gateway
+ * that works today.  Only the log warns. */
+void test_cmd_mycall_uncodable_primary_still_ok(void)
+{
+    char cmd[] = "MYCALL N0CALL/P SEC1";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL(2, captured_cmd_count);
+}
+
+/* After a primary a CALL cannot carry, CONNECT is WRONG instead of OK with
+ * nothing sent; a MYCALL with a good primary, sent right before the CONNECT,
+ * makes it OK again. */
+void test_cmd_connect_after_uncodable_mycall(void)
+{
+    char bad[] = "MYCALL ABCDEFGHIJKLMNO";        /* 15: a CALL holds 14 */
+    execute_control_command(bad);
+    assert_ok_response();
+
+    tcp_write_call_count = 0;
+    captured_cmd_count = 0;
+    char c1[] = "CONNECT ABCDEFGHIJKLMNO K1ABC";
+    execute_control_command(c1);
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+
+    tcp_write_call_count = 0;
+    char good[] = "MYCALL ABCDEFGHIJKLMN";        /* 14 */
+    execute_control_command(good);
+    assert_ok_response();
+
+    tcp_write_call_count = 0;
+    captured_cmd_count = 0;
+    char c2[] = "CONNECT ABCDEFGHIJKLMN K1ABC";
+    execute_control_command(c2);
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_CONNECT, captured_cmd.type);
+}
+
+/* A MYCALL the ARQ layer refuses changes nothing, the flag included. */
+void test_cmd_refused_mycall_keeps_connect_state(void)
+{
+    arq_submit_return = -1;
+    char bad[] = "MYCALL N0CALL/P";
+    execute_control_command(bad);
+    assert_wrong_response();
+
+    arq_submit_return = 0;
+    tcp_write_call_count = 0;
+    char c[] = "CONNECT A B";
+    execute_control_command(c);
+    assert_ok_response();
+}
+
+/* The line limits split_words enforces: 8 words, 15 characters a word. */
+void test_split_words_limits(void)
+{
+    char w[CMD_MAX_WORDS][ARQ_EVENT_TEXT_MAX];
+    TEST_ASSERT_EQUAL_INT(0, split_words("", w));
+    TEST_ASSERT_EQUAL_INT(2, split_words("  A\t B  ", w));
+    TEST_ASSERT_EQUAL_STRING("B", w[1]);
+    TEST_ASSERT_EQUAL_INT(8, split_words("1 2 3 4 5 6 7 8", w));
+    TEST_ASSERT_EQUAL_INT(-1, split_words("1 2 3 4 5 6 7 8 9", w));
+    TEST_ASSERT_EQUAL_INT(1, split_words("ABCDEFGHIJKLMNO", w));     /* 15 */
+    TEST_ASSERT_EQUAL_INT(-1, split_words("ABCDEFGHIJKLMNOP", w));   /* 16 */
+}
+
+/* Secondaries go on the air only as a CRC16: no alphabet, unchanged. */
+void test_cmd_mycall_secondary_any_characters(void)
+{
+    char cmd[] = "MYCALL TEST1 N0CALL/P";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_EQUAL(2, captured_cmd_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_ADD_SECONDARY_CALLSIGN, captured_cmd.type);
+    TEST_ASSERT_EQUAL_STRING("N0CALL/P", captured_cmd.arg0);
+}
+
+void test_cmd_mycall_needs_a_word_boundary(void)
+{
+    char cmd[] = "MYCALLTEST1";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* A primary longer than 15 characters used to be cut to 15, which named a
+ * different station; it is WRONG now. */
+void test_cmd_mycall_over_15_is_wrong(void)
+{
+    char cmd[] = "MYCALL ABCDEFGHIJKLMNOP";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+void test_cmd_connect_with_ssids(void)
+{
+    char cmd[] = "CONNECT KD0ABC-5 K7XYZ-R";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_CONNECT, captured_cmd.type);
+    TEST_ASSERT_EQUAL_STRING("KD0ABC-5", captured_cmd.arg0);
+    TEST_ASSERT_EQUAL_STRING("K7XYZ-R", captured_cmd.arg1);
+}
+
+/* The digipeated form used to be answered OK and connected direct, the path
+ * dropped.  Mercury has no relay: WRONG. */
+void test_cmd_connect_via_is_wrong(void)
+{
+    char one[] = "CONNECT SRC1 DST1 VIA RLY1";
+    execute_control_command(one);
+    assert_wrong_response();
+
+    tcp_write_call_count = 0;
+    char two[] = "CONNECT SRC1 DST1 VIA RLY1 RLY2";
+    execute_control_command(two);
+    assert_wrong_response();
+
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* Long names and any characters still connect: the CALL carries MYCALL's
+ * primary, and the called station goes as a CRC16. */
+void test_cmd_connect_long_and_unusual_calls(void)
+{
+    char cmd[] = "CONNECT HERMES-GW-01 N0CALL/P";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_STRING("HERMES-GW-01", captured_cmd.arg0);
+    TEST_ASSERT_EQUAL_STRING("N0CALL/P", captured_cmd.arg1);
+}
+
+void test_cmd_connect_rejects_extra_words_and_long_calls(void)
+{
+    static const char *lines[] = {
+        "CONNECT SRC1 DST1 JUNK",
+        "CONNECT SRC1",
+        "CONNECT",
+        "CONNECT SRC1 ABCDEFGHIJKLMNOP",   /* 16: used to be cut to 15 */
+        "CONNECTX SRC1 DST1",
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", lines[i]);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("WRONG\r", (char *)last_tcp_write_buf, 6, lines[i]);
+    }
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* The bandwidth stays mandatory,
+ * and what used to be ignored after it is now WRONG. */
+void test_cmd_cqframe_rejects_malformed(void)
+{
+    static const char *lines[] = {
+        "CQFRAME CALL1",
+        "CQFRAME CALL1 2300 JUNK",
+        "CQFRAME CALL1 2300x",
+        "CQFRAME CALL1 1000",
+        "CQFRAME N0CALL/P 2300",           /* cannot be coded into the CQ */
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", lines[i]);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("WRONG\r", (char *)last_tcp_write_buf, 6, lines[i]);
+    }
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* ---- GATEWAY and DRIVELEVEL */
+
+/* GATEWAY is a no-op, with any argument or none. */
+void test_cmd_gateway(void)
+{
+    static const char *lines[] = {
+        "GATEWAY", "GATEWAY N0CALL", "GATEWAY ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "GATEWAY 1 2 3 4 5 6 7 8 9 10",
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", lines[i]);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("OK\r", (char *)last_tcp_write_buf, 3, lines[i]);
+    }
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* DRIVELEVEL sets the attenuation, rounded to a whole dB, without keying. */
+void test_cmd_drivelevel(void)
+{
+    static const struct { const char *line; float db; } cases[] = {
+        { "DRIVELEVEL -12", -12.0f }, { "DRIVELEVEL -9.5", -10.0f },
+        { "DRIVELEVEL 0", 0.0f },     /* a full slider: the set levels, no more */
+        { "DRIVELEVEL -30.4", -30.0f }, { "DRIVELEVEL 0.4", 0.0f },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", cases[i].line);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        assert_ok_response();
+        TEST_ASSERT_EQUAL_FLOAT_MESSAGE(cases[i].db, mock_drive_db, cases[i].line);
+    }
+    /* attenuation on the tuning carrier, not its level: TUNE's stays */
+    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_level_dbfs);
+    TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* Anything but one number from -30 to 0 is WRONG and changes nothing. */
+void test_cmd_drivelevel_bad_is_wrong(void)
+{
+    static const char *lines[] = {
+        "DRIVELEVEL", "DRIVELEVEL abc", "DRIVELEVEL 3", "DRIVELEVEL -31",
+        "DRIVELEVEL nan", "DRIVELEVEL -inf", "DRIVELEVEL -5dB", "DRIVELEVEL - 7",
+        "DRIVELEVEL -5 -6",
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", lines[i]);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("WRONG\r", (char *)last_tcp_write_buf, 6, lines[i]);
+    }
+    TEST_ASSERT_EQUAL(0, mock_drive_calls);
+    TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
+}
+
+/* ---- Whole-word arguments: LISTEN, PUBLIC and CHAT used to decide on the
+ * argument's second letter, and to take any line starting with their name */
+
+void test_cmd_listen_decides_on_the_whole_word(void)
+{
+    static const char *lines[] = {
+        "LISTEN NO",
+        "LISTEN ONX",       /* was LISTEN ON ('N') */
+        "LISTEN AN",        /* was LISTEN ON ('N') */
+        "LISTEN OF",        /* was LISTEN OFF ('F') */
+        "LISTEN ON OFF",
+        "LISTEN",
+        "LISTENING ON",
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", lines[i]);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("WRONG\r", (char *)last_tcp_write_buf, 6, lines[i]);
+    }
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+void test_cmd_public_off(void)
+{
+    char cmd[] = "PUBLIC OFF";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_SET_PUBLIC, captured_cmd.type);
+    TEST_ASSERT_FALSE(captured_cmd.flag);
+}
+
+void test_cmd_public_bad_arg_is_wrong(void)
+{
+    static const char *lines[] = { "PUBLIC MAYBE", "PUBLIC", "PUBLIC ON ON", "PUBLICON" };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", lines[i]);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("WRONG\r", (char *)last_tcp_write_buf, 6, lines[i]);
+    }
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+void test_cmd_chat_off_and_bad_arg(void)
+{
+    char off[] = "CHAT OFF";
+    execute_control_command(off);
+    assert_ok_response();
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+
+    tcp_write_call_count = 0;
+    char bad[] = "CHAT MAYBE";
+    execute_control_command(bad);
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
 }
 
 /* ---- TUNE: the ATU tuning carrier (VARA syntax) ----
@@ -1125,6 +1476,66 @@ void test_cmd_p2p(void)
     execute_control_command(cmd);
 
     assert_ok_response();
+}
+
+/* Pat sends P2P SESSION before a peer-to-peer CONNECT, without reading the
+ * answer: it is OK, as P2P alone is.  Any other word is WRONG. */
+void test_cmd_p2p_session(void)
+{
+    char cmd[] = "P2P SESSION";
+    execute_control_command(cmd);
+    assert_ok_response();
+
+    tcp_write_call_count = 0;
+    char other[] = "P2P NOW";
+    execute_control_command(other);
+    assert_wrong_response();
+}
+
+/* A command name needs a word boundary after it, for the rest of the parser
+ * too: these used to be read as their head command ("ABORTX" aborted a live
+ * session). */
+void test_cmd_word_boundary_for_the_rest(void)
+{
+    static const char *lines[] = {
+        "ABORTX", "ABORT SESSION", "DISCONNECTX", "DISCONNECT NOW",
+        "VERSIONX", "VERSION 1", "BUFFERX", "BUFFER NOW", "SNX", "BITRATEX",
+        "P2PX", "COMPRESSIONX", "IGNOREKISSDCDX", "BUSYDETECTX", "TUNEX",
+        "MODEX", "BEACONMODEX", "BWF", "CALLINTX", "RETRIESX",
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", lines[i]);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("WRONG\r", (char *)last_tcp_write_buf, 6, lines[i]);
+    }
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* Words after a valid argument used to be ignored by positional sscanf. */
+void test_cmd_extra_words_after_a_valid_command(void)
+{
+    static const char *lines[] = {
+        "MONITOR ON junk", "TUNE OFF junk", "TUNE -5x", "BW500x",
+        "MODE 7 junk", "BEACONMODE 8 junk", "BUSYDETECT ON junk",
+        "BUSYRESEED OFF junk", "LISTEN OFF junk", "PUBLIC ON junk",
+        "CHAT OFF junk", "CWID ON junk",
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "%s", lines[i]);
+        tcp_write_call_count = 0;
+        execute_control_command(cmd);
+        TEST_ASSERT_EQUAL_MESSAGE(1, tcp_write_call_count, lines[i]);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE("WRONG\r", (char *)last_tcp_write_buf, 6, lines[i]);
+    }
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+    TEST_ASSERT_EQUAL(0, mock_tune_start_calls);
+    TEST_ASSERT_EQUAL(0, mock_tune_stop_calls);
 }
 
 void test_cmd_unknown(void)
@@ -2507,6 +2918,27 @@ int main(void)
     RUN_TEST(test_cmd_winlink_session);
     RUN_TEST(test_cmd_cwid_on_off);
     RUN_TEST(test_cmd_cwid_bad_arg_is_wrong);
+    RUN_TEST(test_cmd_cwid_lower_case_arg_is_ok);
+    RUN_TEST(test_callsign_encodable);
+    RUN_TEST(test_cmd_mycall_uncodable_primary_still_ok);
+    RUN_TEST(test_cmd_connect_after_uncodable_mycall);
+    RUN_TEST(test_cmd_refused_mycall_keeps_connect_state);
+    RUN_TEST(test_split_words_limits);
+    RUN_TEST(test_cmd_mycall_secondary_any_characters);
+    RUN_TEST(test_cmd_mycall_needs_a_word_boundary);
+    RUN_TEST(test_cmd_mycall_over_15_is_wrong);
+    RUN_TEST(test_cmd_connect_with_ssids);
+    RUN_TEST(test_cmd_connect_long_and_unusual_calls);
+    RUN_TEST(test_cmd_connect_via_is_wrong);
+    RUN_TEST(test_cmd_connect_rejects_extra_words_and_long_calls);
+    RUN_TEST(test_cmd_cqframe_rejects_malformed);
+    RUN_TEST(test_cmd_gateway);
+    RUN_TEST(test_cmd_drivelevel);
+    RUN_TEST(test_cmd_drivelevel_bad_is_wrong);
+    RUN_TEST(test_cmd_listen_decides_on_the_whole_word);
+    RUN_TEST(test_cmd_public_off);
+    RUN_TEST(test_cmd_public_bad_arg_is_wrong);
+    RUN_TEST(test_cmd_chat_off_and_bad_arg);
     RUN_TEST(test_cmd_tune_on);
     RUN_TEST(test_cmd_tune_on_fractional_level);
     RUN_TEST(test_cmd_tune_off);
@@ -2547,6 +2979,9 @@ int main(void)
     RUN_TEST(test_cmd_disconnect);
     RUN_TEST(test_cmd_cqframe);
     RUN_TEST(test_cmd_p2p);
+    RUN_TEST(test_cmd_p2p_session);
+    RUN_TEST(test_cmd_word_boundary_for_the_rest);
+    RUN_TEST(test_cmd_extra_words_after_a_valid_command);
     RUN_TEST(test_cmd_unknown);
     RUN_TEST(test_cmd_submit_failure);
     RUN_TEST(test_cmd_abort);

@@ -408,11 +408,15 @@ static void cb_notify_pending_again(const char *remote_call)
     g_pending_ms = time_now_ms();
 }
 
+/* Not the session's bandwidth: a CANCELPENDING tells the host only, and the
+ * call it ends may still connect from the ACCEPT fallback, whose session must
+ * run at the bandwidth the ACCEPT named (min(ours, the CALL's)).  Cleared, it
+ * fell back to ours: a BW500 caller's late connect to a BW2300 callee ran the
+ * two ends on different rungs and floors.  The FSM clears it when the call
+ * ends without a session (arq_clear_session_bw), and a session's end does
+ * (cb_notify_disconnected). */
 static void cb_notify_cancelpending(void)
 {
-    pthread_mutex_lock(&g_conn_lock);
-    arq_conn.session_bw = 0;
-    pthread_mutex_unlock(&g_conn_lock);
     arq_tnc_send_cancelpending();
     HLOGI(LOG_COMP, "Incoming connection cancelled");
 }
@@ -1101,7 +1105,7 @@ static void abort_hold(uint64_t now)
     bool told = g_host_told;
     pthread_mutex_unlock(&g_conn_lock);
     bool owed = told && g_sess.conn_state == ARQ_CONN_DISCONNECTING &&
-                !(g_sess.teardown == ARQ_TD_SENT && !g_sess.tx_active);
+                !(arq_td_sent(&g_sess) && !g_sess.tx_active);
     if (owed && g_abort_hold_ms && now - g_abort_hold_ms >= ARQ_ABORT_SCAN_HOLD_MS)
     {
         /* Not reached while the FSM's ABORT bounds hold (~30 s). */
@@ -1492,6 +1496,13 @@ void arq_set_session_bw(int bw_hz, bool from_call)
     pthread_mutex_unlock(&g_conn_lock);
 }
 
+void arq_clear_session_bw(void)
+{
+    pthread_mutex_lock(&g_conn_lock);
+    arq_conn.session_bw = 0;
+    pthread_mutex_unlock(&g_conn_lock);
+}
+
 bool arq_handle_incoming_cq_frame(uint8_t *data, size_t frame_size)
 {
     char source_call[CALLSIGN_MAX_SIZE] = {0};
@@ -1729,7 +1740,7 @@ int arq_goodbye_progress(void)
 {
     pthread_mutex_lock(&g_sess_lock);
     int p = !arq_conn_state_has_peer(g_sess.conn_state) ? 0
-          : (g_sess.conn_state == ARQ_CONN_DISCONNECTING && g_sess.teardown == ARQ_TD_SENT) ? 2 : 1;
+          : (g_sess.conn_state == ARQ_CONN_DISCONNECTING && arq_td_sent(&g_sess)) ? 2 : 1;
     pthread_mutex_unlock(&g_sess_lock);
     return p;
 }

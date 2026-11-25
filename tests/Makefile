@@ -67,7 +67,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm test
             test_freedv_harq test_sock_wire test_rtp_wire test_hl2_wire test_hl2_dsp test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file test_car_short_msg \
             test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port test_net_probe \
-            test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore test_car_poll_size test_car_probe_up \
+            test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore test_car_poll_size test_car_pattern_late test_car_probe_up \
             test_mfsk_harq test_mfsk_modem test_psk_modem test_rx_inflight test_pattern_ack_detection \
             test_message_store test_ui_history test_ws_protocol \
             test_monitor_frame test_hermes_log test_host test_api_host test_bcast_carousel test_bcast_rx_host
@@ -204,6 +204,10 @@ floor_idle: sim/floor_idle.c $(CAROUSEL_SIM_SRC)
 
 # The carousel's invariants: completes, delivers intact, never keys over the peer
 test_carousel: sim/test_carousel.c $(CAROUSEL_SIM_SRC) $(UNITY_SRC)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# A pattern keyed on time is heard when its receiver learns its own keydown's end late
+test_car_pattern_late: sim/test_car_pattern_late.c $(CAROUSEL_SIM_SRC) $(UNITY_SRC)
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # The size of a poll, on carousel.c's own static functions

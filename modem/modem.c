@@ -177,6 +177,27 @@ float modem_get_tx_gain(void)
     return atomic_load(&g_tx_gain);
 }
 
+/* Host DRIVELEVEL: attenuation, MODEM_DRIVE_MIN_DB..0 dB, on everything the
+ * modem keys -- data frames below the operator's TX gain, the tuning carrier
+ * below the level TUNE set -- so a host can lower the drive but never raise
+ * it past what the operator set.  Not saved: each start is at 0 dB. */
+static _Atomic int   g_drive_milli  = 0;      /* dB * 1000 */
+static _Atomic float g_drive_linear = 1.0f;
+
+int modem_set_drive_db(float db)
+{
+    if (!isfinite(db) || db < MODEM_DRIVE_MIN_DB || db > 0.0f)
+        return -1;
+    atomic_store(&g_drive_milli, (int)lrintf(db * 1000.0f));
+    atomic_store(&g_drive_linear, powf(10.0f, db / 20.0f));
+    return 0;
+}
+
+static float tx_gain_now(void)
+{
+    return atomic_load(&g_tx_gain) * atomic_load(&g_drive_linear);
+}
+
 /* --- TX keying delay (ms), waited after PTT ON before audio is handed to
  * the playback device. Covers the local radio relay's switch time and,
  * beyond that, gives a slow external PTT (host app driving a serial/CAT
@@ -250,6 +271,15 @@ float modem_tune_level_dbfs(void)
     return (float)atomic_load(&g_tune_dbfs_milli) / 1000.0f;
 }
 
+/* The level the carrier is generated at: what TUNE set, lowered by the
+ * host's DRIVELEVEL.  tune_thread reads it for every chunk, so a carrier
+ * already on follows a change within ~100 ms. */
+static float modem_tune_effective_dbfs(void)
+{
+    float eff = (float)(atomic_load(&g_tune_dbfs_milli) + atomic_load(&g_drive_milli)) / 1000.0f;
+    return eff < MODEM_TUNE_MIN_DBFS ? MODEM_TUNE_MIN_DBFS : eff;
+}
+
 static void *tune_thread(void *unused)
 {
     (void)unused;
@@ -277,7 +307,7 @@ static void *tune_thread(void *unused)
             continue;
         }
 
-        float dbfs = modem_tune_level_dbfs();
+        float dbfs = modem_tune_effective_dbfs();
         double amp = pow(10.0, (double)dbfs / 20.0) * 2147483648.0;
         for (int i = 0; i < MODEM_TUNE_CHUNK_SAMPLES; i++)
         {
@@ -606,6 +636,31 @@ static void note_rx_freq_offset(const modem_codec_t *codec)
     uint64_t now = monotonic_ms();
     atomic_store(&g_rx_foff_hz, hz);
     atomic_store(&g_rx_foff_ms, now ? now : 1);
+}
+
+/* Carousel session seed (see arq_modem_set_crc_seed_fn).  While set, HARQ is
+ * off: consecutive carousel frames are different codewords, never copies. */
+static _Atomic bool g_crc_seed_active = false;
+
+/* The peer's offset, for the pattern detectors (mfsk_pattern_set_rx_offset):
+ * from its own MFSK frames only, those that carry the session's seed -- not a
+ * CALL from another station, nor an OFDM frame, which decodes only within the
+ * patterns' own search anyway.  The MFSK decoders search +/-94 Hz at every
+ * geometry; the pattern detector, centred, about 90 at the floor's and 45 at
+ * the 500 Hz floor's (BW500): a link between the two moved data and lost
+ * every ACK and BREAK (N3JXB and KG9NI, 2026-11-23: ~100 Hz apart, 0 of 13
+ * patterns heard).  The offset is in Hz whichever MFSK measured it.  Cleared when a session's seed is set or dropped
+ * (modem_apply_crc_seed).  Caller holds the codec instance's lock. */
+static void note_peer_pattern_offset(const modem_codec_t *codec, int mode, bool seeded)
+{
+    float hz;
+    if (!seeded || !atomic_load(&g_crc_seed_active) || !mercury_mode_is_mfsk(mode) ||
+        !codec->be->get_freq_offset || !codec->be->get_freq_offset(codec->ctx, &hz))
+        return;
+    float was = mfsk_pattern_rx_offset();
+    mfsk_pattern_set_rx_offset(hz);
+    if (fabsf(hz - was) >= 15.0f)
+        HLOGI("modem-rx", "the peer's MFSK arrives %+.0f Hz off: its patterns are looked for there", (double)hz);
 }
 
 bool modem_get_rx_freq_offset(float *hz, uint64_t *age_ms)
@@ -1697,7 +1752,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     }
 
     size_t total_samples = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;  /* pre-saturation peak magnitude across this burst */
 
     for (int i = 0; i < samples_head; i++)
@@ -1783,7 +1838,7 @@ static int send_modulated_keydown(generic_modem_t *g_modem, const arq_keydown_t 
     }
 
     size_t total = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;
     for (int i = 0; i < FREEDV_FS_8000 * TX_HEAD_SILENCE_MS / 1000; i++)
         tx_buffer[total++] = 0;
@@ -1911,7 +1966,7 @@ static int send_pattern_ack(generic_modem_t *g_modem, int mode, int pattern_kind
     }
 
     size_t k = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
+    float tx_gain = tx_gain_now();
     float peak_fs = 0.0f;
     for (int i = 0; i < samples_head; i++) tx_buffer[k++] = 0;
     /* MFSK generator emits int16 passband; scale up to int32 with tx_gain. */
@@ -2149,15 +2204,14 @@ static int harq_enabled(void)
     return !(e && e[0] == '0');
 }
 
-/* Carousel session seed (see arq_modem_set_crc_seed_fn).  While set, HARQ is
- * off: consecutive carousel frames are different codewords, never copies. */
-static _Atomic bool g_crc_seed_active = false;
 
 static void modem_apply_crc_seed(uint16_t seed)
 {
     atomic_store(&g_crc_seed_active, seed != 0);
-    /* The session's patterns, too: only its peer's ACK/BREAK count. */
+    /* The session's patterns, too: only its peer's ACK/BREAK count -- at
+     * nominal until its first MFSK frame says where it is. */
     mfsk_pattern_set_session(seed);
+    mfsk_pattern_set_rx_offset(0.0f);
     pthread_mutex_lock(&modem_pool_lock);
     for (int i = 0; i < modem_mode_pool_n; i++)
     {
@@ -2848,6 +2902,8 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         rx_status = be->get_rx_status(ctx);
         be->get_stats(ctx, &sync, &snr_est);
         bool seeded = nbytes_out > 0 && be->rx_crc_seeded && be->rx_crc_seeded(ctx);
+        if (nbytes_out > 0 && !monitor)
+            note_peer_pattern_offset(&state->codec, state->mode, seeded);
         pthread_mutex_unlock(ilock);
 
         /* Diagnosis: what the decoder actually saw.  sync, the status bits and

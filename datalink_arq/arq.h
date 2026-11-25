@@ -281,6 +281,9 @@ int arq_reported_bandwidth_hz(void);
 /* The FSM took a CALL (from_call: the session gets min(ours, its)) or an
  * ACCEPT (the session gets its) advertising bw_hz. */
 void arq_set_session_bw(int bw_hz, bool from_call);
+/* The call the FSM was answering is over without a session (the ACCEPT
+ * fallback ended, or there was none): back to our own bandwidth. */
+void arq_clear_session_bw(void);
 
 /**
  * @brief Queue outbound payload bytes for ARQ transmission.
