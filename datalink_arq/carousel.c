@@ -3163,8 +3163,34 @@ static int s_idle_rung(car_t *c, uint64_t now)
 }
 
 /* S answers M's round (or its REQ about one) as its receiver. */
+/* A silence on an untried rung, held at the fallback (CAR_T_W), settled by
+ * what M sent next.  A REQ about a round I answered: M never had my poll, so
+ * the rung was never asked -- untried still.  Anything else: the probe is
+ * scored lost, as the fallback scored it before -- unless the REQ names that
+ * round, which s_answer scores itself.  On air (sBitx bench, 12 dB,
+ * 2026-11-25) a DATAC16 poll asking for DATAC17 went unheard, DATAC17 scored
+ * 0 of 1 and was never asked again, and 8 KB went on DATAC1 in 30 s rounds:
+ * 218 s where the next run took 76.  Not held unscored either way, nor on a
+ * rung near its threshold: there the probe is mostly of a rung the channel
+ * does not carry, and asking it again cost an exchange (sim, cliff:12 one way
+ * +24 % unscored; QAM16C2 at 12 dB, ctlloss:12:12:0.1 seed 14, +23 s). */
+static void s_settle_probe(car_t *c, uint64_t now, bool req)
+{
+    for (int lv = 1; lv < CAR_NLEVELS; lv++) {
+        if (c->rung[lv].rounds || !c->rung[lv].probe_at) continue;
+        if (req && c->req_mk == c->rx_mk) {
+            car_trace(c, "rx: my poll for lv=%d was lost -- lv=%d untried still", lv, lv);
+            c->rung[lv].probe_at = 0;
+        } else if (!(req && c->req_lv == lv && c->req_n > 0)) {
+            c->loss_est = 0.5 * c->loss_est + 0.5;
+            measure_level(c, lv, 1, 1.0, now);
+        }
+    }
+}
+
 static void s_answer(car_t *c, uint64_t now, bool req)
 {
+    s_settle_probe(c, now, req);
     if (req) {
         /* M's round had no answer from me.  None of it came: score it lost,
          * as the frames M says it sent.  Taken as my last poll's size (the
@@ -3202,6 +3228,7 @@ static void s_answer_both(car_t *c, uint64_t now)
     /* Nothing of mine to send: the answer to M's round alone, which may be a
      * pattern -- M offers me its turn on every round of a clean link. */
     if (!has_data(c)) { s_answer(c, now, false); return; }
+    s_settle_probe(c, now, false);
     if (c->round_frames > 0) rx_measure(c, c->round_lv, now);
     deliver_in_order(c);
     rx_trace(c);
@@ -3687,8 +3714,14 @@ void car_on_tx_done(car_t *c, uint64_t now)
          * so this is in time. */
         if (c->s_asked_new) {
             c->s_asked_new = false;
+            /* ...the round M may send: one frame more than I asked for when
+             * the rest of its data fits in it (round_n).  Sized as asked, the
+             * fallback came 1.2 s before the end of M's two-frame answer to a
+             * one-frame probe, and I left the rung under it: QAM16C2 scored
+             * dead at 12 dB (sim, cliff:12, UUCP-like script, seed 1). */
+            int n = asked_n(c) < peer_keydown_cap(c, c->poll_level) ? asked_n(c) + 1 : asked_n(c);
             uint64_t round_end = now + D_OFDM_MS + TURN_G_MS + LEAD_MAX_MS +
-                                 round_air(c, c->poll_level, asked_n(c)) + TAIL_MS + d_of_mode(lmode(c, c->poll_level));
+                                 round_air(c, c->poll_level, n) + TAIL_MS + d_of_mode(lmode(c, c->poll_level));
             arm(c, CAR_T_W, round_end);
         }
         return;
@@ -3813,8 +3846,18 @@ void car_on_time(car_t *c, uint64_t now)
                 car_trace(c, "rx: no round on the floor -- staying there: I hear the peer below the control mode");
             } else if (c->rx_level == c->poll_level && c->s_prev_lv >= 0 && c->poll_level != c->s_prev_lv) {
                 car_trace(c, "rx: no round on lv=%d -- back to lv=%d", c->poll_level, c->s_prev_lv);
-                c->round_seen = 0; c->round_frames = asked_n(c);
-                rx_measure(c, c->poll_level, now);
+                /* On a rung never tried, that the SNR gives room to spare,
+                 * the score waits for what M sends next (s_settle_probe): my
+                 * poll may be what was lost, and one lost frame there scores
+                 * the rung at half its rate for the rest of the session.
+                 * probe_at marks it held (it is 0 until a rung is measured). */
+                if (!c->rung[c->poll_level].rounds && !c->rung[c->poll_level].probe_at &&
+                    !level_marginal(c, c->poll_level)) {
+                    c->rung[c->poll_level].probe_at = now ? now : 1;
+                } else {
+                    c->round_seen = 0; c->round_frames = asked_n(c);
+                    rx_measure(c, c->poll_level, now);
+                }
                 bind_rx(c, c->s_prev_lv);
             }
         }

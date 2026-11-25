@@ -1,5 +1,6 @@
 /* tests/sim/test_car_probe_up.c -- a receiver does not probe a faster rung
- * from one that has delivered nothing.  Includes carousel.c for its statics.
+ * from one that has delivered nothing, and a probe whose poll was lost does
+ * not count against the rung.  Includes carousel.c for its statics.
  *
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -46,10 +47,33 @@ void test_a_delivered_round_still_probes_up(void)
     TEST_ASSERT_TRUE(choose_level(&car, 10000) > 3);
 }
 
+/* On air (sBitx bench, 2026-11-25): my poll asking for an untried rung went
+ * unheard, and M's REQ about the round I had answered came after my fallback.
+ * The rung was never asked: untried still, not 0 of 1. */
+void test_a_lost_poll_leaves_the_rung_untried(void)
+{
+    car.rung[5].probe_at = 7000;             /* held at the fallback (CAR_T_W) */
+    car.rx_mk = 9; car.req_mk = 9; car.req_lv = 3; car.req_n = 1;   /* REQ: a round I had */
+    s_settle_probe(&car, 10000, true);
+    TEST_ASSERT_EQUAL_INT(0, car.rung[5].rounds);
+    TEST_ASSERT_TRUE(car.rung[5].probe_at == 0);
+}
+
+/* Anything else M sends next: the probe was lost, scored as the fallback did. */
+void test_a_lost_probe_is_scored_when_the_next_round_comes(void)
+{
+    car.rung[5].probe_at = 7000;
+    s_settle_probe(&car, 10000, false);
+    TEST_ASSERT_EQUAL_INT(1, car.rung[5].rounds);
+    TEST_ASSERT_TRUE(fabs(car.rung[5].lost - 1.0) < 1e-9);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_a_lost_first_round_does_not_probe_up);
     RUN_TEST(test_a_delivered_round_still_probes_up);
+    RUN_TEST(test_a_lost_poll_leaves_the_rung_untried);
+    RUN_TEST(test_a_lost_probe_is_scored_when_the_next_round_comes);
     return UNITY_END();
 }
