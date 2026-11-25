@@ -335,7 +335,7 @@ static void test_carousel_unheard_polls_free_their_slots(void)
 /* B's answer to a floor poll of A's, the poll A's answer to a round of B's
  * it heard, lost and never sensed: B is mid-stream, and continues on one
  * anchor or the other, so A keeps the poll's continuation slots (m_watch,
- * after_round).  Freed, A's next keydown went into B's continuation when
+ * CAR_LOG_AFTER_ROUND).  Freed, A's next keydown went into B's continuation when
  * something else held it past the gap before them (on air, VE4KLM <- K7EK
  * 2026-11-24 23:51Z and 23:52Z).  Kept, they still leave A the gap: its
  * re-poll goes there, no longer held than before.  The frames: B's round

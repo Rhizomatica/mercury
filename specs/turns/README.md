@@ -109,13 +109,48 @@ one off the air for 97 s (NW8L-KA8RYU, IONOS MPD at -5 dB).
 response slot, and `CarouselTurns.cfg` with the rule added gives a
 `NoOverlap` counterexample at once.
 
+### Not after a round M heard (#670)
+
+The premise holds for a poll S never heard.  It does not for a keydown M
+keyed after hearing a round of S's (`hr`, logged as `ar`; `car_mlog_t`:
+`CAR_LOG_AFTER_ROUND`): S is then mid-stream, and its silence in the
+response slot means it missed the keydown and continues the round M heard,
+or answered and M missed that, and continues this one.  At the floor M
+misses a round whenever its MFSK preamble fades: carrier sense is a
+preamble search.  On air (VE4KLM <- K7EK, 2026-11-24 23:51Z and 23:52Z,
+1.9.25) the caller freed such a keydown's slots and keyed 1.3 s into the
+callee's continuation, twice.  `MWatch` now leaves those slots as they are,
+and never frees a keydown whose response slot M heard S finish (`done &
+1u` in the code; the model had no need of it while carrier sense was
+ideal).
+
+`CSMISS` lets carrier sense miss a whole round of S's in the response slot:
+`"after"` only for a keydown logged after a round (the on-air case),
+`"any"` for any.
+
+- `CarouselTurns_watchmiss.cfg`: `CarouselTurns_watch.cfg` with `CSMISS =
+  "after"`.  No error, 5.74 M distinct states, the same graph as
+  `CarouselTurns_watch.cfg` (21 min, 8 workers): with the rule, `MWatch`
+  never frees those slots, so a missed carrier there changes nothing M
+  does.
+- `Mut_freeafter.cfg`: the same with the rule before #670 (`MWatch` frees
+  those slots too).  Violates `NoOverlap`: M polls, hears S's round, keys
+  Q; S answers Q unheard and unsensed, continues in slot 1, and M, the
+  slots freed, keys over the continuation -- the VE4KLM collision.
+  A 26-state counterexample (`NoContOverlap`, 0.43 M distinct states).  With
+  `NoOverlap` instead the shortest one is that collision's cousin: the
+  freed response slot loses its guard, and M keys into the tail of S's
+  unheard answer.
+
 - `CarouselTurns_watch.cfg`: the slot-closing rules with `MWatch`, at
   `H = 16` (the full `H = 24` does not exhaust, as for
-  `CarouselTurns_close.cfg`).  No error, 2.15 M distinct states (4 min,
-  4 workers).
+  `CarouselTurns_close.cfg`).  No error, 5.74 M distinct states
+  with #670's `hr`/`ar` (2.15 M before; 18 min, 8 workers).
 - `Mut_csmiss.cfg`: M's carrier sense misses S's round in the response
-  slot.  Violates `NoOverlap`: M frees the slots, then keys over S's
-  continuation.  This is the residual risk, next to `FalsePattern`'s.  With
+  slot, whatever came before it.  Violates `NoOverlap`: M frees the slots,
+  then keys over S's continuation.  Since #670 that is a residual risk only
+  after rounds of S's M did not hear (`CSMISS = "any"`), next to
+  `FalsePattern`'s.  With
   the busy detector off, carrier sense is a decoder in sync, so a round M
   cannot sync on (a deep fade) is not sensed.  The watch samples carrier
   sense once a second from the slot's opening, and a floor round is far

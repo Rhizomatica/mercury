@@ -1867,7 +1867,12 @@ static uint64_t mslot_hi(const car_t *c, const car_mlog_t *l, int i) { return ms
 static void m_log_add(car_t *c, uint64_t e)
 {
     /* My keydown before this one ended at prev_e: data of S's heard since is
-     * a round this keydown answers (m_watch). */
+     * a round this keydown answers (m_watch).  Both are times on my clock,
+     * the io's now: prev_e when that keydown's TX ended (car_on_tx_done),
+     * peer_data_ms when a frame of S's was decoded (m_on_data), which is
+     * after it left the air by the decode latency -- so later, never sooner,
+     * than its true time.  A frame decoded after prev_e was on the air after
+     * my keydown, as a half-duplex link has it: S keys only once mine is over. */
     uint64_t prev_e = c->nmlog ? c->mlog[c->nmlog - 1].e : 0;
     bool after_round = c->peer_data_ms && c->peer_data_ms > prev_e;
     int keep = 0;
@@ -1881,8 +1886,8 @@ static void m_log_add(car_t *c, uint64_t e)
     car_mlog_t *l = &c->mlog[c->nmlog++];
     *l = c->m_kd;
     l->e = e; l->done = 0; l->tg = TG_MS;
-    l->pat = c->m_kind == KD_PATTERN_ACK || c->m_kind == KD_PATTERN_BREAK;
-    l->after_round = after_round;
+    l->flags = (c->m_kind == KD_PATTERN_ACK || c->m_kind == KD_PATTERN_BREAK ? CAR_LOG_PAT : 0) |
+               (after_round ? CAR_LOG_AFTER_ROUND : 0);
 }
 
 /* The earliest time from s at which M may key for len ms: clear, with a guard
@@ -1920,7 +1925,8 @@ static void m_close_slot(car_t *c, uint64_t te, int mk, bool pat, int slot)
         for (int j = 0; j < c->nmlog; j++) {
             const car_mlog_t *l = &c->mlog[j];
             if (slot > l->k || (l->done & (1u << slot))) continue;
-            if (pat ? !l->pat : (l->pat || l->mk != mk)) continue;
+            bool lpat = l->flags & CAR_LOG_PAT;
+            if (pat ? !lpat : (lpat || l->mk != mk)) continue;
             if (mslot_lo(c, l, slot) <= te && te <= mslot_hi(c, l, slot) + ds) { hits++; hj = j; }
         }
         if (hits == 1) { m_close_from(c, hj, slot); return; }
@@ -1949,7 +1955,7 @@ static void m_close_spent(car_t *c, uint64_t te, int mk)
     int hj = -1, hits = 0;
     for (int j = 0; j < c->nmlog; j++) {
         const car_mlog_t *l = &c->mlog[j];
-        if (l->pat || l->mk != mk) continue;
+        if ((l->flags & CAR_LOG_PAT) || l->mk != mk) continue;
         if (mslot_lo(c, l, 0) <= te && te <= mslot_hi(c, l, 0) + ds) { hits++; hj = j; }
     }
     if (hits != 1 || c->mlog[hj].done == 0xFF) return;
@@ -1980,13 +1986,13 @@ static void m_watch(car_t *c, uint64_t now)
     bool freed = false;
     for (int j = 0; j < c->nmlog; j++) {
         car_mlog_t *l = &c->mlog[j];
-        if (!l->k || l->pat || (l->done & 1u)) continue;
+        if (!l->k || (l->flags & (CAR_LOG_PAT | CAR_LOG_KEPT)) || (l->done & 1u)) continue;
         uint64_t lo = mslot_lo(c, l, 0), hi = mslot_hi(c, l, 0);
         if (now < hi) {
             uint64_t t = now < lo ? lo : now + WATCH_MS;
             if (t > hi) t = hi;
             if (!next || t < next) next = t;
-        } else if (c->last_carrier_ms < lo && l->after_round) {
+        } else if (c->last_carrier_ms < lo && (l->flags & CAR_LOG_AFTER_ROUND)) {
             /* After a round of S's I heard: S is mid-stream, and its
              * silence is no sign it has stopped.  It missed this poll, and
              * continues the round I heard; or it answered and I missed that,
@@ -1995,7 +2001,7 @@ static void m_watch(car_t *c, uint64_t now)
              * 23:51Z and 23:52Z: a floor round neither decoded nor sensed,
              * and the poll after it keyed 1.3 s into K7EK's continuation). */
             car_trace(c, "rx: nothing on the air in the peer's answer slot -- after its round, its %d continuation slots are kept", l->k);
-            l->done |= 1u;                   /* the answer slot only: it is over */
+            l->flags |= CAR_LOG_KEPT;        /* the slots as they are, the answer's guard too */
         } else if (c->last_carrier_ms < lo) {
             car_trace(c, "rx: nothing on the air in the peer's answer slot -- its %d continuation slots are free", l->k);
             l->done = 0xFF;
@@ -2268,7 +2274,7 @@ static int m_round_fit(const car_t *c, int lv, uint64_t now)
     if (!c->master) return 0;
     const car_mlog_t *l = NULL;
     for (int j = 0; j < c->nmlog; j++)
-        if (!c->mlog[j].pat && c->mlog[j].mk == c->poll_id && (!l || c->mlog[j].e > l->e)) l = &c->mlog[j];
+        if (!(c->mlog[j].flags & CAR_LOG_PAT) && c->mlog[j].mk == c->poll_id && (!l || c->mlog[j].e > l->e)) l = &c->mlog[j];
     if (!l) return 0;
     uint64_t lo = mslot_lo(c, l, 0);
     if (now <= lo + TAIL_MS) return 0;
