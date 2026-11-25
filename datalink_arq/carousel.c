@@ -1404,7 +1404,8 @@ static int fall_level(const car_t *c, int top)
     return lv < top ? lv : top;
 }
 
-static int choose_level(const car_t *c, uint64_t now)
+/* The measured rung that delivers most per second (-1: none measured). */
+static int best_level(const car_t *c, double *pgp)
 {
     int best = -1;
     double best_gp = -1.0;
@@ -1413,6 +1414,14 @@ static int choose_level(const car_t *c, uint64_t now)
         double gp = level_goodput(c, lv);
         if (gp > best_gp) { best_gp = gp; best = lv; }
     }
+    if (pgp) *pgp = best_gp;
+    return best;
+}
+
+static int choose_level(const car_t *c, uint64_t now)
+{
+    double best_gp;
+    int best = best_level(c, &best_gp);
     if (best < 0) {
         /* A start stays where the connect's SNR put it: a fade's reading
          * started fading +10 one rung low, and seed 58 took 17 % longer. */
@@ -2337,6 +2346,29 @@ static int deaf_rung(const car_t *c, int lv)
          ? lv : 0;
 }
 
+/* No probe of a rung within half the gate of its threshold for a short
+ * message: one frame carries it on the rung that delivers best, and the
+ * probe wins nothing for it -- it only risks the exchange.  On air (sBitx
+ * bench, 2026-11-25, UUCP at 9-17 dB) short replies were asked on
+ * QAM16C2 at 12 dB and a frame lost, 30-40 s each time, in 6 sessions
+ * of 16.  Short is what the peer's backlog says, or, with nothing said,
+ * as long as its last message -- a guess: after UUCP's short commands
+ * comes a file.  So a rung with more room is still probed (the whole
+ * gate cost 14 % at cliff:8, where DATAC17 carried the file), and so is
+ * anything for a peer whose backlog is not short. */
+static int no_marginal_probe(const car_t *c, int lv)
+{
+    size_t want = s_peer_expect(c);
+    if (!want && c->peer_has_data && c->peer_last_msg) want = peer_next_guess(c);
+    int best = best_level(c, NULL);
+    if (best > 0 && lv > best && c->snr_valid && c->snr_ema < level_min_db(c, lv) + SNR_GATE_DB / 2 &&
+        want && want <= BL_SMALL_BYTES) {
+        car_trace(c, "rx: a short message -- lv=%d, no probe of lv=%d", best, lv);
+        return best;
+    }
+    return lv;
+}
+
 static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
 {
     if (peer_direction_done(c)) {
@@ -2346,6 +2378,7 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
     }
     bool floor = c->poll_level == 0 && c->io.pattern;
     int lv = choose_level(c, now);
+    lv = no_marginal_probe(c, lv);
     /* Leave the floor only when a poll can reach the sender: asking for
      * another rung re-binds my decoder to it at once.  And a receiver that
      * hears the peer's control only on MFSK stays there (deaf_rung). */
