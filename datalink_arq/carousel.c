@@ -3197,10 +3197,13 @@ static void s_settle_probe(car_t *c, uint64_t now, bool req)
 {
     for (int lv = 1; lv < CAR_NLEVELS; lv++) {
         if (c->rung[lv].rounds || !c->rung[lv].probe_at) continue;
-        if (req && c->req_mk == c->rx_mk) {
+        if (req && c->req_mk == c->rx_mk && c->req_n > 0) {   /* paired with the branch below */
             car_trace(c, "rx: my poll for lv=%d was lost -- lv=%d untried still", lv, lv);
             c->rung[lv].probe_at = 0;
         } else if (!(req && c->req_lv == lv && c->req_n > 0)) {
+            /* rx_score's update with loss 1, by hand: rx_score itself would
+             * overwrite round_seen/round_frames, which the rx_measure of the
+             * round being answered still needs right after this. */
             c->loss_est = 0.5 * c->loss_est + 0.5;
             measure_level(c, lv, 1, 1.0, now);
         }
@@ -3881,7 +3884,7 @@ void car_on_time(car_t *c, uint64_t now)
                  * probe_at marks it held (it is 0 until a rung is measured). */
                 if (!c->rung[c->poll_level].rounds && !c->rung[c->poll_level].probe_at &&
                     !level_marginal(c, c->poll_level)) {
-                    c->rung[c->poll_level].probe_at = now ? now : 1;
+                    c->rung[c->poll_level].probe_at = now ? now : 1;   /* 0 would read as unmeasured */
                 } else {
                     c->round_seen = 0; c->round_frames = asked_n(c);
                     rx_measure(c, c->poll_level, now);

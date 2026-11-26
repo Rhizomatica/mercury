@@ -265,7 +265,8 @@ typedef struct {
         int      probe_fails;       /* its rounds in a row that lost half */
         double   p_ok;              /* the delivery it showed when it last delivered */
         uint32_t round_at;          /* polls, when last measured */
-        uint64_t probe_at, backoff_ms;
+        uint64_t probe_at, backoff_ms;  /* probe_at with rounds == 0: a probe held at the
+                                         * fallback, not yet scored (s_settle_probe) */
     } rung[CAR_NLEVELS];
     uint32_t polls;
     double   loss_est;

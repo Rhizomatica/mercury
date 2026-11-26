@@ -81,6 +81,17 @@ void test_an_unmeasured_start_follows_a_higher_reading(void)
     TEST_ASSERT_EQUAL_INT(4, choose_level(&car, 10000));
 }
 
+/* A REQ naming the held rung's round itself: settle leaves it held, and
+ * s_answer's own rx_score of the REQ measures it -- once, not twice. */
+void test_a_req_for_the_held_round_is_scored_by_the_req_alone(void)
+{
+    car.rung[5].probe_at = 7000;
+    car.rx_mk = 9; car.req_mk = 10; car.req_lv = 5; car.req_n = 1;   /* a round I never had */
+    s_settle_probe(&car, 10000, true);
+    TEST_ASSERT_EQUAL_INT(0, car.rung[5].rounds);
+    TEST_ASSERT_TRUE(car.rung[5].probe_at == 7000);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -88,6 +99,7 @@ int main(void)
     RUN_TEST(test_a_delivered_round_still_probes_up);
     RUN_TEST(test_a_lost_poll_leaves_the_rung_untried);
     RUN_TEST(test_a_lost_probe_is_scored_when_the_next_round_comes);
+    RUN_TEST(test_a_req_for_the_held_round_is_scored_by_the_req_alone);
     RUN_TEST(test_an_unmeasured_start_follows_a_higher_reading);
     return UNITY_END();
 }
