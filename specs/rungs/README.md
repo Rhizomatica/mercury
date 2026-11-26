@@ -260,7 +260,9 @@ Which model covers the other 2.0 changes:
   (`short_rung`): it changes only which rung and how many frames a short
   poll asks for, which `RungAgreement` leaves free.
 - M offers S its turn on a rung S has just asked for, with its poll in a
-  control frame in front (`offer_both` without `inline_poll`):
+  short control frame in front, on a rung not within `SNR_GATE_DB` of its
+  threshold (`offer_both` without `inline_poll`): both conditions only
+  narrow when `KD_BOTH` is offered;
   `RungAgreement` models `KD_BOTH` on any rung and its round lost alone,
   and the keydown is one of the lengths `specs/turns` allows (a control
   frame and a round under the cap, as `m_try`'s `KD_BOTH` already keys).
