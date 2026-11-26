@@ -2725,28 +2725,32 @@ static void m_decide_idle(car_t *c, uint64_t now)
 }
 
 /* My round, offering S its turn in the same exchange: on a clean link above
- * the floor, with the poll inline (no control frame), it costs 18 bytes of my
- * first frame -- and a request/response application's answer then comes in
- * S's answer to my round, not after a poll of mine for it (two keydowns an
- * exchange, not four).  S with nothing to send answers my round as before. */
+ * the floor it costs 18 bytes of my first frame with the poll inline, or the
+ * short control frame in front -- and a request/response application's
+ * answer then comes in S's answer to my round, not after a poll of mine for
+ * it (two keydowns an exchange, not four).  S with nothing to send answers
+ * my round as before. */
 #define OFFER_RECENT_MS 120000
 static bool offer_both(car_t *c, uint64_t now)
 {
     /* Not only with the poll inline: on a rung S has just asked me onto
      * (ok_lv not yet confirmed there) the poll goes in a control frame in
-     * front, which both_ok checks fits under my cap.  With the short control
-     * frame that is 1.9 s against an exchange: on air (sBitx bench,
+     * front, which both_ok checks fits under my cap.  Only on the short
+     * control frame, 1.9 s against an exchange: on air (sBitx bench,
      * 2026-11-25) a UUCP reply ready 0.9 s before the callee answered the
      * file's last round, on the QAM16C2 its probe had asked for, went only
      * after my poll for it, ~5 s later.  Sim (UUCP-like script, 30 seeds):
-     * cliff:12 -10 %, cliff:8..15 -4 %, fade:10/15 -4 %; fade:0 and
-     * step:3:10 +3 %; one way, both ways and chat unchanged. */
-    /* ...to a peer that sends: a lost answer costs the wait for the round S
-     * might have sent, and offered to a peer with nothing, every probe lost
-     * on a cliff cost it (sim, cliff:5 one way 155 -> 181 s).  And that has
-     * sent all it had: a peer with more goes by turns, as both ways in bulk
-     * -- offered every round there, a lossy link lost both ways at once
-     * (sim, nvis both ways 3743 -> 3853 s over 60 seeds). */
+     * cliff:12 -10 %, cliff:8..15 -4 %, fade:10/15 -4 %.  Behind the control
+     * mode (3.7 s, below ARQ_SNR_MIN_CTL_FAST_DB) it cost fade:0 and
+     * step:3:10 +3 % (#671 review).
+     *
+     * Offered only to a peer that sends: a lost answer costs the wait for
+     * the round S might have sent, and offered to a peer with nothing, every
+     * probe lost on a cliff cost it (sim, cliff:5 one way 155 -> 181 s).  And
+     * that has sent all it had: a peer with more goes by turns, as both ways
+     * in bulk -- offered every round there, a lossy link lost both ways at
+     * once (sim, nvis both ways 3743 -> 3853 s over 60 seeds). */
+    if (!inline_poll(c) && ctl_mode(c) != ARQ_CONTROL_MODE_FAST) return false;
     if (!peer_direction_done(c)) return false;
     if (!c->peer_has_data && !(c->peer_data_ms && now - c->peer_data_ms < OFFER_RECENT_MS)) return false;
     int lv = choose_level(c, now);
