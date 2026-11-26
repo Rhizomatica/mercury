@@ -1530,12 +1530,38 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         /* We gave up CALLING (retries exhausted) and returned to LISTENING,
          * but the callee is still retrying ACCEPT from our earlier CALL.
          * We already told the TNC "DISCONNECTED", so we can't reconnect.
-         * Send a DISCONNECT to tell the peer to stop retrying. */
+         * Send a DISCONNECT to tell the peer to stop retrying.
+         *
+         * One reply guard later, like every other answer: the ACCEPT decodes
+         * before its tail has played out, and the callee's radio is still
+         * keyed then.  Keyed at once, the DISCONNECT went out 10 ms after the
+         * decode, over the callee's PTT-OFF, and was lost; the callee sat in
+         * ACCEPTING, holding its scanning host, until the caller's next CALL
+         * (on air, VE4KLM -> K7EK, 2026-11-25 10:36:59Z: JNOS had given up
+         * the CONNECT at 60 s, 11 s before K7EK's MFSK ACCEPT decoded).
+         * LISTENING's timer is free unless the ACCEPT fallback holds it;
+         * then the DISCONNECT goes at once, as it always did. */
         if (ev->session_id == sess->session_id)
         {
-            HLOGI(LOG_COMP, "Stale ACCEPT in LISTENING — sending DISCONNECT to peer");
-            send_disconnect_frame(sess);
+            if (sess->deadline_ms == UINT64_MAX)
+            {
+                HLOGI(LOG_COMP, "Stale ACCEPT in LISTENING — sending DISCONNECT to peer after the reply guard");
+                sess->deadline_ms    = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
+                sess->deadline_event = ARQ_EV_TIMER_ACK;
+            }
+            else
+            {
+                HLOGI(LOG_COMP, "Stale ACCEPT in LISTENING — sending DISCONNECT to peer");
+                send_disconnect_frame(sess);
+            }
         }
+        break;
+
+    case ARQ_EV_TIMER_ACK:
+        /* The reply guard after a stale ACCEPT (RX_ACCEPT above) is over. */
+        sess->deadline_ms    = UINT64_MAX;
+        sess->deadline_event = ARQ_EV_TIMER_RETRY;
+        send_disconnect_frame(sess);
         break;
 
     case ARQ_EV_APP_CONNECT:
