@@ -14,7 +14,7 @@ and no power grid worth speaking of.
 [Docs](https://rhizomatica.github.io/mercury/) ·
 [Mailing list](https://lists.riseup.net/www/info/hermes-general) ·
 [Google Play (Android)](https://play.google.com/store/apps/details?id=org.rhizomatica.mercury) ·
-[App Store (iPhone, iPad)](https://apps.apple.com/app/mercury-hf-modem/id6822504870)
+[App Store (iPhone, iPad, Mac)](https://apps.apple.com/app/mercury-hf-modem/id6822504870)
 
 **Help wanted: Apple hardware.** We build and test the macOS and iOS apps in a
 macOS virtual machine on an Intel PC, so we have never run the arm64 builds
@@ -399,6 +399,14 @@ Keep Mercury on screen while you use it: it does not run in the background
 yet.  Later releases install over this one, because they are signed with the
 same key.  A build signed with another key has to be uninstalled first.
 
+### Install on macOS
+
+**From the Mac App Store.**  Install
+[Mercury HF Modem](https://apps.apple.com/app/mercury-hf-modem/id6822504870)
+on macOS 15 or later.  It is free, and updates arrive through the App
+Store.  Or download the signed and notarized `.dmg` from the
+[releases page](https://github.com/Rhizomatica/mercury/releases).
+
 ### Install on iOS (technology preview)
 
 **From the App Store.**  Install
@@ -518,7 +526,7 @@ pkcon install rpm-build gcc-c++ make hamlib-devel alsa-lib-devel pulseaudio-deve
 Then leave `devel-su` and build as the normal user:
 
 ```bash
-v=1.9.25    # the release to build (1.9.22 and older have no sailfish/)
+v=1.9.26    # the release to build (1.9.22 and older have no sailfish/)
 mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS
 curl -fsSL -o ~/rpmbuild/SOURCES/mercury-$v.tar.gz \
     https://github.com/Rhizomatica/mercury/archive/refs/tags/v$v.tar.gz
