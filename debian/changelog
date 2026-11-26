@@ -1,3 +1,35 @@
+mercury (1.9.26-1) unstable; urgency=medium
+
+  * Release 1.9.26.
+  * macos: the universal CLI, app and DMG target macOS 15.0, not the build machine's.
+  * carousel: a small message leaves a failing rung.
+  * carousel: a poll for a small answer asks only for the frames it takes.
+  * arq: the connect log names the carrier the handshake used.
+  * tcp: keep BPQ32 idle timer off a stalled inbound transfer (#392).
+  * arq: a session ended by a lost peer stops its keydown.
+  * modem: the frame-in-flight timer survives a pass with no decoder report.
+  * arq: arq:call_mfsk500, to call a scanning gateway without 27 s CALLs.
+  * carousel: no probe up from a rung that has delivered nothing.
+  * Fix flaky Integration Tests: rigctld reopen race, hold-test deadline, suite timeout.
+  * build: a build from a source archive (Download ZIP) knows its commit.
+  * arq: hold the host on PENDING into the accept fallback, so a late connect is not lost to a scanner hop.
+  * tcp: GATEWAY, DRIVELEVEL (incl. data power), refuse CONNECT ... VIA, whole-line parser.
+  * macos: the app's Info.plist carries Mercury's version, not fyne's 0.0.1.
+  * fyne-ui: the TX gain slider follows the engine's gain.
+  * arq: the accept fallback keeps the session's bandwidth for a late connect.
+  * modem: the pattern detectors look for the peer where its MFSK frames were measured.
+  * fyne-ui: send the TX gain once per drag, not per step.
+  * arq: a station whose watchdog gives up tells the peer once.
+  * carousel: a pattern keyed on time is not ignored as early.
+  * carousel: a start misread low follows the reading up.
+  * arq: ABORT leaves our DISCONNECT on the air.
+  * carousel: a lost poll does not score the rung it asked for.
+  * Makefile: track headers of the modem, host and iOS objects the top level builds.
+  * arq: a stale ACCEPT's DISCONNECT waits one reply guard.
+  * docs: 1.9.26 release notes, the docs index, spec §23 since 1.9.25.
+
+ -- Rafael Diniz <rafael@riseup.net>  Thu, 26 Nov 2026 15:14:16 +0000
+
 mercury (1.9.25-1) unstable; urgency=medium
 
   * Release 1.9.25.
