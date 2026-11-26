@@ -90,9 +90,11 @@ struct sim {
      * within acq_ms of each other) cannot happen.  Off by default. */
     bool             carrier_sense;
     uint32_t         acq_ms;
-    /* ...and a keydown of PSK frames only gives none: the PSK decoder finds
-     * a frame once it has ended, and reports no sync (modem_psk.c). */
-    bool             tx_unsensed[2];
+    /* ...from the first frame of the keydown that is not PSK: the PSK
+     * decoder finds a frame once it has ended, and reports no sync
+     * (modem_psk.c), so a keydown of PSK frames only gives none, and one
+     * that opens with the short control frame none until its round. */
+    uint64_t         tx_sense_from[2];
 
     arq_timing_ctx_t timing;  /* shared timing context (metrics only, not correctness) */
 };
@@ -206,7 +208,7 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
         }
         if (!cont) {
             s->tx_start_ms[dir] = now_ms; /* the whole keydown is on the air */
-            s->tx_unsensed[dir] = mercury_mode_is_psk(of.mode);
+            s->tx_sense_from[dir] = mercury_mode_is_psk(of.mode) ? UINT64_MAX : now_ms;
         }
         s->tx_end_ms[dir]   = over_end;
 
@@ -245,15 +247,15 @@ static void drain_keydown_from(sim_t *s, sim_endpoint_t *sender,
         now_ms = s->tx_end_ms[dir];
 
     uint64_t start[ARQ_KEYDOWN_FRAMES], end[ARQ_KEYDOWN_FRAMES], t = now_ms;
-    bool unsensed = true;
+    uint64_t sense_from = UINT64_MAX;
     for (int i = 0; i < kd.n; i++)
     {
-        if (!mercury_mode_is_psk(kd.f[i].mode)) unsensed = false;
         if (kd.f[i].mode >= 0 && kd.f[i].mode < SIM_MODES)
             s->mode_frames[kd.f[i].mode]++;
         if (!mercury_mode_is_mfsk(kd.f[i].mode) && kd.f[i].mode != SIM_MODE_PATTERN) s->non_mfsk[dir]++;
         if (i) t += kd.f[i].gap_ms;
         start[i] = t;
+        if (sense_from == UINT64_MAX && !mercury_mode_is_psk(kd.f[i].mode)) sense_from = t;
         t += sim_channel_airtime_ms(kd.f[i].mode, kd.f[i].len);
         end[i] = t;
     }
@@ -286,7 +288,7 @@ static void drain_keydown_from(sim_t *s, sim_endpoint_t *sender,
     }
     s->tx_start_ms[dir] = now_ms;
     s->tx_end_ms[dir]   = over_end;
-    s->tx_unsensed[dir] = unsensed;
+    s->tx_sense_from[dir] = sense_from;
     if (collided)
         return;
 
@@ -329,8 +331,8 @@ static void sense(sim_t *s, sim_endpoint_t *ep, uint64_t now_ms)
         return;
     int me = (ep == s->a) ? 0 : 1, peer = me ^ 1;
     bool keyed = s->tx_start_ms[me] <= now_ms && now_ms < s->tx_end_ms[me];
-    if (!keyed && !s->tx_unsensed[peer] &&
-        s->tx_start_ms[peer] + s->acq_ms <= now_ms && now_ms < s->tx_end_ms[peer])
+    if (!keyed && s->tx_sense_from[peer] != UINT64_MAX &&
+        s->tx_sense_from[peer] + s->acq_ms <= now_ms && now_ms < s->tx_end_ms[peer])
         sim_endpoint_session(ep)->last_rx_sync_ms = now_ms;
 }
 

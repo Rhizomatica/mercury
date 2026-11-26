@@ -82,6 +82,12 @@ struct modem_backend {
      * payload plane picked up off a control burst -- see rx_worker_thread. */
     void  (*unsync)(void *ctx);
 
+    /* Drop what a flush must drop that the codec keeps outside the sync
+     * unsync releases (optional; null-checked): the control codec's short
+     * frame receiver, whose frame our own keydown's end would complete
+     * (modem_ctl.c).  Called on every flush that does not unsync. */
+    void  (*flush)(void *ctx);
+
     /* Carousel session CRC seed (optional; null-checked): the CRC16 of every
      * frame is XORed with the seed, so an earlier or foreign session's frames
      * fail it.  accept_plain also accepts an unseeded CRC (the control plane

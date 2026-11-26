@@ -1013,6 +1013,22 @@ void test_car_caller_abort_keeps_off_a_psk_round(void)
     TEST_ASSERT_EQUAL_INT(0, untold);
 }
 
+/* ...and over the short control frame's SNRs: a caller that hears the
+ * callee well opens its keydown with it, and it raises no sync either, so
+ * nothing senses the keydown until its round.  The callee keyed its
+ * DISCONNECT over the caller in 4, 12 and 7 of 60 ABORT moments at 3, 6
+ * and 12 dB (#629 review); it waits out a short control frame too. */
+void test_car_callee_abort_keeps_off_a_short_control_frame(void)
+{
+    static const double db[] = { 3.0, 9.0, 12.0, 15.0 };
+    for (size_t i = 0; i < sizeof db / sizeof db[0]; i++) {
+        int untold, cases;
+        abort_sweep(true, 60, db[i], &untold, &cases);
+        TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
+        TEST_ASSERT_EQUAL_INT(0, untold);
+    }
+}
+
 /* Request and reply, as UUCP talks: A's request arrives, B's application
  * answers while B's last poll (nothing left either way) is on the air.  The
  * reply came too late for that poll and B was not idle yet, so it waited for
@@ -1396,6 +1412,7 @@ int main(void)
     RUN_TEST(test_car_callee_abort_tells_the_caller_whole_sweep);
     RUN_TEST(test_car_callee_abort_keeps_off_a_psk_round);
     RUN_TEST(test_car_caller_abort_keeps_off_a_psk_round);
+    RUN_TEST(test_car_callee_abort_keeps_off_a_short_control_frame);
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
     RUN_TEST(test_car_bandwidth_caps_the_rungs);

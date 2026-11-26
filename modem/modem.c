@@ -2681,11 +2681,14 @@ static void *rx_worker_thread(void *arg)
              * (our own keydown's end) would complete it as a fresh one. */
             bool unsync = atomic_exchange(&w->unsync_req, false) ||
                           mercury_mode_is_psk(w->state.mode);
-            if (unsync && modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync)
+            void (*drop)(void *) = !modem_codec_valid(&w->state.codec) ? NULL
+                                 : unsync ? w->state.codec.be->unsync
+                                 : w->state.codec.be->flush;
+            if (drop)
             {
                 pthread_mutex_t *rl = modem_inst_lock_for(w->state.codec.ctx);
                 pthread_mutex_lock(rl);
-                w->state.codec.be->unsync(w->state.codec.ctx);
+                drop(w->state.codec.ctx);
                 pthread_mutex_unlock(rl);
             }
             clear_buffer(w->ring);

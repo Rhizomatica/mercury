@@ -140,7 +140,7 @@ rules here cover it as they cover any poll of S's.  Which end may end the
 session on it, and when, is `specs/teardown` (`NoUnasked`, `NoLostWord`).
 
 The short control frame (`PSKC`, 1.42 s, `carousel.c` `ctl_mode`) needs no
-change here: M's keydowns may have any length in `ML`, and an S keydown is
+change to the slots (it does to the out-of-turn DISCONNECT, below): M's keydowns may have any length in `ML`, and an S keydown is
 at most the length M allowed, which the peer's slots still size for the
 control mode (DATAC16); a shorter control keydown is one of the lengths the
 model already covers.
@@ -154,19 +154,29 @@ end of the callee's last keydown, which asked the caller for a round on an
 OFDM or MFSK rung (a decoder syncs on it), on a PSK rung (none does: the
 PSK decoder finds a frame once it has ended), or for nothing.  The caller
 answers within the reply window, with that round or with control, or not
-at all, and does not hear the callee's keydown.  `NoOverlap`: the
+at all, and does not hear the callee's keydown.  The caller's keydown may
+open with the short control frame (`ctl_mode`), which no decoder syncs on
+either, followed by the round or by nothing; it does so only when the
+callee's reading of it says it may (`hears`).  `NoOverlap`: the
 DISCONNECT never meets the caller's keydown.
 
     java -cp tla2tools.jar tlc2.TLC -workers 4 \
         -metadir /tmp/tlc-abortkey -config AbortKey.cfg AbortKey.tla
 
-- `AbortKey.cfg`: the clear time waits out the PSK round asked for
-  (`car_unsensed_round_ms`).  No error, 4910 distinct states.
+- `AbortKey.cfg`: the clear time waits out the PSK round asked for, and
+  the short control frame and its gap where the caller may open with it
+  (`car_unsensed_round_ms`).  No error, 14954 distinct states.
 - `Mut_pskblind.cfg`: without that term (#628 before review).  Violates
   `NoOverlap`: the caller keys a PSK round at the end of its window, and the
   callee keys over it once its reply window and the acquisition time are
   over.  The sim showed the same at -1 dB, 2.8 s into a PSK3 round
   (`test_car_callee_abort_keeps_off_a_psk_round`).
+- `Mut_pskcblind.cfg`: without the short-frame term (#629 before review).
+  Violates `NoOverlap`: the caller opens with the short frame at the end of
+  its window, and the callee keys over it before the round behind it is
+  sensed.  The sim showed the same at 3-12 dB once it sensed a keydown from
+  its first frame that is not PSK, 4-12 of 60 ABORT moments
+  (`test_car_callee_abort_keeps_off_a_short_control_frame`).
 - The caller's out-of-turn DISCONNECT waits out the same term: its poll
   fills `poll_level`/`poll_n` as the callee's does, and `car_unsensed_round_ms`
   no longer returns 0 for it.  The model's roles are symmetric here -- the

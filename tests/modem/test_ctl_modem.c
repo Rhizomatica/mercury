@@ -74,9 +74,47 @@ void test_ctl_hears_both(void)
     TEST_ASSERT_EQUAL_INT(1, seen_b);
 }
 
+/* A short frame cut by a flush (our keydown starting part-way into it) is
+ * dropped, not completed by the audio after it as a fresh frame: decoded
+ * 10/10 at every cut from 50 to 90 % before the flush reached the short
+ * frame's receiver (#629 review).  The control mode's rxbuf stays. */
+void test_ctl_flush_drops_a_cut_short_frame(void)
+{
+    TEST_ASSERT_NOT_NULL(be->flush);
+    int bytes = be->bits_per_frame(ctx) / 8;
+    uint8_t b[64], got[64];
+    frame(b, bytes, 3);
+    int cap = 8000 * 12, n = 4000;
+    int16_t *pb = calloc((size_t)cap, sizeof(int16_t));
+    burst(pk, psk, b, pb, &n);
+    int len = n - 8000 - 4000;
+    for (int pct = 50; pct <= 90; pct += 10) {
+        int cut = 4000 + len * pct / 100, seen = 0, flushed = 0;
+        void *c = be->open(FREEDV_MODE_DATAC16);
+        be->configure(c, 1, 0);
+        for (int off = 0; off < cap;) {
+            int nin = be->nin(c);
+            if (off + nin > cap) break;
+            int16_t chunk[8192];
+            for (int i = 0; i < nin; i++) {
+                double v = (off + i < cut ? pb[off + i] * 0.5 : 0.0) + 200.0 * gauss();
+                chunk[i] = (int16_t)lrint(v);
+            }
+            if (!flushed && off >= cut) { be->flush(c); flushed = 1; }
+            int k = be->rawdata_rx(c, got, chunk);
+            off += nin;
+            if (k == bytes && !memcmp(got, b, (size_t)bytes)) seen++;
+        }
+        be->close(c);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, seen, "a cut short frame decoded after the flush");
+    }
+    free(pb);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_ctl_hears_both);
+    RUN_TEST(test_ctl_flush_drops_a_cut_short_frame);
     return UNITY_END();
 }
