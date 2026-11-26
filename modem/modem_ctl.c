@@ -131,12 +131,20 @@ static void ctl_get_stats(void *ctx, int *sync, float *snr)
 static int ctl_get_rx_status(void *ctx) { return F->get_rx_status(FC(ctx)); }
 static void ctl_harq_reset(void *ctx)   { F->harq_reset(FC(ctx)); }
 static void ctl_set_harq(void *ctx, int on) { F->set_harq(FC(ctx), on); }
+/* A flush drops the short frame's part frame and the audio it has not had,
+ * but leaves the control mode's rxbuf: zeroing that starves its preamble
+ * normaliser (the was_tx regression, modem.c). */
+static void ctl_flush(void *ctx)
+{
+    ctl_t *h = ctx;
+    P->unsync(h->psk);
+    h->nin = h->nheld = 0;
+}
 static void ctl_unsync(void *ctx)
 {
     ctl_t *h = ctx;
     F->unsync(h->fdv);
-    P->unsync(h->psk);
-    h->nin = h->nheld = 0;
+    ctl_flush(h);
 }
 static void ctl_set_crc_seed(void *ctx, uint16_t seed, int accept_plain)
 {
@@ -178,6 +186,7 @@ const modem_backend_t modem_backend_ctl = {
     .harq_reset       = ctl_harq_reset,
     .set_harq         = ctl_set_harq,
     .unsync           = ctl_unsync,
+    .flush            = ctl_flush,
     .set_crc_seed     = ctl_set_crc_seed,
     .rx_crc_seeded    = ctl_rx_crc_seeded,
     .get_freq_offset  = ctl_get_freq_offset,

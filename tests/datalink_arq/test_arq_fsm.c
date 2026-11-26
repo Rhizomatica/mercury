@@ -1953,12 +1953,13 @@ void test_quiet_peer_disconnect_does_not_wait_for_slots(void)
     mock_set_uptime_ms(sess.deadline_ms);
     ev = make_event(sess.deadline_event);
     arq_fsm_dispatch(&sess, &ev);
-    /* disconnect_must_wait's own guard after our TX may still hold it once;
-     * past that, nothing else does. */
+    /* disconnect_must_wait's own guard after our TX may still hold it once
+     * (the reply window, and a short control frame the answer may open
+     * with: 4.1 s); past that, nothing else does. */
     if (sess.teardown != ARQ_TD_SENT)
     {
-        mock_set_uptime_ms(now + 3000);
-        ev = make_event(ARQ_EV_TIMER_ACK);
+        mock_set_uptime_ms(sess.deadline_ms);
+        ev = make_event(sess.deadline_event);
         arq_fsm_dispatch(&sess, &ev);
     }
     TEST_ASSERT_EQUAL_INT(ARQ_TD_SENT, sess.teardown);

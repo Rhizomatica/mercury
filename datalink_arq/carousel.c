@@ -439,6 +439,7 @@ static bool peer_ctl_on_floor(const car_t *c) { return c->io.pattern && c->ctl_d
  * how the peer says it hears me, moved by how I hear it since; a reading not
  * yet moved counts as it was said.  The peer decodes both on its control
  * plane, so nothing tells it which comes. */
+#define CTL_FAST_MARGIN_DB 3.0f      /* car_unsensed_round_ms */
 static int ctl_mode(const car_t *c)
 {
     float db = peer_hears_me_db(c);
@@ -3890,8 +3891,18 @@ uint64_t car_answer_due_ms(const car_t *c, uint64_t keyed_by)
 
 uint32_t car_unsensed_round_ms(const car_t *c)
 {
-    if (!c || c->master || c->poll_n <= 0 || !mercury_mode_is_psk(lmode(c, c->poll_level))) return 0;
-    return s_round_ms(c, c->poll_level, c->poll_n);
+    if (!c) return 0;
+    uint32_t ms = 0;
+    if (c->poll_n > 0 && mercury_mode_is_psk(lmode(c, c->poll_level)))
+        ms = s_round_ms(c, c->poll_level, c->poll_n);
+    /* The peer's keydown opens with the short control frame when it hears
+     * me well, by the reading I report of it (ctl_mode); that reading only
+     * moves by the path's changes since, which mine follows too, so a
+     * margin under the gate covers it.  Not to a peer whose control goes on
+     * the floor. */
+    if (!peer_ctl_on_floor(c) && !(my_snr(c) < ARQ_SNR_MIN_CTL_FAST_DB - CTL_FAST_MARGIN_DB))
+        ms += (uint32_t)mode_air(ARQ_CONTROL_MODE_FAST) + CHAIN_GAP_MS;
+    return ms;
 }
 
 bool car_is_master(const car_t *c) { return c && c->master; }
