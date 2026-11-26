@@ -2755,6 +2755,12 @@ static bool offer_both(car_t *c, uint64_t now)
     if (!c->peer_has_data && !(c->peer_data_ms && now - c->peer_data_ms < OFFER_RECENT_MS)) return false;
     int lv = choose_level(c, now);
     if (c->ctl_deaf && c->io.pattern) lv = 0;
+    /* ...nor on a rung within SNR_GATE_DB of its threshold, where the round
+     * is likely lost: S, told by the control frame that it came, scores the
+     * loss, and that loss then kept the offer off the file's last round,
+     * the reply an exchange later (sim, flat 6 dB, a DATAC17 probe: +11 %;
+     * 3-4 dB +5 %). */
+    if (!inline_poll(c) && level_marginal(c, c->tx_level)) return false;
     if (!both_ok(c, lv)) return false;
     m_enter(c, PH_RECV, now);
     c->silent_polls &= ~SILENT_ASKED;
