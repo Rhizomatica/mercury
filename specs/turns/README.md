@@ -157,15 +157,18 @@ answers within the reply window, with that round or with control, or not
 at all, and does not hear the callee's keydown.  The caller's keydown may
 open with the short control frame (`ctl_mode`), which no decoder syncs on
 either, followed by the round or by nothing; it does so only when the
-callee's reading of it says it may (`hears`).  `NoOverlap`: the
-DISCONNECT never meets the caller's keydown.
+callee's reading of it says it may (`hears`).  Or the session is idle
+(`car_is_idle`: the callee asked for nothing and has nothing in flight):
+the caller then keys nothing in the reply window, and keys next on its own
+idle timer.  `NoOverlap`: the DISCONNECT never meets the caller's keydown.
 
     java -cp tla2tools.jar tlc2.TLC -workers 4 \
         -metadir /tmp/tlc-abortkey -config AbortKey.cfg AbortKey.tla
 
 - `AbortKey.cfg`: the clear time waits out the PSK round asked for, and
   the short control frame and its gap where the caller may open with it
-  (`car_unsensed_round_ms`).  No error, 14954 distinct states.
+  (`car_unsensed_round_ms`), the latter only when the session is not idle.
+  No error, 16250 distinct states.
 - `Mut_pskblind.cfg`: without that term (#628 before review).  Violates
   `NoOverlap`: the caller keys a PSK round at the end of its window, and the
   callee keys over it once its reply window and the acquisition time are
@@ -177,6 +180,21 @@ DISCONNECT never meets the caller's keydown.
   sensed.  The sim showed the same at 3-12 dB once it sensed a keydown from
   its first frame that is not PSK, 4-12 of 60 ABORT moments
   (`test_car_callee_abort_keeps_off_a_short_control_frame`).
+- `Mut_pskcpoll.cfg`: the short-frame term only after a poll for a round
+  (`poll_n > 0`), as the PSK term is.  Violates `NoOverlap`: the caller's
+  answer to a poll for nothing while the callee still has data in flight
+  opens with the short frame too.  Hence the idle gate, not `poll_n`.
+- Why the gate (#629 review): held for the short frame in an idle session,
+  the callee's DISCONNECT went 4.06 s after its keydown, into the caller's
+  idle poll 3.2 s after it, the short frame alone, which no decoder syncs on.
+  `ctl_loss_abort_told` (callee at 5 dB, caller at -6.5 dB, 40 % DATAC16
+  loss to the caller, 120 ABORT moments from each of seeds 300, 1000 and
+  5000): 342 callers told without the term, 314 with it, 341 with the gate.
+- Residual risk: a keydown the caller starts on its own timer (an idle
+  poll, or data its host wrote) that opens with the short frame can't be
+  sensed at all, so no clear time keeps the DISCONNECT off it.  Outside
+  the reply window this model is about, as before the short frame, when
+  the same caller's keydown was sensed from its first frame.
 - The caller's out-of-turn DISCONNECT waits out the same term: its poll
   fills `poll_level`/`poll_n` as the callee's does, and `car_unsensed_round_ms`
   no longer returns 0 for it.  The model's roles are symmetric here -- the

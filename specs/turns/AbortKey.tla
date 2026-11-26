@@ -22,15 +22,24 @@
 (* alone).  S knows whether M may (hears: S's reading of M, within a      *)
 (* margin of the gate, car_unsensed_round_ms); M opens so only then.      *)
 (*                                                                         *)
+(* Or the session is idle (car_is_idle: S asked for nothing and has      *)
+(* nothing in flight): M then keys nothing in the reply window, and its   *)
+(* next keydown comes on its own idle timer, outside this model (README:  *)
+(* residual risks).                                                       *)
+(*                                                                         *)
 (* channel_clear_at: the reply window and the acquisition (Tg+W+Acq),     *)
 (* for a round asked for on a PSK rung that round's length too, and the   *)
-(* short frame's C where M may open with it (car_unsensed_round_ms).      *)
+(* short frame's C where M may open with it and the session is not idle   *)
+(* (car_unsensed_round_ms).                                               *)
 (*                                                                         *)
 (* Safety: S's DISCONNECT never meets M's keydown (NoOverlap).            *)
 (* Mutant "pskblind": no PSK term (#628 before review; the sim keyed 2.8 s *)
 (* into a PSK3 round at -1 dB).  Mutant "pskcblind": no short-frame term  *)
 (* (#629 before review; the sim keyed over the caller in 4-12 of 60       *)
-(* ABORT moments at 3-12 dB).                                              *)
+(* ABORT moments at 3-12 dB).  Mutant "pskcpoll": the short-frame term   *)
+(* only after a poll for a round (poll_n > 0), as the PSK term is: M's    *)
+(* answer to a round of S's, or to a poll for nothing while S still has   *)
+(* data, can open with the short frame too.                               *)
 (***************************************************************************)
 EXTENDS Naturals
 
@@ -38,13 +47,14 @@ CONSTANTS Tg, W, Acq, R, C, Ld, H, Mutant
 
 Asks  == {"ofdm", "psk", "nothing"}
 
-VARIABLES t, asked, hears, front, mKind, mLen, mStart, sKey
-vars == <<t, asked, hears, front, mKind, mLen, mStart, sKey>>
+VARIABLES t, asked, idle, hears, front, mKind, mLen, mStart, sKey
+vars == <<t, asked, idle, hears, front, mKind, mLen, mStart, sKey>>
 
 None == H + 1                       \* not keyed (yet)
 
 TypeOK == /\ t \in 0..H
           /\ asked \in Asks
+          /\ idle \in BOOLEAN
           /\ hears \in BOOLEAN
           /\ front \in {0, C}
           /\ mKind \in {"ofdm", "psk", "ctl", "none"}
@@ -60,9 +70,10 @@ Answers(a, f) == (IF a = "psk" THEN {"psk", "ofdm", "none"} ELSE {"ofdm", "none"
 
 Init == /\ t = 0
         /\ asked \in Asks
+        /\ idle \in (IF asked = "nothing" THEN BOOLEAN ELSE {FALSE})
         /\ hears \in BOOLEAN
         /\ front \in (IF hears THEN {0, C} ELSE {0})
-        /\ mKind \in Answers(asked, front)
+        /\ mKind \in (IF idle THEN {"none"} ELSE Answers(asked, front))
         /\ mLen \in 1..R
         /\ mStart = None
         /\ sKey = None
@@ -73,21 +84,22 @@ MEnd == mStart + front + (IF mKind = "ctl" THEN 0 ELSE mLen)
 Sensed == mStart # None /\ mKind = "ofdm" /\ mStart + front + Acq <= t /\ t < MEnd
 
 ClearAt == Tg + W + Acq + (IF asked = "psk" /\ Mutant # "pskblind" THEN R ELSE 0)
-                        + (IF hears /\ Mutant # "pskcblind" THEN C ELSE 0)
+                        + (IF hears /\ ~idle /\ Mutant # "pskcblind"
+                              /\ ~(Mutant = "pskcpoll" /\ asked = "nothing") THEN C ELSE 0)
 
 MKey == /\ mStart = None /\ mKind # "none" /\ t >= Tg /\ t <= Tg + W
         /\ mStart' = t
-        /\ UNCHANGED <<t, asked, hears, front, mKind, mLen, sKey>>
+        /\ UNCHANGED <<t, asked, idle, hears, front, mKind, mLen, sKey>>
 
 SKey == /\ sKey = None /\ ~Sensed /\ t >= ClearAt
         /\ sKey' = t
-        /\ UNCHANGED <<t, asked, hears, front, mKind, mLen, mStart>>
+        /\ UNCHANGED <<t, asked, idle, hears, front, mKind, mLen, mStart>>
 
 \* M keys within its window, if at all.
 Tick == /\ t < H
         /\ ~(mStart = None /\ mKind # "none" /\ t = Tg + W)
         /\ t' = t + 1
-        /\ UNCHANGED <<asked, hears, front, mKind, mLen, mStart, sKey>>
+        /\ UNCHANGED <<asked, idle, hears, front, mKind, mLen, mStart, sKey>>
 
 Next == MKey \/ SKey \/ Tick
 Spec == Init /\ [][Next]_vars
