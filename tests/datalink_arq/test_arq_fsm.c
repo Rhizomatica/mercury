@@ -25,6 +25,7 @@ DEFINE_FFF_GLOBALS;
 #include "freedv/freedv_api.h"
 #include "modem_mfsk.h"        /* MERCURY_MODE_MFSK */
 #include "carousel.h"          /* car_drain_budget_ms */
+#include "framer.h"            /* PACKET_TYPE_ARQ_CONTROL */
 
 /* Provided by arq_test_stubs.c */
 extern void mock_set_uptime_ms(uint64_t ms);
@@ -961,6 +962,57 @@ void test_accept_transitions_to_connected(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
     TEST_ASSERT_TRUE(fake_notify_connected_fake.arg2_val);    /* we called */
+}
+
+/* A stale ACCEPT (the host gave up the call while the callee's ACCEPT was on
+ * the air) is answered with a DISCONNECT one reply guard later, like every
+ * other answer, not keyed over the callee's PTT-OFF.  On air (VE4KLM -> K7EK,
+ * 2026-11-25 10:36:59Z) the DISCONNECT went 10 ms after the decode and K7EK
+ * never heard it. */
+void test_stale_accept_disconnect_waits_the_reply_guard(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    uint8_t sid = sess.session_id;
+
+    ev = make_event(ARQ_EV_APP_DISCONNECT);          /* the host gives up */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+
+    unsigned sent = fake_send_tx_frame_fake.call_count;
+    uint64_t now = time_now_ms();
+    ev = make_event(ARQ_EV_RX_ACCEPT);               /* the callee's ACCEPT, late */
+    ev.session_id = sid;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT(sent, fake_send_tx_frame_fake.call_count);   /* nothing keyed yet */
+    TEST_ASSERT_EQUAL_UINT64(now + ARQ_CHANNEL_GUARD_MS, sess.deadline_ms);
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+
+    mock_set_uptime_ms(now + ARQ_CHANNEL_GUARD_MS);
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_UINT(sent + 1, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(PACKET_TYPE_ARQ_CONTROL, fake_send_tx_frame_fake.arg0_val);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, sess.deadline_ms);
+}
+
+/* An ACCEPT of another session in LISTENING is not ours: no DISCONNECT. */
+void test_foreign_accept_in_listening_is_ignored(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = (uint8_t)(sess.session_id + 1);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_UINT(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, sess.deadline_ms);
 }
 
 /* The connect is logged on the carrier the ACCEPT came on, not the control
@@ -3368,6 +3420,8 @@ int main(void)
     RUN_TEST(test_timeout_ms_idle);
     RUN_TEST(test_accept_is_only_sent_in_answer_to_a_heard_call);
     RUN_TEST(test_accepting_silent_wait_gives_up_after_budget);
+    RUN_TEST(test_stale_accept_disconnect_waits_the_reply_guard);
+    RUN_TEST(test_foreign_accept_in_listening_is_ignored);
     RUN_TEST(test_caller_records_the_accept_carrier);
     RUN_TEST(test_callee_records_the_accept_carrier);
     return UNITY_END();
