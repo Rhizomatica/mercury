@@ -843,7 +843,10 @@ static int ctl_loss_abort_told(int n, uint64_t seed0) { return ctl_loss_abort_to
  * to a round, then the one DISCONNECT on DATAC16.  That one DISCONNECT now
  * goes twice in its keydown to a caller that hears the control mode below
  * -3 dB (unretried_disconnect_copies): 28 (115 of 120 from seed 1000,
- * against 105). */
+ * against 105).  The short control frame's hold in an idle session put
+ * the DISCONNECT into the caller's idle poll: 27 (#629 review; 314 of 360
+ * from seeds 300, 1000 and 5000); held only where the caller answers
+ * (car_unsensed_round_ms), 341 of 360, as without it. */
 void test_car_ctl_loss_callee_abort_tells_the_caller(void)
 {
     int told = ctl_loss_abort_told(30, 300);

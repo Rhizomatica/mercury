@@ -3891,8 +3891,14 @@ uint32_t car_unsensed_round_ms(const car_t *c)
      * me well, by the reading I report of it (ctl_mode); that reading only
      * moves by the path's changes since, which mine follows too, so a
      * margin under the gate covers it.  Not to a peer whose control goes on
-     * the floor. */
-    if (!peer_ctl_on_floor(c) && !(my_snr(c) < ARQ_SNR_MIN_CTL_FAST_DB - CTL_FAST_MARGIN_DB))
+     * the floor.  Only where the peer answers my keydown: the callee always
+     * does, in my slots; the caller, unless nothing is in flight either way
+     * (car_is_idle), when it keys next on its own idle timer, out of the
+     * reply window this covers.  Held into that timer's poll, the short
+     * frame alone and unsensed, the callee's out-of-turn DISCONNECT met it:
+     * callers told 342 -> 317 of 360 (#629 review, ctl_loss_abort_told). */
+    if ((c->master || !car_is_idle(c)) &&
+        !peer_ctl_on_floor(c) && !(my_snr(c) < ARQ_SNR_MIN_CTL_FAST_DB - CTL_FAST_MARGIN_DB))
         ms += (uint32_t)mode_air(ARQ_CONTROL_MODE_FAST) + CHAIN_GAP_MS;
     return ms;
 }
