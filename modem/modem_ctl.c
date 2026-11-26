@@ -129,6 +129,11 @@ static void ctl_get_stats(void *ctx, int *sync, float *snr)
 }
 
 static int ctl_get_rx_status(void *ctx) { return F->get_rx_status(FC(ctx)); }
+static int ctl_rx_mode(void *ctx)
+{
+    ctl_t *h = ctx;
+    return h->last ? MERCURY_MODE_PSKC : F->get_mode(h->fdv);
+}
 static void ctl_harq_reset(void *ctx)   { F->harq_reset(FC(ctx)); }
 static void ctl_set_harq(void *ctx, int on) { F->set_harq(FC(ctx), on); }
 /* A flush drops the short frame's part frame and the audio it has not had,
@@ -183,6 +188,7 @@ const modem_backend_t modem_backend_ctl = {
     .rawdata_rx       = ctl_rawdata_rx,
     .get_stats        = ctl_get_stats,
     .get_rx_status    = ctl_get_rx_status,
+    .rx_mode          = ctl_rx_mode,
     .harq_reset       = ctl_harq_reset,
     .set_harq         = ctl_set_harq,
     .unsync           = ctl_unsync,

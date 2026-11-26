@@ -66,8 +66,10 @@ void test_ctl_hears_both(void)
         if (off + nin > cap) break;
         int k = be->rawdata_rx(ctx, got, pb + off);
         off += nin;
-        if (k == bytes && !memcmp(got, a, (size_t)bytes)) seen_a++;
-        if (k == bytes && !memcmp(got, b, (size_t)bytes)) seen_b++;
+        /* each frame as the mode it came on; what TX reads stays the control mode */
+        if (k == bytes && !memcmp(got, a, (size_t)bytes)) { seen_a++; TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, be->rx_mode(ctx)); }
+        if (k == bytes && !memcmp(got, b, (size_t)bytes)) { seen_b++; TEST_ASSERT_EQUAL_INT(MERCURY_MODE_PSKC, be->rx_mode(ctx)); }
+        TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, be->get_mode(ctx));
     }
     free(pb);
     TEST_ASSERT_EQUAL_INT(1, seen_a);

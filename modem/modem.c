@@ -2404,7 +2404,7 @@ static void process_received_frame(const uint8_t *data,
     {
         if (arq_policy_ready)
             arq_handle_carousel_frame(data, payload_nbytes, mode,
-                                      mode == FREEDV_MODE_DATAC16, snr_est, age_ms);
+                                      ARQ_MODE_IS_CONTROL(mode), snr_est, age_ms);
         return;
     }
 
@@ -2893,6 +2893,8 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                           (uint8_t)(nin & 0xff), (uint16_t)c);
         }
         nbytes_out = (size_t)be->rawdata_rx(ctx, state->bytes_out, state->demod_in);
+        /* The mode the frame came on: the control codec decodes two. */
+        int fmode = nbytes_out > 0 && be->rx_mode ? be->rx_mode(ctx) : state->mode;
         if (nbytes_out > 0 && !monitor)
         {
             publish_link_bitrate(&state->codec, state->mode);
@@ -2946,20 +2948,20 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
             long behind = (long)state->backlog + state->demod_count + (sample_count - fed);
             uint32_t age_ms = behind > 0 ? (uint32_t)(behind * 1000L / FREEDV_FS_8000) : 0;
             HLOGD("modem-rx", "Decoded frame mode=%d (%s) bytes=%zu snr=%.2f age=%u ms",
-                  state->mode,
-                  mode_name_from_enum(state->mode),
+                  fmode,
+                  mode_name_from_enum(fmode),
                   nbytes_out,
                   snr_est, age_ms);
             if (monitor)
                 process_monitor_frame(state->bytes_out, nbytes_out,
-                                      state->mode, snr_est);
+                                      fmode, snr_est);
             else
                 process_received_frame(state->bytes_out,
                                        nbytes_out,
                                        state->bytes_cap,
                                        arq_policy_ready,
                                        snr_est,
-                                       state->mode,
+                                       fmode,
                                        seeded,
                                        age_ms);
         }
