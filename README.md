@@ -38,13 +38,14 @@ presents the result to your application as an ordinary TCP connection.
 
 Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
 
-**On-air compatibility.** 1.9.25 connects only to 1.9.25, in either
-direction: its ladders' levels mean other modes, so it refuses 1.9.24 and
-older and says so in the log.  1.9.20 to 1.9.24 (the "2.0" architecture)
+**On-air compatibility.** 1.9.26 and 1.9.25 connect to each other, in
+either direction, and to nothing older: their ladders' levels mean other
+modes, so they refuse 1.9.24 and older and say so in the log.  1.9.20 to 1.9.24 (the "2.0" architecture)
 connect to each other, but not to 1.9.19 or older: their connect frames have
 a packet type of their own (and 1.9.18 and 1.9.19 did not connect to each
 other either).  A station with `mfsk_tx_only` set needs 1.9.21 or later at
 the other end.  See
+[docs/RELEASE-1.9.26.md](docs/RELEASE-1.9.26.md),
 [docs/RELEASE-1.9.25.md](docs/RELEASE-1.9.25.md),
 [docs/RELEASE-1.9.24.md](docs/RELEASE-1.9.24.md),
 [docs/RELEASE-1.9.23.md](docs/RELEASE-1.9.23.md),
