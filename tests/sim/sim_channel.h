@@ -69,6 +69,11 @@ void           sim_channel_set_fading(sim_channel_t *ch, double mean_snr_db, dou
  * the channel reads as it does. */
 void           sim_channel_set_ctl_snr_offset(sim_channel_t *ch, double db);
 double         sim_channel_ctl_snr_offset(const sim_channel_t *ch);
+/* The same for one data mode (CAR_MODE_SNR_OFFSET): on air a narrow mode
+ * reads under the wide ones on the same link (DATAC3 6 dB under DATAC17W and
+ * the short control frame on the bench, 2026-11-26), where white noise has
+ * them all true.  0 for the mode: none. */
+void           sim_channel_set_mode_snr_offset(sim_channel_t *ch, int freedv_mode, double db);
 /* The SNR a frame of this mode reads at t0_ms: the fading model's per-frame
  * figure, else the caller's fallback figure, with the control mode's offset
  * applied.  What a modem would report for such a frame. */

@@ -748,6 +748,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     /* CAR_CTL_SNR_OFFSET=<dB>: the control frames' estimate reads that much
      * off, and only theirs (#501).  0: as the channel reads. */
     double ctl_snr_offset = getenv("CAR_CTL_SNR_OFFSET") ? atof(getenv("CAR_CTL_SNR_OFFSET")) : 0.0;
+    /* CAR_MODE_SNR_OFFSET=<freedv mode>:<dB>: the same for one data mode. */
+    int off_mode = 0; double off_mode_db = 0.0;
+    if (getenv("CAR_MODE_SNR_OFFSET") && sscanf(getenv("CAR_MODE_SNR_OFFSET"), "%d:%lf", &off_mode, &off_mode_db) != 2)
+        off_mode = 0;
     nev = 0;
     collisions = 0;
     buffer_overclaim = 0; buffer_break_drops = 0;
@@ -776,6 +780,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     double snr_db = 12.0;                  /* what the sim stamps on frames */
     ch = carousel_sim_channel(seed, chan, &snr_db);
     sim_channel_set_ctl_snr_offset(ch, ctl_snr_offset);
+    sim_channel_set_mode_snr_offset(ch, off_mode, off_mode_db);
     snr_now = snr_db;
     if (getenv("CAR_NOHINT")) snr_db = -99.0;
 

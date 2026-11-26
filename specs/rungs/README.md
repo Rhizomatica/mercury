@@ -219,6 +219,11 @@ Which model covers the other 2.0 changes:
 - the direct probe (`choose_level` asks for the rung the SNR would start
   on): `RungAgreement`'s sized poll names any rung (`\E l \in Rungs`), so
   agreement and delivery hold for whichever it picks;
+- a short rung's reading kept out of the estimate (`car_on_frame`: a data
+  frame below the best measured rung and narrower than it, under a wide top
+  rung): like the snap, it changes only the reading S judges rungs by, so
+  `RungAgreement` covers the rung S then names (any rung).  The deafness
+  test still takes the reading, as it takes the control mode's (#501);
 - the SNR snap (two readings more than `SNR_GATE_DB` to one side of the
   smoothed SNR move it): it changes only the reading S judges rungs by, so
   `RungAgreement` covers the rung S then names (any rung).  It also moves
