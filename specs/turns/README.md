@@ -59,6 +59,17 @@ With `CLOSE = TRUE`, M may take a slot as over before its time is up, as
   sooner than `Tg + PMIN` after that keydown, and no later than `DP` past its
   response slot.
 
+`PMIN` is in the model's units (a unit is ~4.4 s: the BW500 floor's 26.2 s
+frame is 6), so it stands for the code's whole lower bound, `TG_MS +
+PAT_MIN_MS` less `PAT_LATE_END_MS`; a change of a few hundred ms stays inside
+one unit.  Checked 2026-11-25 for #663 (the bound 200 ms sooner):
+`CarouselTurns_close.cfg` with `H = 14` gives the same 686 711 distinct
+states, no error, with `PMIN = 1` and with `PMIN = 0`.  What the lower bound
+guards against is below the model's resolution: a spurious BREAK 1.2 s after
+a keydown made S send a round into M's (`car_explore`, cliff:-5 and cliff:-9
+both ways), and the explorer is what checks it, at ms resolution.  The code's
+earliest pattern taken is 1.25 s after a keydown.
+
 With `DISC = TRUE`, M also keys the FSM's DISCONNECT.  It keys it clear of
 S's slots (`car_disconnect_must_wait`) and logs it (`car_log_ctl`).  S
 answers it `TgD` after decoding it, in a single slot, and the carousel

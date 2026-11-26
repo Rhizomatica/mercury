@@ -715,6 +715,79 @@ static int decode_at_offset(int mode, double offset_hz, float *foff_out)
     return match;
 }
 
+/* The pattern detector looks for the peer's ACK and BREAK where its MFSK
+ * frames were measured (mfsk_pattern_set_rx_offset), with the offset the frame
+ * decoder reports, as modem.c passes it on.  On air (N3JXB and KG9NI,
+ * 2026-11-23) the stations were ~100 Hz apart: frames decoded, and no pattern
+ * was heard either way, the detector being centred on nominal.  A frame and a
+ * pattern sent at the same offset: centred, the pattern is missed; at the
+ * frame's measured offset, it is heard.  Either side of nominal. */
+static int pattern_heard_at(double df, float rx_off)
+{
+    const int burst = mfsk_pattern_max_tx_samples();
+    int total = 4 * burst;
+    int16_t *pb = calloc((size_t)total, sizeof(int16_t));
+    int n = mfsk_pattern_tx(pb + burst, 0);
+    TEST_ASSERT_TRUE(n > 0);
+    shift_hz(pb, total, df, 8000.0);
+    mfsk_pattern_set_rx_offset(rx_off);
+    mfsk_pattern_window_t w = {0};
+    int hit = 0, isb = 0;
+    for (int off = 0; off + 160 <= total && !hit; off += 160)
+        hit = mfsk_pattern_window_push(&w, pb + off, 160, &isb);
+    mfsk_pattern_window_free(&w);
+    mfsk_pattern_set_rx_offset(0.0f);
+    free(pb);
+    return hit && !isb;
+}
+
+void test_mfsk_pattern_heard_at_the_offset_its_frames_measured(void)
+{
+    static const double DF[] = { 105.0, -105.0 };
+    for (unsigned i = 0; i < sizeof DF / sizeof DF[0]; i++) {
+        float foff = 0.0f;
+        char msg[96];
+        snprintf(msg, sizeof msg, "frame lost %+.0f Hz off", DF[i]);
+        TEST_ASSERT_TRUE_MESSAGE(decode_at_offset(MERCURY_MODE_MFSK, DF[i], &foff), msg);
+        snprintf(msg, sizeof msg, "pattern %+.0f Hz off heard centred", DF[i]);
+        TEST_ASSERT_FALSE_MESSAGE(pattern_heard_at(DF[i], 0.0f), msg);
+        snprintf(msg, sizeof msg, "pattern %+.0f Hz off missed at the measured %+.1f Hz", DF[i], (double)foff);
+        TEST_ASSERT_TRUE_MESSAGE(pattern_heard_at(DF[i], foff), msg);
+    }
+}
+
+/* The same at the session's other MFSK geometries, which modem.c takes the
+ * offset from too: a frame on the 2 kHz MFSK (MFSK_W2, rung 1 of BW2300 and
+ * BW2750), whose session's patterns are the floor's; and one on the 500 Hz
+ * MFSK (MFSK_N32, the floor of BW500 and the deep floor of a wider session),
+ * whose patterns are the narrow geometry's.  There, centred, the pattern
+ * search (+/-2.5 bins of 15.625 Hz) held to ~45 Hz where the frames decode to
+ * ~100: a BW500 link 50 Hz off already lost every pattern.  Each case is off
+ * by more than its centred pattern range (#661 review). */
+void test_mfsk_pattern_heard_at_the_offset_every_geometry_measured(void)
+{
+    static const struct { int frame, geom; double df; } C[] = {
+        { MERCURY_MODE_MFSK_W2,  MERCURY_MODE_MFSK,     100.0 },
+        { MERCURY_MODE_MFSK_W2,  MERCURY_MODE_MFSK,     -95.0 },
+        { MERCURY_MODE_MFSK_N32, MERCURY_MODE_MFSK_N32,  60.0 },
+        { MERCURY_MODE_MFSK_N32, MERCURY_MODE_MFSK_N32, -60.0 },
+        { MERCURY_MODE_MFSK_N32, MERCURY_MODE_MFSK_N32,  95.0 },
+    };
+    for (unsigned i = 0; i < sizeof C / sizeof C[0]; i++) {
+        char msg[128];
+        float foff = 0.0f;
+        mfsk_pattern_set_geometry(C[i].geom);
+        snprintf(msg, sizeof msg, "mode %d frame lost %+.0f Hz off", C[i].frame, C[i].df);
+        TEST_ASSERT_TRUE_MESSAGE(decode_at_offset(C[i].frame, C[i].df, &foff), msg);
+        snprintf(msg, sizeof msg, "mode %d: pattern %+.0f Hz off heard centred", C[i].geom, C[i].df);
+        TEST_ASSERT_FALSE_MESSAGE(pattern_heard_at(C[i].df, 0.0f), msg);
+        snprintf(msg, sizeof msg, "mode %d: pattern %+.0f Hz off missed at the measured %+.1f Hz",
+                 C[i].geom, C[i].df, (double)foff);
+        TEST_ASSERT_TRUE_MESSAGE(pattern_heard_at(C[i].df, foff), msg);
+    }
+    mfsk_pattern_set_geometry(MERCURY_MODE_MFSK);
+}
+
 void test_mfsk_modem_every_geometry(void)
 {
     const struct { int mode; double tone_hz; int bw_hz; } g[] = {
@@ -1198,5 +1271,7 @@ int main(void)
     RUN_TEST(test_mfsk_modem_sync_soon_after_open);
     RUN_TEST(test_mfsk_modem_no_carrier_in_noise);
     RUN_TEST(test_mfsk_modem_unsync_drops_a_frame_cut_by_a_hop);
+    RUN_TEST(test_mfsk_pattern_heard_at_the_offset_its_frames_measured);
+    RUN_TEST(test_mfsk_pattern_heard_at_the_offset_every_geometry_measured);
     return UNITY_END();
 }

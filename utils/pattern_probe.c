@@ -22,6 +22,8 @@
  *
  * PATTERN_KEY=<seed> measures a session's lists (mfsk_pattern_set_session).
  * PATTERN_FOFF=<Hz> sets the second offset (default +25 Hz).
+ * PATTERN_RX_OFFSET=<Hz> sets the receiver's offset (mfsk_pattern_set_rx_offset):
+ * the window rotates its baseband by it, as for a peer its frames measured off.
  * PATTERN_GEOM=<mode> measures the patterns at another MFSK mode's geometry
  * (102: 16 tones at 31.25 Hz, 103: 32 tones at 15.625 Hz).
  *
@@ -446,6 +448,10 @@ int main(int argc, char **argv)
 {
     const char *what = argc > 1 ? argv[1] : "all";
     if (getenv("PATTERN_FOFF")) g_foff = atof(getenv("PATTERN_FOFF"));
+    if (getenv("PATTERN_RX_OFFSET")) {
+        mfsk_pattern_set_rx_offset((float)atof(getenv("PATTERN_RX_OFFSET")));
+        printf("# receiver offset %s Hz\n", getenv("PATTERN_RX_OFFSET"));
+    }
     if (getenv("PATTERN_GEOM")) {
         mfsk_pattern_set_geometry(atoi(getenv("PATTERN_GEOM")));
         printf("# geometry of mode %s: %d symbols, %d samples\n", getenv("PATTERN_GEOM"),

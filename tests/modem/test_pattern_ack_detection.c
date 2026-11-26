@@ -38,7 +38,7 @@ static double urand(void)
 }
 
 void setUp(void)    { s_rng = 0x12345; }
-void tearDown(void) { }
+void tearDown(void) { mfsk_pattern_set_rx_offset(0.0f); mfsk_pattern_set_session(0); }
 
 /* mfsk_detect_patterns() scores several tone lists in one pass so the RX loop
  * stops paying for the same FFTs twice.  That is only safe if it is exactly
@@ -545,6 +545,65 @@ static int push_pcm(mfsk_pattern_window_t *w, const int16_t *pcm, int n, int *is
     return hits;
 }
 
+/* Through the window, as the RX loop runs it: pattern `kind` sent df Hz off
+ * (positive: above nominal), heard with the receiver's offset set to `rx_off`.
+ * Detected kind, or -1. */
+static int window_hears_off(int kind, double df, float rx_off)
+{
+    const int burst = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)burst, sizeof(int16_t));
+    int16_t *sh  = calloc((size_t)burst, sizeof(int16_t));
+    int n = mfsk_pattern_tx(pat, kind);
+    shift_passband(pat, n, df, sh);
+    mfsk_pattern_set_rx_offset(rx_off);
+    mfsk_pattern_window_t w = {0};
+    int hits = 0, isb = -1;
+    push_silence(&w, burst, &hits);
+    hits += push_pcm(&w, sh, n, &isb);
+    push_silence_isb(&w, 2 * burst, &hits, &isb);
+    mfsk_pattern_window_free(&w);
+    free(pat); free(sh);
+    return hits ? isb : -1;
+}
+
+/* Centred on nominal the window holds to about 90 Hz; the MFSK frame decoder
+ * searches +/-94 Hz and decodes to about 100.  On air (N3JXB and KG9NI,
+ * 2026-11-23) the two were 100 Hz apart: frames came through and none of 13
+ * patterns did.  Told the offset the peer's frames were measured at, the
+ * window searches around it: the same patterns are heard, either side. */
+void test_window_hears_a_peer_off_by_its_measured_offset(void)
+{
+    static const double DF[] = { 100.0, 110.0, 130.0, -100.0, -130.0 };
+    for (size_t i = 0; i < sizeof(DF) / sizeof(DF[0]); i++) {
+        char what[64];
+        snprintf(what, sizeof(what), "ACK %+.0f Hz off, centred", DF[i]);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(-1, window_hears_off(PAT_ACK, DF[i], 0.0f), what);
+        snprintf(what, sizeof(what), "ACK %+.0f Hz off, offset given", DF[i]);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(PAT_ACK, window_hears_off(PAT_ACK, DF[i], (float)DF[i]), what);
+    }
+    TEST_ASSERT_EQUAL_INT(PAT_BREAK, window_hears_off(PAT_BREAK, 110.0, 110.0f));
+}
+
+/* The measured offset is the frame decoder's, to its own resolution (half a
+ * bin, 15.6 Hz at the floor): within that of the truth, and more, the
+ * pattern is still heard. */
+void test_window_offset_need_not_be_exact(void)
+{
+    TEST_ASSERT_EQUAL_INT(PAT_ACK, window_hears_off(PAT_ACK, 110.0, 94.0f));
+    TEST_ASSERT_EQUAL_INT(PAT_ACK, window_hears_off(PAT_ACK, 110.0, 125.0f));
+    TEST_ASSERT_EQUAL_INT(PAT_ACK, window_hears_off(PAT_ACK, 60.0, 110.0f));
+}
+
+/* With no offset given the window is what it was: an on-frequency pattern and
+ * one 40 Hz off are heard, and the setting goes back to 0 cleanly. */
+void test_window_offset_zero_is_centred(void)
+{
+    TEST_ASSERT_EQUAL_INT(PAT_ACK, window_hears_off(PAT_ACK, 110.0, 110.0f));
+    TEST_ASSERT_EQUAL_INT(PAT_ACK, window_hears_off(PAT_ACK, 0.0, 0.0f));
+    TEST_ASSERT_EQUAL_INT(PAT_ACK, window_hears_off(PAT_ACK, -40.0, 0.0f));
+    TEST_ASSERT_EQUAL_INT(PAT_BREAK, window_hears_off(PAT_BREAK, 40.0, 0.0f));
+}
+
 /* The window reports a burst as it ends, not a scan later: within a few steps
  * of its last sample (plus the low-pass filter's delay), and only once. */
 void test_window_reports_a_burst_promptly_and_once(void)
@@ -655,5 +714,8 @@ int main(void)
     RUN_TEST(test_window_finds_a_chunked_ack_at_any_scan_phase);
     RUN_TEST(test_reset_discards_a_stale_burst);
     RUN_TEST(test_without_reset_the_stale_burst_is_found);
+    RUN_TEST(test_window_hears_a_peer_off_by_its_measured_offset);
+    RUN_TEST(test_window_offset_need_not_be_exact);
+    RUN_TEST(test_window_offset_zero_is_centred);
     return UNITY_END();
 }

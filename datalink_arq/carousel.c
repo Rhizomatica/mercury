@@ -1417,6 +1417,15 @@ static int choose_level(const car_t *c, uint64_t now)
         /* A start stays where the connect's SNR put it: a fade's reading
          * started fading +10 one rung low, and seed 58 took 17 % longer. */
         int top = c->polls ? fall_level(c, c->snr_level) : c->snr_level;
+        /* ...or higher, where my reading has since put it: a connect misread
+         * low (on air, a CALL decoded at -2.6 dB on a 12-17 dB link) kept a
+         * session on MFSK2K until a probe.  Never lower than the connect's:
+         * a fade's reading started fading +10 one rung low. */
+        if (c->snr_valid && !ctl_on_floor(c)) {
+            float db = c->snr_last < c->snr_ema ? c->snr_last : c->snr_ema;   /* as fall_level */
+            int up = cap_level(c, car_start_level(db));
+            if (up > top && !c->rung[up].rounds && level_allowed(c, up)) top = up;
+        }
         if (!c->rung[top].rounds) return top;
         /* The SNR's rung was tried and is out: the next one down not tried
          * yet, not the floor.  At 12 dB two DATAC17 polls lost in a row
@@ -3155,8 +3164,18 @@ static int s_idle_rung(car_t *c, uint64_t now)
     if (!g_short_rung || !c->peer_short) return 0;
     if (c->io.pattern && (c->ctl_deaf || c->poll_level == 0)) return 0;
     /* From the rung M's rounds last came on, not a probe: an ack is no place
-     * to try a rung out. */
+     * to try a rung out.  But no lower than where my reading would start a
+     * session: one misread SNR at the connect kept a session on MFSK2K, every
+     * ack naming nothing, for 80 s of UUCP's short messages read at 17 dB (on
+     * air, sBitx bench, 2026-11-25: the CALL decoded at -2.6 dB). */
     int lv = c->s_prev_lv >= 1 ? c->s_prev_lv : choose_level(c, now), n = 1;
+    if (c->snr_valid && !ctl_on_floor(c)) {
+        /* the lower reading, as fall_level, and with the gate's margin: a
+         * fade's peak lifting short messages cost 8 % (sim, fade:0, chat) */
+        float db = (c->snr_last < c->snr_ema ? c->snr_last : c->snr_ema) - SNR_GATE_DB;
+        int start = cap_level(c, car_start_level(db));
+        if (start > lv && level_allowed(c, start)) lv = start;
+    }
     size_t guess = peer_next_guess(c);
     if (lv <= 1 || !guess) return 0;
     return short_rung(c, lv, guess, &n);
@@ -3742,14 +3761,23 @@ void car_on_tx_done(car_t *c, uint64_t now)
  * after a keydown made S send a round into M's (car_explore, cliff:-5 and
  * cliff:-9 both ways). */
 #define PAT_MIN_MS (110 + PATTERN_AIR_MS)
+/* ...less this much: my keydown's end is when I learn of it (TX_COMPLETE,
+ * once the sound card has played out), and that is late on the air by its
+ * playback latency, where the peer dates it from its decode.  With no
+ * allowance but the detector's own ~0.24 s, a pattern keyed on time came in
+ * early: on air (N3JXB to KG9NI, 1.9.25, 2026-11-23) 6 of 12 were ignored,
+ * detected 1.41-1.45 s after KG9NI's PTT OFF against a bound of 1.45 s --
+ * KG9NI's TX_COMPLETE ~0.25 s after its audio ended.  Still above 1.2 s,
+ * where the explorer's spurious BREAK made S send a round into M's. */
+#define PAT_LATE_END_MS 200
 static bool pattern_in_time(const car_t *c, uint64_t now)
 {
     if (c->master) {
         if (!c->nmlog) return false;
         const car_mlog_t *l = &c->mlog[c->nmlog - 1];
-        return now >= l->e + TG_MS + PAT_MIN_MS && now <= mslot_hi(c, l, 0) + D_PAT_MS;
+        return now + PAT_LATE_END_MS >= l->e + TG_MS + PAT_MIN_MS && now <= mslot_hi(c, l, 0) + D_PAT_MS;
     }
-    if (!c->s_tx_end || now < c->s_tx_end + TURN_G_MS + PAT_MIN_MS) return false;
+    if (!c->s_tx_end || now + PAT_LATE_END_MS < c->s_tx_end + TURN_G_MS + PAT_MIN_MS) return false;
     /* ...and before my next slot, where I would have gone on regardless */
     return !c->anc.on || now < c->anc.eh + TG_MS + (uint64_t)c->anc.i * c->anc.p;
 }
