@@ -32,6 +32,7 @@
 #include "sim_core.h"
 #include "arq_fsm.h"
 #include "arq_protocol.h"
+#include "modem_psk.h"             /* MERCURY_MODE_PSK3 */
 #include "freedv_api.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,7 +46,7 @@ static const sim_mode_per_t NVIS[] = {
     { FREEDV_MODE_DATAC13, 0.30 }, { FREEDV_MODE_DATAC14, 0.30 },
     { FREEDV_MODE_DATAC4,  0.45 }, { FREEDV_MODE_DATAC3,  0.67 },
     { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },
-    { FREEDV_MODE_QAM16C2, 0.95 },
+    { FREEDV_MODE_QAM16C2, 0.95 }, { MERCURY_MODE_PSK3,   0.05 },   /* as carousel_sim.c */
 };
 
 int main(int argc, char **argv)

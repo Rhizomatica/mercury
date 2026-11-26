@@ -12,6 +12,7 @@
  */
 #include "unity.h"
 #include "modem_mfsk.h"
+#include "modem_psk.h"             /* MERCURY_MODE_PSK3 */
 #include "sim_clock.h"
 #include "sim_channel.h"
 #include "sim_endpoint.h"
@@ -1001,6 +1002,17 @@ void test_car_callee_abort_keeps_off_a_psk_round(void)
     TEST_ASSERT_EQUAL_INT(0, untold);
 }
 
+/* ...and the caller the same: its poll asked the callee for a PSK3 round,
+ * which nothing senses, and its DISCONNECT keyed 2350 and 650 ms into it
+ * (cases 12 and 13, -1 dB, #628 review). */
+void test_car_caller_abort_keeps_off_a_psk_round(void)
+{
+    int untold, cases;
+    abort_sweep(false, 60, -1.0, &untold, &cases);
+    TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
+    TEST_ASSERT_EQUAL_INT(0, untold);
+}
+
 /* Request and reply, as UUCP talks: A's request arrives, B's application
  * answers while B's last poll (nothing left either way) is on the air.  The
  * reply came too late for that poll and B was not idle yet, so it waited for
@@ -1053,7 +1065,7 @@ void test_car_fuzz(void)
         { FREEDV_MODE_DATAC15, 0.20 }, { FREEDV_MODE_DATAC16, 0.20 },
         { FREEDV_MODE_DATAC4,  0.45 }, { FREEDV_MODE_DATAC3,  0.67 },
         { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },
-        { FREEDV_MODE_QAM16C2, 0.95 },
+        { FREEDV_MODE_QAM16C2, 0.95 }, { MERCURY_MODE_PSK3,   0.05 },   /* as carousel_sim.c */
     };
     for (size_t c = 0; c < sizeof(CH) / sizeof(CH[0]); c++)
         for (uint64_t seed = 1; seed <= 8; seed++)
@@ -1383,6 +1395,7 @@ int main(void)
     RUN_TEST(test_car_callee_abort_disconnect_before_the_hop);
     RUN_TEST(test_car_callee_abort_tells_the_caller_whole_sweep);
     RUN_TEST(test_car_callee_abort_keeps_off_a_psk_round);
+    RUN_TEST(test_car_caller_abort_keeps_off_a_psk_round);
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
     RUN_TEST(test_car_bandwidth_caps_the_rungs);
