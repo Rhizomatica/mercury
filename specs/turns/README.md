@@ -167,3 +167,10 @@ DISCONNECT never meets the caller's keydown.
   callee keys over it once its reply window and the acquisition time are
   over.  The sim showed the same at -1 dB, 2.8 s into a PSK3 round
   (`test_car_callee_abort_keeps_off_a_psk_round`).
+- The caller's out-of-turn DISCONNECT waits out the same term: its poll
+  fills `poll_level`/`poll_n` as the callee's does, and `car_unsensed_round_ms`
+  no longer returns 0 for it.  The model's roles are symmetric here -- the
+  end that keys the DISCONNECT asked the other for a round it cannot sense --
+  so `AbortKey.cfg` and `Mut_pskblind.cfg` cover the caller as they stand;
+  the sim found it at -2/-1 dB, 2 of 60 ABORT moments each, before the fix
+  (`test_car_caller_abort_keeps_off_a_psk_round`, #628 review).

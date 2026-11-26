@@ -14,6 +14,7 @@
 
 #include "arq_fsm.h"
 #include "arq_protocol.h"
+#include "modem_psk.h"             /* MERCURY_MODE_PSK3 */
 #include "framer.h"
 #include "arq.h"
 #include "freedv_api.h"
@@ -602,7 +603,7 @@ void test_sim_fuzz_fading(void)
                 { FREEDV_MODE_DATAC13, 0.25 * sev }, { FREEDV_MODE_DATAC14, 0.25 * sev },
                 { FREEDV_MODE_DATAC4,  0.45 * sev }, { FREEDV_MODE_DATAC3,  0.67 * sev },
                 { FREEDV_MODE_DATAC1,  0.89 * sev }, { FREEDV_MODE_DATAC17, 0.93 * sev },
-                { FREEDV_MODE_QAM16C2, 0.95 * sev },
+                { FREEDV_MODE_QAM16C2, 0.95 * sev }, { MERCURY_MODE_PSK3,   0.05 * sev },   /* as carousel_sim.c */
             };
             sim_set_mode_per(s, tbl, (int)(sizeof(tbl)/sizeof(tbl[0])), 10.0f);
         }
