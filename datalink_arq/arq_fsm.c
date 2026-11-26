@@ -1080,6 +1080,10 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     sess->ctl_floor_at_stop = false;
     sess->car_active = true;
     sess->car_session = true;
+    /* car_never_answered() reads "never heard the callee" as car_last_rx_ms
+     * within a second of state_enter_ms: the caller must enter CONNECTED and
+     * start here together, and nothing else may touch car_last_rx_ms before
+     * a frame of the callee's does. */
     sess->car_last_rx_ms = now;
     if (is_caller)
         car_start_sender(sess->car, now);
