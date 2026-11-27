@@ -822,6 +822,10 @@ static void disconnect_answered(arq_session_t *sess)
 static uint64_t car_lost_at(const arq_session_t *sess)
 {
     uint64_t at = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
+    /* ...and not before my control, moved to the floor by my silence, has
+     * had a poll there that the callee listens for (car_recover_by_ms, #623). */
+    uint64_t rec = car_recover_by_ms(sess->car);
+    if (rec > at) at = rec;
     uint64_t due = car_answer_due_ms(sess->car, at);
     return due > at ? due : at;
 }

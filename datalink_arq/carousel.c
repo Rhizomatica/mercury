@@ -3726,6 +3726,11 @@ void car_on_tx_done(car_t *c, uint64_t now)
     if (c->io.pattern && now >= c->heard_ms + silent && !(c->ctl_deaf && c->peer_ctl_deaf)) {
         car_trace(c, "nothing of the peer's decoded in %d s: control at the floor",
                   (int)((now - c->heard_ms) / 1000));
+        /* S may have decoded this keydown, the last of mine above the
+         * floor: its own fallback to the floor counts from it
+         * (car_recover_by_ms).  Once per silence: a later move would only
+         * stretch the lost-peer watchdog further. */
+        if (c->master && c->floor_sw_ms <= c->heard_ms) c->floor_sw_ms = now;
         if (c->ctl_deaf != CAR_DEAF_MFSK_TX) c->ctl_deaf = CAR_DEAF_SNR;
         if (c->peer_ctl_deaf != CAR_DEAF_MFSK_TX) c->peer_ctl_deaf = CAR_DEAF_SNR;
         /* Below the control mode is below DATAC15 too (CTL_DEAF_ON_DB): my
@@ -3937,6 +3942,25 @@ uint32_t car_unsensed_round_ms(const car_t *c)
 {
     if (!c || c->poll_n <= 0 || !mercury_mode_is_psk(lmode(c, c->poll_level))) return 0;
     return s_round_ms(c, c->poll_level, c->poll_n);
+}
+
+/* The silence rule moved my control to the floor when the keydown that ended
+ * at floor_sw_ms was done.  S, bound to a rung above, may have decoded that
+ * keydown, and listens at the floor only S_FALLBACK_MS after it (plus its
+ * decode): my MFSK polls before then are not heard.  The first poll of mine
+ * keyed once S is there starts within one floor exchange (my poll, S's slot
+ * for its answer, the guards and the ask again) and is over one poll later.
+ * The lost-peer watchdog counted only from the last frame heard: with the
+ * default 150 s silence, 240 s left 90 s after the move, the very time S's
+ * fallback takes, and the session ended 1.9 s before S listened at the floor
+ * (sim, nvis, a B2F-shaped exchange, seed 68: the FF never sent).  The
+ * answer to that poll is waited for as any other (car_answer_due_ms). */
+uint64_t car_recover_by_ms(const car_t *c)
+{
+    if (!c || !c->master || !c->io.pattern || c->floor_sw_ms <= c->heard_ms) return 0;
+    uint64_t poll = s_ctl_for(c, true);                  /* a control frame at the floor */
+    uint64_t exchange = poll + TG_MS + D_MFSK_MS + poll + 2 * TURN_G_MS + IDLE_POLL_MIN_MS;
+    return c->floor_sw_ms + D_MFSK_MS + S_FALLBACK_MS + exchange + poll;
 }
 
 bool car_is_master(const car_t *c) { return c && c->master; }
