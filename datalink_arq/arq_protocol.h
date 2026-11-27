@@ -312,6 +312,19 @@ void arq_protocol_session_calls(bool we_called, const char *remote_call,
  * deferral step: a decode at the allowance's very end otherwise ties with the
  * CALL (specs/connect/ConnectCarrier.tla, DW). */
 #define ARQ_CALL_DECODE_WAIT_MS       (4500 + ARQ_CHANNEL_DEFER_MS)
+/* A station we are calling is taking another caller: we decoded a CALL to
+ * it from a third station, its ACCEPT to one, or its own CALL to one
+ * (RX_RIVAL).  Our CALLs then wait until nothing of that exchange has been
+ * heard for RIVAL_HOLD_MS (arq_fsm.c, call_held_for_rival), checked every
+ * RIVAL_POLL_MS; arq:call_max_s keeps running meanwhile.  Mostly the session
+ * it starts is out of our hearing (we hear one end of it, often neither), so
+ * the hold runs from the last frame of it we caught: 180 s covers the BBS
+ * forwards on air, 1.5-4 min.  On air (KG9NI calling K7EK, 1.9.26,
+ * 2026-11-26 22:21Z): KG9NI decoded N3JXB's two CALLs to K7EK, went to the
+ * MFSK floor 6 s later and keyed 13.5 s and two 27 s CALLs over the
+ * K7EK-N3JXB session for 3 minutes. */
+#define ARQ_CALL_RIVAL_HOLD_MS        180000
+#define ARQ_CALL_RIVAL_POLL_MS        1000
 /* Before a DISCONNECT: how long past the longer reply guard to leave for a
  * frame our last transmission invited to start and be heard, before keying
  * over the gap. */

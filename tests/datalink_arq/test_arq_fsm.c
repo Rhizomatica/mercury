@@ -2713,6 +2713,106 @@ void test_call_gives_up_at_call_max_s(void)
     TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
 }
 
+/* ---- A callee taking another caller (RX_RIVAL) ---- */
+
+/* Another station's CALL to DST1, decoded: crc of DST1, from "RIVAL". */
+static void hear_rival_call(const char *caller, const char *called)
+{
+    arq_event_t ev = make_event(ARQ_EV_RX_RIVAL);
+    ev.car_called_crc = arq_protocol_callsign_crc16(called);
+    strncpy(ev.remote_call, caller, CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+}
+
+/* Fire TIMER_RETRY at every deadline until t_end; the CALLs sent meanwhile. */
+static unsigned run_calling_until(uint64_t t_end)
+{
+    unsigned before = fake_send_tx_frame_fake.call_count;
+    while (sess.conn_state == ARQ_CONN_CALLING && sess.deadline_ms <= t_end) {
+        mock_set_uptime_ms(sess.deadline_ms);
+        arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+    if (time_now_ms() < t_end) mock_set_uptime_ms(t_end);
+    return fake_send_tx_frame_fake.call_count - before;
+}
+
+/* On air, KG9NI calling K7EK (1.9.26, 2026-11-26 22:21Z): N3JXB's CALLs to
+ * K7EK decoded, and KG9NI's next CALLs went over the K7EK-N3JXB session.
+ * Now no CALL is keyed for ARQ_CALL_RIVAL_HOLD_MS after it, no retry slot
+ * is spent, and the CALLs resume after. */
+void test_call_holds_while_callee_takes_another_caller(void)
+{
+    arq_protocol_set_call_max_s(0);
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+
+    hear_rival_call("RIVAL", "DST1");
+    int slots = sess.tx_retries_left;
+    uint64_t heard = time_now_ms();
+    TEST_ASSERT_EQUAL_UINT(0, run_calling_until(heard + ARQ_CALL_RIVAL_HOLD_MS - 1));
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(slots, sess.tx_retries_left);
+    TEST_ASSERT_TRUE(run_calling_until(heard + ARQ_CALL_RIVAL_HOLD_MS + 30000) >= 1);
+}
+
+/* A CALL to another station, or by one that is not our callee, holds nothing. */
+void test_call_ignores_rival_for_other_station(void)
+{
+    arq_protocol_set_call_max_s(0);
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    hear_rival_call("RIVAL", "OTHER");
+    TEST_ASSERT_TRUE(run_calling_until(time_now_ms() + 60000) >= 1);
+}
+
+/* Our callee CALLing a third station is as busy: held as well. */
+void test_call_holds_while_callee_calls_another(void)
+{
+    arq_protocol_set_call_max_s(0);
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    hear_rival_call("DST1", "OTHER");
+    TEST_ASSERT_EQUAL_UINT(0, run_calling_until(time_now_ms() + 60000));
+}
+
+/* Heard before our CONNECT: the first CALL waits too, and the call still has
+ * all its CALLs once the hold ends. */
+void test_call_first_waits_after_recent_rival(void)
+{
+    hear_rival_call("RIVAL", "DST1");
+    uint64_t heard = time_now_ms();
+    mock_set_uptime_ms(heard + 10000);
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CALL_RETRY_SLOTS + 1, sess.tx_retries_left);
+    TEST_ASSERT_EQUAL_UINT(0, run_calling_until(heard + ARQ_CALL_RIVAL_HOLD_MS - 1));
+    TEST_ASSERT_TRUE(run_calling_until(heard + ARQ_CALL_RIVAL_HOLD_MS + 2000) >= 1);
+}
+
+/* The hold does not stretch the call: arq:call_max_s still ends it. */
+void test_call_rival_hold_keeps_call_max_s(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    uint64_t start = time_now_ms();
+    arq_fsm_dispatch(&sess, &ev);
+    for (int i = 0; i < 3; i++) {          /* the callee busy throughout */
+        hear_rival_call("RIVAL", "DST1");
+        run_calling_until(time_now_ms() + 150000);
+    }
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_TRUE(time_now_ms() - start <= (uint64_t)ARQ_CALL_MAX_S_DEFAULT * 1000 + 150000);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+}
+
 /* arq:call_max_s = 0: RETRIES alone decides, every CALL is sent. */
 void test_call_max_s_zero_sends_every_retry(void)
 {
@@ -3387,6 +3487,11 @@ int main(void)
     RUN_TEST(test_call_timeout_no_listen);
     RUN_TEST(test_call_gives_up_at_call_max_s);
     RUN_TEST(test_call_max_s_zero_sends_every_retry);
+    RUN_TEST(test_call_holds_while_callee_takes_another_caller);
+    RUN_TEST(test_call_ignores_rival_for_other_station);
+    RUN_TEST(test_call_holds_while_callee_calls_another);
+    RUN_TEST(test_call_first_waits_after_recent_rival);
+    RUN_TEST(test_call_rival_hold_keeps_call_max_s);
     RUN_TEST(test_call_max_s_leaves_default_retries_alone);
     RUN_TEST(test_accepting_gives_up_after_budget);
     RUN_TEST(test_accept_fallback_completes_on_first_frame);
