@@ -34,6 +34,12 @@ type engineLink struct {
 	// Signalled after a command that changes what the pickers should show, so
 	// the lists are re-read instead of going stale.
 	refresh chan struct{}
+
+	// Signalled when the operator opens the Soundcards dialog: one re-read,
+	// so a device plugged in since start is listed.  Not the retry loop of
+	// refresh, which would keep resetting the pickers to the engine's
+	// selection while the operator is choosing a new one.
+	relist chan struct{}
 }
 
 const (
@@ -58,6 +64,7 @@ func newEngineLink() *engineLink {
 		statusEvery:   engineStatusInterval,
 		spectrumEvery: engineSpectrumInterval,
 		refresh:       make(chan struct{}, 1),
+		relist:        make(chan struct{}, 1),
 	}
 }
 
@@ -131,6 +138,9 @@ func (l *engineLink) Start(ctx context.Context) (<-chan Event, error) {
 				listRetriesLeft--
 				listsOK = l.emitDeviceLists(ctx, events)
 
+			case <-l.relist:
+				_ = l.emitDeviceLists(ctx, events)
+
 			case <-l.refresh:
 				// A device or radio change was just applied; re-read so the
 				// pickers show what the engine actually ended up using, which is
@@ -184,6 +194,11 @@ func (l *engineLink) Send(cmd Command) error {
 		// so no bare time.AfterFunc here that would outlive Close().
 		select {
 		case l.refresh <- struct{}{}:
+		default:
+		}
+	case "refresh_devices":
+		select {
+		case l.relist <- struct{}{}:
 		default:
 		}
 	}
