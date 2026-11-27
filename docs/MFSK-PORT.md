@@ -457,8 +457,10 @@ symbols per 32-bit hash, so it must be rehashed for longer suffixes.
 The dB bought back by the threshold is the whole trade:
 
 - plain 16-symbol pattern, threshold 8/16 — usable to about **−15 dB**, but
-  addresses nobody.  Fine for the in-session connect confirm, which is what
-  ships: the session already exists and the correlator window is bounded.
+  addresses nobody.  Fine inside a session, where the session already exists
+  and the correlator window is bounded: that is what the DISCONNECT reply and
+  the carousel's ACK/BREAK answers use today (the in-session connect confirm
+  that first used it was removed in 6d8d2ccb; see the note below).
 - directed 20-symbol pattern, threshold 18/20 — usable to about **−10.5 dB**,
   i.e. comparable to DATAC16's −9.5 dB, in **800 ms against 3740 ms**.
 
@@ -513,3 +515,14 @@ has to pay for it.
 **Verdict: the ACCEPT stays a coded DATAC16 frame.**  Connect optimisation
 stops at the CALL-retry anchor and the pattern confirm (12.8 s → 9.7 s
 bilateral).
+
+> Note (2026-11-27): the pattern connect confirm described above is gone.
+> 6d8d2ccb ("arq: carousel only", 2026-10-10) removed it with the rest of the
+> stop-and-wait plane.  The ACCEPT is now the carousel's first poll, and every
+> seeded frame carries the session in its CRC (`crc_seed`), so no separate
+> confirm step remains.  The un-addressed 8/16 pattern lives on in-session: the
+> ACK that answers a DISCONNECT (`send_disconnect_reply` in
+> `datalink_arq/arq_fsm.c`) and the carousel's ACK/BREAK answers to rounds
+> (`datalink_arq/carousel.c`).  The directed hail
+> (`mfsk_set_hail_target()`, `mfsk_generate_hail_pattern()`) is still not
+> wired into any live path.
