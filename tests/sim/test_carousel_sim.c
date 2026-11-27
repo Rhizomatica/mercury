@@ -222,10 +222,22 @@ void test_car_idle_lossy_link_stays_connected(void)
     TEST_ASSERT_EQUAL_INT(20, up);
 }
 
+/* The caller has heard the callee since the connect: the session started,
+ * and a link that goes now is a quiet peer, not a session that never started
+ * (#669's 120 s rule). */
+static void hear_callee_once(sim_t *s)
+{
+    arq_session_t *a = sim_endpoint_session(sim_a(s));
+    for (int i = 0; i < 3000 && a->car_last_rx_ms < a->state_enter_ms + 1000; i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_TRUE(a->car_last_rx_ms >= a->state_enter_ms + 1000);
+}
+
 /* #384: DISCONNECT after the peer has gone quiet: one try, not three. */
 void test_car_disconnect_quiet_peer_one_try(void)
 {
     sim_t *s = idle_session(9, 10.0);
+    hear_callee_once(s);
     sim_set_per(s, 1.0);
     sim_run_until_idle(s, 150000);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));

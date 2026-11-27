@@ -99,6 +99,7 @@ started on or sent (invariant I-BW, section 7).
 | CTL_DEAF_ON_DB | -7.5 (C:185) | CTL_DEAF_OFF_DB | -6.0 (C:186) |
 | ARQ_SNR_MIN_DATAC15_DB | -7.0 (P:369) | ARQ_SNR_HYST_DB | 5.0 (P:368) |
 | ARQ_CAR_PEER_LOST_MS | 240000 (F:1391) | DISCONNECT drain default | 45 s (P:476) |
+| ARQ_CAR_UNANSWERED_MS | 120000: the caller's watchdog while nothing of the callee's has been heard since its ACCEPT (`car_never_answered`) | | |
 
 Link-adaptation constants (C:700-705, 796, 842-847): PROBE_UP_DELIVERY 0.5,
 PROBE_EVERY 8, DEAD_PROBE_MS 60000, DEAD_PROBE_MAX_MS 480000, LV_DECAY 0.8,

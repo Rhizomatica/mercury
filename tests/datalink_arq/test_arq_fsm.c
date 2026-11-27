@@ -2081,11 +2081,22 @@ void test_silent_peer_after_hangup_waits_the_callees_drain(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, after);
 }
 
+/* The callee heard once since the connect: the session started, and its
+ * silence from here on is the 240 s watchdog's, not the never-started 120 s
+ * (car_never_answered). */
+static void callee_heard_once(void)
+{
+    mock_set_uptime_ms(sess.car_last_rx_ms + 2000);
+    arq_event_t ev = make_event(ARQ_EV_RX_PATTERN);
+    arq_fsm_dispatch(&sess, &ev);
+}
+
 /* The same silence from a peer that has not hung up is a fade, not an end:
  * only the lost-peer watchdog ends it. */
 void test_silent_peer_without_hangup_waits_for_the_watchdog(void)
 {
     goto_connected();
+    callee_heard_once();
     mock_set_uptime_ms(sess.car_last_rx_ms + 130000);
     arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
     arq_fsm_dispatch(&sess, &ev);
@@ -2099,6 +2110,7 @@ void test_silent_peer_without_hangup_waits_for_the_watchdog(void)
 void test_watchdog_waits_for_an_answer_on_the_air(void)
 {
     goto_connected();
+    callee_heard_once();
     uint64_t mark = sess.car_last_rx_ms + 240000;
 
     /* My poll ended 2 s before the mark: its answer slot runs past it. */
@@ -2122,6 +2134,7 @@ void test_watchdog_waits_for_an_answer_on_the_air(void)
 void test_watchdog_does_not_wait_for_a_keydown_after_the_mark(void)
 {
     goto_connected();
+    callee_heard_once();
     uint64_t mark = sess.car_last_rx_ms + 240000;
 
     car_log_ctl(sess.car, mark + 1000, ARQ_CHANNEL_GUARD_MS);
@@ -2142,6 +2155,7 @@ static void note_cut(const char *why) { (void)why; disconnected_at_cut = fake_no
 void test_watchdog_cuts_the_keydown_on_the_air(void)
 {
     goto_connected();
+    callee_heard_once();
     fake_notify_disconnected_fake.call_count = 0;
     disconnected_at_cut = 99;
     fake_cut_tx_fake.custom_fake = note_cut;
@@ -2227,6 +2241,67 @@ void test_watchdog_sends_one_disconnect_then_tells_the_host(void)
  * the host hears DISCONNECTED as it goes off the air -- the teardown the
  * watchdog's from start to end (ARQ_TD_LOST, then ARQ_TD_LOST_SENT), never
  * retried. */
+/* A caller connected on an ACCEPT, the callee never heard after it: the
+ * session never started, and the watchdog ends it at ARQ_CAR_UNANSWERED_MS
+ * (120 s), not 240 s -- as the watchdog does, with one DISCONNECT.  On air
+ * (KG9NI -> K7EK 2026-11-24 04:23Z) the callee's host had let the call go
+ * while the ACCEPT was on the air, and KG9NI polled nobody for 258 s. */
+static void caller_connected(void)
+{
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "AAA");
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+    fake_tx_backlog_fake.return_val = 0;
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
+void test_caller_never_answered_ends_at_120_s(void)
+{
+    caller_connected();
+    uint64_t t0 = sess.car_last_rx_ms;
+    arq_event_t ev;
+
+    mock_set_uptime_ms(t0 + 119000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_CONNECTED, sess.conn_state, "ended before 120 s");
+
+    mock_set_uptime_ms(t0 + 121000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_DISCONNECTING, sess.conn_state, "still polling a session that never started");
+    TEST_ASSERT_EQUAL_INT(ARQ_TD_LOST, sess.teardown);   /* the watchdog's end: one DISCONNECT */
+}
+
+/* ...and one heard, however little (a pattern), keeps the 240 s watchdog. */
+void test_caller_answered_once_keeps_the_watchdog(void)
+{
+    caller_connected();
+    uint64_t t0 = sess.car_last_rx_ms;
+    mock_set_uptime_ms(t0 + 10000);
+    arq_event_t ev = make_event(ARQ_EV_RX_PATTERN);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_UINT64(t0 + 10000, sess.car_last_rx_ms);
+
+    mock_set_uptime_ms(t0 + 121000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_CONNECTED, sess.conn_state, "a session that started ended at 120 s");
+
+    mock_set_uptime_ms(t0 + 10000 + 241000);
+    ev = make_event(ARQ_EV_TIMER_CAROUSEL);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+}
+
 void test_callee_watchdog_sends_one_disconnect_out_of_turn(void)
 {
     arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
@@ -3371,6 +3446,8 @@ int main(void)
     RUN_TEST(test_watchdog_sends_one_disconnect_then_tells_the_host);
     RUN_TEST(test_watchdog_disconnect_mfsk_only);
     RUN_TEST(test_callee_watchdog_sends_one_disconnect_out_of_turn);
+    RUN_TEST(test_caller_never_answered_ends_at_120_s);
+    RUN_TEST(test_caller_answered_once_keeps_the_watchdog);
     RUN_TEST(test_callee_hangup_on_a_quiet_caller_tells_it_once);
     RUN_TEST(test_callee_hangup_on_a_live_caller_waits_for_its_slot);
     RUN_TEST(test_disconnect_waits_out_a_long_keydown);

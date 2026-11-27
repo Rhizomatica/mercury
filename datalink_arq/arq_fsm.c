@@ -819,9 +819,30 @@ static void disconnect_answered(arq_session_t *sess)
  * frame was through, the file never sent.  Only a keydown that ended by the
  * 240 s mark: one keyed after it is not waited for, so a caller asking
  * again and again does not hold the session open. */
+/* A caller that has heard nothing of the callee's since its ACCEPT -- no
+ * answer to any poll, no pattern -- is in a session that never started, and
+ * gives up sooner than one whose callee has gone quiet.  The callee that sent
+ * that ACCEPT may have left the call while it was on the air (its host's
+ * LISTEN OFF: KG9NI -> K7EK 2026-11-24 04:23Z, KG9NI polled nobody 258 s), or
+ * never decoded the caller's polls (K7EK -> KG9NI 2026-11-20 01:32Z, 246 s).
+ * On air the callee's first answer came at most 78 s after the connect (37
+ * sessions, 19-24 Nov, three stations, BW500 to BW2750); car_lost_at() still
+ * waits out an answer due to a poll on the air at the mark, which at the
+ * BW500 floor (26.5 s frames) is a third exchange.  The caller starts the
+ * carousel as it enters CONNECTED (car_start), so car_last_rx_ms is
+ * state_enter_ms until the callee is first heard; a frame of the callee's
+ * cannot come within the second after: the caller polls first. */
+#define ARQ_CAR_UNANSWERED_MS 120000
+static bool car_never_answered(const arq_session_t *sess)
+{
+    return sess->conn_state == ARQ_CONN_CONNECTED && car_is_master(sess->car) &&
+           sess->car_last_rx_ms < sess->state_enter_ms + 1000;
+}
+
 static uint64_t car_lost_at(const arq_session_t *sess)
 {
-    uint64_t at = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
+    uint64_t at = sess->car_last_rx_ms +
+                  (car_never_answered(sess) ? ARQ_CAR_UNANSWERED_MS : ARQ_CAR_PEER_LOST_MS);
     uint64_t due = car_answer_due_ms(sess->car, at);
     return due > at ? due : at;
 }
@@ -1072,6 +1093,10 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     sess->ctl_floor_at_stop = false;
     sess->car_active = true;
     sess->car_session = true;
+    /* car_never_answered() reads "never heard the callee" as car_last_rx_ms
+     * within a second of state_enter_ms: the caller must enter CONNECTED and
+     * start here together, and nothing else may touch car_last_rx_ms before
+     * a frame of the callee's does. */
     sess->car_last_rx_ms = now;
     if (is_caller)
         car_start_sender(sess->car, now);
@@ -2450,8 +2475,12 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_TIMER_CAROUSEL:
         if (now >= car_lost_at(sess))
         {
-            HLOGW(LOG_COMP, "carousel: nothing from the peer in %d s%s — link lost",
-                  (int)((now - sess->car_last_rx_ms) / 1000), car_is_idle(sess->car) ? "" : " with data in flight");
+            if (car_never_answered(sess))
+                HLOGW(LOG_COMP, "carousel: nothing from the callee in the %d s since its ACCEPT — the session never started",
+                      (int)((now - sess->car_last_rx_ms) / 1000));
+            else
+                HLOGW(LOG_COMP, "carousel: nothing from the peer in %d s%s — link lost",
+                      (int)((now - sess->car_last_rx_ms) / 1000), car_is_idle(sess->car) ? "" : " with data in flight");
             car_end_lost(sess, now);
             return true;
         }
