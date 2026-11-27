@@ -220,6 +220,15 @@ typedef struct
     uint64_t nav_busy_until_ms;     /* a NAV header heard: the peer's keydown runs until then */
     uint8_t  defer_count;              /* consecutive busy-channel deferrals
                                         * of our DISCONNECT, or our CALL    */
+    /* A session we ended with a DISCONNECT the peer never answered: its
+     * seed is kept in LISTENING until this, so a poll of the peer's still
+     * decodes, and is answered with our DISCONNECT (linger_*, arq_fsm.c).
+     * 0: no linger. */
+    uint64_t linger_until_ms;
+    uint8_t  linger_replies;           /* DISCONNECTs keyed in this linger    */
+    bool     linger_arm;               /* entering LISTENING keeps the seed   */
+    bool     linger_keyed;             /* our reply is on the air: its end
+                                        * releases the host (CANCELPENDING)  */
     bool     tx_active;                /* we are keyed (TX_STARTED seen, no
                                         * TX_COMPLETE yet)                   */
     uint64_t last_tx_end_ms;           /* when our last transmission ended  */

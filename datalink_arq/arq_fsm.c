@@ -134,6 +134,7 @@ int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now)
  * ====================================================================== */
 
 static void car_stop(arq_session_t *sess);
+static void end_linger(arq_session_t *sess, const char *why);
 static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev);
 static void car_begin_disconnect(arq_session_t *sess, uint64_t now, bool lost);
 static bool abort_teardown(arq_session_t *sess, uint64_t now);
@@ -192,6 +193,12 @@ static void sess_enter_td(arq_session_t *sess, arq_conn_state_t new_state, arq_t
     HLOGD(LOG_COMP, "conn: %s -> %s",
           arq_conn_state_name(sess->conn_state),
           arq_conn_state_name(new_state));
+    /* A linger lives in the LISTENING its session's end entered
+     * (end_unanswered), and in no other state: a new call, LISTEN OFF (a
+     * scanner hopping) or any other move ends it. */
+    if (sess->linger_until_ms && !(sess->linger_arm && new_state == ARQ_CONN_LISTENING))
+        end_linger(sess, NULL);
+    sess->linger_arm = false;
     sess->teardown = td;
     if (new_state == ARQ_CONN_CONNECTED && sess->conn_state != ARQ_CONN_CONNECTED)
     {
@@ -1088,8 +1095,50 @@ static void car_stop(arq_session_t *sess)
      * stays until it has gone out.  Cleared first, the reply went out on the
      * station-wide patterns and the peer, still in the session, never
      * detected it (harness, a callee ending at the floor: 3 runs of 3). */
-    if (sess->crc_seed && sess->teardown != ARQ_TD_REPLYING)
+    if (sess->crc_seed && sess->teardown != ARQ_TD_REPLYING && !sess->linger_until_ms)
         car_set_seed(sess, 0);
+}
+
+/* The linger is over (ARQ_LINGER_MS, its replies spent, the peer's own
+ * DISCONNECT, or the station moved on): the seed goes, and plain frames on
+ * the payload modes -- broadcast -- decode again.  why: logged, or NULL. */
+static void end_linger(arq_session_t *sess, const char *why)
+{
+    if (!sess->linger_until_ms)
+        return;
+    sess->linger_until_ms = 0;
+    sess->linger_replies  = 0;
+    sess->linger_keyed    = false;
+    if (why)
+        HLOGI(LOG_COMP, "No longer listening for %s's polls (%s)", sess->remote_call, why);
+    if (sess->crc_seed && !sess->accept_fallback && sess->teardown != ARQ_TD_REPLYING)
+        car_set_seed(sess, 0);
+}
+
+/* The session is over and the peer never answered our DISCONNECT (ABORT's
+ * one, the channel never clear for it, or its retries spent): back to idle,
+ * but a listening station keeps the session's seed for ARQ_LINGER_MS.  A
+ * peer that missed our DISCONNECT is still in the session, polling; its
+ * polls carry the seed, and without it they never decode.  Each one heard
+ * is answered with our DISCONNECT again (fsm_listening, RX_CAROUSEL), so the
+ * peer ends now instead of at its 240 s watchdog or its operator's Stop. */
+static void end_unanswered(arq_session_t *sess)
+{
+    if (sess->crc_seed && sess->listen_enabled)
+    {
+        sess->linger_until_ms = time_now_ms() + ARQ_LINGER_MS;
+        sess->linger_replies  = 0;
+        sess->linger_keyed    = false;
+        sess->linger_arm      = true;
+    }
+    enter_idle_after_call(sess);
+    if (sess->linger_until_ms)
+    {
+        sess->deadline_ms    = sess->linger_until_ms;
+        sess->deadline_event = ARQ_EV_TIMER_RETRY;
+        HLOGI(LOG_COMP, "Listening %d s more for %s's polls: it may not have heard our DISCONNECT",
+              ARQ_LINGER_MS / 1000, sess->remote_call);
+    }
 }
 
 /* The session is over because the peer has gone, and the host is about to be
@@ -1327,7 +1376,7 @@ static bool abort_teardown(arq_session_t *sess, uint64_t now)
         HLOGI(LOG_COMP, "ABORT: our DISCONNECT is out -- ending now, the peer's answer not awaited");
         notify_session_ended(sess);
         if (g_timing) arq_timing_record_disconnect(g_timing, "abort");
-        enter_idle_after_call(sess);
+        end_unanswered(sess);
         return true;
     }
     if (arq_td_sent(sess))
@@ -1543,7 +1592,9 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
          * then the DISCONNECT goes at once, as it always did. */
         if (ev->session_id == sess->session_id)
         {
-            if (sess->deadline_ms == UINT64_MAX)
+            /* A linger's timer is taken back after the guard (TIMER_ACK). */
+            if (sess->deadline_ms == UINT64_MAX ||
+                (sess->linger_until_ms && sess->deadline_event != ARQ_EV_TIMER_ACK))
             {
                 HLOGI(LOG_COMP, "Stale ACCEPT in LISTENING — sending DISCONNECT to peer after the reply guard");
                 sess->deadline_ms    = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
@@ -1558,10 +1609,30 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TIMER_ACK:
-        /* The reply guard after a stale ACCEPT (RX_ACCEPT above) is over. */
+        /* The reply guard after a stale ACCEPT (RX_ACCEPT above), or after a
+         * lingering session's poll (RX_CAROUSEL below), is over. */
         sess->deadline_ms    = UINT64_MAX;
         sess->deadline_event = ARQ_EV_TIMER_RETRY;
         send_disconnect_frame(sess);
+        if (sess->linger_until_ms)
+        {
+            sess->linger_keyed = true;
+            sess->deadline_ms  = sess->linger_until_ms;
+        }
+        break;
+
+    case ARQ_EV_TX_COMPLETE:
+        /* Our answer to a lingering peer is off the air: the host the poll's
+         * arrival held (arrival_hold's PENDING, forgotten once we keyed) is
+         * let go. */
+        if (sess->linger_keyed)
+        {
+            sess->linger_keyed = false;
+            if (g_cbs.notify_cancelpending)
+                g_cbs.notify_cancelpending();
+            if (sess->linger_replies >= ARQ_LINGER_REPLIES)
+                end_linger(sess, "our DISCONNECT sent again");
+        }
         break;
 
     case ARQ_EV_APP_CONNECT:
@@ -1580,9 +1651,28 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_CAROUSEL:
         if (sess->accept_fallback && sess->crc_seed)
             car_connect_callee(sess, ev);
+        else if (sess->linger_until_ms && sess->crc_seed &&
+                 sess->deadline_event != ARQ_EV_TIMER_ACK && !sess->linger_keyed &&
+                 sess->linger_replies < ARQ_LINGER_REPLIES)
+        {
+            /* The session we ended is still the peer's: it never heard our
+             * DISCONNECT.  Again, one reply guard after its frame, as every
+             * answer goes (the stale ACCEPT's above). */
+            sess->linger_replies++;
+            HLOGI(LOG_COMP, "%s is still polling the session we ended: our DISCONNECT again (%d of %d)",
+                  sess->remote_call, sess->linger_replies, ARQ_LINGER_REPLIES);
+            sess->deadline_ms    = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
+            sess->deadline_event = ARQ_EV_TIMER_ACK;
+        }
         break;
 
     case ARQ_EV_TIMER_RETRY:
+        if (sess->linger_until_ms)
+        {
+            end_linger(sess, "nothing more from it");
+            sess->deadline_ms = UINT64_MAX;
+            break;
+        }
         if (sess->teardown == ARQ_TD_HOLDING)
         {
             /* The hold is over and the caller has not come: let the host go
@@ -1601,6 +1691,13 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_RX_DISCONNECT:
+        /* A lingering peer has ended the session itself. */
+        if (sess->linger_until_ms && ev->session_id == sess->session_id)
+        {
+            end_linger(sess, "it hung up too");
+            sess->deadline_ms = UINT64_MAX;
+            break;
+        }
         /* The caller we stopped answering has given up: no frame of that
          * session is coming, so stop waiting for one (see fsm_accepting). */
         if (sess->accept_fallback && sess->crc_seed && ev->session_id == sess->session_id)
@@ -2194,7 +2291,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                       arq_td_lost(sess) ? lost_why(sess) : "ABORT");
                 notify_session_ended(sess);
                 if (g_timing) arq_timing_record_disconnect(g_timing, arq_td_lost(sess) ? "timeout" : "abort");
-                enter_idle_after_call(sess);
+                end_unanswered(sess);
                 return;
             }
             car_on_tx_done(sess->car, now);
@@ -2235,7 +2332,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                           arq_td_lost(sess) ? lost_why(sess) : "ABORT");
                     notify_session_ended(sess);
                     if (g_timing) arq_timing_record_disconnect(g_timing, arq_td_lost(sess) ? "timeout" : "abort");
-                    enter_idle_after_call(sess);
+                    end_unanswered(sess);
                     return;
                 }
                 sess->teardown_deadline_ms = now + ARQ_CHANNEL_DEFER_MS;
@@ -2245,7 +2342,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                 HLOGI(LOG_COMP, "Disconnect finalized (timeout: the caller never answered)");
                 notify_session_ended(sess);
                 if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
-                enter_idle_after_call(sess);
+                end_unanswered(sess);
                 return;
             }
             car_on_time(sess->car, now);
@@ -2411,7 +2508,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
             HLOGI(LOG_COMP, "Disconnect finalized (timeout)");
             notify_session_ended(sess);
             if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
-            enter_idle_after_call(sess);
+            end_unanswered(sess);
         }
         break;
 
