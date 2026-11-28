@@ -204,6 +204,8 @@ Transmit level and power notes:
 | `make fyne-ui-macos-appstore-pkg` | **Mac App Store build:** the universal `Mercury.app` for macOS 15.0+, sandboxed (`macos/entitlements-appstore.plist`), signed with `MACOS_APPSTORE_IDENTITY` and the profile in `MACOS_APPSTORE_PROFILE`, in an installer package signed with `MACOS_INSTALLER_IDENTITY`, for upload to App Store Connect. |
 | `make test` | Build and run the C unit and simulator tests (`tests/`). |
 | `make integration-test` | Run the Go two-daemon integration tests ([tests/integration](tests/integration/README.md)); `make integration-test-random` uses a fresh channel seed. |
+| `make tla-quick` | Run TLC on the TLA+ models' 145 quick configurations ([specs/tlc.list](specs/tlc.list), ~6 min) and check each result against its README: no error, or the invariant a mutant must break.  Needs java and `tla2tools.jar` (`TLA2TOOLS=...`). |
+| `make tla` | The same for every configuration, the long ones included (hours). `TLA_ONLY=turns/` runs one directory, or any lines of `specs/tlc.list` that contain the text. |
 
 ### Build options
 

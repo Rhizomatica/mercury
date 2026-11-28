@@ -1,0 +1,179 @@
+# TLA+ configurations and the result each README gives (specs/tlc.sh, make tla).
+#
+#   dir  config  spec  expect  class  [tlc flags]
+#
+# expect: ok (no error), deadlock, or the invariant or property TLC must
+# report violated (a mutant, or a risk the README records).
+# class:  quick  finishes in a minute or two (make tla-quick, make tla)
+#         long   minutes to hours (make tla)
+#         huge   not exhausted, or about a day: run only when named
+#                (make tla TLA_ONLY=<config>)
+# A new .cfg gets a line here, with the result its README states.
+carousel  Adversary_Floor                  CarouselBlocks     ok                     long
+carousel  DirDone                          DirDone            ok                     quick
+carousel  Honest_Above                     CarouselBlocks     ok                     long
+carousel  Honest_Above_W3                  CarouselBlocks     ok                     long
+carousel  Honest_Floor                     CarouselBlocks     ok                     quick
+carousel  Honest_Floor_W3                  CarouselBlocks     ok                     long
+carousel  Live_Adversary_Floor             CarouselBlocks     ok                     huge
+carousel  Live_Honest_Above                CarouselBlocks     ok                     huge
+carousel  Live_Honest_Above_3              CarouselBlocks     ok                     long
+carousel  Live_Honest_Floor                CarouselBlocks     ok                     huge
+carousel  Live_Spurious_Floor              CarouselBlocks     ok                     long
+carousel  Mut_dd_keepstatus                DirDone            Sound                  quick
+carousel  Mut_dd_offerany                  DirDone            Sound                  quick
+carousel  ProofCheck                       ProofCheck         ok                     quick
+carousel  Spurious_Floor                   CarouselBlocks     ok                     quick
+carousel  Spurious_Floor_Big               CarouselBlocks     ok                     long
+carousel  Stale_Above                      CarouselBlocks     ok                     quick
+carousel  Stale_Above_NoCheck              CarouselBlocks     Integrity              quick
+carousel  Stale_Poll                       CarouselBlocks     RetireSafe             quick
+connect   ConnectCarrier                   ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_cemfsk            ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_cemfsk_early      ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_cemfsk_floor      ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_cmfsk             ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_cmfsk_early       ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_cmfsk_floor       ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_deep              ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_deep_cmfsk        ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_deep_early        ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_deep_emfsk        ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_deep_f4           ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_deep_floor        ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_deep_sense        ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_deeponly          ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_deeponly_cmfsk    ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_deeponly_emfsk    ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_deeponly_f4       ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_early             ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_emfsk             ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_emfsk_early       ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_emfsk_floor       ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_emfsk_listenall   ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_f10               ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_f10_early         ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_f10_emfsk         ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_f10_emfsk_floor   ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_f10_floor         ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_f4                ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_f4_cmfsk_floor    ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_f4_early          ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_f4_emfsk          ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_f4_emfsk_floor    ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_f4_floor          ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_floor             ConnectCarrier     ok                     quick -deadlock
+connect   ConnectCarrier_sense             ConnectCarrier     ok                     quick -deadlock
+connect   ConnectHandshake                 ConnectHandshake   ok                     quick
+connect   ConnectHandshake_big             ConnectHandshake   ok                     quick
+connect   ConnectHandshake_creq            ConnectHandshake   ok                     quick
+connect   ConnectHandshake_ereq            ConnectHandshake   ok                     quick
+connect   ConnectHandshake_old24           ConnectHandshake   ok                     quick
+connect   ConnectHandshake_oldC            ConnectHandshake   ok                     quick
+connect   ConnectHandshake_oldE            ConnectHandshake   ok                     quick
+connect   Mut_anyaccept                    ConnectHandshake   ok                     quick
+connect   Mut_bwleak                       ConnectHandshake   NoDoom                 quick
+connect   Mut_deepfloor                    ConnectCarrier     Connects               quick -deadlock
+connect   Mut_deepiv                       ConnectCarrier     NoOverlap              quick -deadlock
+connect   Mut_fallbackbw                   ConnectHandshake   NoDoom                 quick
+connect   Mut_fastiv                       ConnectCarrier     NoOverlap              quick -deadlock
+connect   Mut_firstiv                      ConnectCarrier     NoOverlap              quick -deadlock
+connect   Mut_ignorecall                   ConnectHandshake   NoDeafRedial           quick
+connect   Mut_ignorenewer                  ConnectHandshake   NoDeafRedial           quick
+connect   Mut_lateanswer                   ConnectCarrier     NoOverlap              quick -deadlock
+connect   Mut_loud                         ConnectCarrier     NoOverlap              quick -deadlock
+connect   Mut_mixed                        ConnectHandshake   SameLadder             quick
+connect   Mut_noalt                        ConnectCarrier     ok                     quick -deadlock
+connect   Mut_nodecwait                    ConnectCarrier     ok                     quick -deadlock
+connect   Mut_nohold                       ConnectCarrier     ok                     quick -deadlock
+connect   Mut_nolisten                     ConnectCarrier     NoOverlap              quick -deadlock
+connect   Mut_old                          ConnectCarrier     Early                  quick -deadlock
+connect   Mut_reanswer                     ConnectHandshake   Agree                  quick
+connect   Mut_remeasure                    ConnectHandshake   NoDoom                 quick
+connect   Mut_renonce                      ConnectHandshake   NoDoom                 quick
+connect   Mut_staletake                    ConnectHandshake   NoDeadAnswer           quick
+ctldeaf   CtlDeaf                          CtlDeaf            ok                     quick
+ctldeaf   Mut_fellback                     CtlDeaf            LossNeedsAsks          quick
+ctldeaf   Mut_nohold                       CtlDeaf            LossEnds               quick
+ctldeaf   Mut_pskclears                    CtlDeaf            HardNeedsOfdm          quick
+notices   CalleeNotices                    CalleeNotices      ok                     quick
+notices   Mut_early                        CalleeNotices      LateHeld               quick
+notices   Mut_noguard                      CalleeNotices      Settled                quick
+notices   Mut_silent                       CalleeNotices      Settled                quick
+rungs     Alt_reqonly                      RungAgreement      ok                     quick
+rungs     FallbacksAgree                   RungAgreement      ok                     quick
+rungs     FallbacksAgree_Code              RungAgreement      FallbacksAgree         quick
+rungs     FloorFallback                    FloorFallback      ok                     quick
+rungs     FloorFallback_FS8                FloorFallback      ok                     quick
+rungs     FloorSilence                     FloorSilence       ok                     quick
+rungs     Mut_deaf                         RungAgreement      Agree                  quick
+rungs     Mut_fb_six                       FloorFallback      WastedFB               quick
+rungs     Mut_fb_six_FS8                   FloorFallback      WastedFB               quick
+rungs     Mut_fs_lagread                   FloorSilence       FloorHolds             quick
+rungs     Mut_fs_noread                    FloorSilence       Delivered              quick
+rungs     Mut_fs_nosilence                 FloorSilence       Delivered              quick
+rungs     Mut_fs_nostay                    FloorSilence       Delivered              quick
+rungs     Mut_nobind                       RungAgreement      Agree                  quick
+rungs     Mut_nodrop                       PollRung           Delivered              quick
+rungs     Mut_norecvfb                     RungAgreement      WastedF                quick
+rungs     Mut_norecvfb_Delivered           RungAgreement      ok                     quick
+rungs     Mut_norecvfb_W2                  RungAgreement      ok                     quick
+rungs     Mut_noreq                        RungAgreement      WastedF                quick
+rungs     Mut_noscore                      PollRung           Delivered              quick
+rungs     Mut_prevr                        RungAgreement      FallbacksAgree         quick
+rungs     Mut_stale                        PollRung           Agree                  quick
+rungs     Mut_unnamed                      RungAgreement      Agree                  quick
+rungs     PollRung                         PollRung           ok                     quick
+rungs     PollRung_dark                    PollRung           ok                     quick
+rungs     RungAgreement                    RungAgreement      ok                     quick
+rungs     WastedF_Zero                     RungAgreement      WastedF                quick
+teardown  Foreign                          SessionTeardown    NoKill                 quick
+teardown  ForeignEnd                       SessionTeardown    ok                     long
+teardown  ForeignPattern                   SessionTeardown    ok                     long
+teardown  Mut_abortnow                     SessionTeardown    Clean                  quick
+teardown  Mut_abortsilent                  SessionTeardown    Clean                  quick
+teardown  Mut_aborttwice                   SessionTeardown    ToldOnce               quick
+teardown  Mut_ackless                      SessionTeardown    Confirmed              quick
+teardown  Mut_activeonly                   SessionTeardown    ToldOnce               quick
+teardown  Mut_anypattern                   SessionTeardown    ok                     long
+teardown  Mut_crossedsilent                SessionTeardown    Clean                  quick
+teardown  Mut_endheld                      SessionTeardown    NoLostWord             quick
+teardown  Mut_endsilence                   SessionTeardown    NoCut                  quick
+teardown  Mut_holdlate                     SessionTeardown    HoldOwnSession         quick
+teardown  Mut_ignorepattern                SessionTeardown    Clean                  quick
+teardown  Mut_lostsilent                   SessionTeardown    NoSilentEnd            quick
+teardown  Mut_mackless                     SessionTeardown    SConfirmed             quick
+teardown  Mut_quietsilent                  SessionTeardown    NoSilentEnd            quick
+teardown  Mut_rearm                        SessionTeardown    Released               quick
+teardown  Mut_redialwait                   SessionTeardown    Released               quick
+teardown  Mut_samecall                     SessionTeardown    Answered               quick
+teardown  Mut_skipreply                    SessionTeardown    Clean                  quick
+teardown  Mut_staleteardown                SessionTeardown    NoInherited            quick
+teardown  Mut_toldearly                    SessionTeardown    ToldAtEnd              quick
+teardown  Mut_unkeyed                      SessionTeardown    NoForeign              quick
+teardown  Mut_unkeyedend                   SessionTeardown    NoUnasked              quick
+teardown  Race                             SessionTeardown    NoRace                 quick
+teardown  SessionTeardown                  SessionTeardown    ok                     long
+teardown  SessionTeardown_abort            SessionTeardown    ok                     long
+teardown  SessionTeardown_abort_lossy      SessionTeardown    ok                     huge
+teardown  SessionTeardown_lossy            SessionTeardown    ok                     long
+turns     AbortKey                         AbortKey           ok                     quick
+turns     CarouselTurns                    CarouselTurns      ok                     long
+turns     CarouselTurns_close              CarouselTurns      ok                     huge
+turns     CarouselTurns_mfsk               CarouselTurns      ok                     long
+turns     CarouselTurns_mfsk500            CarouselTurns      ok                     long
+turns     CarouselTurns_one                CarouselTurns      ok                     long
+turns     CarouselTurns_watch              CarouselTurns      ok                     long
+turns     FalsePattern                     CarouselTurns      NoOverlap              quick
+turns     Mut_anytime                      CarouselTurns      NoOverlap              quick
+turns     Mut_blind                        CarouselTurns      NoOverlap              quick
+turns     Mut_closenewer                   CarouselTurns      NoOverlap              quick
+turns     Mut_csmiss                       CarouselTurns      NoOverlap              quick
+turns     Mut_late                         CarouselTurns      NoOverlap              quick
+turns     Mut_long                         CarouselTurns      NoOverlap              quick
+turns     Mut_nogrid                       CarouselTurns      NoOverlap              quick
+turns     Mut_nologdisc                    CarouselTurns      NoOverlap              quick
+turns     Mut_onecont                      CarouselTurns      NoOverlap              quick
+turns     Mut_pskblind                     AbortKey           NoOverlap              quick
+turns     Mut_reuse                        CarouselTurns      NoOverlap              quick
+turns     Mut_spentany                     CarouselTurns      NoOverlap              quick
