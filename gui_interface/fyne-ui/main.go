@@ -459,7 +459,7 @@ func windowPosition(win fyne.Window) (int, int, bool) {
 func main() {
 	// Handle informational CLI actions (-h/-l/-z/-K/-Q/-V) before touching the
 	// GUI, so `mercury-ui -h` prints to the terminal and exits like the daemon.
-	if mercuryInfoCheck(os.Args, filepath.Join(getBaseDir(), "mercury.ini")) {
+	if mercuryInfoCheck(os.Args, defaultConfigPath()) {
 		return
 	}
 
@@ -1873,7 +1873,7 @@ func main() {
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 
-		defaultConfig := filepath.Join(getBaseDir(), "mercury.ini")
+		defaultConfig := defaultConfigPath()
 
 		logPath := filepath.Join(getLogDir(), "mercury_engine.log")
 		micGranted := ensureMicPermission(appendLog)
@@ -2250,8 +2250,49 @@ func getBaseDir() string {
 	if runtime.GOOS == "windows" {
 		return getExeDir()
 	}
+	if runtime.GOOS == "darwin" {
+		// "." was the working directory, which in a running Mercury.app is
+		// Contents/Resources (GLFW changes to it at start): the sandboxed App
+		// Store build cannot write there, so the sound card, radio and
+		// callsign were lost at every restart.  The message history already
+		// lives here (common/message_store.c).  In the sandbox the home
+		// directory is the app's container.
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, "Library", "Application Support", "mercury")
+		}
+	}
 	return "."
 }
+
+// defaultConfigPath is the mercury.ini the UI hands the engine when no -C is
+// given.  On macOS: the one in Application Support; else the
+// ~/.config/mercury/mercury.ini that the command-line mercury also reads, so
+// the two keep sharing it; else a new one in Application Support, seeded
+// from a mercury.ini in the bundle's Resources if an earlier version left
+// one there.
+var defaultConfigPath = sync.OnceValue(func() string {
+	path := filepath.Join(getBaseDir(), "mercury.ini")
+	if runtime.GOOS != "darwin" {
+		return path
+	}
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		shared := filepath.Join(home, ".config", "mercury", "mercury.ini")
+		if _, err := os.Stat(shared); err == nil {
+			return shared
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return path
+	}
+	old := filepath.Join(getExeDir(), "..", "Resources", "mercury.ini")
+	if data, err := os.ReadFile(old); err == nil {
+		_ = os.WriteFile(path, data, 0644)
+	}
+	return path
+})
 
 func getLogDir() string {
 	if runtime.GOOS == "linux" {
