@@ -40,7 +40,9 @@ Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
 
 **On-air compatibility.** 1.9.26 and 1.9.25 connect to each other, in
 either direction, and to nothing older: their ladders' levels mean other
-modes, so they refuse 1.9.24 and older and say so in the log.  1.9.20 to 1.9.24 (the "2.0" architecture)
+modes, so they refuse 1.9.24 and older and say so in the log.  Builds of
+the development branch (`mercuryv2`) after 1.9.26 put a new mode, PSK3, at
+rung 2 (connect minor 3): they refuse 1.9.26 and older, and log why.  1.9.20 to 1.9.24 (the "2.0" architecture)
 connect to each other, but not to 1.9.19 or older: their connect frames have
 a packet type of their own (and 1.9.18 and 1.9.19 did not connect to each
 other either).  A station with `mfsk_tx_only` set needs 1.9.21 or later at
