@@ -160,10 +160,10 @@ func tlsHello() []byte {
 
 func TestWebRequestOnBroadcastPortIsNotTransmitted(t *testing.T) {
 	cases := map[string][]byte{
-		"post":     browserPost("/", append([]byte("\r\n"), kissFrame("WEB-FRAME")...)),
+		"post":      browserPost("/", append([]byte("\r\n"), kissFrame("WEB-FRAME")...)),
 		"post_long": browserPost("/"+strings.Repeat("a", 4000), kissFrame("WEB-FRAME")),
-		"get":      append([]byte("GET /"), append(kissFrame("WEB-FRAME"), " HTTP/1.1\r\n\r\n"...)...),
-		"https":    tlsHello(),
+		"get":       append([]byte("GET /"), append(kissFrame("WEB-FRAME"), " HTTP/1.1\r\n\r\n"...)...),
+		"https":     tlsHello(),
 	}
 	for name, req := range cases {
 		t.Run(name, func(t *testing.T) {
