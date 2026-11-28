@@ -641,6 +641,26 @@ static bool decode_data(const uint8_t *b, size_t len, msg_t *m, int P)
     return true;
 }
 
+/* A data frame's room past its segments.  Left zero, it puts one symbol on
+ * every carrier: the OFDM frame turns into clipped peaks, sends less power at
+ * the same peak, and its SNR estimate reads low.  On the bench (2026-11-26/27)
+ * a lone, mostly empty DATAC17W frame read 11.9 dB where full ones read 15.0,
+ * and QAM16C2W 12.8 against 16.0.  On white noise at 15 dB a 2-byte frame
+ * read 12.2 against 14.8 (DATAC17W), and needed 2.7 dB more SNR to decode.
+ * So the room is filled with bytes that look random, after one zero segment
+ * header: the parse stops there (count 0), as it always has at zeros.  The
+ * fill is a fixed function of the byte's place in the frame, so a frame resent
+ * whole is the same frame (HARQ combines the copies). */
+static void fill_room(uint8_t *b, int pos, int room)
+{
+    if (room - pos >= SEG_HDR) pos += SEG_HDR;
+    for (uint32_t i = (uint32_t)pos; i < (uint32_t)room; i++) {
+        uint32_t x = i * 0x9E3779B1u;            /* a fixed hash of the index */
+        x ^= x >> 15; x *= 0x2C1B3C6Du; x ^= x >> 12;
+        b[i] = (uint8_t)(x >> 8);
+    }
+}
+
 static void put_seg_hdr(uint8_t *p, const car_sblock_t *s, int count, int first, int P)
 {
     int pad = s->K * P - s->len;
@@ -987,6 +1007,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
             nseg++;
             if (bb != b) break;
         }
+        fill_room(x->bytes, pos, room);
         nf++;
         while (b < c->nsb && want[b] <= 0) b++;
         if (b >= c->nsb) break;                  /* all wants met */
