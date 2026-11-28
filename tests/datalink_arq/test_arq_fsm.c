@@ -25,6 +25,7 @@ DEFINE_FFF_GLOBALS;
 #include "freedv/freedv_api.h"
 #include "modem_mfsk.h"        /* MERCURY_MODE_MFSK */
 #include "carousel.h"          /* car_drain_budget_ms */
+#include "framer.h"            /* PACKET_TYPE_ARQ_CONTROL */
 
 /* Provided by arq_test_stubs.c */
 extern void mock_set_uptime_ms(uint64_t ms);
@@ -978,6 +979,57 @@ void test_accept_transitions_to_connected(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
     TEST_ASSERT_TRUE(fake_notify_connected_fake.arg2_val);    /* we called */
+}
+
+/* A stale ACCEPT (the host gave up the call while the callee's ACCEPT was on
+ * the air) is answered with a DISCONNECT one reply guard later, like every
+ * other answer, not keyed over the callee's PTT-OFF.  On air (VE4KLM -> K7EK,
+ * 2026-11-25 10:36:59Z) the DISCONNECT went 10 ms after the decode and K7EK
+ * never heard it. */
+void test_stale_accept_disconnect_waits_the_reply_guard(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    uint8_t sid = sess.session_id;
+
+    ev = make_event(ARQ_EV_APP_DISCONNECT);          /* the host gives up */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+
+    unsigned sent = fake_send_tx_frame_fake.call_count;
+    uint64_t now = time_now_ms();
+    ev = make_event(ARQ_EV_RX_ACCEPT);               /* the callee's ACCEPT, late */
+    ev.session_id = sid;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT(sent, fake_send_tx_frame_fake.call_count);   /* nothing keyed yet */
+    TEST_ASSERT_EQUAL_UINT64(now + ARQ_CHANNEL_GUARD_MS, sess.deadline_ms);
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+
+    mock_set_uptime_ms(now + ARQ_CHANNEL_GUARD_MS);
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_UINT(sent + 1, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(PACKET_TYPE_ARQ_CONTROL, fake_send_tx_frame_fake.arg0_val);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, sess.deadline_ms);
+}
+
+/* An ACCEPT of another session in LISTENING is not ours: no DISCONNECT. */
+void test_foreign_accept_in_listening_is_ignored(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = (uint8_t)(sess.session_id + 1);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_UINT(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, sess.deadline_ms);
 }
 
 /* The connect is logged on the carrier the ACCEPT came on, not the control
@@ -2578,6 +2630,49 @@ void test_notice_owed_until_the_reply_is_out(void)
 }
 
 
+/* ABORT cuts what is on the air (arq.c), but not the keydown that tells the
+ * peer the session is over: nothing follows a cut one.  On air, K7EK
+ * 2026-11-24 20:30:34Z, BPQ32's ABORT cut a 26.5 s MFSK500 DISCONNECT 3.7 s
+ * in, and KG9NI sat out its 240 s watchdog.  The caller's DISCONNECT: */
+void test_keydown_tells_peer_caller_disconnect(void)
+{
+    TEST_ASSERT_FALSE_MESSAGE(arq_fsm_keydown_tells_peer(&sess), "no session");
+    goto_disconnecting_caller_held();
+    TEST_ASSERT_FALSE_MESSAGE(arq_fsm_keydown_tells_peer(&sess), "its DISCONNECT not keyed yet");
+    send_our_disconnect();
+    TEST_ASSERT_TRUE_MESSAGE(arq_fsm_keydown_tells_peer(&sess), "our DISCONNECT on the air");
+}
+
+/* ...the callee's, in a slot of the caller's (car_io_end): */
+void test_keydown_tells_peer_callee_disconnect(void)
+{
+    goto_connected();
+    TEST_ASSERT_FALSE_MESSAGE(arq_fsm_keydown_tells_peer(&sess), "a session's own rounds are cut");
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    ev.abort = true;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    sess.teardown = ARQ_TD_SENT;            /* car_io_end: the DISCONNECT in my slot */
+    TEST_ASSERT_TRUE(arq_fsm_keydown_tells_peer(&sess));
+}
+
+/* ...and our reply to the peer's DISCONNECT, from when it keys until it is
+ * out. */
+void test_keydown_tells_peer_reply(void)
+{
+    goto_connected();
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_FALSE_MESSAGE(arq_fsm_keydown_tells_peer(&sess), "the reply not keyed yet");
+    ev = make_event(ARQ_EV_TIMER_ACK);                 /* the reply keys */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE(arq_fsm_keydown_tells_peer(&sess));
+    ev = make_event(ARQ_EV_TX_COMPLETE);               /* ...and is out */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_FALSE(arq_fsm_keydown_tells_peer(&sess));
+}
+
 
 /* ---- Timeout tests ---- */
 
@@ -3308,6 +3403,9 @@ int main(void)
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
     RUN_TEST(test_rx_disconnect_with_backlog_ends_at_once);
     RUN_TEST(test_notice_owed_until_the_reply_is_out);
+    RUN_TEST(test_keydown_tells_peer_caller_disconnect);
+    RUN_TEST(test_keydown_tells_peer_callee_disconnect);
+    RUN_TEST(test_keydown_tells_peer_reply);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
@@ -3347,6 +3445,8 @@ int main(void)
     RUN_TEST(test_timeout_ms_idle);
     RUN_TEST(test_accept_is_only_sent_in_answer_to_a_heard_call);
     RUN_TEST(test_accepting_silent_wait_gives_up_after_budget);
+    RUN_TEST(test_stale_accept_disconnect_waits_the_reply_guard);
+    RUN_TEST(test_foreign_accept_in_listening_is_ignored);
     RUN_TEST(test_caller_records_the_accept_carrier);
     RUN_TEST(test_callee_records_the_accept_carrier);
     return UNITY_END();

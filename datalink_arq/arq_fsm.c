@@ -677,6 +677,19 @@ static int peer_is_transmitting(const arq_session_t *sess)
 
 int arq_fsm_channel_keyed(const arq_session_t *sess) { return peer_is_transmitting(sess); }
 
+/* The keydown on the air now, if any, is the one that tells the peer the
+ * session is over: our DISCONNECT, its teardown having keyed it (a retry of
+ * the caller's is one too), or our reply to the peer's.  ABORT leaves it to
+ * finish (arq.c): cut, it was the session's last word lost.  On air, K7EK
+ * 2026-11-24 20:30:34Z, BPQ32's ABORT came 3.7 s into a 26.5 s MFSK500
+ * DISCONNECT, the cut left nothing KG9NI could decode, and KG9NI, which had
+ * heard K7EK's application hang up, sat out its 240 s watchdog. */
+bool arq_fsm_keydown_tells_peer(const arq_session_t *sess)
+{
+    return (sess->conn_state == ARQ_CONN_DISCONNECTING && sess->teardown == ARQ_TD_SENT) ||
+           sess->teardown == ARQ_TD_NOTIFYING;
+}
+
 bool arq_fsm_notice_owed(const arq_session_t *sess)
 {
     switch (sess->conn_state)
@@ -1524,12 +1537,38 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         /* We gave up CALLING (retries exhausted) and returned to LISTENING,
          * but the callee is still retrying ACCEPT from our earlier CALL.
          * We already told the TNC "DISCONNECTED", so we can't reconnect.
-         * Send a DISCONNECT to tell the peer to stop retrying. */
+         * Send a DISCONNECT to tell the peer to stop retrying.
+         *
+         * One reply guard later, like every other answer: the ACCEPT decodes
+         * before its tail has played out, and the callee's radio is still
+         * keyed then.  Keyed at once, the DISCONNECT went out 10 ms after the
+         * decode, over the callee's PTT-OFF, and was lost; the callee sat in
+         * ACCEPTING, holding its scanning host, until the caller's next CALL
+         * (on air, VE4KLM -> K7EK, 2026-11-25 10:36:59Z: JNOS had given up
+         * the CONNECT at 60 s, 11 s before K7EK's MFSK ACCEPT decoded).
+         * LISTENING's timer is free unless the ACCEPT fallback holds it;
+         * then the DISCONNECT goes at once, as it always did. */
         if (ev->session_id == sess->session_id)
         {
-            HLOGI(LOG_COMP, "Stale ACCEPT in LISTENING — sending DISCONNECT to peer");
-            send_disconnect_frame(sess);
+            if (sess->deadline_ms == UINT64_MAX)
+            {
+                HLOGI(LOG_COMP, "Stale ACCEPT in LISTENING — sending DISCONNECT to peer after the reply guard");
+                sess->deadline_ms    = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
+                sess->deadline_event = ARQ_EV_TIMER_ACK;
+            }
+            else
+            {
+                HLOGI(LOG_COMP, "Stale ACCEPT in LISTENING — sending DISCONNECT to peer");
+                send_disconnect_frame(sess);
+            }
         }
+        break;
+
+    case ARQ_EV_TIMER_ACK:
+        /* The reply guard after a stale ACCEPT (RX_ACCEPT above) is over. */
+        sess->deadline_ms    = UINT64_MAX;
+        sess->deadline_event = ARQ_EV_TIMER_RETRY;
+        send_disconnect_frame(sess);
         break;
 
     case ARQ_EV_APP_CONNECT:

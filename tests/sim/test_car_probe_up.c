@@ -1,5 +1,6 @@
 /* tests/sim/test_car_probe_up.c -- a receiver does not probe a faster rung
- * from one that has delivered nothing.  Includes carousel.c for its statics.
+ * from one that has delivered nothing, and a probe whose poll was lost does
+ * not count against the rung.  Includes carousel.c for its statics.
  *
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -46,10 +47,59 @@ void test_a_delivered_round_still_probes_up(void)
     TEST_ASSERT_TRUE(choose_level(&car, 10000) > 3);
 }
 
+/* On air (sBitx bench, 2026-11-25): my poll asking for an untried rung went
+ * unheard, and M's REQ about the round I had answered came after my fallback.
+ * The rung was never asked: untried still, not 0 of 1. */
+void test_a_lost_poll_leaves_the_rung_untried(void)
+{
+    car.rung[5].probe_at = 7000;             /* held at the fallback (CAR_T_W) */
+    car.rx_mk = 9; car.req_mk = 9; car.req_lv = 3; car.req_n = 1;   /* REQ: a round I had */
+    s_settle_probe(&car, 10000, true);
+    TEST_ASSERT_EQUAL_INT(0, car.rung[5].rounds);
+    TEST_ASSERT_TRUE(car.rung[5].probe_at == 0);
+}
+
+/* Anything else M sends next: the probe was lost, scored as the fallback did. */
+void test_a_lost_probe_is_scored_when_the_next_round_comes(void)
+{
+    car.rung[5].probe_at = 7000;
+    s_settle_probe(&car, 10000, false);
+    TEST_ASSERT_EQUAL_INT(1, car.rung[5].rounds);
+    TEST_ASSERT_TRUE(fabs(car.rung[5].lost - 1.0) < 1e-9);
+}
+
+/* A start misread low at the connect (on air, a CALL at -2.6 dB on a
+ * 12-17 dB link) moves up with my reading before anything is measured, and
+ * never down below the connect's. */
+void test_an_unmeasured_start_follows_a_higher_reading(void)
+{
+    car.snr_level = 1;
+    car.snr_ema = car.snr_last = 15.0f;
+    TEST_ASSERT_TRUE(choose_level(&car, 10000) > 1);
+    car.snr_level = 4;
+    car.snr_ema = car.snr_last = -5.0f;
+    TEST_ASSERT_EQUAL_INT(4, choose_level(&car, 10000));
+}
+
+/* A REQ naming the held rung's round itself: settle leaves it held, and
+ * s_answer's own rx_score of the REQ measures it -- once, not twice. */
+void test_a_req_for_the_held_round_is_scored_by_the_req_alone(void)
+{
+    car.rung[5].probe_at = 7000;
+    car.rx_mk = 9; car.req_mk = 10; car.req_lv = 5; car.req_n = 1;   /* a round I never had */
+    s_settle_probe(&car, 10000, true);
+    TEST_ASSERT_EQUAL_INT(0, car.rung[5].rounds);
+    TEST_ASSERT_TRUE(car.rung[5].probe_at == 7000);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_a_lost_first_round_does_not_probe_up);
     RUN_TEST(test_a_delivered_round_still_probes_up);
+    RUN_TEST(test_a_lost_poll_leaves_the_rung_untried);
+    RUN_TEST(test_a_lost_probe_is_scored_when_the_next_round_comes);
+    RUN_TEST(test_a_req_for_the_held_round_is_scored_by_the_req_alone);
+    RUN_TEST(test_an_unmeasured_start_follows_a_higher_reading);
     return UNITY_END();
 }

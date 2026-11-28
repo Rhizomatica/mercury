@@ -481,6 +481,10 @@ bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now);
 /** Why the channel is busy now (a CAR_KEYED_* sign), 0 when clear: the
  *  listen-before-talk test the FSM keys by. */
 int arq_fsm_channel_keyed(const arq_session_t *sess);
+/** Whether the keydown on the air, if any, is our DISCONNECT or our reply to
+ *  the peer's: the frame that tells the peer the session is over, which
+ *  ABORT does not cut (arq.c). */
+bool arq_fsm_keydown_tells_peer(const arq_session_t *sess);
 /** Whether the FSM will still tell the host DISCONNECTED for this session:
  *  it is up, or it ended on the peer's DISCONNECT and the reply (then the
  *  notice) is still to go.  A host DISCONNECT or ABORT is answered at once

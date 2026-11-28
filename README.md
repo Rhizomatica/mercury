@@ -14,7 +14,7 @@ and no power grid worth speaking of.
 [Docs](https://rhizomatica.github.io/mercury/) ·
 [Mailing list](https://lists.riseup.net/www/info/hermes-general) ·
 [Google Play (Android)](https://play.google.com/store/apps/details?id=org.rhizomatica.mercury) ·
-[App Store (iPhone, iPad)](https://apps.apple.com/app/mercury-hf-modem/id6822504870)
+[App Store (iPhone, iPad, Mac)](https://apps.apple.com/app/mercury-hf-modem/id6822504870)
 
 **Help wanted: Apple hardware.** We build and test the macOS and iOS apps in a
 macOS virtual machine on an Intel PC, so we have never run the arm64 builds
@@ -38,13 +38,14 @@ presents the result to your application as an ordinary TCP connection.
 
 Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
 
-**On-air compatibility.** 1.9.25 connects only to 1.9.25, in either
-direction: its ladders' levels mean other modes, so it refuses 1.9.24 and
-older and says so in the log.  1.9.20 to 1.9.24 (the "2.0" architecture)
+**On-air compatibility.** 1.9.26 and 1.9.25 connect to each other, in
+either direction, and to nothing older: their ladders' levels mean other
+modes, so they refuse 1.9.24 and older and say so in the log.  1.9.20 to 1.9.24 (the "2.0" architecture)
 connect to each other, but not to 1.9.19 or older: their connect frames have
 a packet type of their own (and 1.9.18 and 1.9.19 did not connect to each
 other either).  A station with `mfsk_tx_only` set needs 1.9.21 or later at
 the other end.  See
+[docs/RELEASE-1.9.26.md](docs/RELEASE-1.9.26.md),
 [docs/RELEASE-1.9.25.md](docs/RELEASE-1.9.25.md),
 [docs/RELEASE-1.9.24.md](docs/RELEASE-1.9.24.md),
 [docs/RELEASE-1.9.23.md](docs/RELEASE-1.9.23.md),
@@ -398,6 +399,14 @@ Keep Mercury on screen while you use it: it does not run in the background
 yet.  Later releases install over this one, because they are signed with the
 same key.  A build signed with another key has to be uninstalled first.
 
+### Install on macOS
+
+**From the Mac App Store.**  Install
+[Mercury HF Modem](https://apps.apple.com/app/mercury-hf-modem/id6822504870)
+on macOS 15 or later.  It is free, and updates arrive through the App
+Store.  Or download the signed and notarized `.dmg` from the
+[releases page](https://github.com/Rhizomatica/mercury/releases).
+
 ### Install on iOS (technology preview)
 
 **From the App Store.**  Install
@@ -517,7 +526,7 @@ pkcon install rpm-build gcc-c++ make hamlib-devel alsa-lib-devel pulseaudio-deve
 Then leave `devel-su` and build as the normal user:
 
 ```bash
-v=1.9.25    # the release to build (1.9.22 and older have no sailfish/)
+v=1.9.26    # the release to build (1.9.22 and older have no sailfish/)
 mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS
 curl -fsSL -o ~/rpmbuild/SOURCES/mercury-$v.tar.gz \
     https://github.com/Rhizomatica/mercury/archive/refs/tags/v$v.tar.gz

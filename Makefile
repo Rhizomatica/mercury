@@ -1374,10 +1374,14 @@ integration-test-random:
 # only the .d files next to the objects THIS Makefile compiles: paths inside a
 # .d are relative to the directory the compiler ran in, so they only resolve
 # correctly from the Makefile that built them.  The top level compiles main.o,
-# the RaptorQ + bcast_file objects, the fyne-ui engine bridge, and the vendored
-# hidapi objects -- and must NOT sweep in the sub-makes' .d files (common/*.d,
-# datalink_arq/*.d, ...), whose relative paths would be resolved wrongly here.
+# the RaptorQ + bcast_file objects, the modem objects no sub-make builds
+# (MODEM_TOP_OBJS), the host and iOS objects, the fyne-ui engine bridge, and
+# the vendored hidapi objects -- and must NOT sweep in the sub-makes' .d files
+# (common/*.d, datalink_arq/*.d, ...), whose relative paths would be resolved
+# wrongly here.  Without MODEM_TOP_OBJS, a field added to modem_backend_t left
+# modem_freedv.o built against the old struct, and every session went deaf.
 TOP_DEPS := main.d \
+	$(MODEM_TOP_OBJS:.o=.d) host/*.d ios/*.d \
 	datalink_broadcast/bcast_file.d datalink_broadcast/bcast_file.w64.d \
 	datalink_broadcast/raptorq/lib/*.d datalink_broadcast/raptorq/deps/obl/*.d \
 	$(FYNE_UI_DIR)/engine/mercury_bridge.d $(FYNE_UI_DIR)/engine/mercury_bridge_w64.d \

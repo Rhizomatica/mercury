@@ -114,6 +114,13 @@ static char g_connect_src[CALLSIGN_MAX_SIZE];
 static bool g_host_told;
 
 static bool notice_owed(void);
+static bool keydown_tells_peer(void);
+/* When an ABORT last left our DISCONNECT on the air (0: none).  Another ABORT
+ * within ABORT_AGAIN_MS, longer than any keydown, cuts it.  The command
+ * bridge worker's alone (handle_cmd).  Left stale, it can only make a later
+ * ABORT cut, as before #665. */
+#define ABORT_AGAIN_MS 30000
+static uint64_t g_abort_left_ms;
 
 /* Internal event queue */
 #define ARQ_EV_QUEUE_CAP 64
@@ -882,8 +889,35 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
          * the ABORT and its DISCONNECTED, carrying data the session had just
          * dropped.  The modem unkeys within its tail time, the FSM sees the
          * keydown end as it would any other, and the one DISCONNECT goes out
-         * after it.  A CALL being sent is cut too: the call is over. */
-        arq_modem_cut_tx("ABORT");
+         * after it.  A CALL being sent is cut too: the call is over.
+         *
+         * Not our DISCONNECT, nor our reply to the peer's: that keydown IS
+         * the one that tells the peer, and nothing follows a cut one (the
+         * FSM: "our DISCONNECT is out -- no more retries").  BPQ32 ABORTs
+         * 30 s after a DISCONNECT that has not been answered, and at the
+         * floor ours can still be on the air then (arq_fsm_keydown_tells_peer).
+         * The scanner is held on PENDING until it is over (abort_hold). */
+        /* ...unless the host ABORTs again while it plays out: then it stops
+         * at once.  ABORT is also the stop button (a wrong frequency, a
+         * complaint of interference, a keydown that looks stuck), and a
+         * DISCONNECT at the floor is 26.5 s.  BPQ32 sends one ABORT. */
+        {
+            uint64_t now_ms = time_now_ms();
+            bool again = g_abort_left_ms && now_ms - g_abort_left_ms < ABORT_AGAIN_MS;
+            if (keydown_tells_peer() && !again)
+            {
+                g_abort_left_ms = now_ms;
+                HLOGI(LOG_COMP, "ABORT: our DISCONNECT is on the air -- left to finish, it tells the peer "
+                      "(ABORT again to stop it)");
+            }
+            else
+            {
+                if (again)
+                    HLOGI(LOG_COMP, "ABORT again: our DISCONNECT stops now");
+                g_abort_left_ms = 0;
+                arq_modem_cut_tx("ABORT");
+            }
+        }
         ev.id = ARQ_EV_APP_DISCONNECT;
         ev.abort = true;
         break;
@@ -1699,6 +1733,15 @@ void arq_post_pattern_ack(bool is_break)
     ev.id       = ARQ_EV_RX_PATTERN;
     ev.pattern_break = is_break;
     evq_push(&ev);
+}
+
+/* What is on the air tells the peer the session is over (arq_fsm_keydown_tells_peer). */
+static bool keydown_tells_peer(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    bool tells = arq_fsm_keydown_tells_peer(&g_sess);
+    pthread_mutex_unlock(&g_sess_lock);
+    return tells;
 }
 
 /* The FSM will still say DISCONNECTED for the session (arq_fsm_notice_owed):

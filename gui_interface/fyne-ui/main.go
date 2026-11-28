@@ -1409,6 +1409,12 @@ func main() {
 	myWindow.SetContent(mainLayout)
 
 	showSoundcardDialog := func() {
+		// Re-read the device lists: they are otherwise read only at connect
+		// and after Apply, so a sound card plugged in after start (issue
+		// #556) was missing until a restart.  An older remote engine does
+		// not know the command; the dialog still opens with what it has.
+		_ = sendWSCommand("refresh_devices", "", "", "", "", "", "", "")
+
 		currentSubsystem, subsystemOptions := func() (string, []string) {
 			state.mu.RLock()
 			link := state.link
@@ -2259,6 +2265,16 @@ func getLogDir() string {
 	}
 	if runtime.GOOS == "windows" {
 		return filepath.Join(getExeDir(), "logs")
+	}
+	if runtime.GOOS == "darwin" {
+		// "." was the working directory, which for an app opened from the
+		// Finder is "/": nothing could be written there and "Open logs
+		// directory" opened nothing (issue #556).  ~/Library/Logs is where
+		// macOS keeps app logs; in the App Store build's sandbox the home
+		// directory is the app's container, which is writable.
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, "Library", "Logs", "Mercury")
+		}
 	}
 	return "."
 }
