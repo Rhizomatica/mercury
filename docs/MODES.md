@@ -176,6 +176,14 @@ Its SNR map (`SNR_MAP_QAM16C2W`) is refitted on frames at the new drive:
 the raw estimate now rises to 13.9 at 28 dB true, where it flattened at
 12.5.
 
+At 1.8 a frame still runs to the cap now and then (2 of 30 at 18 dB, 5 at
+16).  So QAM16C2 and QAM16C2W stop at 50 iterations, not the code's 100: a
+frame not settled by 50 almost never is by 100 (60 random frames a point:
+QAM16C2W 59/60 either way at 11 dB, QAM16C2 56/60 against 57/60 at 10 dB),
+and the worst decode is ~0.4 s on a Pi 4, inside the margin the caller's
+round timer leaves past a burst.  The QPSK modes keep 100: DATAC17 at 3.5
+dB delivers 40/60 at 50 against 44/60.
+
 QAM16N1 and QAM16N2 under Poor, 160 bursts: equal or better at every point
 (QAM16N2 113/125/126 -> 117/125/128 at +20/+24/+28 dB).  White noise is
 unchanged, and no trigger came from 600 s of white noise or from DATAC1, 3,

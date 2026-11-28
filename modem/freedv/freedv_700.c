@@ -223,6 +223,17 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   assert(f->ldpc != NULL);
   ldpc_codes_setup(f->ldpc, f->ofdm->codename);
   ldpc_mode_specific_setup(f->ofdm, f->ldpc);
+  /* The 16-QAM modes on the (16200,9720) code: a frame that has not settled
+   * by 50 iterations almost never does by the code's 100, and 100 of them
+   * take ~0.8 s on a Pi 4 -- a decode that late outlasts the margin the
+   * caller's round timer leaves past a burst (carousel.c, m_on_ctl), and
+   * the round was scored lost before it came (bench, 2026-11-28).  Random
+   * frames, 60 a point, delivered at 50 against 100 iterations: QAM16C2W
+   * 59/60 = 59/60 at 11 dB, QAM16C2 56/60 against 57/60 at 10 dB.  The QPSK
+   * modes need theirs near threshold (DATAC17 at 3.5 dB: 40/60 against
+   * 44/60) and keep them. */
+  if (f->mode == FREEDV_MODE_QAM16C2 || f->mode == FREEDV_MODE_QAM16C2W)
+    f->ldpc->max_iter = 50;
 #ifdef __EMBEDDED__
   f->ldpc->max_iter = 10; /* limit LDPC decoder iterations to limit CPU load */
 #endif
