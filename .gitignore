@@ -123,3 +123,6 @@ Mercury-*.aab
 
 # sailfish/build-mercury-ui.sh: development links and pkg-config files
 sailfish/.gl/
+
+# TLC state and output (make tla)
+specs/.tlc/
