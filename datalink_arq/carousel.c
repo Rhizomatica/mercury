@@ -362,6 +362,26 @@ static uint64_t mode_air(int mode)
     return tm ? (uint64_t)(tm->frame_duration_s * 1000.0f + 0.5f) : 4400;
 }
 static uint64_t level_air(const car_t *c, int lv) { return mode_air(lmode(c, lv)); }
+/* The span a mode's carriers occupy, Hz (mercury -l): which of two frames'
+ * SNR readings saw more of the channel (car_on_frame).  0: not known. */
+static uint16_t mode_bw_hz(int mode)
+{
+    switch (mode) {
+    case FREEDV_MODE_DATAC17W: case FREEDV_MODE_QAM16C2W:             return 2750;
+    case FREEDV_MODE_DATAC17:  case FREEDV_MODE_QAM16C2:              return 2250;
+    case MERCURY_MODE_MFSK_W2:                                        return 2000;
+    case FREEDV_MODE_DATAC1:                                          return 1687;
+    case MERCURY_MODE_PSK3:    case MERCURY_MODE_PSKC:                return 1300;
+    case MERCURY_MODE_MFSK:                                           return 1000;
+    case FREEDV_MODE_DATAC3:   case FREEDV_MODE_DATAC0:  case FREEDV_MODE_DATAN1:
+    case FREEDV_MODE_QAM16N1:  case FREEDV_MODE_QAM16N2:              return 562;
+    case MERCURY_MODE_MFSK_N32: case MERCURY_MODE_MFSK_N16:           return 500;
+    case FREEDV_MODE_DATAC4:                                          return 250;
+    case FREEDV_MODE_DATAC14:                                         return 222;
+    case FREEDV_MODE_DATAC13:  case FREEDV_MODE_DATAC15: case FREEDV_MODE_DATAC16: return 187;
+    default:                                                          return 0;
+    }
+}
 
 /* ---- the control plane at the floor ----------------------------------------
  * Control frames go on the control mode (DATAC16).  A peer that hears me below
@@ -1419,7 +1439,9 @@ static int fall_level(const car_t *c, int top)
     return lv < top ? lv : top;
 }
 
-static int choose_level(const car_t *c, uint64_t now)
+/* The measured rung that delivers most, of those allowed: the one the
+ * session works on.  -1: none measured. */
+static int best_level(const car_t *c)
 {
     int best = -1;
     double best_gp = -1.0;
@@ -1428,6 +1450,13 @@ static int choose_level(const car_t *c, uint64_t now)
         double gp = level_goodput(c, lv);
         if (gp > best_gp) { best_gp = gp; best = lv; }
     }
+    return best;
+}
+
+static int choose_level(const car_t *c, uint64_t now)
+{
+    int best = best_level(c);
+    double best_gp = best < 0 ? -1.0 : level_goodput(c, best);
     if (best < 0) {
         /* A start stays where the connect's SNR put it: a fade's reading
          * started fading +10 one rung low, and seed 58 took 17 % longer. */
@@ -3592,9 +3621,29 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
          * the deafness test below, as it would have moved the estimate: that
          * asks whether the control mode gets through, and its own reading
          * says so.  With no data frame lately -- at connect, between
-         * transfers -- the control frames are all there is, as before. */
-        bool ctl_only = control && c->snr_valid && c->peer_data_ms &&
-                        now - c->peer_data_ms < CTL_READING_DATA_MS;
+         * transfers -- the control frames are all there is, as before.
+         *
+         * Nor does a data frame's on a rung below the one the session works
+         * on (best_level) and narrower than it: a small message's short rung
+         * (short_rung).  It reads a narrower slice of the channel, and on air
+         * a narrow mode reads under the wide ones where white noise has them
+         * all true: on the bench (2026-11-26) the UUCP handshake's frames
+         * went on DATAC3 (562 Hz) and read 9-10 dB, DATAC17W 12-15 and the
+         * short control frame 14.8.  Four of them took the estimate from
+         * 13.6 to 10.4, under the half-gate a first try of QAM16C2W needs,
+         * and 8 KB went on DATAC17W at half QAM16C2W's rate: 71 s from the
+         * file to the hang-up, 45 s for the other modem.  Only under a wide
+         * top rung (DATAC17, QAM16C2 and the 2750 Hz pair): lower down, on a
+         * fading channel, a lower rung's low reading is news, and holding it
+         * cost fade:5 two-way 3 % in the sim (9 seeds of 30 slower, none
+         * faster).  Where the session falls, the rung it works on falls with
+         * it, and the lower rung's readings count again. */
+        int blv = control ? -1 : best_level(c);
+        int flv = level_of_mode(mode);
+        bool held = control ? c->snr_valid && c->peer_data_ms && now - c->peer_data_ms < CTL_READING_DATA_MS
+                            : c->snr_valid && blv > 0 && flv >= 0 && flv < blv &&
+                                  mode_bw_hz(lmode(c, blv)) > mode_bw_hz(MERCURY_MODE_MFSK_W2) &&
+                                  mode_bw_hz(mode) < mode_bw_hz(lmode(c, blv));
         /* After S_FALLBACK_MS with nothing of the peer's decoded, the
          * estimate is from before the silence, and the silence says the
          * channel fell: the first reading after it counts whatever its mode,
@@ -3607,10 +3656,10 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
          * without a decode, read -8.1 on DATAC16 and kept -6.8, above the
          * control mode, while the callee's answers on it went unheard. */
         if (c->snr_valid && now >= c->heard_ms + S_FALLBACK_MS) {
-            ctl_only = false;
+            held = false;
             if (snr_db < ema) ema = snr_db;
         }
-        if (!ctl_only) {
+        if (!held) {
             c->snr_ema = ema;
             /* Two readings in a row more than SNR_GATE_DB to one side of the
              * smoothed one move it to the nearer of them: smoothing is for a
