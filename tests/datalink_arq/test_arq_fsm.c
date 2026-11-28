@@ -2684,8 +2684,8 @@ static void hear_peer_poll(void)
 /* On air, K7EK <- N3JXB 2026-11-26 19:30:41Z: N3JXB missed K7EK's DISCONNECT
  * and polled for 70 s; K7EK's decoders locked on its polls and, the seed
  * gone, could not read them.  Now the seed stays, a poll is answered with
- * the DISCONNECT one reply guard later, and the held host is let go after
- * that keydown. */
+ * the DISCONNECT one reply guard later, and the linger -- with the host it
+ * holds (arq.c, linger_hold) -- goes on for the peer's next poll. */
 void test_linger_answers_a_gone_peers_poll(void)
 {
     end_with_unanswered_disconnect();
@@ -2705,7 +2705,8 @@ void test_linger_answers_a_gone_peers_poll(void)
     arq_fsm_dispatch(&sess, &ev);
     ev = make_event(ARQ_EV_TX_COMPLETE);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(1, fake_notify_cancelpending_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
+    TEST_ASSERT_NOT_EQUAL(0, sess.linger_until_ms);
     TEST_ASSERT_EQUAL_UINT64(sess.linger_until_ms, sess.deadline_ms);
 }
 

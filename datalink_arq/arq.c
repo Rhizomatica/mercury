@@ -373,12 +373,15 @@ static void cb_notify_connected(const char *remote_call, const char *local_call,
 static uint64_t g_pending_ms;
 
 static void abort_hold_release(uint64_t now);
+static void linger_hold_drop(void);
 
 static void cb_notify_pending(const char *remote_call, const char *local_call)
 {
     /* An ABORT hold still on is an earlier session's: its CANCELPENDING goes
      * first, or it would cancel this PENDING (abort_hold_release). */
     abort_hold_release(time_now_ms());
+    /* A linger's hold is this PENDING's now: no CANCELPENDING of its own. */
+    linger_hold_drop();
     /* An incoming call makes us the callee, whatever an earlier session left
      * behind.  cb_notify_connected takes a set src_addr to mean "we called",
      * so addresses left over from an outgoing session that ended without
@@ -1112,6 +1115,55 @@ static uint64_t g_abort_hold_ms;   /* the hold's first PENDING; 0: none (g_sess_
 static uint64_t g_abort_hold_last; /* its last PENDING */
 static bool     g_abort_hold_done; /* this teardown has had its hold */
 
+/* While a session's end lingers (arq_fsm.c, end_unanswered: our DISCONNECT
+ * went unanswered, and LISTENING keeps the seed ARQ_LINGER_MS for the peer's
+ * polls), PENDING holds a scanning host on the channel, as abort_hold does
+ * until the DISCONNECT is out, and CANCELPENDING lets it go when the linger
+ * ends.  Without it the linger listened on a channel the host had left: on
+ * air (K7EK, callee, ABORT 2026-11-27 02:44:57Z) BPQ32 hopped 2.5 s after
+ * the session ended, its LISTEN OFF ended the linger, and KG9NI, which had
+ * missed the DISCONNECT, polled for 4 min; K7EK heard two of its polls, on
+ * visits to the channel.  The cost is the host's scan for at most
+ * ARQ_LINGER_MS, after a session whose end the peer did not hear.  On the
+ * event loop under g_sess_lock, as abort_hold. */
+static uint64_t g_linger_hold_ms;   /* the hold's first PENDING; 0: none */
+static uint64_t g_linger_hold_last; /* its last PENDING */
+
+static bool linger_hold_owed(uint64_t now)
+{
+    return g_sess.linger_until_ms && now < g_sess.linger_until_ms &&
+           g_sess.conn_state == ARQ_CONN_LISTENING;
+}
+
+/* The hold is over because a call's PENDING takes its place. */
+static void linger_hold_drop(void) { g_linger_hold_ms = 0; }
+
+static void linger_hold(uint64_t now)
+{
+    if (!linger_hold_owed(now))
+    {
+        if (!g_linger_hold_ms)
+            return;
+        arq_tnc_send_cancelpending();
+        HLOGI(LOG_COMP, "The linger is over: the scanner released (%llu s held)",
+              (unsigned long long)((now - g_linger_hold_ms) / 1000));
+        g_linger_hold_ms = 0;
+        return;
+    }
+    if (!g_linger_hold_ms)
+    {
+        /* In the pass that ended the session, after its notice (and the
+         * ABORT hold's CANCELPENDING, cb_notify_disconnected): a DISCONNECTED
+         * clears a pending connect at the host, so this PENDING comes last. */
+        g_linger_hold_ms = now;
+        HLOGI(LOG_COMP, "Holding a scanning host while %s may still poll (PENDING)", g_sess.remote_call);
+    }
+    else if (now - g_linger_hold_last < ARQ_PENDING_HOLD_MS)
+        return;
+    arq_tnc_send_pending();
+    g_linger_hold_last = now;
+}
+
 /* CANCELPENDING for a hold in progress.  From abort_hold once the hold is no
  * longer owed (after the event loop's pass), and earlier where a new call
  * may follow in the same pass: cb_notify_disconnected, as the ABORTed
@@ -1273,7 +1325,8 @@ static void arrival_hold(uint64_t now)
         g_arrival_gone_ms = now;
     if (now - g_arrival_gone_ms >= ARQ_ARRIVAL_GRACE_MS)
     {
-        arq_tnc_send_cancelpending();
+        if (!g_linger_hold_ms)               /* the linger's hold goes on */
+            arq_tnc_send_cancelpending();
         HLOGI(LOG_COMP, "The frame was no CALL for us: the scanner released (%llu s held)",
               (unsigned long long)((now - g_arrival_ms) / 1000));
         g_arrival_ms = g_arrival_gone_ms = 0;
@@ -1329,6 +1382,7 @@ static void *arq_event_loop_worker(void *arg)
         call_progress(now);
         pending_hold(now);
         abort_hold(now);
+        linger_hold(now);
         rx_abort_tick();
         arrival_hold(now);
         pthread_mutex_unlock(&g_sess_lock);

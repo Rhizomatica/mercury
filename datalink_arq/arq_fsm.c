@@ -1622,14 +1622,11 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TX_COMPLETE:
-        /* Our answer to a lingering peer is off the air: the host the poll's
-         * arrival held (arrival_hold's PENDING, forgotten once we keyed) is
-         * let go. */
+        /* Our answer to a lingering peer is off the air.  The host stays held
+         * until the linger ends (arq.c, linger_hold). */
         if (sess->linger_keyed)
         {
             sess->linger_keyed = false;
-            if (g_cbs.notify_cancelpending)
-                g_cbs.notify_cancelpending();
             if (sess->linger_replies >= ARQ_LINGER_REPLIES)
                 end_linger(sess, "our DISCONNECT sent again");
         }
