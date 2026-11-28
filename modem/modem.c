@@ -1322,11 +1322,20 @@ int run_tests_tx(generic_modem_t *g_modem)
      * end (send_modulated_data), so leaving here leaves the radio unkeyed. */
     while (!mercury_stop)
     {
+        /* Bytes that look random, as real traffic does (the carousel fills a
+         * frame's spare room the same way).  A frame of zeros puts one symbol
+         * on every carrier: it clips into peaks and reads several dB off on
+         * the SNR estimate, so the maps fitted from these frames
+         * (utils/snr_calib_sweep.sh) would not hold for real data. */
+        uint32_t x = 0x6D2B79F5u * (uint32_t)(counter + 1);
         for (size_t i = 0; i < payload_size; i++)
         {
-            buffer[i] = 0;
+            x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+            buffer[i] = (uint8_t)(x >> 24);
         }
-        buffer[counter % payload_size] = 1;
+        buffer[0] = (uint8_t)(counter >> 8);
+        if (payload_size > 1)
+            buffer[1] = (uint8_t)counter;
         counter++;
 
         send_modulated_data(g_modem, buffer, 1);
