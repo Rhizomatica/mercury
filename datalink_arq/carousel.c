@@ -362,6 +362,26 @@ static uint64_t mode_air(int mode)
     return tm ? (uint64_t)(tm->frame_duration_s * 1000.0f + 0.5f) : 4400;
 }
 static uint64_t level_air(const car_t *c, int lv) { return mode_air(lmode(c, lv)); }
+/* The span a mode's carriers occupy, Hz (mercury -l): which of two frames'
+ * SNR readings saw more of the channel (car_on_frame).  0: not known. */
+static uint16_t mode_bw_hz(int mode)
+{
+    switch (mode) {
+    case FREEDV_MODE_DATAC17W: case FREEDV_MODE_QAM16C2W:             return 2750;
+    case FREEDV_MODE_DATAC17:  case FREEDV_MODE_QAM16C2:              return 2250;
+    case MERCURY_MODE_MFSK_W2:                                        return 2000;
+    case FREEDV_MODE_DATAC1:                                          return 1687;
+    case MERCURY_MODE_PSK3:    case MERCURY_MODE_PSKC:                return 1300;
+    case MERCURY_MODE_MFSK:                                           return 1000;
+    case FREEDV_MODE_DATAC3:   case FREEDV_MODE_DATAC0:  case FREEDV_MODE_DATAN1:
+    case FREEDV_MODE_QAM16N1:  case FREEDV_MODE_QAM16N2:              return 562;
+    case MERCURY_MODE_MFSK_N32: case MERCURY_MODE_MFSK_N16:           return 500;
+    case FREEDV_MODE_DATAC4:                                          return 250;
+    case FREEDV_MODE_DATAC14:                                         return 222;
+    case FREEDV_MODE_DATAC13:  case FREEDV_MODE_DATAC15: case FREEDV_MODE_DATAC16: return 187;
+    default:                                                          return 0;
+    }
+}
 
 /* ---- the control plane at the floor ----------------------------------------
  * Control frames go on the control mode (DATAC16).  A peer that hears me below
@@ -1419,7 +1439,9 @@ static int fall_level(const car_t *c, int top)
     return lv < top ? lv : top;
 }
 
-static int choose_level(const car_t *c, uint64_t now)
+/* The measured rung that delivers most, of those allowed: the one the
+ * session works on.  -1: none measured. */
+static int best_level(const car_t *c)
 {
     int best = -1;
     double best_gp = -1.0;
@@ -1428,6 +1450,13 @@ static int choose_level(const car_t *c, uint64_t now)
         double gp = level_goodput(c, lv);
         if (gp > best_gp) { best_gp = gp; best = lv; }
     }
+    return best;
+}
+
+static int choose_level(const car_t *c, uint64_t now)
+{
+    int best = best_level(c);
+    double best_gp = best < 0 ? -1.0 : level_goodput(c, best);
     if (best < 0) {
         /* A start stays where the connect's SNR put it: a fade's reading
          * started fading +10 one rung low, and seed 58 took 17 % longer. */
@@ -2725,24 +2754,42 @@ static void m_decide_idle(car_t *c, uint64_t now)
 }
 
 /* My round, offering S its turn in the same exchange: on a clean link above
- * the floor, with the poll inline (no control frame), it costs 18 bytes of my
- * first frame -- and a request/response application's answer then comes in
- * S's answer to my round, not after a poll of mine for it (two keydowns an
- * exchange, not four).  S with nothing to send answers my round as before. */
+ * the floor it costs 18 bytes of my first frame with the poll inline, or the
+ * short control frame in front -- and a request/response application's
+ * answer then comes in S's answer to my round, not after a poll of mine for
+ * it (two keydowns an exchange, not four).  S with nothing to send answers
+ * my round as before. */
 #define OFFER_RECENT_MS 120000
 static bool offer_both(car_t *c, uint64_t now)
 {
-    if (!inline_poll(c)) return false;
-    /* ...to a peer that sends: a lost answer costs the wait for the round S
-     * might have sent, and offered to a peer with nothing, every probe lost
-     * on a cliff cost it (sim, cliff:5 one way 155 -> 181 s).  And that has
-     * sent all it had: a peer with more goes by turns, as both ways in bulk
-     * -- offered every round there, a lossy link lost both ways at once
-     * (sim, nvis both ways 3743 -> 3853 s over 60 seeds). */
+    /* Not only with the poll inline: on a rung S has just asked me onto
+     * (ok_lv not yet confirmed there) the poll goes in a control frame in
+     * front, which both_ok checks fits under my cap.  Only on the short
+     * control frame, 1.9 s against an exchange: on air (sBitx bench,
+     * 2026-11-25) a UUCP reply ready 0.9 s before the callee answered the
+     * file's last round, on the QAM16C2 its probe had asked for, went only
+     * after my poll for it, ~5 s later.  Sim (UUCP-like script, 30 seeds):
+     * cliff:12 -10 %, cliff:8..15 -4 %, fade:10/15 -4 %.  Behind the control
+     * mode (3.7 s, below ARQ_SNR_MIN_CTL_FAST_DB) it cost fade:0 and
+     * step:3:10 +3 % (#671 review).
+     *
+     * Offered only to a peer that sends: a lost answer costs the wait for
+     * the round S might have sent, and offered to a peer with nothing, every
+     * probe lost on a cliff cost it (sim, cliff:5 one way 155 -> 181 s).  And
+     * that has sent all it had: a peer with more goes by turns, as both ways
+     * in bulk -- offered every round there, a lossy link lost both ways at
+     * once (sim, nvis both ways 3743 -> 3853 s over 60 seeds). */
+    if (!inline_poll(c) && ctl_mode(c) != ARQ_CONTROL_MODE_FAST) return false;
     if (!peer_direction_done(c)) return false;
     if (!c->peer_has_data && !(c->peer_data_ms && now - c->peer_data_ms < OFFER_RECENT_MS)) return false;
     int lv = choose_level(c, now);
     if (c->ctl_deaf && c->io.pattern) lv = 0;
+    /* ...nor on a rung within SNR_GATE_DB of its threshold, where the round
+     * is likely lost: S, told by the control frame that it came, scores the
+     * loss, and that loss then kept the offer off the file's last round,
+     * the reply an exchange later (sim, flat 6 dB, a DATAC17 probe: +11 %;
+     * 3-4 dB +5 %). */
+    if (!inline_poll(c) && level_marginal(c, c->tx_level)) return false;
     if (!both_ok(c, lv)) return false;
     m_enter(c, PH_RECV, now);
     c->silent_polls &= ~SILENT_ASKED;
@@ -3574,9 +3621,29 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
          * the deafness test below, as it would have moved the estimate: that
          * asks whether the control mode gets through, and its own reading
          * says so.  With no data frame lately -- at connect, between
-         * transfers -- the control frames are all there is, as before. */
-        bool ctl_only = control && c->snr_valid && c->peer_data_ms &&
-                        now - c->peer_data_ms < CTL_READING_DATA_MS;
+         * transfers -- the control frames are all there is, as before.
+         *
+         * Nor does a data frame's on a rung below the one the session works
+         * on (best_level) and narrower than it: a small message's short rung
+         * (short_rung).  It reads a narrower slice of the channel, and on air
+         * a narrow mode reads under the wide ones where white noise has them
+         * all true: on the bench (2026-11-26) the UUCP handshake's frames
+         * went on DATAC3 (562 Hz) and read 9-10 dB, DATAC17W 12-15 and the
+         * short control frame 14.8.  Four of them took the estimate from
+         * 13.6 to 10.4, under the half-gate a first try of QAM16C2W needs,
+         * and 8 KB went on DATAC17W at half QAM16C2W's rate: 71 s from the
+         * file to the hang-up, 45 s for the other modem.  Only under a wide
+         * top rung (DATAC17, QAM16C2 and the 2750 Hz pair): lower down, on a
+         * fading channel, a lower rung's low reading is news, and holding it
+         * cost fade:5 two-way 3 % in the sim (9 seeds of 30 slower, none
+         * faster).  Where the session falls, the rung it works on falls with
+         * it, and the lower rung's readings count again. */
+        int blv = control ? -1 : best_level(c);
+        int flv = level_of_mode(mode);
+        bool held = control ? c->snr_valid && c->peer_data_ms && now - c->peer_data_ms < CTL_READING_DATA_MS
+                            : c->snr_valid && blv > 0 && flv >= 0 && flv < blv &&
+                                  mode_bw_hz(lmode(c, blv)) > mode_bw_hz(MERCURY_MODE_MFSK_W2) &&
+                                  mode_bw_hz(mode) < mode_bw_hz(lmode(c, blv));
         /* After S_FALLBACK_MS with nothing of the peer's decoded, the
          * estimate is from before the silence, and the silence says the
          * channel fell: the first reading after it counts whatever its mode,
@@ -3589,10 +3656,10 @@ bool car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
          * without a decode, read -8.1 on DATAC16 and kept -6.8, above the
          * control mode, while the callee's answers on it went unheard. */
         if (c->snr_valid && now >= c->heard_ms + S_FALLBACK_MS) {
-            ctl_only = false;
+            held = false;
             if (snr_db < ema) ema = snr_db;
         }
-        if (!ctl_only) {
+        if (!held) {
             c->snr_ema = ema;
             /* Two readings in a row more than SNR_GATE_DB to one side of the
              * smoothed one move it to the nearer of them: smoothing is for a

@@ -29,7 +29,7 @@ void tearDown(void)
 {
     unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); unsetenv("CAR_BW");
     unsetenv("CAR_SCRIPT"); unsetenv("CAR_MFSK_TX"); unsetenv("CAR_KBD");
-    unsetenv("CAR_CTL_SNR_OFFSET"); unsetenv("CAR_NOISE");
+    unsetenv("CAR_CTL_SNR_OFFSET"); unsetenv("CAR_MODE_SNR_OFFSET"); unsetenv("CAR_NOISE");
 }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
@@ -561,6 +561,32 @@ static void test_carousel_low_control_readings_do_not_hold_the_ladder(void)
     TEST_ASSERT_TRUE_MESSAGE(off.done_ms * 10 <= zero.done_ms * 11, what);   /* within 10 % */
 }
 
+/* A small message's short rung reading low does not hold the ladder.  On
+ * air a narrow mode reads under the wide ones on the same link (the bench,
+ * 2026-11-26: DATAC3 at 9-10 dB, DATAC17W and the short control frame at
+ * 14-15), and the UUCP handshake's frames go on DATAC3 (short_rung).  Their
+ * readings took the estimate under the first try of the top rung, and the
+ * file went one rung down.  Here DATAC3 reads 6 dB low (CAR_MODE_SNR_OFFSET)
+ * after a handshake of four small exchanges: no slower than with it reading
+ * true.  Before, 88.8 s against 87.1 s; with the rule, 84.9 s. */
+static void test_carousel_short_rung_reading_does_not_hold_the_ladder(void)
+{
+    car_sim_result_t zero, off;
+    char what[128];
+
+    setenv("CAR_SCRIPT", "A20,B30+500,A20+500,B30+500,A20+500,B30+500,A20+500,B30+500,A7000+500", 1);
+    carousel_sim_run(1, "cliff:15", false, LIMIT_MS, &zero);
+    setenv("CAR_MODE_SNR_OFFSET", "12:-6", 1);        /* FREEDV_MODE_DATAC3 */
+    carousel_sim_run(1, "cliff:15", false, LIMIT_MS, &off);
+    unsetenv("CAR_MODE_SNR_OFFSET");
+    unsetenv("CAR_SCRIPT");
+    snprintf(what, sizeof(what), "DATAC3 6 dB low: done in %llu ms against %llu ms",
+             (unsigned long long)off.done_ms, (unsigned long long)zero.done_ms);
+    TEST_ASSERT_TRUE_MESSAGE(zero.intact && zero.done_ms, what);
+    TEST_ASSERT_TRUE_MESSAGE(off.intact && off.done_ms, what);
+    TEST_ASSERT_TRUE_MESSAGE(off.done_ms <= zero.done_ms, what);
+}
+
 /* The estimate's step up to the first data frame's reading (#501) corrects
  * the estimate, not the channel: the reading the peer's last report of me is
  * paired with moves with it.  Without that, peer_hears_me_db took the step
@@ -935,6 +961,7 @@ int main(void)
     RUN_TEST(test_carousel_ctl_snr_offset_moves_only_the_control_reading);
     RUN_TEST(test_carousel_ctl_snr_offset_below_the_cliff_falls_to_the_floor);
     RUN_TEST(test_carousel_low_control_readings_do_not_hold_the_ladder);
+    RUN_TEST(test_carousel_short_rung_reading_does_not_hold_the_ladder);
     RUN_TEST(test_carousel_estimate_step_is_not_a_channel_step);
     RUN_TEST(test_carousel_drop_below_the_control_mode_stays_at_the_floor);
     RUN_TEST(test_carousel_idle_keeps_hearing_the_peer);

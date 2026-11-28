@@ -219,6 +219,11 @@ Which model covers the other 2.0 changes:
 - the direct probe (`choose_level` asks for the rung the SNR would start
   on): `RungAgreement`'s sized poll names any rung (`\E l \in Rungs`), so
   agreement and delivery hold for whichever it picks;
+- a short rung's reading kept out of the estimate (`car_on_frame`: a data
+  frame below the best measured rung and narrower than it, under a wide top
+  rung): like the snap, it changes only the reading S judges rungs by, so
+  `RungAgreement` covers the rung S then names (any rung).  The deafness
+  test still takes the reading, as it takes the control mode's (#501);
 - the SNR snap (two readings more than `SNR_GATE_DB` to one side of the
   smoothed SNR move it): it changes only the reading S judges rungs by, so
   `RungAgreement` covers the rung S then names (any rung).  It also moves
@@ -259,6 +264,13 @@ Which model covers the other 2.0 changes:
 - a small message drops the loss margin on a rung delivering under 60 %
   (`short_rung`): it changes only which rung and how many frames a short
   poll asks for, which `RungAgreement` leaves free.
+- M offers S its turn on a rung S has just asked for, with its poll in a
+  short control frame in front, on a rung not within `SNR_GATE_DB` of its
+  threshold (`offer_both` without `inline_poll`): both conditions only
+  narrow when `KD_BOTH` is offered;
+  `RungAgreement` models `KD_BOTH` on any rung and its round lost alone,
+  and the keydown is one of the lengths `specs/turns` allows (a control
+  frame and a round under the cap, as `m_try`'s `KD_BOTH` already keys).
 - a connect heard only on MFSK starts deaf to the control mode
   (`CAR_DEAF_HARD`, arq_fsm.c), and an MFSK reading does not clear that;
   a deaf S may then name, for one frame, the rung its ladder chose

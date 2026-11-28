@@ -33,6 +33,8 @@ struct sim_channel {
     double   fade_mean_db, fade_doppler_hz;
     double   fade_w[2][FADE_OSC], fade_ph[2][FADE_OSC][2];  /* per direction */
     double   ctl_snr_offset;  /* the control mode's SNR reads this much off */
+    int      off_mode;        /* ...and this data mode's (0: none) */
+    double   off_mode_db;
     uint32_t stat_sent[SIM_STAT_MODES], stat_ok[SIM_STAT_MODES];
     uint64_t stat_air_ms[SIM_STAT_MODES];
 };
@@ -200,6 +202,11 @@ double sim_channel_ctl_snr_offset(const sim_channel_t *ch)
     return ch ? ch->ctl_snr_offset : 0.0;
 }
 
+void sim_channel_set_mode_snr_offset(sim_channel_t *ch, int freedv_mode, double db)
+{
+    if (ch) { ch->off_mode = freedv_mode; ch->off_mode_db = db; }
+}
+
 /* The control mode's offset (0 for every other mode).  Applied where the
  * channel judges a frame's SNR, not where the caller stamps it: a reading
  * that low decides too, so the frames stop decoding once the mode is below
@@ -207,7 +214,8 @@ double sim_channel_ctl_snr_offset(const sim_channel_t *ch)
  * out (#501). */
 static double ctl_off(const sim_channel_t *ch, int freedv_mode)
 {
-    return freedv_mode == ARQ_CONTROL_MODE ? ch->ctl_snr_offset : 0.0;
+    return freedv_mode == ARQ_CONTROL_MODE ? ch->ctl_snr_offset
+         : ch->off_mode && freedv_mode == ch->off_mode ? ch->off_mode_db : 0.0;
 }
 
 static double ctl_adj(const sim_channel_t *ch, int freedv_mode, double db)

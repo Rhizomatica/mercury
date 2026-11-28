@@ -273,6 +273,19 @@ frames' alone while the session still completes (above the cliff), and takes
 the session to the floor (below it); an offset of 0 is the run without the
 knob.
 
+## One data mode's SNR (`CAR_MODE_SNR_OFFSET`)
+
+`CAR_MODE_SNR_OFFSET=<freedv mode>:<dB>` does the same for one data mode,
+by its `FREEDV_MODE_*` number: `12:-6` has DATAC3 read, and decode, 6 dB
+under the channel.  On the bench (2026-11-26) DATAC3 (562 Hz) read 9-10 dB
+where DATAC17W and the short control frame read 14-15 on the same link; on
+white noise all three read true.  The UUCP handshake's small messages go on
+DATAC3 (`short_rung`), and their readings held the estimate under the top
+rung's first try.  `test_carousel_short_rung_reading_does_not_hold_the_ladder`
+is the test: four small exchanges and then 7000 bytes on `cliff:15`, no slower
+with the offset than without it (88.8 s against 87.1 s before the rule in
+`car_on_frame`, 84.9 s with it).
+
 ## The fade-cliff regression
 
 `test_sim_fade_cliff_completes` connects on a good band, then drops the
