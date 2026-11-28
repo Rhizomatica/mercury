@@ -48,6 +48,7 @@
 #include "modem_freedv.h"
 #include "modem_mfsk.h"
 #include "modem_psk.h"
+#include "modem_ctl.h"
 #include "mfsk/mfsk.h"          /* NAV header classes */
 #include "fsk.h"
 #include "ldpc_codes.h"
@@ -109,9 +110,10 @@ static pthread_mutex_t modem_pool_lock = PTHREAD_MUTEX_INITIALIZER;
 /* One lock per pool slot, indexed the same way the pool array is.  The pool is
  * a generic slot array now (any backend, not just freedv), so the lock a codec
  * belongs to is found by its context pointer rather than by naming the mode. */
-#define MODEM_POOL_MAX 17   /* the BW2300 ladder, control, floors, the 2.0 BW500/BW2750 rungs,
-                             * MFSK2K and PSK3: 17, full -- the next mode needs this raised (and a
-                             * lock initializer below), or init_mode_pool_locked fails */
+#define MODEM_POOL_MAX 18   /* the BW2300 ladder, control, floors, the 2.0 BW500/BW2750 rungs,
+                             * MFSK2K, PSK3 and the short control frame: 18, full -- the next mode
+                             * needs this raised (and a lock initializer below), or
+                             * init_mode_pool_locked fails */
 static pthread_mutex_t modem_inst_lock[MODEM_POOL_MAX] = {
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
@@ -121,7 +123,7 @@ static pthread_mutex_t modem_inst_lock[MODEM_POOL_MAX] = {
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
-    PTHREAD_MUTEX_INITIALIZER,
+    PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
 };
 _Static_assert(sizeof(modem_inst_lock) / sizeof(modem_inst_lock[0]) == MODEM_POOL_MAX,
                "one lock per pool slot");
@@ -729,6 +731,9 @@ static const modem_backend_t *backend_for_mode(int mode)
         return &modem_backend_mfsk;
     if (mercury_mode_is_psk(mode))
         return &modem_backend_psk;
+    /* The control mode's decoder hears the short control frame too. */
+    if (mode == FREEDV_MODE_DATAC16)
+        return &modem_backend_ctl;
     return &modem_backend_freedv;
 }
 
@@ -774,6 +779,8 @@ static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
         FREEDV_MODE_QAM16N1, FREEDV_MODE_QAM16N2,
         MERCURY_MODE_MFSK_W2,          /* BW2300/BW2750 rung 1 */
         MERCURY_MODE_PSK3,             /* BW2300/BW2750 rung 2 */
+        MERCURY_MODE_PSKC,             /* the short control frame (transmit; the control
+                                        * mode's decoder hears it) */
     };
     clear_mode_pool_locked();
     for (size_t i = 0; i < sizeof(pool_modes) / sizeof(pool_modes[0]); i++)
@@ -2397,7 +2404,7 @@ static void process_received_frame(const uint8_t *data,
     {
         if (arq_policy_ready)
             arq_handle_carousel_frame(data, payload_nbytes, mode,
-                                      mode == FREEDV_MODE_DATAC16, snr_est, age_ms);
+                                      ARQ_MODE_IS_CONTROL(mode), snr_est, age_ms);
         return;
     }
 
@@ -2674,11 +2681,14 @@ static void *rx_worker_thread(void *arg)
              * (our own keydown's end) would complete it as a fresh one. */
             bool unsync = atomic_exchange(&w->unsync_req, false) ||
                           mercury_mode_is_psk(w->state.mode);
-            if (unsync && modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync)
+            void (*drop)(void *) = !modem_codec_valid(&w->state.codec) ? NULL
+                                 : unsync ? w->state.codec.be->unsync
+                                 : w->state.codec.be->flush;
+            if (drop)
             {
                 pthread_mutex_t *rl = modem_inst_lock_for(w->state.codec.ctx);
                 pthread_mutex_lock(rl);
-                w->state.codec.be->unsync(w->state.codec.ctx);
+                drop(w->state.codec.ctx);
                 pthread_mutex_unlock(rl);
             }
             clear_buffer(w->ring);
@@ -2883,6 +2893,8 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                           (uint8_t)(nin & 0xff), (uint16_t)c);
         }
         nbytes_out = (size_t)be->rawdata_rx(ctx, state->bytes_out, state->demod_in);
+        /* The mode the frame came on: the control codec decodes two. */
+        int fmode = nbytes_out > 0 && be->rx_mode ? be->rx_mode(ctx) : state->mode;
         if (nbytes_out > 0 && !monitor)
         {
             publish_link_bitrate(&state->codec, state->mode);
@@ -2936,20 +2948,20 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
             long behind = (long)state->backlog + state->demod_count + (sample_count - fed);
             uint32_t age_ms = behind > 0 ? (uint32_t)(behind * 1000L / FREEDV_FS_8000) : 0;
             HLOGD("modem-rx", "Decoded frame mode=%d (%s) bytes=%zu snr=%.2f age=%u ms",
-                  state->mode,
-                  mode_name_from_enum(state->mode),
+                  fmode,
+                  mode_name_from_enum(fmode),
                   nbytes_out,
                   snr_est, age_ms);
             if (monitor)
                 process_monitor_frame(state->bytes_out, nbytes_out,
-                                      state->mode, snr_est);
+                                      fmode, snr_est);
             else
                 process_received_frame(state->bytes_out,
                                        nbytes_out,
                                        state->bytes_cap,
                                        arq_policy_ready,
                                        snr_est,
-                                       state->mode,
+                                       fmode,
                                        seeded,
                                        age_ms);
         }

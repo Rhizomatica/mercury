@@ -78,7 +78,7 @@ Properties:
   their own).  The wire carries a rung's level, not its mode.  Minor 2
   (1.9.25) changed what the levels mean (BW2300 rung 1 the 2 kHz MFSK, the
   BW500 and BW2750 ladders, the deep floor), and minor 3 put PSK3 at rung
-  2.  Each station takes a CALL or ACCEPT only from its lowest minor up
+  2 and added the short control frame.  Each station takes a CALL or ACCEPT only from its lowest minor up
   (`CMin`, `EMin`: `ARQ_CONNECT_MINOR_MIN`,
   `arq_protocol_connect_compatible`); 1.9.20-1.9.24 read any minor (0) and
   1.9.25 any from 2, so an older station still answers a newer CALL, and

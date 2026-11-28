@@ -1483,7 +1483,8 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     if (rc == -3)
     {
         /* Minors 0-2 (1.9.20-1.9.25) map the ladder's levels to other
-         * modes (ARQ_CONNECT_MINOR_MIN): a session would lose its rounds. */
+         * modes and cannot decode the short control frame
+         * (ARQ_CONNECT_MINOR_MIN): a session would lose its rounds. */
         HLOGW(LOG_COMP, "%s for %s from Mercury 1.9.25 or older (protocol minor %d): the versions do not connect, %s",
               is_accept ? "ACCEPT" : "CALL", dialed_call, arq_protocol_connect_minor(data),
               is_accept ? "ignored" : "not answered");

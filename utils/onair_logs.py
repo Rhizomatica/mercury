@@ -54,14 +54,14 @@ def rounds(sender):
             on = None
         elif 'Pattern ACK detected' in msg and off is not None:
             kind = 'pattern'
-        elif 'Decoded frame mode=23' in msg and off is not None and kind is None:
+        elif re.search(r'Decoded frame mode=(23|111) ', msg) and off is not None and kind is None:   # DATAC16 or PSKC control
             kind = 'poll'
     return gaps
 
 
 def rungs(receiver):
     modes = [re.search(r'\((\w+)\)', msg)[1] for _, _, comp, msg in lines(receiver)
-             if comp == 'modem-rx' and 'Decoded frame' in msg and 'DATAC16' not in msg]
+             if comp == 'modem-rx' and 'Decoded frame' in msg and '(DATAC16)' not in msg and '(PSKC)' not in msg]
     runs, prev = [], None
     for m in modes:
         if m != prev:

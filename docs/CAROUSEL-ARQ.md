@@ -39,6 +39,17 @@ side that sees what arrives.  Per direction:
 - every frame says how many follow, so the receiver knows when the round ends
   and polls again.  No sequence numbers, no per-frame ACKs.
 
+**The short control frame.**  A control frame (POLL, HANDOVER, STATUS) goes
+on the short control frame (`PSKC`, 1.42 s, the same 14 bytes) instead of
+DATAC16 (3.30 s) when the peer says it hears me at
+`ARQ_SNR_MIN_CTL_FAST_DB` (3 dB) or more (`ctl_mode`, as the floor's choice
+in `ctl_on_floor`).  The control decoder hears both (`modem_ctl.c`), so
+nothing on the air says which comes, and the peer's slots stay sized for
+DATAC16.  The connect stays on DATAC16.  In the Go harness (8 kB, white
+noise and CCIR Moderate at 5/10/15 dB, 3 seeds) sessions took 0.865 of the
+time, 17 of 18 faster; in the sim matrix 0.952, faster from 5 dB up and on
+NVIS, unchanged at the weak end, where control stays on DATAC16.
+
 **Only the receiver keeps a round timer.**  It polls again when the round's
 window closes, or when the sender's carrier drops if it heard the carrier.
 A round that brought nothing is repeated once unscored, keeping its poll id,
@@ -241,7 +252,8 @@ frame on MFSK.
   as with no answer.  This drops the minor-1 TX-MFSK-only rule above (minor
   0 is no longer connected at all).  specs/connect `SameLadder`.
 - Minor 3 put the three-carrier PSK (PSK3) at rung 2 of BW2300 and BW2750,
-  where DATAC4 was.  A station of minor 3 ignores minors 0-2 and logs
+  where DATAC4 was, and added the short control frame (PSKC), which a minor-2
+  station cannot decode.  A station of minor 3 ignores minors 0-2 and logs
   them ("from Mercury 1.9.25 or older"); 1.9.25 takes minor 2 and up, so it
   answers a minor-3 CALL and the caller ignores that ACCEPT, as above.  3 is
   the last value the two bits hold.

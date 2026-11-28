@@ -843,7 +843,10 @@ static int ctl_loss_abort_told(int n, uint64_t seed0) { return ctl_loss_abort_to
  * to a round, then the one DISCONNECT on DATAC16.  That one DISCONNECT now
  * goes twice in its keydown to a caller that hears the control mode below
  * -3 dB (unretried_disconnect_copies): 28 (115 of 120 from seed 1000,
- * against 105). */
+ * against 105).  The short control frame's hold in an idle session put
+ * the DISCONNECT into the caller's idle poll: 27 (#629 review; 314 of 360
+ * from seeds 300, 1000 and 5000); held only where the caller answers
+ * (car_unsensed_round_ms), 341 of 360, as without it. */
 void test_car_ctl_loss_callee_abort_tells_the_caller(void)
 {
     int told = ctl_loss_abort_told(30, 300);
@@ -1011,6 +1014,22 @@ void test_car_caller_abort_keeps_off_a_psk_round(void)
     abort_sweep(false, 60, -1.0, &untold, &cases);
     TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
     TEST_ASSERT_EQUAL_INT(0, untold);
+}
+
+/* ...and over the short control frame's SNRs: a caller that hears the
+ * callee well opens its keydown with it, and it raises no sync either, so
+ * nothing senses the keydown until its round.  The callee keyed its
+ * DISCONNECT over the caller in 4, 12 and 7 of 60 ABORT moments at 3, 6
+ * and 12 dB (#629 review); it waits out a short control frame too. */
+void test_car_callee_abort_keeps_off_a_short_control_frame(void)
+{
+    static const double db[] = { 3.0, 9.0, 12.0, 15.0 };
+    for (size_t i = 0; i < sizeof db / sizeof db[0]; i++) {
+        int untold, cases;
+        abort_sweep(true, 60, db[i], &untold, &cases);
+        TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
+        TEST_ASSERT_EQUAL_INT(0, untold);
+    }
 }
 
 /* Request and reply, as UUCP talks: A's request arrives, B's application
@@ -1396,6 +1415,7 @@ int main(void)
     RUN_TEST(test_car_callee_abort_tells_the_caller_whole_sweep);
     RUN_TEST(test_car_callee_abort_keeps_off_a_psk_round);
     RUN_TEST(test_car_caller_abort_keeps_off_a_psk_round);
+    RUN_TEST(test_car_callee_abort_keeps_off_a_short_control_frame);
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
     RUN_TEST(test_car_bandwidth_caps_the_rungs);

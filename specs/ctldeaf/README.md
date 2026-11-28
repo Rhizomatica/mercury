@@ -13,7 +13,7 @@ The smoothed reading is abstracted to four bands against `CTL_DEAF_ON_DB`
 (-7.5), `CTL_DEAF_OFF_DB` (-6.0) and `CTL_LOSS_OFF_DB` (-3.0), and any frame
 may read any band.  The states are `none`, `snr` (the reading's hysteresis),
 `hard` (connect heard only on MFSK: only an OFDM frame clears it, not an
-MFSK or a PSK3 one), `mfsktx`
+MFSK or a PSK one, PSK3 or the short control frame), `mfsktx`
 (for good) and `loss` (#538: two asks unanswered while the callee is heard
 and the reading is below -3.0 dB).  Time passes under weak fairness; nothing
 else is owed.
@@ -45,4 +45,7 @@ Results (`Hold = 2` ticks; `Hold = 5`: 1110 states, no error):
   lost on its way to the callee says nothing about the callee's control.
 - `Mut_pskclears.cfg`, a PSK frame's reading ends HARD (#628 before
   review): `HardNeedsOfdm` violated.  A PSK3 probe decoded put control back
-  on a DATAC16 the peer still could not decode.
+  on a DATAC16 the peer still could not decode.  A frame's kind is the mode
+  its decoder reports for it (`rx_mode`, `modem_backend.h`): the control
+  decoder hears the short control frame too and reports it as PSKC, not as
+  DATAC16 (#629 review; before, a PSKC frame counted as OFDM).

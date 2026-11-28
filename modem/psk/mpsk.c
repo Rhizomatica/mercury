@@ -20,14 +20,21 @@
  * carriers with the one-symbol pulse, 6 and 8 narrower ones with the RRC.  Codes: rate ~1/2, sized to the data
  * cells: N = 2 x nc x (nsym - 1 - nmark). */
 const mpsk_level_t mpsk_levels[] = {
-    { "psk3", 3, { 900, 1500, 2100 }, 375, 12, 0, "H_IRA_2172_1080" },
-    { "psk6", 6, { 700, 1020, 1340, 1660, 1980, 2300 }, 354, 6, 2, "H_IRA_4164_2072" },
-    { "psk8", 8, { 702, 930, 1158, 1386, 1614, 1842, 2070, 2298 }, 351, 5, 2, "H_IRA_5520_2752" },
+    { "psk3", 3, { 900, 1500, 2100 }, 375, 12, 0, "H_IRA_2172_1080", 20.0 },
+    { "psk6", 6, { 700, 1020, 1340, 1660, 1980, 2300 }, 354, 6, 2, "H_IRA_4164_2072", 20.0 },
+    { "psk8", 8, { 702, 930, 1158, 1386, 1614, 1842, 2070, 2298 }, 351, 5, 2, "H_IRA_5520_2752", 20.0 },
+    /* The short control frame: 14 bytes and the CRC in 1.42 s, rate 0.2.
+     * Its 133 symbols score lower than a long frame's on the same S/N, so
+     * its search takes a lower threshold: at 20 it found only 23 of 80
+     * bursts at -4 dB on white noise, at 12 every one from -8, with 57
+     * detections and no decode in 600 s of noise (each a 1.4 s decode
+     * attempt).  24 markers a carrier (8 lost 1 dB at the 50 % point under
+     * CCIR Poor). */
+    { "pskc", 3, { 900, 1500, 2100 }, 133, 24, 0, "H_IRA_648_128", 12.0 },
 };
 const int mpsk_nlevels = (int)(sizeof(mpsk_levels) / sizeof(mpsk_levels[0]));
 
 #define LPF_N   161                  /* 8 kHz decimating filter, delay 80 = 16 x DEC */
-#define CHI_MIN 20.0
 
 struct mpsk {
     int dbg_t; double dbg_chi;                /* last lock (debug)            */
@@ -379,7 +386,7 @@ int mpsk_modulate_raw(mpsk_t *m, const uint8_t *frame, int16_t *out, double peak
  * their fourth powers (d4).  The frame search scores one new start position
  * per receiver sample: chi(T) = |A|^2/np + |B|^2/nd, A the markers' products
  * against the scrambling, B the data's fourth powers against its fourth
- * power.  A start whose score passes CHI_MIN and is not beaten for two symbols
+ * power.  A start whose score passes the level's chi_min and is not beaten for two symbols
  * is decoded (and one sample either side, for timing). */
 #define RX_LAG   (2 * MPSK_RSPS)
 
@@ -532,8 +539,8 @@ static int rx_step(mpsk_t *m, uint8_t *frame, int *found, float *snr_db)
     }
     double chi = creal(A * conj(A)) / m->np + creal(B * conj(B)) / m->nd;
     if (chi > m->best) { m->best = chi; m->bT = T; }
-    if (m->best < CHI_MIN || T < m->bT + RX_LAG) {
-        if (m->best < CHI_MIN && T > m->bT + RX_LAG) { m->best = -1.0; m->bT = -1; }
+    if (m->best < m->lv->chi_min || T < m->bT + RX_LAG) {
+        if (m->best < m->lv->chi_min && T > m->bT + RX_LAG) { m->best = -1.0; m->bT = -1; }
         return 0;
     }
     /* a detection, not beaten for two symbols: decode it */

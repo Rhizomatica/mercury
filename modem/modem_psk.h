@@ -19,10 +19,14 @@
 /* Mode integer, clear of the FreeDV enum and of the MFSK modes (100..104):
  * rung 2 of the BW2300 and BW2750 ladders. */
 #define MERCURY_MODE_PSK3 110
+/* The short control frame (14 bytes in 1.42 s), sent instead of the control
+ * mode to a peer that hears me well (carousel.c, ctl_mode); the control
+ * plane's decoder hears both (modem_ctl.c). */
+#define MERCURY_MODE_PSKC 111
 
 static inline int mercury_mode_is_psk(int mode)
 {
-    return mode == MERCURY_MODE_PSK3;
+    return mode == MERCURY_MODE_PSK3 || mode == MERCURY_MODE_PSKC;
 }
 
 extern const modem_backend_t modem_backend_psk;

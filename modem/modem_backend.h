@@ -71,6 +71,12 @@ struct modem_backend {
     int   (*rawdata_rx)(void *ctx, uint8_t *bytes_out, const int16_t *demod_in);
     void  (*get_stats)(void *ctx, int *sync, float *snr);
     int   (*get_rx_status)(void *ctx);
+    /* The mode of the frame rawdata_rx last returned, for a codec that
+     * decodes more than one (optional; null-checked, the worker's mode
+     * otherwise): the control codec's short frame is reported as itself
+     * (modem_ctl.c).  Not get_mode, which the TX path reads on the same
+     * instance. */
+    int   (*rx_mode)(void *ctx);
 
     /* HARQ soft-combining across retransmissions (optional: leave NULL if
      * unsupported; the modem layer null-checks before calling). */
@@ -81,6 +87,12 @@ struct modem_backend {
      * acquired cold (optional; null-checked).  Used to release a sync the
      * payload plane picked up off a control burst -- see rx_worker_thread. */
     void  (*unsync)(void *ctx);
+
+    /* Drop what a flush must drop that the codec keeps outside the sync
+     * unsync releases (optional; null-checked): the control codec's short
+     * frame receiver, whose frame our own keydown's end would complete
+     * (modem_ctl.c).  Called on every flush that does not unsync. */
+    void  (*flush)(void *ctx);
 
     /* Carousel session CRC seed (optional; null-checked): the CRC16 of every
      * frame is XORed with the seed, so an earlier or foreign session's frames

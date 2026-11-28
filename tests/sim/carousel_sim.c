@@ -215,7 +215,7 @@ static double ctl_snr_sum, data_snr_sum;
 static int ctl_snr_n, data_snr_n;
 static void note_snr(int mode, double snr)
 {
-    if (mode == ARQ_CONTROL_MODE) { ctl_snr_sum += snr; ctl_snr_n++; }
+    if (ARQ_MODE_IS_CONTROL(mode)) { ctl_snr_sum += snr; ctl_snr_n++; }
     else                          { data_snr_sum += snr; data_snr_n++; }
 }
 
@@ -229,7 +229,7 @@ static void overlap_diag(const station_t *s, const station_t *peer, const char *
     int sync = 0, ctl = 0;
     for (int i = 0; i < peer->kd_n; i++) {
         if (peer->kd[i].sync) sync++;
-        if (peer->kd[i].mode == ARQ_CONTROL_MODE) ctl++;
+        if (ARQ_MODE_IS_CONTROL(peer->kd[i].mode)) ctl++;
     }
     printf("OVERLAP t=%.1f %c keys %s %.1f s into %c's keydown (%.1f s long, %d frames, %d ctl, %d syncable)"
            " peer_nav=%s nav_from=%+.1f listener rx_mode=%d bound=%+.1f snr=%.1f\n",
@@ -278,7 +278,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     if (peer->tx_end > now_ms) {                  /* keyed while the peer is on the air */
         kd_overlaps++;
         if (!unsensed(peer->kd_no)) kd_unexplained++;
-        overlap_diag(s, peer, n && fr[0].mode == ARQ_CONTROL_MODE ? "ctl" : "data");
+        overlap_diag(s, peer, n && ARQ_MODE_IS_CONTROL(fr[0].mode) ? "ctl" : "data");
     }
     s->tx_start = now_ms;
     s->kd_n = 0;
@@ -298,7 +298,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
         uint64_t air = sim_channel_airtime_ms(fr[i].mode, 0), d;
         if (trace) {
             static const char *K[] = { "poll", "handover", "status", "?" };
-            if (fr[i].mode == ARQ_CONTROL_MODE) printf(" %s", K[fr[i].bytes[0] >> 6]);
+            if (ARQ_MODE_IS_CONTROL(fr[i].mode)) printf(" %s", K[fr[i].bytes[0] >> 6]);
             else printf(" data(%d)", fr[i].mode);
         }
         /* A decoder syncs on what it could decode above its cliff, even when
@@ -394,7 +394,7 @@ static void io_trace(void *ctx, const char *line)
         const station_t *p = &S[s->id ^ 1];
         int data = 0;
         for (int i = 0; i < p->kd_n; i++)
-            if (p->kd[i].mode != ARQ_CONTROL_MODE && p->kd[i].mode != SIM_MODE_PATTERN) data++;
+            if (!ARQ_MODE_IS_CONTROL(p->kd[i].mode) && p->kd[i].mode != SIM_MODE_PATTERN) data++;
         if (atoi(line + 42) > data) over_scored++;
         if (atoi(line + 42) < data) under_scored++;
     } else if (!strncmp(line, "rx -> poll lv=", 14) && s->round_snr_ok) {
@@ -476,7 +476,7 @@ static int io_peer_keyed(void *ctx)
             if (!p->kd[i].sync) continue;
             if (m == SIM_MODE_PATTERN) {
                 if (mercury_mode_is_mfsk(l->rx_mode) && bound) from = p->kd[i].start;
-            } else if (m == ARQ_CONTROL_MODE || (m == l->rx_mode && bound)) {
+            } else if (ARQ_MODE_IS_CONTROL(m) || (m == l->rx_mode && bound)) {
                 /* The MFSK preamble search takes longer to be sure: under a
                  * second at -7 dB (test_mfsk_modem), more near its floor. */
                 from = p->kd[i].start + (mercury_mode_is_mfsk(m) ? MFSK_CS_EXTRA_MS : 0);
@@ -882,7 +882,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                     heard(s);
                     car_on_pattern(&s->car, now_ms, (int)e.len);
                 }
-            } else if (e.mode == ARQ_CONTROL_MODE) {
+            } else if (ARQ_MODE_IS_CONTROL(e.mode)) {
                 heard(s);
                 float snr = (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode));
                 note_snr(e.mode, snr);

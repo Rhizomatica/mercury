@@ -64,6 +64,7 @@ static double mode_cliff_db(int freedv_mode)
     case MERCURY_MODE_MFSK_N32: return -16.0;
     case MERCURY_MODE_MFSK_W2:  return -10.0;   /* the floor + 3 dB (twice the rate) */
     case MERCURY_MODE_PSK3:     return -3.0;    /* 90 % at -3.1 dB carrier S/N (psk_sweep) */
+    case ARQ_CONTROL_MODE_FAST: return -3.0;    /* 90 % at -2 dB carrier S/N (psk_sweep pskc) */
     case SIM_MODE_PATTERN: {  /* ~10 dB below DATAC16 (mfsk-margin) */
         /* SIM_PATTERN_CLIFF: utils/pattern_probe measures the real detector
          * at 50 % near -14.5 dB, -14 with a +25 Hz offset. */

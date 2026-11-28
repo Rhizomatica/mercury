@@ -120,8 +120,14 @@ typedef struct
  * DISCONNECT/CQ, and the carousel's control frames).  Swapping the control mode is a
  * one-line change here; everything else references this define.  The mode
  * must carry exactly ARQ_CONTROL_FRAME_SIZE payload bytes and must be the
- * only mode with that frame size in arq_mode_table. */
+ * only mode with that frame size in arq_mode_table, but for the short
+ * control frame below, which carries the same frame. */
 #define ARQ_CONTROL_MODE  FREEDV_MODE_DATAC16
+/* The short control frame (modem_psk.h, MERCURY_MODE_PSKC): the same 14
+ * bytes in 1.42 s, from a sender whose peer hears it at ARQ_SNR_MIN_CTL_FAST_DB
+ * or more (carousel.c, ctl_mode).  The control plane's decoder hears both. */
+#define ARQ_CONTROL_MODE_FAST 111
+#define ARQ_MODE_IS_CONTROL(m) ((m) == ARQ_CONTROL_MODE || (m) == ARQ_CONTROL_MODE_FAST)
 
 /* Timing constants shared across modules.  The two guards are measured, not
  * tuned, and are no longer configuration: they bundle the radio's TX->RX
@@ -329,6 +335,14 @@ void arq_protocol_session_calls(bool we_called, const char *remote_call,
  * is the burst's S/N), plus 1.5 dB.  Faded it needs ~5 dB more (CCIR
  * Moderate/Poor 90 % at +1.6/+1.8 dB carrier, 0.2/0.4 dB burst). */
 #define ARQ_SNR_MIN_PSK3_DB          -3.0f
+/* The short control frame: 90 % at -2 dB carrier on white noise, +1/+2 dB
+ * under CCIR Poor/Moderate (24 markers, 80 bursts a point), against the
+ * control mode's -6 and +2/+1.  Used only where the peer reads my frames
+ * this far above it (a reading is the burst's S/N, ~3 dB under the
+ * carrier's): in the sim matrix a gate at 0 dB gave 0.926 of the session
+ * time, at 3 dB 0.939, at 6 dB 0.953, and none of them lost anything at the
+ * weak end; a burst 4 dB less robust than measured, gated at 3 dB, 0.943. */
+#define ARQ_SNR_MIN_CTL_FAST_DB       3.0f
 #define ARQ_SNR_MIN_DATAC15_DB       -7.0f  /* its cliff (sim, bench): below
                                              * it the carousel's MFSK rung wins */
 #define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* bench (docs/MODES.md):
@@ -512,7 +526,8 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
  * bandwidth its own ladder (BW2300 rung 1 the 2 kHz MFSK, the BW500 and
  * BW2750 ladders, the 500 Hz deep floor) and changed the QAM16C2 and DATAC17
  * frames.  Minor 3 put the three-carrier PSK (PSK3) at rung 2 of BW2300 and
- * BW2750, where DATAC4 was.  The wire carries a rung's level, not its
+ * BW2750, where DATAC4 was, and added the short control frame (PSKC), which
+ * a minor-2 station cannot decode.  The wire carries a rung's level, not its
  * mode, so a pair that maps a level to different modes would lose every
  * round there: the versions do not connect.  An older station still ACCEPTs
  * our CALL (1.9.20-1.9.24 read any minor, 1.9.25 any from 2); we ignore its

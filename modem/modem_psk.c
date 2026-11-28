@@ -22,7 +22,8 @@ typedef struct {
     float snr;         /* the last frame's S/N, the burst's in 3 kHz */
 } psk_modem_t;
 
-/* The marker estimate (mpsk_rx's *snr_db, from the markers' phase noise)
+/* The marker estimate (mpsk_rx's *snr_db, from the markers' phase noise;
+ * the control frame's, on the same carriers, read the same way)
  * against the burst's S/N in 3 kHz on white noise (utils/psk_sweep psk3, 80
  * frames a point; the burst goes out 1.4 dB under a carrier at its peak),
  * so the reading is on the scale the OFDM rungs report.  Outside the knots,
@@ -43,11 +44,11 @@ static float burst_snr(float raw)
 
 static void *psk_be_open(int mode)
 {
-    if (mode != MERCURY_MODE_PSK3) return NULL;
+    if (!mercury_mode_is_psk(mode)) return NULL;
     psk_modem_t *h = calloc(1, sizeof(*h));
     if (!h) return NULL;
     h->mode = mode;
-    h->m = mpsk_open(mpsk_level_index("psk3"));
+    h->m = mpsk_open(mpsk_level_index(mode == MERCURY_MODE_PSKC ? "pskc" : "psk3"));
     if (!h->m) { free(h); return NULL; }
     mpsk_rx_reset(h->m);
     return h;

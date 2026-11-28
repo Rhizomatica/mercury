@@ -301,14 +301,17 @@ void test_mode_timing_fast_modes(void)
 
     /* Frame sizes stay pairwise unique across the OFDM rungs, where the
      * stop-and-wait plane once inferred the peer's TX mode from the size.
-     * The two MFSK floors carry the same frame: a frame's mode is the
-     * decoder's that produced it. */
+     * The two MFSK floors carry the same frame, and so do the two control
+     * modes: a frame's mode is the decoder's that produced it. */
     for (int i = 0; i < arq_mode_table_count; i++)
-        for (int j = i + 1; j < arq_mode_table_count; j++)
-            if (!mercury_mode_is_mfsk(arq_mode_table[i].freedv_mode) ||
-                !mercury_mode_is_mfsk(arq_mode_table[j].freedv_mode))
+        for (int j = i + 1; j < arq_mode_table_count; j++) {
+            int a = arq_mode_table[i].freedv_mode, b = arq_mode_table[j].freedv_mode;
+            if (ARQ_MODE_IS_CONTROL(a) && ARQ_MODE_IS_CONTROL(b))
+                TEST_ASSERT_EQUAL(arq_mode_table[i].payload_bytes, arq_mode_table[j].payload_bytes);
+            else if (!mercury_mode_is_mfsk(a) || !mercury_mode_is_mfsk(b))
                 TEST_ASSERT_NOT_EQUAL(arq_mode_table[i].payload_bytes,
                                       arq_mode_table[j].payload_bytes);
+        }
     TEST_ASSERT_EQUAL(arq_protocol_mode_timing(MERCURY_MODE_MFSK)->payload_bytes,
                       arq_protocol_mode_timing(MERCURY_MODE_MFSK_N32)->payload_bytes);
 }
