@@ -20,6 +20,8 @@ sim_endpoint_t *sim_b(sim_t *s);
 
 /* Inject an app event into one endpoint. */
 void            sim_inject(sim_t *s, sim_endpoint_t *ep, const arq_event_t *ev);
+/* Call hook(s, ctx) after every FSM dispatch, either endpoint; NULL: none. */
+void            sim_set_dispatch_hook(sim_t *s, void (*hook)(sim_t *s, void *ctx), void *ctx);
 
 /* Run the event loop until no channel frames in flight AND both FSM deadlines
  * are INT_MAX-idle, OR until max_ms virtual time elapses.

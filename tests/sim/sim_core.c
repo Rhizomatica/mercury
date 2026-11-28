@@ -60,6 +60,11 @@ struct sim {
     sim_endpoint_t  *b;
     sim_channel_t   *ch;
 
+    /* Called after every FSM dispatch (sim_set_dispatch_hook): a trace
+     * recorder reads both sessions there (connect_trace.c). */
+    void           (*hook)(sim_t *s, void *ctx);
+    void            *hook_ctx;
+
     sim_pending_t    pending[SIM_PENDING_MAX];
     int              pending_count;
 
@@ -334,6 +339,20 @@ static void sense(sim_t *s, sim_endpoint_t *ep, uint64_t now_ms)
         sim_endpoint_session(ep)->last_rx_sync_ms = now_ms;
 }
 
+/* Every dispatch goes through here, so the hook sees each step. */
+static void sim_dispatch(sim_t *s, arq_session_t *sess, const arq_event_t *ev)
+{
+    arq_fsm_dispatch(sess, ev);
+    if (s->hook)
+        s->hook(s, s->hook_ctx);
+}
+
+void sim_set_dispatch_hook(sim_t *s, void (*hook)(sim_t *s, void *ctx), void *ctx)
+{
+    s->hook = hook;
+    s->hook_ctx = ctx;
+}
+
 /* Fire one pending event. */
 static void fire_pending(sim_t *s, sim_pending_t *p)
 {
@@ -343,14 +362,14 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
     if (p->kind == SIM_PENDING_TX_STARTED)
     {
         arq_event_t ev = { .id = ARQ_EV_TX_STARTED };
-        arq_fsm_dispatch(sim_endpoint_session(p->target), &ev);
+        sim_dispatch(s, sim_endpoint_session(p->target), &ev);
         return;
     }
 
     if (p->kind == SIM_PENDING_TX_COMPLETE)
     {
         arq_event_t ev = { .id = ARQ_EV_TX_COMPLETE };
-        arq_fsm_dispatch(sim_endpoint_session(p->target), &ev);
+        sim_dispatch(s, sim_endpoint_session(p->target), &ev);
         return;
     }
 
@@ -372,7 +391,7 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
         if (p->seed != sim_endpoint_crc_seed(p->target))
             return;
         arq_event_t pev = { .id = ARQ_EV_RX_PATTERN, .pattern_break = p->frame[0] != 0 };
-        arq_fsm_dispatch(rs, &pev);
+        sim_dispatch(s, rs, &pev);
         return;
     }
     if (p->car)
@@ -391,7 +410,7 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
         cev.rx_snr       = p->rx_snr;
         cev.payload_len  = p->frame_len;
         memcpy(cev.payload, p->frame, p->frame_len);
-        arq_fsm_dispatch(rs, &cev);
+        sim_dispatch(s, rs, &cev);
         return;
     }
 
@@ -405,7 +424,7 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
          * the CALL's carrier (call_rx_mode), so with none the callee answered
          * an MFSK CALL on DATAC16 and no session connected below it. */
         ev.mode = p->mode;
-        arq_fsm_dispatch(sim_endpoint_session(p->target), &ev);
+        sim_dispatch(s, sim_endpoint_session(p->target), &ev);
     }
 }
 
@@ -527,7 +546,7 @@ void sim_inject(sim_t *s, sim_endpoint_t *ep, const arq_event_t *ev)
 {
     sim_endpoint_set_active(ep);
     sense(s, ep, sim_clock_now());
-    arq_fsm_dispatch(sim_endpoint_session(ep), ev);
+    sim_dispatch(s, sim_endpoint_session(ep), ev);
     drain_all_outframes(s, sim_clock_now());
 }
 
@@ -583,7 +602,7 @@ uint64_t sim_run_until_idle(sim_t *s, uint64_t max_ms)
             arq_event_t tev = { .id = sa->deadline_event };
             sim_endpoint_set_active(s->a);
             sense(s, s->a, now);
-            arq_fsm_dispatch(sa, &tev);
+            sim_dispatch(s, sa, &tev);
             drain_all_outframes(s, now);
         }
 
@@ -595,7 +614,7 @@ uint64_t sim_run_until_idle(sim_t *s, uint64_t max_ms)
             arq_event_t tev = { .id = sb->deadline_event };
             sim_endpoint_set_active(s->b);
             sense(s, s->b, now);
-            arq_fsm_dispatch(sb, &tev);
+            sim_dispatch(s, sb, &tev);
             drain_all_outframes(s, now);
         }
 
