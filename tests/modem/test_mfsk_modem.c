@@ -1248,6 +1248,102 @@ void test_mfsk_modem_unsync_drops_a_frame_cut_by_a_hop(void)
     TEST_ASSERT_FALSE(cut_tail_decodes(1));
 }
 
+/* A train of nb bursts back to back, burst i's CRC broken where bad[i], then
+ * trail_s of noise: how long the sync flag stays up once the train is over,
+ * and over how much of the last burst it is up (from 1.5 s in to 0.3 s
+ * before its end). */
+typedef struct { double after_s; double last_held; int decoded; } train_t;
+static train_t burst_train(double snr_db, const int *bad, int nb, int seed, double trail_s)
+{
+    s_rng = 0x9E3779B97F4A7C15ULL + (uint64_t)seed * 7919;
+    int bytes = be->bits_per_frame(ctx) / 8, nin = be->nin(ctx);
+    int ndata = be->n_tx_samples(ctx), fs = be->sample_rate(ctx);
+    int cap = ndata * 2 + 40000;
+    int16_t *pre = calloc(cap, 2), *post = calloc(cap, 2), *dat[3];
+    uint8_t *fr[3];
+    int np = be->preamble_tx(ctx, pre), ns = be->postamble_tx(ctx, post), nd = 0;
+    for (int b = 0; b < nb; b++) {
+        fr[b] = malloc(bytes); dat[b] = calloc(cap, 2);
+        for (int i = 0; i < bytes - 2; i++) fr[b][i] = (uint8_t)(i * (7 + 6 * b) + 3 + 2 * b);
+        uint16_t crc = freedv_gen_crc16(fr[b], bytes - 2);
+        fr[b][bytes - 2] = crc >> 8;
+        fr[b][bytes - 1] = (uint8_t)((crc & 0xff) ^ (bad[b] ? 0x55 : 0));
+        nd = be->rawdata_tx(ctx, dat[b], fr[b]);
+    }
+    int blen = np + nd + ns, preroll = 5 * fs, total = preroll + nb * blen + (int)(trail_s * fs);
+    double *x = calloc((size_t)total, sizeof(double)), ps = 0.0;
+    for (int b = 0; b < nb; b++)
+        for (int k = 0; k < blen; k++) {
+            double v = k < np ? pre[k] : k < np + nd ? dat[b][k - np] : post[k - np - nd];
+            x[preroll + b * blen + k] = v;
+            ps += v * v;
+        }
+    ps /= (double)nb * blen;
+    double sigma = sqrt(ps * (fs / 2.0) / (3000.0 * pow(10.0, snr_db / 10.0)));
+    int16_t *pb = malloc((size_t)total * 2);
+    for (int k = 0; k < total; k++) {
+        double v = x[k] + sigma * gauss();
+        pb[k] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+    uint8_t *out = calloc(bytes, 1);
+    double end = (double)(preroll + nb * blen) / fs, last0 = (double)(preroll + (nb - 1) * blen) / fs;
+    train_t r = { 0.0, 0.0, 0 };
+    int steps = 0, held = 0;
+    for (int off = 0; off + nin <= total; off += nin) {
+        int n = be->rawdata_rx(ctx, out, &pb[off]);
+        int sync = 0; float snr = 0;
+        be->get_stats(ctx, &sync, &snr);
+        double t = (double)(off + nin) / fs;
+        for (int b = 0; n > 0 && b < nb; b++)
+            if (!memcmp(out, fr[b], bytes)) r.decoded |= 1 << b;
+        if (t > end + 0.05 && sync) r.after_s += (double)nin / fs;
+        if (t > last0 + 1.5 && t <= end - 0.3) { steps++; held += sync; }
+    }
+    r.last_held = steps ? (double)held / steps : 0.0;
+    for (int b = 0; b < nb; b++) { free(fr[b]); free(dat[b]); }
+    free(pre); free(post); free(x); free(pb); free(out);
+    return r;
+}
+
+/* A burst that fails stays in the window, and carrier sense took a preamble
+ * match on its last symbols -- the postamble is the preamble two symbols
+ * late on half its tones -- or in its payload for a new burst: sync held
+ * for up to a burst's length after the sender had unkeyed, and the ARQ held
+ * its turn for it (on air, KG9NI 2026-11-27 02:44:10Z: 13.5 s, and K7EK's
+ * BBS hung up as the reply went out).  Each case here held sync 8-13 s. */
+void test_mfsk_modem_no_carrier_after_a_lost_frame(void)
+{
+    static const struct { double snr; int nb; int bad[3]; int seed; } c[] = {
+        { 30.0, 2, {0, 1}, 0 },     /* the tail: two symbols before the postamble */
+        { -4.0, 2, {0, 1}, 2 },     /* ...four before it */
+        { -4.0, 1, {1},    2 },     /* the payload, scanned afresh after the lock */
+    };
+    char msg[96];
+    for (size_t i = 0; i < sizeof c / sizeof c[0]; i++) {
+        be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
+        train_t r = burst_train(c[i].snr, c[i].bad, c[i].nb, c[i].seed, 15.0);
+        snprintf(msg, sizeof msg, "case %zu: sync %.1f s after the last burst", i, r.after_s);
+        TEST_ASSERT_TRUE_MESSAGE(r.after_s < 0.5, msg);
+    }
+}
+
+/* ...and the burst right behind a lost one is still sensed, all of it: its
+ * preamble starts P symbols past the lost one's postamble, and the postamble
+ * search's own alias -- a "postamble" two symbols into that preamble -- must
+ * not hide it. */
+void test_mfsk_modem_carrier_on_a_burst_behind_a_lost_one(void)
+{
+    static const int bad[2] = {1, 0};
+    char msg[96];
+    for (int seed = 0; seed < 2; seed++) {
+        be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
+        train_t r = burst_train(30.0, bad, 2, seed, 3.0);
+        snprintf(msg, sizeof msg, "seed %d: sync over %.0f %% of the second burst", seed, 100.0 * r.last_held);
+        TEST_ASSERT_TRUE_MESSAGE(r.last_held >= 0.95, msg);
+        TEST_ASSERT_TRUE_MESSAGE(r.decoded & 2, "the second burst did not decode");
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1271,6 +1367,8 @@ int main(void)
     RUN_TEST(test_mfsk_modem_sync_soon_after_open);
     RUN_TEST(test_mfsk_modem_no_carrier_in_noise);
     RUN_TEST(test_mfsk_modem_unsync_drops_a_frame_cut_by_a_hop);
+    RUN_TEST(test_mfsk_modem_no_carrier_after_a_lost_frame);
+    RUN_TEST(test_mfsk_modem_carrier_on_a_burst_behind_a_lost_one);
     RUN_TEST(test_mfsk_pattern_heard_at_the_offset_its_frames_measured);
     RUN_TEST(test_mfsk_pattern_heard_at_the_offset_every_geometry_measured);
     return UNITY_END();
