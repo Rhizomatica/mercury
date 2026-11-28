@@ -234,7 +234,7 @@ Trade-offs vs Architecture 1:
 |---|---|---|
 | Topology | multipoint / mesh | fixed point-to-point |
 | Loss recovery | Reticulum end-to-end | Mercury ARQ (fast, local) |
-| Modes | DATAC1/DATAC17/QAM16C2 only (MTU) | every rung, MFSK floor to QAM16C2 (MFSK..DATAC3 at BW500) |
+| Modes | DATAC1/DATAC17/QAM16C2 only (MTU) | every rung, MFSK floor to QAM16C2 (MFSK500..QAM16N2 at BW500) |
 | Status | **verified working** | design pattern, needs a bridge implementation |
 | Best for | community mesh, several stations | maximum robustness on one marginal backbone hop |
 

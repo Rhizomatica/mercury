@@ -19,8 +19,9 @@ are appended after the audio-health fields:
   `peer_snr` the -99.9 sentinel; `peer_hears_mode` reports what the peer
   hears instead.
 - `peer_hears_mode`: in a carousel session, the highest rung the far station
-  last reported its SNR supports for our signal (`MFSK` ... `QAM16C2`, or
-  at most `DATAC3` in a BW500 session), from
+  last reported its SNR supports for our signal, a rung of the session's
+  ladder (`MFSK` ... `QAM16C2` at BW2300, `MFSK500` ... `QAM16N2` at BW500,
+  up to `QAM16C2W` at BW2750), from
   its ACCEPT or its polls; empty otherwise, and empty while it has not
   reported (a station that only receives gets no polls from its sender).
 - `freq_offset_hz`: the carrier offset the last frame decoded arrived at, in

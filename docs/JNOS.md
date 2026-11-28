@@ -271,7 +271,7 @@ The same BBS session as test 1, with `vara bw vara 2300` on both stations (the
 patched JNOS). Mercury received `BW2300`, and the session came up as
 `CONNECTED PU2UIT-15 PU2UIT-2 2300`. The remote BBS's help text (`H`) came back
 on QAM16C2, and the gateway sent on DATAC1. Neither mode is allowed in a BW500
-session, which stops at DATAC3.
+session (which then stopped at DATAC3; since 1.9.25 it tops out at QAM16N2).
 
 ### 4. IP over the air (PPP over VARA) — not pursued
 
@@ -304,8 +304,8 @@ restarts it):
 - `B` leaves a remote BBS and returns you to your own. Ctrl-T is the BBS
   gateway's escape character.
 - Expect tens of seconds per turn: every line is a Mercury keydown. Without
-  `vara bw vara 2300`, JNOS asks for BW500 and the session stays at DATAC3
-  or below.
+  `vara bw vara 2300`, JNOS asks for BW500 and the session stays on the
+  500 Hz ladder, QAM16N2 at most (DATAC3 before 1.9.25).
 - The BBS passwords are in each station's `/home/pi/jnos/rte/ftpusers`.
 
 **Giving the stations back to HERMES.** While JNOS holds Mercury's TNC ports,
@@ -321,9 +321,11 @@ restarts `uucpd` (and `caller` on the gateway). It leaves `jnostun` and the
 
 - **Stock JNOS asks for BW500 and cannot be told otherwise.**
   `vara_initinterface()` hard-codes it. Mercury sets a session's bandwidth to
-  the narrower of the two ends, and since 1.9.18 BW500 also caps the rungs at
-  DATAC3. So **every session with a stock JNOS end stops at DATAC3**, even on a
-  link that carries QAM16C2. Through 1.9.17 BW500 was not enforced. **Fixed in
+  the narrower of the two ends, and BW500 narrows the ladder: from 1.9.18 to
+  1.9.24 a cap stopped it at DATAC3, and since 1.9.25 it has its own ladder
+  up to the 9-carrier QAM16N2 (868 bit/s against QAM16C2's 3286). So **every session with a stock JNOS
+  end stays narrow**, even on a link that carries QAM16C2. Through 1.9.17
+  BW500 was not enforced. **Fixed in
   our fork** with `vara bw` (above). Both ends need it: one BW500 end narrows
   the whole session.
 - **The CALL carries the primary `MYCALL`, not `CONNECT`'s source.**
