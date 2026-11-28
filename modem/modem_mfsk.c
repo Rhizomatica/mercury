@@ -1190,14 +1190,50 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, int ref, int pre_payoff
 #define CS_OVERLAP_SYMB 1
 /* How far back an incremental search starts behind where the last one ended. */
 #define SCAN_OVERLAP_SYMB 2
+/* A burst that fails reads to carrier sense as the head of the next.  A decode
+ * clears the window and the burst with it; a failed one stays in view, and a
+ * preamble match on its last symbols then held sync for a burst's length after
+ * the sender had unkeyed: on air (KG9NI, 2026-11-27 02:44:10Z, K7EK's
+ * two-frame floor round, the second lost) the carousel's turn waited 13.5 s on
+ * it, and K7EK's BBS hung up as the reply went out.  The postamble is the
+ * preamble shifted a quarter of the band, so no dial offset aligns the two
+ * (mfsk.c), but a time offset does: at M=32 the preamble's tones 4 20 12 28
+ * against the postamble's 12 28 20 4, two symbols early, put two of the four
+ * on it; and once the burst's own preamble is resident carrier sense looks
+ * afresh at its last few symbols, where a payload's tones can make the rest of
+ * a match.  So a match from 2P symbols before the failed burst's postamble up
+ * to half a symbol past its start is that burst.  No later: a match starting
+ * after the postamble does overlaps it in one tone at most, and the next
+ * burst's preamble, back to back, starts P symbols on -- at a sample clock
+ * off by c, P - 320 c symbols on, so an edge at P - 1/2 left the next burst
+ * unsensed from 0.2 % off (sim: none of it at -0.3 to -1.5 %), where the
+ * clock search allows 2 % (MFSK_RATE_MAX).  The postamble is where the
+ * failed payload (pre_fail_abs) puts it, at the clock the last decoded burst
+ * measured (h->rate).  Not pst_tried_abs: the same alias, the other way, has
+ * the postamble search place a "postamble" two symbols into the next burst's
+ * preamble (sim: the next burst's carrier sense lost for 88 % of it).
+ * Only the failed burst's tail: a burst can hold another station's preamble
+ * (that overlap is often why it failed), which carrier sense must see. */
+static bool mfsk_cs_in_failed_burst(const mfsk_modem_t *h, long at_abs)
+{
+    if (h->pre_fail_abs < 0)
+        return false;
+    long pst = h->pre_fail_abs / h->dec + lround((double)h->NPAY * h->Nr * h->rate);   /* full rate -> receiver rate */
+    long d = at_abs - pst;
+    return d >= -2L * h->P * h->Nr && d <= h->Nr / 2;
+}
+
 static int mfsk_carrier_sense(mfsk_modem_t *h, int search_len)
 {
     int burst = (h->P + h->NPAY) * h->Nr;
     long end_abs = h->b_abs + h->bf_len;
     if (h->carrier_abs >= 0) {
-        if (h->carrier_abs >= h->b_abs && h->carrier_abs + burst > end_abs)
+        if (h->carrier_abs >= h->b_abs && h->carrier_abs + burst > end_abs &&
+            !mfsk_cs_in_failed_burst(h, h->carrier_abs))
             return 1;                        /* still arriving */
-        h->carrier_abs = -1;                 /* resident or slid out */
+        /* Resident (or a failed burst's tail, once placed).  Its payload is
+         * scanned afresh: another station's preamble may be in it. */
+        h->carrier_abs = -1;
     }
     /* From where the last look stopped, one symbol back so a preamble that
      * straddled it is seen whole; never below the resident-payload range. */
@@ -1205,18 +1241,29 @@ static int mfsk_carrier_sense(mfsk_modem_t *h, int search_len)
     long from_abs = h->b_abs + (resident_end > 0 ? resident_end : 0);
     if (h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nr > from_abs)
         from_abs = h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nr;
-    int base = (int)(from_abs - h->b_abs);
-    int len  = h->bf_len - base;
-    if (len < (h->P + 1) * h->Nr)
-        return 0;
     int best = -1;
-    double best_metric = -1.0;
-    for (int hy = 0; hy < h->nhyp; hy++) {
-        if (h->freq_locked && hy != h->freq_hb - h->hyp_lo) continue;
-        double m = 0.0;
-        int o = mfsk_sync_search(h->bf + base, len, 1, h->preT_hyp[hy], h->preE,
-                                 h->preN, h->Nr, 0, &m);
-        if (o >= 0 && m > best_metric) { best_metric = m; best = o; }
+    for (int pass = 0; pass < 2; pass++) {
+        int base = (int)(from_abs - h->b_abs);
+        int len  = h->bf_len - base;
+        if (len < (h->P + 1) * h->Nr)
+            break;
+        best = -1;
+        double best_metric = -1.0;
+        for (int hy = 0; hy < h->nhyp; hy++) {
+            if (h->freq_locked && hy != h->freq_hb - h->hyp_lo) continue;
+            double m = 0.0;
+            int o = mfsk_sync_search(h->bf + base, len, 1, h->preT_hyp[hy], h->preE,
+                                     h->preN, h->Nr, 0, &m);
+            if (o >= 0 && m > best_metric) { best_metric = m; best = o; }
+        }
+        if (best < 0 || !mfsk_cs_in_failed_burst(h, from_abs + best))
+            break;
+        /* The failed burst: look again past it, from where the next
+         * burst's preamble (P symbols on) can start. */
+        long next = from_abs + best + h->Nr;
+        while (mfsk_cs_in_failed_burst(h, next)) next += h->Nr;
+        from_abs = next;
+        best = -1;
     }
     /* Positions within P symbols of the end cannot be tested yet. */
     h->carrier_scan_abs = end_abs - (long)(h->P + 2) * h->Nr;
