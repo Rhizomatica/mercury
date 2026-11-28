@@ -70,6 +70,7 @@ const char *arq_event_name(arq_event_id_t ev)
         [ARQ_EV_RX_CAROUSEL]        = "RX_CAROUSEL",
         [ARQ_EV_TIMER_CAROUSEL]     = "TIMER_CAROUSEL",
         [ARQ_EV_RX_PATTERN]         = "RX_PATTERN",
+        [ARQ_EV_RX_RIVAL]           = "RX_RIVAL",
     };
     if ((unsigned)ev < ARQ_EV__COUNT) return names[ev];
     return "UNKNOWN";
@@ -373,6 +374,8 @@ static int call_answer_carrier(const arq_session_t *sess)
  * air (KG9NI calling K7EK, 1.9.23, 2026-11-10) 5 of K7EK's 6 floor ACCEPTs
  * were keyed over, 3.7-4.9 s of each; no ACCEPT on the control mode got
  * through, so the floor's was the one that could have. */
+static bool call_held_for_rival(arq_session_t *sess);
+
 static float call_interval_s(const arq_session_t *sess)
 {
     return arq_protocol_call_interval_for_mode_s(call_answer_carrier(sess));
@@ -1420,8 +1423,21 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->call_sends_done = 0;
         sess->call_carrier    = 0;
+        sess->rival_hold_logged = false;
         sess->payload_mode       = FREEDV_MODE_DATAC15;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
+        /* The station we call was just heard taking another caller: the
+         * first CALL waits with the rest (call_held_for_rival), and comes
+         * from TIMER_RETRY, which counts it -- one more slot, so the call
+         * still has all of its CALLs. */
+        if (call_held_for_rival(sess))
+        {
+            sess->tx_retries_left++;
+            sess_enter(sess, ARQ_CONN_CALLING,
+                       deadline_from_s(ARQ_CALL_RIVAL_POLL_MS / 1000.0f),
+                       ARQ_EV_TIMER_RETRY);
+            break;
+        }
         send_call_accept(sess, false);
         /* the first CALL's interval: the floor's from a station that
          * transmits only MFSK, or its next CALL keys behind this one */
@@ -1667,6 +1683,66 @@ static bool call_must_wait(arq_session_t *sess)
     return true;
 }
 
+/* Is the station we call (sess->remote_call) in the last connect exchange
+ * between other stations we decoded: called in it, or the caller? */
+static bool rival_is_our_callee(const arq_session_t *sess)
+{
+    if (!sess->rival_heard_ms || !sess->remote_call[0])
+        return false;
+    return sess->rival_called_crc == arq_protocol_callsign_crc16(sess->remote_call) ||
+           strcasecmp(sess->rival_caller, sess->remote_call) == 0;
+}
+
+/* A CALL waits while the station we call is taking another caller
+ * (ARQ_CALL_RIVAL_HOLD_MS): we decoded a third station's CALL to it, its
+ * ACCEPT to one, or its own CALL to one.  It is about to be in a session we
+ * cannot join, and mostly cannot hear: the escalation to the floor that
+ * follows unanswered CALLs keyed 13.5 s and 27 s CALLs over it (on air,
+ * KG9NI calling K7EK while K7EK answered N3JXB, 1.9.26, 2026-11-26 22:21Z:
+ * three floor CALLs over the session, 3 minutes).  Any frame a decoder of
+ * ours catches meanwhile renews the hold: it may be that session.  No retry
+ * slot is spent while held, and arq:call_max_s keeps running (call_over_time
+ * is checked first), so a callee busy past it ends our call unsent, as a
+ * busy station should, and the host tries again later.
+ *
+ * Sets the deadline of the next look when it holds. */
+static bool call_held_for_rival(arq_session_t *sess)
+{
+    if (!rival_is_our_callee(sess))
+        return false;
+    uint64_t now = time_now_ms();
+    uint64_t until = sess->rival_heard_ms + ARQ_CALL_RIVAL_HOLD_MS;
+    if (now < until && decoder_hears_frame(sess))
+    {
+        sess->rival_heard_ms = now;   /* its session, likely: still on */
+        until = now + ARQ_CALL_RIVAL_HOLD_MS;
+    }
+    if (now >= until)
+    {
+        if (sess->rival_hold_logged)
+            HLOGI(LOG_COMP, "CALL resumes: nothing of %s's other exchange heard in %d s",
+                  sess->remote_call, ARQ_CALL_RIVAL_HOLD_MS / 1000);
+        sess->rival_hold_logged = false;
+        sess->rival_heard_ms = 0;
+        return false;
+    }
+    if (!sess->rival_hold_logged)
+    {
+        bool callee_calls = strcasecmp(sess->rival_caller, sess->remote_call) == 0;
+        HLOGI(LOG_COMP, "CALL held: %s is %s %s (heard %llu s ago) -- not calling over it, "
+              "for up to %d s after its last frame",
+              sess->remote_call,
+              callee_calls ? "calling" : "taking a call from",
+              callee_calls ? "another station"
+                           : (sess->rival_caller[0] ? sess->rival_caller : "another station"),
+              (unsigned long long)((now - sess->rival_heard_ms) / 1000),
+              ARQ_CALL_RIVAL_HOLD_MS / 1000);
+        sess->rival_hold_logged = true;
+    }
+    sess->deadline_ms = now + ARQ_CALL_RIVAL_POLL_MS;
+    return true;
+}
+
 static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
 {
     switch (ev->id)
@@ -1737,6 +1813,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
                   (int)((time_now_ms() - sess->state_enter_ms) / 1000), sess->tx_retries_left);
             sess->tx_retries_left = 0;
         }
+        if (sess->tx_retries_left > 0 && call_held_for_rival(sess))
+            break;
         if (sess->tx_retries_left > 0 && call_must_wait(sess))
             break;
         if (sess->tx_retries_left > 0)
@@ -2767,6 +2845,17 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     {
         HLOGD(LOG_COMP, "Session ID mismatch: got %d expected %d — dropped",
               (int)ev->session_id, (int)sess->session_id);
+        return;
+    }
+
+    /* A connect exchange between other stations: remembered whatever our
+     * state, so a CALL placed next to the station in it waits too
+     * (call_held_for_rival).  Not a frame of ours: no RX time, no state. */
+    if (ev->id == ARQ_EV_RX_RIVAL)
+    {
+        sess->rival_called_crc = ev->car_called_crc;
+        snprintf(sess->rival_caller, sizeof(sess->rival_caller), "%s", ev->remote_call);
+        sess->rival_heard_ms = time_now_ms();
         return;
     }
 

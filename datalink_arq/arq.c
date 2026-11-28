@@ -1466,6 +1466,28 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
             else
                 HLOGD(LOG_COMP, "%s not for us: from=? to=%s (not our protocol version)",
                       kind, dst);
+            /* Still news for a CALL of ours to either station: the one called
+             * is about to be busy (call_held_for_rival).  A CALL names the
+             * called station's CRC in every version, and its caller in ours;
+             * an ACCEPT of ours names the station answering (called_crc). */
+            arq_event_t rev = {0};
+            rev.id = ARQ_EV_RX_RIVAL;
+            bool known = false;
+            if (!is_accept && frame_size >= ARQ_CONNECT_PAYLOAD_IDX + 2)
+            {
+                rev.car_called_crc = (uint16_t)(data[ARQ_CONNECT_PAYLOAD_IDX] |
+                                                (data[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8));
+                if (rc == 0)
+                    snprintf(rev.remote_call, CALLSIGN_MAX_SIZE, "%s", caller);
+                known = true;
+            }
+            else if (is_accept && rc == 0)
+            {
+                rev.car_called_crc = acc.called_crc;
+                known = true;
+            }
+            if (known)
+                evq_push(&rev);
             return false;
         }
     }

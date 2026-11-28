@@ -106,6 +106,9 @@ typedef enum
     ARQ_EV_RX_CAROUSEL,             /* a frame with the session's CRC seed */
     ARQ_EV_TIMER_CAROUSEL,          /* the carousel's next deadline  */
     ARQ_EV_RX_PATTERN,              /* a pattern heard (pattern_break) */
+    ARQ_EV_RX_RIVAL,                /* a CALL/ACCEPT between other stations:
+                                     * car_called_crc the station called,
+                                     * remote_call the caller ("" if unknown) */
 
     ARQ_EV__COUNT
 } arq_event_id_t;
@@ -220,6 +223,13 @@ typedef struct
     uint64_t nav_busy_until_ms;     /* a NAV header heard: the peer's keydown runs until then */
     uint8_t  defer_count;              /* consecutive busy-channel deferrals
                                         * of our DISCONNECT, or our CALL    */
+    /* The last connect exchange between other stations we decoded
+     * (RX_RIVAL): its called station's CRC, its caller, and when.  Our CALL
+     * to either of them waits (call_held_for_rival). */
+    uint16_t rival_called_crc;
+    char     rival_caller[CALLSIGN_MAX_SIZE];
+    uint64_t rival_heard_ms;
+    bool     rival_hold_logged;        /* this call's hold was said in the log */
     bool     tx_active;                /* we are keyed (TX_STARTED seen, no
                                         * TX_COMPLETE yet)                   */
     uint64_t last_tx_end_ms;           /* when our last transmission ended  */
