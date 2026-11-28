@@ -460,6 +460,17 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     memcpy(&config->tx_uw[config->nuwbits - sizeof(uw)], uw, sizeof(uw));
     config->tx_bpf_proto = filtP1400S1600;
     config->tx_bpf_proto_n = sizeof(filtP1400S1600) / sizeof(float);
+    /* QAM16C2's drive (2.0) on 44 carriers clipped QAM16C2W harder than
+       QAM16C2 (its amp_scale, 36 carriers': the 44 add ~0.9 dB into the
+       clipper).  Its in-band distortion left a few parity checks unmet at
+       any S/N: every frame ran the decoder to its 100 iterations, ~0.36 s a
+       frame here and ~0.8 s on a Pi 4, where every other mode stops in 1-7;
+       on the bench (2026-11-28) the frame behind a PSKC decoded ~0.8 s after
+       its burst, and the caller scored three such rounds lost just before.
+       Drive 1.8, random frames on white noise, 30 a point: 10-13 iterations
+       at ~18 dB, PAPR 6.4 dB (QAM16C2's 6.5), and the 50 % threshold 10.5
+       dB against 11.5 -- 16.9 dB against the peak, not 17.5. */
+    if (qam) config->clip_gain1 = 1.8;
   } else if (strcmp(mode, "datan1") == 0 || strcmp(mode, "qam16n1") == 0 ||
              strcmp(mode, "qam16n2") == 0) {
     /* BW500's rungs above DATAC3: DATAC3's 9 carriers (562 Hz), a 4 ms guard

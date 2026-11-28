@@ -88,7 +88,7 @@ single-frame bursts, 100 trials, "delivered" = acquired AND decoded.
 | **DATAC17** | 2250 | 1741 | 1184 | (16200,9720) shortened | 5.45 | 90 % reads 3.9 dB (AWGN) ³ | Forward link data (intermediate SNR) |
 | QAM16C2 | 2250 | 3286 | 1183 | (16200,9720) shortened | 2.85 | 90 % reads 10.2 dB (AWGN) ³ | Forward link data (high SNR) |
 | **DATAC17W** | 2750 | 2089 | 1170 | (16200,9720) shortened | 4.50 | 90 % reads 4.8 dB (AWGN) ³ | BW2750's rung 5 |
-| **QAM16C2W** | 2750 | 3897 | 1169 | (16200,9720) shortened | 2.40 | 90 % reads 11.9 dB (AWGN) ³ | BW2750's rung 6 |
+| **QAM16C2W** | 2750 | 3897 | 1169 | (16200,9720) shortened | 2.40 | 90 % reads 11.7 dB (AWGN) ³ | BW2750's rung 6 |
 | **DATAN1** | 560 | 467 | 243 | (3072,2048) IRA | 4.15 | 90 % reads −1.7 dB (AWGN) ³ | BW500's rung 4 |
 | **QAM16N1** | 560 | 639 | 179 | (3072,1536) IRA | 2.25 | 90 % reads 4.4 dB (AWGN) ³ | BW500's rung 5 |
 | **QAM16N2** | 560 | 868 | 242 | (3072,2048) IRA | 2.25 | 90 % reads 5.9 dB (AWGN) ³ | BW500's rung 6 |
@@ -153,6 +153,28 @@ still lost was found, passed the unique word and failed in the decode.
 | QAM16C2, Moderate | -- | 37 -> 40 | 37 -> 40 |
 | QAM16C2W, Moderate | 25 -> 32 | 32 -> 37 | 32 -> 38 |
 | QAM16C2W, Poor | 20 -> 20 | 25 -> 30 | 29 -> 37 |
+
+**QAM16C2W's own clip drive.**  QAM16C2W took QAM16C2's drive into the
+clipper (`clip_gain1` 2.0, and its `amp_scale`, set for 36 carriers: the 44
+carriers add ~0.9 dB into the clipper).  The in-band distortion left a few
+of the code's parity checks unmet at any S/N, so every frame ran the LDPC
+decoder to its 100 iterations: ~0.36 s a frame on a PC and ~0.8 s on a
+Pi 4, where every other mode stops in 1-7 at 20 dB.  On the bench a
+QAM16C2W frame behind a short control frame decoded ~0.8 s after its burst,
+and the caller scored three such rounds lost before they came (2026-11-28).
+At drive 1.8 a frame takes 10-13 iterations at ~18 dB, the peak-to-average
+ratio is 6.4 dB (QAM16C2's 6.5), and it is better at equal peak on every
+channel (`utils/rung_sweep`, delivered of 40 bursts; carrier S/N):
+
+| QAM16C2W, drive 2.0 -> 1.8 | | | | |
+|---|---|---|---|---|
+| White noise | +14 dB: 9 -> 31 | 90 % at +14.4 -> +14.1 (80 bursts) | | |
+| CCIR Moderate | +16: 6 -> 12 | +18: 24 -> 30 | +20: 34 -> 38 | +22: 38 -> 40 |
+| CCIR Poor | +20: 20 -> 25 | +24: 31 -> 36 | +28: 34 -> 38 | +30 to +40: 35 -> 39 |
+
+Its SNR map (`SNR_MAP_QAM16C2W`) is refitted on frames at the new drive:
+the raw estimate now rises to 13.9 at 28 dB true, where it flattened at
+12.5.
 
 QAM16N1 and QAM16N2 under Poor, 160 bursts: equal or better at every point
 (QAM16N2 113/125/126 -> 117/125/128 at +20/+24/+28 dB).  White noise is
