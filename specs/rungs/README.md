@@ -208,6 +208,65 @@ fallback) does not take a fallen-back S off the floor.
   after 0 dB read -2.7, and a Winlink client's 74 bytes took 311 s in the
   sim.  An MFSK frame's reading now decides alone.
 
+### M's lost-peer watchdog (#623)
+
+With `LOST` > 0, M ends the session after `LOST` exchanges with nothing of
+S's heard (`car_lost_at`, `ARQ_CAR_PEER_LOST_MS`), or, once its control is
+on the floor, not before `FM + FS + 2` (`car_recover_by_ms`).  S may decode
+M's last DATAC16 control before the move while its own answers are lost, and
+then listens at the floor only `FS` exchanges after it.  M's next floor
+exchange is the first one S can hear.  `LOST` = 0 is no watchdog, which is
+how the checks above run (`LOST = 0  LT = 0`: 696 states, as before).
+
+A watchdog ends any session whose losses outlast it, so with `L` alone no
+finite mark keeps `Delivered`.  The question here is the race, not that.
+`LT` > 0 bounds the losses in all, and allows them only while the channel
+is up: the asymmetry that sets up the race (S hears M, M misses S), with a
+clean floor after the drop.
+
+    java -cp /opt/TLA+Toolbox/tla2tools.jar tlc2.TLC -workers 4 \
+        -metadir /tmp/tlc-floor -config FloorSilence_Lost.cfg FloorSilence.tla
+
+- `FloorSilence_Lost.cfg`: the defaults in exchanges of ~34 s (M keyed
+  every ~34 s in silence in the sim, nvis): `FM` = 5 (150 s), `FS` = 3
+  (90 s), `LOST` = 7 (240 s), `L` = `LT` = 5.  `Delivered` and `FloorHolds`
+  hold: no error, 4831 distinct states.
+- `Mut_fs_oldmark.cfg`: the mark at `LOST` alone, as before #623.  Violates
+  `Delivered` (4759 states).  The trace is the one in the issue: S decodes
+  M's control at the fourth silent exchange with its answers lost, M moves
+  to the floor at the fifth, S falls back at the seventh, and M's watchdog
+  ends the session there.
+- Checked for `FM` in 1..6, `FS` in 1..4, `LOST` in `FM + 1` ..
+  `FM + FS + 2`, `L` = `LT` = `FM`, `N` = 2 (108 runs, 76-5454 distinct
+  states).  The code's mark holds in all 108.  The old mark violates
+  `Delivered` in 60 of them: exactly those with `LOST` <= `FM + FS`.  At
+  `FM` = `FS` = 3 (M's shortcut after two unanswered REQs, `S_FALLBACK_MS`)
+  the old 240 s (`LOST` = 7) holds, as the sim found with data in flight.
+- The code bounds the move with no state: the first keydown end at or after
+  `heard_ms + SILENT_MS`, plus one floor exchange (in silence M keys at
+  least that often).  The model's `FM + FS + 2` counts from the move M
+  actually made, so it is the tighter of the two: the code's mark is at or
+  past it.  The code uses `SILENT_MS` even with two asks unanswered.  `reqs`
+  may reach 2 only after `heard_ms + S_FALLBACK_MS`, and the move then
+  comes on the `SILENT_MS` branch (sim, fade:-5, seed 1147).
+- What it costs: the time a caller takes to leave a vanished peer, every
+  frame lost from a connected session, in seconds after the loss (sim,
+  `script_bench dead`, 20 seeds, all equal):
+
+  | session | before #623 | #623 |
+  |---|---:|---:|
+  | idle, 2300 Hz | 240 | 336 |
+  | idle, BW500 | 259 | 402 |
+  | idle, `silence_fallback_s` 200 | 240 | 424 |
+  | data in flight, defaults | 237 | 331 |
+  | data in flight, BW500, `silence_fallback_s` 230 | 276 | 532 |
+
+  Meanwhile the caller polls an empty channel and does not take CALLs from
+  other stations.
+- Not modelled: the callee's own watchdog.  At BW500 it may fire with M's
+  first 27 s floor poll on the air (sim, fade:-5, 3 of 3000).  That is the
+  mirror case, left for a follow-up.
+
 #431 also brought two rules the model already had: at the silence, M's
 rounds go to the floor with its control (`MDeaf` sets `mRung`; the code
 kept the old rung for one more lost round), and after two unanswered asks

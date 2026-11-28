@@ -76,6 +76,17 @@ static bool intact_prefix(sim_endpoint_t *dst, const uint8_t *sent, size_t sent_
 
 static arq_conn_state_t state(sim_endpoint_t *ep) { return sim_endpoint_session(ep)->conn_state; }
 
+/* Measured NVIS (pathsim --midlat-dist-nvis --snr 10), per-mode erasure: as
+ * ab_bench, conn_bench and carousel_sim.c. */
+static const sim_mode_per_t NVIS[] = {
+    { FREEDV_MODE_DATAC15, 0.20 }, { FREEDV_MODE_DATAC16, 0.20 },
+    { FREEDV_MODE_DATAC13, 0.30 }, { FREEDV_MODE_DATAC14, 0.30 },
+    { FREEDV_MODE_DATAC4,  0.45 }, { FREEDV_MODE_DATAC3,  0.67 },
+    { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },
+    { FREEDV_MODE_QAM16C2, 0.95 }, { MERCURY_MODE_PSK3,   0.05 },   /* as carousel_sim.c */
+};
+#define NVIS_N ((int)(sizeof(NVIS) / sizeof(NVIS[0])))
+
 void test_car_connect_seeds_both_ends(void)
 {
     sim_t *s = make_sim(1, 0.0);
@@ -196,7 +207,7 @@ static sim_t *idle_session(uint64_t seed, double snr_db)
 
 /* #384: the peer leaves an idle session.  The lost-peer watchdog ran only
  * with data in flight, and the caller polled the vanished peer for 10 min,
- * until the operator aborted.  The caller ends 319 s after the loss: its
+ * until the operator aborted.  The caller ends 331 s after the loss: its
  * silence moves its control to the floor, and it waits for a floor poll the
  * callee would be listening for (car_recover_by_ms, #623). */
 void test_car_idle_peer_loss_disconnects(void)
@@ -1064,12 +1075,6 @@ void test_car_fuzz(void)
         { "cliff 3", 0.02, 3, 0, 0 }, { "cliff 10", 0.02, 10, 0, 0 }, { "nvis", 0.02, 0, 1, 0 },
         { "fade 8", 0.02, 0, 0, 8 }, { "fade 15", 0.02, 0, 0, 15 },
     };
-    static const sim_mode_per_t NVIS[] = {
-        { FREEDV_MODE_DATAC15, 0.20 }, { FREEDV_MODE_DATAC16, 0.20 },
-        { FREEDV_MODE_DATAC4,  0.45 }, { FREEDV_MODE_DATAC3,  0.67 },
-        { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },
-        { FREEDV_MODE_QAM16C2, 0.95 }, { MERCURY_MODE_PSK3,   0.05 },   /* as carousel_sim.c */
-    };
     for (size_t c = 0; c < sizeof(CH) / sizeof(CH[0]); c++)
         for (uint64_t seed = 1; seed <= 8; seed++)
         {
@@ -1077,7 +1082,7 @@ void test_car_fuzz(void)
             snprintf(what, sizeof(what), "%s seed %llu", CH[c].name, (unsigned long long)seed);
             sim_t *s = make_sim(seed, CH[c].per);
             if (CH[c].snr) sim_set_snr(s, CH[c].snr);
-            if (CH[c].nvis) sim_set_mode_per(s, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])), 10.0f);
+            if (CH[c].nvis) sim_set_mode_per(s, NVIS, NVIS_N, 10.0f);
             if (CH[c].fade) sim_set_fading(s, CH[c].fade, 1.0);
             sim_endpoint_queue_tx(sim_a(s), ab, sizeof(ab));
             sim_endpoint_queue_tx(sim_b(s), ba, sizeof(ba));
@@ -1295,18 +1300,11 @@ void test_car_step_drop_watchdog_waits_for_the_floor_answer(void)
  * car_recover_by_ms. */
 static bool script_completes(uint64_t seed, int chan, const char *script)
 {
-    static const sim_mode_per_t NVIS[] = {
-        { FREEDV_MODE_DATAC15, 0.20 }, { FREEDV_MODE_DATAC16, 0.20 },
-        { FREEDV_MODE_DATAC13, 0.30 }, { FREEDV_MODE_DATAC14, 0.30 },
-        { FREEDV_MODE_DATAC4,  0.45 }, { FREEDV_MODE_DATAC3,  0.67 },
-        { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },
-        { FREEDV_MODE_QAM16C2, 0.95 },
-    };
     sim_channel_cfg_t chan_cfg = { .seed = seed, .per = 0.0, .guard_ms = 150 };
     sim_t *s = sim_create(&chan_cfg, "A0AAA", "B0BBB");
     TEST_ASSERT_NOT_NULL(s);
     if (chan == 0) {
-        sim_set_mode_per(s, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])), 10.0f);
+        sim_set_mode_per(s, NVIS, NVIS_N, 10.0f);
     } else {
         sim_set_rx_snr(s, -5.0f);
         sim_set_fading(s, -5.0, 0.5);

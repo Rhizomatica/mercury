@@ -36,6 +36,17 @@
 (* decodes only M's floor keydowns, and an MFSK frame's reading alone     *)
 (* says so (car_on_frame), so its answer keeps M's control on the floor.  *)
 (*                                                                         *)
+(* M's lost-peer watchdog (car_lost_at), with LOST > 0: after LOST        *)
+(* exchanges with nothing of S's heard M ends the session -- or, once its *)
+(* control is on the floor, not before FM + FS + 2 (car_recover_by_ms,    *)
+(* #623): S may have decoded M's last keydown before the move and falls   *)
+(* back only FS exchanges after it, and M's next floor exchange is the    *)
+(* first S can hear.  LOST = 0: no watchdog (the checks before #623).     *)
+(* A watchdog ends any session whose losses outlast it, so with LT > 0    *)
+(* the losses are LT in all, and only while the channel is up: the        *)
+(* asymmetry (S hears M, M misses S) that sets up the race, then a clean  *)
+(* floor.  LT = 0: L in a row each way, as before.                        *)
+(*                                                                         *)
 (* Properties: Delivered, every message gets through, with the channel   *)
 (* down for ever if the adversary likes; FloorHolds, down, M's control    *)
 (* once on the floor stays there.                                         *)
@@ -46,6 +57,8 @@ CONSTANTS N,      \* messages M sends
           L,      \* most keydowns the channel loses in a row (each way)
           FM,     \* M's silence, in exchanges, before its control goes to the floor
           FS,     \* S's silence, in exchanges, before it listens at the floor
+          LOST,   \* M's lost-peer watchdog, in exchanges since it heard S (0: none)
+          LT,     \* most keydowns lost in all, either way (0: no budget, L alone)
           Mutant  \* "none", or one rule broken (to show the model can fail):
                   \*   "nosilence": M never takes the control mode to be out
                   \*   "nostay":    S's round timer takes it off the floor it fell back to
@@ -53,6 +66,7 @@ CONSTANTS N,      \* messages M sends
                   \*   "lagread":   S's answer to M's floor control says it hears M above the
                   \*                control mode, as its smoothed reading did (#431), and M's
                   \*                control goes back to DATAC16
+                  \*   "oldmark":   M's watchdog at LOST alone, as before #623
 
 Floor == 0
 Fast  == 1
@@ -71,20 +85,30 @@ VARIABLES
     sSilent,   \* S: exchanges since it last decoded anything of M's
     sFell,     \* S: it fell back to the floor in this silence
     sHave,     \* S: messages it has
-    lossM, lossS
+    lossM, lossS,
+    mQuiet,    \* M: exchanges since it last heard S, for its watchdog (0 without one)
+    lossT      \* keydowns lost so far (0 without a budget)
 
 vars == <<up, mRung, mCtl, mSilent, mSent, mDone, sBind, sPrev, sArmed, sSilent, sFell, sHave,
-          lossM, lossS>>
+          lossM, lossS, mQuiet, lossT>>
 
-Lossy(lr, clean) == IF clean \/ lr >= L THEN {FALSE} ELSE BOOLEAN
+Lossy(lr, clean) == IF clean \/ lr >= L \/ (LT > 0 /\ (lossT >= LT \/ ~up)) THEN {FALSE} ELSE BOOLEAN
+Spent(lost) == IF LT > 0 /\ lost THEN 1 ELSE 0
 Max(a, b) == IF a > b THEN a ELSE b
 Decodes(r) == up \/ r = Floor                        \* a keydown on rung r gets through
 SCtl == IF mCtl = "floor" THEN Floor ELSE Fast       \* S answers at the floor once M says so
+\* M's watchdog mark (car_lost_at): LOST, and with M's control moved to the
+\* floor no earlier than S's fallback after the move and one floor exchange
+\* more (car_recover_by_ms).
+Mark == IF mCtl = "floor" /\ Mutant # "oldmark" THEN Max(LOST, FM + FS + 2) ELSE LOST
+MaxMark == Max(LOST, FM + FS + 2)
+Lost == LOST > 0 /\ mQuiet >= Mark                  \* M ended the session
 
 Init ==
     /\ up = TRUE /\ mRung = Fast /\ sBind = Fast /\ sPrev = Fast
     /\ mCtl = "c16" /\ mSilent = 0 /\ mSent = 1 /\ mDone = FALSE
     /\ sArmed = FALSE /\ sSilent = 0 /\ sFell = FALSE /\ sHave = 0 /\ lossM = 0 /\ lossS = 0
+    /\ mQuiet = 0 /\ lossT = 0
 
 \* S decoded nothing of M's keydown: its silence grows, and its timers fire.
 \* The round timer runs to the end of the round S asked for, which may come
@@ -102,6 +126,7 @@ SDeaf ==
 \* M heard nothing back: its silence grows; at FM, the floor.
 MDeaf ==
     /\ mSilent' = IF mSilent < FM THEN mSilent + 1 ELSE FM
+    /\ mQuiet' = IF LOST > 0 /\ mQuiet < MaxMark THEN mQuiet + 1 ELSE mQuiet
     /\ IF mSilent + 1 >= FM /\ Mutant # "nosilence"
        THEN mCtl' = "floor" /\ mRung' = Floor
        ELSE UNCHANGED <<mCtl, mRung>>
@@ -110,7 +135,7 @@ MDeaf ==
 \* One exchange: M's keydown (a round, or control after silence), S's answer.
 \* Only while M has a message S has not acknowledged.
 Exchange(clean) ==
-    /\ ~mDone
+    /\ ~mDone /\ ~Lost
     /\ up' \in (IF up THEN BOOLEAN ELSE {FALSE})
     /\ \E lostM \in Lossy(lossM, clean), lostS \in Lossy(lossS, clean),
           n \in (IF up \/ Mutant = "noread" THEN Rungs ELSE {Floor}) :
@@ -121,6 +146,9 @@ Exchange(clean) ==
             heardM  == ~lostS /\ Decodes(SCtl)       \* S's answer, on its control mode
         IN
         /\ lossM' = IF lostM THEN lossM + 1 ELSE 0
+        \* S's answer is a keydown only when S decoded M's
+        /\ lossT + Spent(lostM) + Spent(heardS /\ lostS) <= Max(LT, 0)
+        /\ lossT' = lossT + Spent(lostM) + Spent(heardS /\ lostS)
         /\ IF ~heardS THEN
               /\ SDeaf /\ MDeaf /\ lossS' = lossS
               /\ UNCHANGED <<mSent>>
@@ -132,7 +160,7 @@ Exchange(clean) ==
               /\ sArmed' = (n # (IF round THEN mRung ELSE sPrev))
               /\ lossS' = IF lostS THEN lossS + 1 ELSE 0
               /\ IF heardM THEN
-                    /\ mSilent' = 0 /\ mRung' = n
+                    /\ mSilent' = 0 /\ mQuiet' = 0 /\ mRung' = n
                     /\ mDone' = (sHave' >= mSent)
                     /\ mCtl' \in (IF Mutant = "lagread" /\ ~up THEN {mCtl, "c16"} ELSE {mCtl})
                     /\ mSent' = mSent
@@ -143,11 +171,11 @@ Exchange(clean) ==
 NextMsg ==
     /\ mDone /\ mSent < N
     /\ mSent' = mSent + 1 /\ mDone' = FALSE
-    /\ UNCHANGED <<up, mRung, mCtl, mSilent, sBind, sPrev, sArmed, sSilent, sFell, sHave, lossM, lossS>>
+    /\ UNCHANGED <<up, mRung, mCtl, mSilent, sBind, sPrev, sArmed, sSilent, sFell, sHave, lossM, lossS, mQuiet, lossT>>
 
 Finished == mDone /\ mSent = N
 Step(clean) == ~Finished /\ (NextMsg \/ Exchange(clean))
-Done == Finished /\ UNCHANGED vars
+Done == (Finished \/ Lost) /\ UNCHANGED vars       \* delivered, or M has ended
 Next == Step(FALSE) \/ Done
 
 \* M keeps going; an exchange that could go through loss-free, again and
@@ -161,6 +189,7 @@ TypeOK ==
     /\ up \in BOOLEAN /\ mRung \in Rungs /\ sBind \in Rungs /\ sPrev \in Rungs
     /\ mCtl \in {"c16", "floor"} /\ mSilent \in 0 .. FM /\ sSilent \in 0 .. FS
     /\ mSent \in 1 .. N /\ sHave \in 0 .. N /\ lossM \in 0 .. L /\ lossS \in 0 .. L
+    /\ mQuiet \in 0 .. MaxMark /\ lossT \in 0 .. Max(LT, 0)
 Delivered == <>Finished
 FloorHolds == [][~up /\ mCtl = "floor" => mCtl' = "floor"]_vars
 =============================================================================

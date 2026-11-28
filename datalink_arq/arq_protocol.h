@@ -216,7 +216,9 @@ extern _Atomic int arq_retry_stagger_ms;
  * (the carousel's SILENT_MS), in seconds.  The receiver's own wait for the
  * floor (S_FALLBACK_MS) is 60 % of it.  Default 150 (so 90), range 110..600.
  * Shorter reacts faster to QRM but moved multipath links to a floor they did
- * not need in the sim (#442); see carousel.c.
+ * not need in the sim (#442); see carousel.c.  Longer also holds the
+ * caller's lost-peer watchdog longer once its control is on the floor
+ * (car_recover_by_ms, #623).
  *
  * The minimum keeps each timer at least one exchange long, which is what
  * specs/rungs/FloorSilence.tla counts them in (specs/rungs/README.md): the
