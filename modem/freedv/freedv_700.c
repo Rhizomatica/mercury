@@ -223,6 +223,17 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   assert(f->ldpc != NULL);
   ldpc_codes_setup(f->ldpc, f->ofdm->codename);
   ldpc_mode_specific_setup(f->ofdm, f->ldpc);
+  /* The 16-QAM modes on the (16200,9720) code: a frame that has not settled
+   * by 50 iterations almost never does by the code's 100, and 100 of them
+   * take ~0.8 s on a Pi 4 -- a decode that late outlasts the margin the
+   * caller's round timer leaves past a burst (carousel.c, m_on_ctl), and
+   * the round was scored lost before it came (bench, 2026-11-28).  Random
+   * frames, 60 a point, delivered at 50 against 100 iterations: QAM16C2W
+   * 59/60 = 59/60 at 11 dB, QAM16C2 56/60 against 57/60 at 10 dB.  The QPSK
+   * modes need theirs near threshold (DATAC17 at 3.5 dB: 40/60 against
+   * 44/60) and keep them. */
+  if (f->mode == FREEDV_MODE_QAM16C2 || f->mode == FREEDV_MODE_QAM16C2W)
+    f->ldpc->max_iter = 50;
 #ifdef __EMBEDDED__
   f->ldpc->max_iter = 10; /* limit LDPC decoder iterations to limit CPU load */
 #endif
@@ -501,7 +512,10 @@ static const snr_knot_t SNR_MAP_QAM16C2[] = {{9.78f, 10.00f},  {10.32f, 12.00f},
  * frames' power.  The narrow 16-QAM ones flatten from ~16 dB (7.4 raw at
  * 20 true): their maps are steep there, as QAM16C2's is past 20. */
 static const snr_knot_t SNR_MAP_DATAC17W[] = {{3.91f, 5.00f}, {4.96f, 7.00f}, {6.17f, 9.00f}, {7.41f, 11.00f}, {8.57f, 13.00f}, {9.65f, 15.00f}, {10.41f, 17.00f}, {11.01f, 19.00f}, {11.42f, 21.00f}, {11.71f, 23.00f}};
-static const snr_knot_t SNR_MAP_QAM16C2W[] = {{10.94f, 12.00f}, {11.32f, 14.00f}, {11.68f, 16.00f}, {11.99f, 18.00f}, {12.22f, 20.00f}, {12.42f, 22.00f}, {12.54f, 24.00f}};
+/* QAM16C2W refitted for its own clip drive, 1.8 (ofdm_mode.c; 2026-11-28):
+ * on random frames, 30 a point, the raw estimate rises to 13.9 at 28 dB true,
+ * +-0.08 a frame, where at QAM16C2's 2.0 it flattened at 12.5. */
+static const snr_knot_t SNR_MAP_QAM16C2W[] = {{11.34f, 12.00f}, {11.88f, 14.00f}, {12.41f, 16.00f}, {12.86f, 18.00f}, {13.23f, 20.00f}, {13.50f, 22.00f}, {13.70f, 24.00f}};
 static const snr_knot_t SNR_MAP_DATAN1[] = {{-2.69f, -2.00f}, {-1.38f, 0.00f}, {0.17f, 2.00f}, {1.73f, 4.00f}, {3.27f, 6.00f}, {4.57f, 8.00f}, {5.67f, 10.00f}, {6.65f, 12.00f}, {7.23f, 14.00f}, {7.69f, 16.00f}, {7.89f, 18.00f}, {8.28f, 20.00f}, {8.41f, 22.00f}};
 static const snr_knot_t SNR_MAP_QAM16N1[] = {{4.50f, 4.00f}, {5.02f, 6.00f}, {5.50f, 8.00f}, {6.07f, 10.00f}, {6.47f, 12.00f}, {6.84f, 14.00f}, {7.02f, 16.00f}, {7.26f, 18.00f}, {7.36f, 20.00f}, {7.40f, 22.00f}, {7.51f, 24.00f}};
 static const snr_knot_t SNR_MAP_QAM16N2[] = {{5.08f, 6.00f}, {5.60f, 8.00f}, {6.09f, 10.00f}, {6.54f, 12.00f}, {6.82f, 14.00f}, {7.08f, 16.00f}, {7.35f, 18.00f}, {7.41f, 20.00f}, {7.46f, 22.00f}};
