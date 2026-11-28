@@ -175,11 +175,16 @@ The current values ride in the status event's `hl2` field.
 ### 3.4b `refresh_devices`
 
 Re-list the capture and playback devices. No fields. The engine enumerates
-the devices again and publishes `capture_dev_list`, `playback_dev_list` and
-`input_channel` (§5.2, §5.3) to every client, as it does when a client
-connects. The lists are otherwise sent only on connect and after
+the devices again and publishes `capture_dev_list`, `playback_dev_list`,
+`input_channel` and `audio_system` (§5.2–§5.4) to every client, as it does
+when a client connects. The lists are otherwise sent only on connect and after
 `set_audio_config`, so a sound card plugged in later was not offered until a
 restart (issue #556). The UI sends this when its Soundcards dialog opens.
+
+The lists go to every connected client, and each carries the engine's current
+selection. A UI that puts its pickers back to that selection when a list
+arrives (the Fyne UI does) loses a choice its operator has made but not yet
+applied, whenever any other client sends `refresh_devices`.
 
 ### 3.5 `set_callsign`
 
@@ -215,10 +220,10 @@ Sent to every connected client via `ws_broadcast_json()` /
 | Event (`type`) | Encoding | Cadence / trigger |
 |---|---|---|
 | `status` | text JSON | Every 500 ms (`UI_PUBLISH_INTERVAL_US`) |
-| `capture_dev_list` | text JSON | On connect / after an audio change |
-| `playback_dev_list` | text JSON | On connect / after an audio change |
-| `input_channel` | text JSON | On connect / after an audio change |
-| `audio_system` | text JSON | On connect / after an audio change |
+| `capture_dev_list` | text JSON | On connect / after an audio change / on `refresh_devices` |
+| `playback_dev_list` | text JSON | On connect / after an audio change / on `refresh_devices` |
+| `input_channel` | text JSON | On connect / after an audio change / on `refresh_devices` |
+| `audio_system` | text JSON | On connect / after an audio change / on `refresh_devices` |
 | `radio_list` | text JSON | On connect / after a PTT change |
 | `history` | text JSON | On connect |
 | spectrum | **binary** | Polled every 50 ms; sent only when a new spectrum is available |
@@ -413,6 +418,10 @@ WSS/TLS, `-W` disable the waterfall (see `mercury.1`).
 
 # Set 10 dB TX gain
 {"command":"set_tx_gain","value":"10"}            -> {"status":"ok"}
+
+# Re-list the sound cards, e.g. after plugging one in
+{"command":"refresh_devices"}                     -> {"status":"ok"}
+   then capture_dev_list, playback_dev_list, input_channel, audio_system
 
 # Bad PTT config: hamlib requires a positive model id
 {"command":"set_ptt_config","value":"hamlib","value3":"0"}  -> {"status":"error","code":-1}

@@ -552,6 +552,21 @@ Mercury uses an asynchronous ring-buffer logger (`common/hermes_log.c`).
 | `-L <path>` | Write all log levels (DEBUG+) to file at `<path>`             |
 | `-J`        | Combine with `-L`: write file in **JSONL** format for machine parsing |
 
+### Where the graphical Mercury writes its logs
+
+The graphical Mercury (`mercury-ui`, the Mercury app) writes two logs:
+`mercury_engine.log` (the modem, the same lines as `-L`) and `ui.log` (the
+window's own messages). **Logs > Open logs directory** opens the folder.
+
+| System | Folder |
+|---|---|
+| Linux | `$XDG_STATE_HOME/mercury/logs`, by default `~/.local/state/mercury/logs` |
+| Windows | `logs` next to `mercury-ui.exe` |
+| macOS (.dmg) | `~/Library/Logs/Mercury` |
+| macOS (App Store) | `~/Library/Containers/org.rhizomatica.mercury/Data/Library/Logs/Mercury` (the app's sandbox) |
+
+The command-line `mercury` writes a log file only when given `-L`.
+
 Example for OTA analysis:
 
 ```sh
