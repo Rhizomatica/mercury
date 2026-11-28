@@ -1561,6 +1561,28 @@ static bool is_http_request(const uint8_t *data, ssize_t len)
     return false;
 }
 
+/* What a web page's connection starts with, however long its request line:
+ * the methods a browser sends without asking first (GET, HEAD, POST), the
+ * OPTIONS of its preflight, or a TLS handshake record (an https:// URL).
+ *
+ * is_http_request() needs " HTTP/" in the first read, and a page picks its
+ * URL: past one read of TCP_BLOCK_SIZE the request line no longer shows it,
+ * and the request's body, which the page also picks, ran as TNC commands.
+ * On the broadcast port a request's body was read as KISS frames and
+ * transmitted, as were the 0xC0 bytes of a TLS client hello.
+ *
+ * No TNC command and no KISS stream starts with any of these. */
+static bool is_web_client_opening(const uint8_t *data, ssize_t len)
+{
+    static const char *const opening[] = { "GET ", "HEAD ", "POST ", "OPTIONS ", "\x16\x03" };
+    for (size_t i = 0; i < sizeof(opening) / sizeof(opening[0]); i++) {
+        size_t n = strlen(opening[i]);
+        if (len >= (ssize_t)n && memcmp(data, opening[i], n) == 0)
+            return true;
+    }
+    return false;
+}
+
 static void refuse_web_client(int *ctl_client_fd)
 {
     static const char reply[] =
@@ -2001,7 +2023,7 @@ void *arq_reactor_thread(void *port)
                     HLOGD("tcp-ctl", "recv %zd bytes from control client", n);
                     bool first = ctl_first_read;
                     ctl_first_read = false;
-                    if (first && is_http_request(rx_buf, n))
+                    if (first && (is_web_client_opening(rx_buf, n) || is_http_request(rx_buf, n)))
                         refuse_web_client(&ctl_client);
                     else
                     {
@@ -2579,11 +2601,25 @@ void *recv_thread(void *client_socket_ptr)
 
     HLOGI("tcp-bcast", "Receive thread started (expected frame_size=%zu)", frame_size);
 
+    bool first_read = true;
+
     while (!mercury_stop && !bcast_client_done)
     {
         ssize_t received = recv(client_socket, (char *)buffer, DATA_TX_BUFFER_SIZE, 0);
         if (received > 0)
         {
+            /* Nothing a web page sends is transmitted.  Checked on what is
+             * read first, so it holds too for a client that waited in the
+             * backlog and has since gone. */
+            if (first_read && is_web_client_opening(buffer, received))
+            {
+                HLOGW("tcp-bcast", "broadcast connection is a web browser: closed. "
+                      "This port is for KISS host programs");
+                /* The server thread watches the socket, not this thread. */
+                SOCK_SHUTDOWN(client_socket);
+                break;
+            }
+            first_read = false;
             HLOGD("tcp-bcast", "recv %zd bytes from broadcast client", received);
             for (ssize_t i = 0; i < received; i++)
             {

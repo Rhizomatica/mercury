@@ -38,7 +38,11 @@ gets in.
 **A web browser on the control port.** The control port is not a web page.
 A browser pointed at it (`http://<host>:8300`) gets a short HTTP 400 reply
 saying so, and only its own connection is closed: a host's data connection
-stays, and the host gets the control port at once.  Mercury logs
+stays, and the host gets the control port at once.  Mercury takes a
+connection for a web client when what it reads first starts with `GET `,
+`HEAD `, `POST `, `OPTIONS ` or a TLS handshake (`https://`), however long
+the request line is; an HTTP request line within that first read counts too.
+Nothing in such a request runs as a command.  Mercury logs
 
     control connection from 192.168.1.20:52344 is a web browser: closed. ...
 
@@ -1325,6 +1329,13 @@ connected broadcast client picks up a new frame size on its next frame — the
 socket does not need to be reopened — so a `MODE` change re-frames the plane
 underneath a live client.  Size your client's frames from the mode you
 selected, not from a cached value.
+
+A web client is closed here too, silently, with no HTTP reply: when what
+Mercury reads first from a connection starts with `GET `, `HEAD `, `POST `,
+`OPTIONS ` or a TLS handshake, it closes the connection and transmits nothing
+from it.  No KISS stream starts like that.  Mercury logs
+
+    broadcast connection is a web browser: closed. This port is for KISS host programs
 
 Three client framings are accepted, distinguished by the KISS command byte:
 
