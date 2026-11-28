@@ -1299,6 +1299,12 @@ static uint64_t channel_clear_at(const arq_session_t *sess)
         clear_at = sess->last_tx_end_ms + window;
     if (sess->last_rx_sync_ms && sess->last_rx_sync_ms + guard > clear_at)
         clear_at = sess->last_rx_sync_ms + guard;
+    /* ...and a round on a PSK rung, asked for by that keydown, raises no
+     * sync: the callee's ABORT keyed 2.8 s into one (sim, -1 dB, #628
+     * review).  The channel is the caller's until the round could be over. */
+    uint32_t unsensed = sess->car_session ? car_unsensed_round_ms(sess->car) : 0;
+    if (unsensed && sess->last_tx_end_ms && sess->last_tx_end_ms + window + unsensed > clear_at)
+        clear_at = sess->last_tx_end_ms + window + unsensed;
     return clear_at;
 }
 
@@ -1416,7 +1422,8 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
          * incoming CALL dialed, which retry_deadline_from_s would otherwise
          * rank this call with. */
         sess->local_call[0] = '\0';
-        sess->session_id      = (uint8_t)(time_now_ms() & ARQ_CONNECT_SESSION_MASK) | 0x01;
+        /* 2..126: never 0, the low bit (the encryption offer) clear */
+        sess->session_id      = (uint8_t)((time_now_ms() % 63 + 1) << 1);
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->call_sends_done = 0;
         sess->call_carrier    = 0;

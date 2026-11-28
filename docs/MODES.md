@@ -24,7 +24,7 @@ that index.
 | 0 | DATAC1 | 510 | 1687 | ARQ rung 4 |
 | 1 | DATAC3 | 126 | 562 | ARQ rung 3; default `-m` |
 | 2 | DATAC0 | 14 | 562 | broadcast and tests only |
-| 3 | DATAC4 | 54 | 250 | ARQ rung 2 |
+| 3 | DATAC4 | 54 | 250 | ARQ rung 2 (BW500) |
 | 4 | DATAC13 | 14 | 187 | broadcast and monitor; no longer an ARQ mode |
 | 5 | DATAC14 | 3 | 222 | broadcast and tests only |
 | 6 | FSK_LDPC | 30 | — | experimental, tests only |
@@ -40,18 +40,20 @@ that index.
 | 16 | QAM16N1 | 179 | 562 | ARQ rung 5 (BW500) |
 | 17 | QAM16N2 | 242 | 562 | ARQ rung 6 (BW500) |
 | 18 | MFSK2K | 98 | 2000 | ARQ rung 1 (BW2300, BW2750) |
+| 19 | PSK3 | 133 | 1300 | ARQ rung 2 (BW2300, BW2750) |
 
 An ARQ session runs each direction on rungs 0-6 of its bandwidth's ladder,
 starting on the rung the connect's SNR supports (`ARQ_SNR_MIN_*`, the
 thresholds below) and moving on measured delivery
-([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md)).  Rungs 2-3 are shared; each bandwidth
-has its own floor and top, and BW2300/BW2750 their own rung 1:
+([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md)).  Rung 3 is shared; each bandwidth
+has its own floor and top, and BW2300/BW2750 their own rungs 1 and 2:
 
 | Rung | BW500 | BW2300 | BW2750 |
 |---|---|---|---|
 | 0 | MFSK500 | MFSK (MFSK500 on the deep floor) | MFSK (the same) |
 | 1 | DATAC15 | MFSK2K | MFSK2K |
-| 2-3 | DATAC4, DATAC3 | same | same |
+| 2 | DATAC4 | PSK3 | PSK3 |
+| 3 | DATAC3 | DATAC3 | DATAC3 |
 | 4 | DATAN1 | DATAC1 | DATAC1 |
 | 5 | QAM16N1 | DATAC17 | DATAC17W |
 | 6 | QAM16N2 | QAM16C2 | QAM16C2W |
@@ -93,6 +95,17 @@ single-frame bursts, 100 trials, "delivered" = acquired AND decoded.
 | **MFSK** | 1000 | ~60 | 98 | LDPC rate 8/16, N=1600 | ~13.5 | 50 % FER at −11.2 dB AWGN (DATAC15 −10.3 on the same harness) ⁴ | Fringe data and control (the carousel's floor) |
 | **MFSK500** | 500 | ~31 | 98 | LDPC rate 8/16, N=1600 | ~26.2 | 90 % at −14.1 dB AWGN, −14.1 behind a 500 Hz filter, −10.4 moderate fading ⁵ | The floor of a BW500 session |
 | **MFSK2K** | 2000 | ~122 | 98 | LDPC rate 8/16, N=1600 | ~6.56 | 90 % at −8 dB AWGN, −5 CCIR Moderate and Poor ⁵ | Rung 1 of BW2300/BW2750: twice the floor's rate for ~2 dB more under fading |
+| **PSK3** | 1300 | 280 | 133 | (2172,1080) IRA | 3.86 | 90 % at −3.1 dB AWGN, +1.6 CCIR Moderate, +1.8 Poor, +8 NVIS (7 ms) ⁶ | Rung 2 of BW2300/BW2750: three differential QPSK carriers, no preamble |
+
+⁶ `utils/psk_sweep psk3`, 80 frames a 1 dB point, on the axis of a steady
+carrier at the transmitter's peak (the frame goes out 1.4 dB under it,
+after the peak reduction in `modem/psk/mpsk.c`).  The receiver finds the
+frame from its 12 marker symbols a carrier and the data's fourth power and
+decodes it differentially, so it fades like the MFSK rungs rather than the
+coherent OFDM ones: on the NVIS channel (ITU-R mid-latitude disturbed, 7 ms)
+DATAC4 and DATAC3 never pass 60-68 % and ~50 % (`utils/rung_sweep`).  The
+three carriers are offset in time (0, 25 and 55 of a symbol's 80 samples)
+to lower the peaks before the clipping.
 
 ⁴ [MFSK-PORT.md](MFSK-PORT.md), "The fringe floor was the sync accept
 threshold"; its sections have the fading figures and the rate ladder.

@@ -12,8 +12,10 @@
 (*                                                                         *)
 (*   deaf:                                                                 *)
 (*     "snr"    the reading: set below ON, kept below OFF.                *)
-(*     "hard"   the connect was heard only on MFSK: an MFSK frame's       *)
-(*              reading does not clear it, an OFDM frame's does.           *)
+(*     "hard"   the connect was heard only on MFSK: an MFSK or PSK       *)
+(*              frame's reading does not clear it, an OFDM frame's does   *)
+(*              (PSK3, differential, gets through where DATAC16 does not, *)
+(*              #628 review).                                              *)
 (*     "mfsktx" S transmits only MFSK: for good.                          *)
 (*     "loss"   two asks unanswered while S is heard and the reading is   *)
 (*              below LOSS_OFF.  Ends on a reading in "high", or after    *)
@@ -40,18 +42,20 @@
 (*                                                                         *)
 (* Mutant: "none", the code; "nohold", LOSS held to the end of the       *)
 (* session (#538 before review: ends only on "high"); "fellback", an     *)
-(* unanswered round counted as a missed answer (also #538 before review). *)
+(* unanswered round counted as a missed answer (also #538 before review); *)
+(* "pskclears", a PSK frame's reading ends HARD (#628 before review).     *)
 (***************************************************************************)
 EXTENDS Naturals
 
 CONSTANTS Hold,     \* LOSS_HOLD_MS, in ticks of the model's clock (>= 1)
-          Mutant    \* "none", "nohold", "fellback"
+          Mutant    \* "none", "nohold", "fellback", "pskclears"
 
 Bands  == {"low", "hyst", "mid", "high"}
 Deafs  == {"none", "snr", "hard", "mfsktx", "loss"}
+Kinds  == {"ofdm", "mfsk", "psk"}      \* the frame's waveform
 
-VARIABLES deaf, band, reqs, fellBack, heard, hold, lastMfsk
-vars == <<deaf, band, reqs, fellBack, heard, hold, lastMfsk>>
+VARIABLES deaf, band, reqs, fellBack, heard, hold, lastKind
+vars == <<deaf, band, reqs, fellBack, heard, hold, lastKind>>
 
 TypeOK == /\ deaf \in Deafs
           /\ band \in Bands
@@ -59,17 +63,18 @@ TypeOK == /\ deaf \in Deafs
           /\ fellBack \in BOOLEAN
           /\ heard \in BOOLEAN
           /\ hold \in 0..Hold
-          /\ lastMfsk \in BOOLEAN
+          /\ lastKind \in Kinds
 
 \* The SNR rule (car_on_frame): not deaf, deaf below ON; deaf, still below OFF.
 SnrRule(was, b) == IF (IF was THEN b \in {"low", "hyst"} ELSE b = "low")
                    THEN "snr" ELSE "none"
 
-\* What a frame read in band b, on MFSK or not, does to deaf.
-OnReading(d, b, mfsk) ==
+\* What a frame of kind k read in band b does to deaf.
+KeepsHard(k) == IF Mutant = "pskclears" THEN k = "mfsk" ELSE k # "ofdm"
+OnReading(d, b, k) ==
     CASE d = "loss"                -> IF b = "high" THEN "none" ELSE "loss"
       [] d = "mfsktx"              -> "mfsktx"
-      [] d = "hard" /\ mfsk        -> "hard"
+      [] d = "hard" /\ KeepsHard(k) -> "hard"
       [] OTHER                     -> SnrRule(d # "none", b)
 
 Init == /\ deaf \in {"none", "snr", "hard", "mfsktx"}   \* seeded by the connect
@@ -78,15 +83,15 @@ Init == /\ deaf \in {"none", "snr", "hard", "mfsktx"}   \* seeded by the connect
         /\ fellBack = FALSE
         /\ heard = TRUE
         /\ hold = 0
-        /\ lastMfsk \in BOOLEAN
+        /\ lastKind \in Kinds
 
 \* A frame of S's: an answer (clears the misses) or anything else.
-Frame(b, mfsk, answer) ==
+Frame(b, k, answer) ==
     /\ band' = b
-    /\ lastMfsk' = mfsk
+    /\ lastKind' = k
     /\ heard' = TRUE
-    /\ deaf' = OnReading(deaf, b, mfsk)
-    /\ hold' = IF OnReading(deaf, b, mfsk) = "loss" THEN hold ELSE 0
+    /\ deaf' = OnReading(deaf, b, k)
+    /\ hold' = IF OnReading(deaf, b, k) = "loss" THEN hold ELSE 0
     /\ reqs' = IF answer THEN 0 ELSE reqs
     /\ fellBack' = IF answer THEN FALSE ELSE fellBack
 
@@ -99,17 +104,17 @@ AskUnanswered ==
     IN /\ reqs' = r
        /\ deaf' = IF go THEN "loss" ELSE deaf
        /\ hold' = IF go THEN Hold ELSE hold
-       /\ UNCHANGED <<band, fellBack, heard, lastMfsk>>
+       /\ UNCHANGED <<band, fellBack, heard, lastKind>>
 
 \* A round of mine gone unanswered: the next goes back a rung (fell_back).
 RoundUnanswered ==
     /\ fellBack' = TRUE
-    /\ UNCHANGED <<deaf, band, reqs, heard, hold, lastMfsk>>
+    /\ UNCHANGED <<deaf, band, reqs, heard, hold, lastKind>>
 
 \* SILENT_MS passes with nothing of S's decoded.
 Silence ==
     /\ heard' = FALSE
-    /\ UNCHANGED <<deaf, band, reqs, fellBack, hold, lastMfsk>>
+    /\ UNCHANGED <<deaf, band, reqs, fellBack, hold, lastKind>>
 
 \* Time passes: CAR_T_F counts down LOSS's hold (ctl_loss_expired).
 Tick ==
@@ -117,9 +122,9 @@ Tick ==
        THEN /\ hold' = hold - 1
             /\ deaf' = IF hold = 1 THEN SnrRule(TRUE, band) ELSE "loss"
        ELSE UNCHANGED <<hold, deaf>>
-    /\ UNCHANGED <<band, reqs, fellBack, heard, lastMfsk>>
+    /\ UNCHANGED <<band, reqs, fellBack, heard, lastKind>>
 
-Next == \/ \E b \in Bands, mfsk \in BOOLEAN, answer \in BOOLEAN : Frame(b, mfsk, answer)
+Next == \/ \E b \in Bands, k \in Kinds, answer \in BOOLEAN : Frame(b, k, answer)
         \/ AskUnanswered
         \/ RoundUnanswered
         \/ Silence
@@ -134,7 +139,7 @@ LossNeedsAsks ==
     [][deaf # "loss" /\ deaf' = "loss" => reqs' >= 2 /\ heard /\ band # "high"]_vars
 
 HardNeedsOfdm ==
-    [][deaf = "hard" /\ deaf' # "hard" => ~lastMfsk']_vars
+    [][deaf = "hard" /\ deaf' # "hard" => lastKind' = "ofdm"]_vars
 
 MfskTxStays == [][deaf = "mfsktx" => deaf' = "mfsktx"]_vars
 =============================================================================

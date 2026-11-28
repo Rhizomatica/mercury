@@ -53,11 +53,12 @@ SNR threshold, or once two rounds in a row brought nothing of the peer at all),
 re-probed after 60 s, doubling to 8 min.  A direction starts on the rung the connect's SNR
 supports (`ARQ_SNR_MIN_*`), as a one-frame probe.  Each bandwidth has its own
 ladder, in both directions (`car_set_bandwidth`; the rung on the wire maps to
-the session's mode): rungs 2-3 (DATAC4, DATAC3) are shared; BW500 has the
-500 Hz MFSK floor, DATAC15 and 9-carrier top rungs (DATAN1, QAM16N1,
-QAM16N2), BW2300 the 2 kHz MFSK (MFSK2K) as rung 1 and DATAC1, DATAC17 and
+the session's mode): rung 3 (DATAC3) is shared; BW500 has the
+500 Hz MFSK floor, DATAC15, DATAC4 and 9-carrier top rungs (DATAN1, QAM16N1,
+QAM16N2), BW2300 the 2 kHz MFSK (MFSK2K) as rung 1, the three-carrier
+differential QPSK (PSK3) as rung 2 and DATAC1, DATAC17 and
 QAM16C2 on 36 carriers (inside a 300-2700 Hz transmit passband), BW2750 the
-same rung 1, DATAC1 and 44-carrier DATAC17W and QAM16C2W
+same rungs 1 and 2, DATAC1 and 44-carrier DATAC17W and QAM16C2W
 ([MODES.md](MODES.md)).
 
 **The BW500 floor.**  A BW500 session's rung 0 is the 500 Hz MFSK (`MFSK500`,
@@ -198,16 +199,16 @@ frame on MFSK.
 
 | byte | CALL | ACCEPT |
 |---|---|---|
-| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 2), the sender transmits only MFSK (1) | the same |
-| 1 | 0, session id (7) | 1, session id (7) |
+| 0 | framer: type CALL2, 6 (3 bits); extension: bandwidth token (2), 2.x minor revision (2, = 3), the sender transmits only MFSK (1) | the same |
+| 1 | 0, session id (7; its low bit the encryption offer) | 1, session id (7) |
 | 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
 | 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |
 | 6-7 | | the callee's session nonce |
-| 8 | | the caller's start rung (3 bits, 0-6), the callee hears the caller below the control mode (1; the rung is then the floor), 4 bits zero |
+| 8 | | the caller's start rung (3 bits, 0-6), the callee hears the caller below the control mode (1; the rung is then the floor), the answer to the encryption offer (1), 3 bits zero |
 | 9 | | the SNR the callee read the CALL at, dB + 128 (0: unknown) |
 | 10-13 | | zero |
 
-- A station takes a CALL or ACCEPT only of type CALL2, of minor 2 or later
+- A station takes a CALL or ACCEPT only of type CALL2, of minor 3 or later
   (`ARQ_CONNECT_MINOR_MIN`, `arq_protocol_connect_compatible`); every 1.9.x
   release drops the type.  The versions do not
   connect to each other.  A 1.9.x CALL (type CALL) for this station is
@@ -239,9 +240,19 @@ frame on MFSK.
   answers a 1.9.25 CALL; the 1.9.25 caller ignores that ACCEPT and gives up
   as with no answer.  This drops the minor-1 TX-MFSK-only rule above (minor
   0 is no longer connected at all).  specs/connect `SameLadder`.
+- Minor 3 put the three-carrier PSK (PSK3) at rung 2 of BW2300 and BW2750,
+  where DATAC4 was.  A station of minor 3 ignores minors 0-2 and logs
+  them ("from Mercury 1.9.25 or older"); 1.9.25 takes minor 2 and up, so it
+  answers a minor-3 CALL and the caller ignores that ACCEPT, as above.  3 is
+  the last value the two bits hold.
 - 1.9.x carried a 2-bit protocol version in type CALL's extension: 1 was
   1.9.18 (MFSK at 1531-2500 Hz), 2 was 1.9.19 (MFSK centred on 1500 Hz), 3
   gave a BW500 session its own floor; 3 was the last value it held.
+- The encryption offer (the CALL's session id, low bit) and answer (ACCEPT
+  byte 8, bit 4) are reserved: a station sends both 0 and ignores them.
+  The offer is part of the session id, which the ACCEPT echoes, so an ACCEPT
+  answers the offer of the CALLs of its id; a CONNECT that offers and one
+  that does not never share an id.  specs/connect `Agree`.
 - An ACCEPT with a reserved bit set is dropped.  The caller takes an ACCEPT
   only if its session id, its own CRC and the called station's CRC all
   match: 39 bits, and every one of them full.

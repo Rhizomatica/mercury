@@ -31,6 +31,7 @@ _Atomic int arq_tx_mfsk_only           = 0;
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
+#include "../modem/modem_psk.h"    /* MERCURY_MODE_PSK3 */
 
 /* Framer layer (write_frame_header, PACKET_TYPE_* constants) */
 #include "../modem/framer.h"
@@ -87,6 +88,9 @@ const arq_mode_timing_t arq_mode_table[] = {
     /* The 2 kHz rung: the same frame on 62.5 Hz tones, half the symbol
      * length, 6.56 s on the air. */
     {  MERCURY_MODE_MFSK_W2,   6.95f,    12.0f,          98   },
+    /* The three-carrier PSK rung: a 3.86 s frame of 133 payload bytes,
+     * no preamble, and the same ~0.45 s margin. */
+    {  MERCURY_MODE_PSK3,      4.30f,    12.0f,          133  },
 };
 
 const int arq_mode_table_count =
@@ -602,11 +606,12 @@ int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len, arq_accept_t *
     if (!out || !arq_protocol_connect_version_ok(buf, buf_len) ||
         !(buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG))
         return -1;
-    /* The rung (3 bits) and the deaf bit, the rest of byte 8 and bytes
-     * 10-13 zero: a frame that passed its CRC with any of them set is not
-     * an ACCEPT.  Rung 7 is off the ladder. */
+    /* The rung (3 bits), the deaf bit and the encryption answer (ignored),
+     * the rest of byte 8 and bytes 10-13 zero: a frame that passed its CRC
+     * with any of them set is not an ACCEPT.  Rung 7 is off the ladder. */
     uint8_t lv = buf[ARQ_ACCEPT_LEVEL_IDX];
-    if (lv & ~(ARQ_ACCEPT_LEVEL_MASK | ARQ_ACCEPT_CTL_DEAF_BIT) || (lv & ARQ_ACCEPT_LEVEL_MASK) == 7)
+    if (lv & ~(ARQ_ACCEPT_LEVEL_MASK | ARQ_ACCEPT_CTL_DEAF_BIT | ARQ_ACCEPT_CRYPTO_BIT) ||
+        (lv & ARQ_ACCEPT_LEVEL_MASK) == 7)
         return -1;
     for (int i = ARQ_ACCEPT_SNR_IDX + 1; i < ARQ_CONTROL_FRAME_SIZE; i++)
         if (buf[i])

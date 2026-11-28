@@ -47,6 +47,7 @@
 #include "freedv_api.h"
 #include "modem_freedv.h"
 #include "modem_mfsk.h"
+#include "modem_psk.h"
 #include "mfsk/mfsk.h"          /* NAV header classes */
 #include "fsk.h"
 #include "ldpc_codes.h"
@@ -108,9 +109,9 @@ static pthread_mutex_t modem_pool_lock = PTHREAD_MUTEX_INITIALIZER;
 /* One lock per pool slot, indexed the same way the pool array is.  The pool is
  * a generic slot array now (any backend, not just freedv), so the lock a codec
  * belongs to is found by its context pointer rather than by naming the mode. */
-#define MODEM_POOL_MAX 16   /* the BW2300 ladder, control, floors, the 2.0 BW500/BW2750 rungs and
-                             * MFSK2K: 16, full -- the next mode needs this raised (and a lock
-                             * initializer below), or init_mode_pool_locked fails */
+#define MODEM_POOL_MAX 17   /* the BW2300 ladder, control, floors, the 2.0 BW500/BW2750 rungs,
+                             * MFSK2K and PSK3: 17, full -- the next mode needs this raised (and a
+                             * lock initializer below), or init_mode_pool_locked fails */
 static pthread_mutex_t modem_inst_lock[MODEM_POOL_MAX] = {
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
@@ -120,6 +121,7 @@ static pthread_mutex_t modem_inst_lock[MODEM_POOL_MAX] = {
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+    PTHREAD_MUTEX_INITIALIZER,
 };
 _Static_assert(sizeof(modem_inst_lock) / sizeof(modem_inst_lock[0]) == MODEM_POOL_MAX,
                "one lock per pool slot");
@@ -694,7 +696,8 @@ static bool is_supported_split_mode(int mode)
            mode == FREEDV_MODE_QAM16N2 ||
            mode == MERCURY_MODE_MFSK ||
            mode == MERCURY_MODE_MFSK_N32 ||
-           mode == MERCURY_MODE_MFSK_W2;
+           mode == MERCURY_MODE_MFSK_W2 ||
+           mode == MERCURY_MODE_PSK3;
 }
 
 static bool is_payload_split_mode(int mode)
@@ -712,7 +715,8 @@ static bool is_payload_split_mode(int mode)
            mode == FREEDV_MODE_QAM16N2 ||
            mode == MERCURY_MODE_MFSK ||
            mode == MERCURY_MODE_MFSK_N32 ||
-           mode == MERCURY_MODE_MFSK_W2;
+           mode == MERCURY_MODE_MFSK_W2 ||
+           mode == MERCURY_MODE_PSK3;
 }
 
 bool modem_listen_mode_switchable(int mode) { return is_payload_split_mode(mode); }
@@ -723,6 +727,8 @@ static const modem_backend_t *backend_for_mode(int mode)
 {
     if (mercury_mode_is_mfsk(mode))
         return &modem_backend_mfsk;
+    if (mercury_mode_is_psk(mode))
+        return &modem_backend_psk;
     return &modem_backend_freedv;
 }
 
@@ -767,6 +773,7 @@ static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
         FREEDV_MODE_DATAC17W, FREEDV_MODE_QAM16C2W, FREEDV_MODE_DATAN1,
         FREEDV_MODE_QAM16N1, FREEDV_MODE_QAM16N2,
         MERCURY_MODE_MFSK_W2,          /* BW2300/BW2750 rung 1 */
+        MERCURY_MODE_PSK3,             /* BW2300/BW2750 rung 2 */
     };
     clear_mode_pool_locked();
     for (size_t i = 0; i < sizeof(pool_modes) / sizeof(pool_modes[0]); i++)
@@ -860,6 +867,8 @@ static uint32_t bitrate_level_from_payload_mode(int mode)
         return 103;
     case MERCURY_MODE_MFSK_W2:
         return 104;
+    case MERCURY_MODE_PSK3:
+        return 110;
     default:
         return 15;
     }
@@ -2261,7 +2270,12 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
              * here.  UNSYNC also zeroes its rxbuf, which once starved the
              * preamble normaliser (the was_tx regression); it cost no burst
              * in the test, down to one starting at once, and a decoder not
-             * synced is left exactly as it was. */
+             * synced is left exactly as it was.
+             *
+             * PSK never reports a sync, so it always loses what it holds:
+             * 60 % of a frame heard before the decoder left its rung, and
+             * the first 1.5 s of audio after its return completed it, every
+             * time (#628 review), a stale frame taken as fresh. */
             state->demod_count = 0;
 
             /* HARQ Chase soft-combining on the RX decoder.  Every ARQ burst
@@ -2282,7 +2296,7 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
             float snr_unused;
             if (codec.be->get_stats)
                 codec.be->get_stats(codec.ctx, &held, &snr_unused);
-            if (held && codec.be->unsync)
+            if ((held || mercury_mode_is_psk(mode)) && codec.be->unsync)
                 codec.be->unsync(codec.ctx);
             if (codec.be->harq_reset)
                 codec.be->harq_reset(codec.ctx);
@@ -2448,6 +2462,7 @@ static const int monitor_modes[] = {
     FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC13,
     FREEDV_MODE_DATAC4,  FREEDV_MODE_DATAC3,  FREEDV_MODE_DATAC1,
     FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2, MERCURY_MODE_MFSK,
+    MERCURY_MODE_PSK3,                         /* BW2300/BW2750 rung 2 */
 };
 #define MONITOR_MODE_COUNT (sizeof(monitor_modes) / sizeof(monitor_modes[0]))
 
@@ -2654,8 +2669,12 @@ static void *rx_worker_thread(void *arg)
     {
         if (atomic_load(&w->flush_req))
         {
-            if (atomic_exchange(&w->unsync_req, false) &&
-                modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync)
+            /* A PSK decoder always drops its frame here: it reports no sync
+             * for anything else to drop it by, and the audio after the flush
+             * (our own keydown's end) would complete it as a fresh one. */
+            bool unsync = atomic_exchange(&w->unsync_req, false) ||
+                          mercury_mode_is_psk(w->state.mode);
+            if (unsync && modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync)
             {
                 pthread_mutex_t *rl = modem_inst_lock_for(w->state.codec.ctx);
                 pthread_mutex_lock(rl);
@@ -2701,11 +2720,11 @@ static void *rx_worker_thread(void *arg)
         if (w->takes_payload_resync &&
             atomic_exchange(&g_payload_resync_req, false))
         {
-            /* Not an MFSK payload decoder: it has no trial sync on DATAC16
-             * to drop, and its window holds whole bursts, so an UNSYNC here
-             * could lose a payload frame already in it. */
+            /* Not an MFSK or PSK payload decoder: neither has a trial sync
+             * on DATAC16 to drop, and each holds the frame it is receiving,
+             * so an UNSYNC here could lose a payload frame already in it. */
             if (modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync &&
-                !mercury_mode_is_mfsk(w->state.mode))
+                !mercury_mode_is_mfsk(w->state.mode) && !mercury_mode_is_psk(w->state.mode))
             {
                 pthread_mutex_t *rl = modem_inst_lock_for(w->state.codec.ctx);
                 pthread_mutex_lock(rl);

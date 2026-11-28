@@ -14,6 +14,7 @@
 
 #include "arq_fsm.h"
 #include "arq_protocol.h"
+#include "modem_psk.h"             /* MERCURY_MODE_PSK3 */
 #include "framer.h"
 #include "arq.h"
 #include "freedv_api.h"
@@ -111,7 +112,7 @@ void test_translate_disconnect_only(void)
     TEST_ASSERT_FALSE(sim_translate_frame(frame, ARQ_FRAME_HDR_SIZE, 3.0f, "B0BBB", &ev));
 }
 
-/* A CALL or ACCEPT of an older 2.x minor (1.9.20-1.9.24) is for us but is
+/* A CALL or ACCEPT of an older 2.x minor (1.9.20-1.9.25) is for us but is
  * not taken: those releases map the ladder's levels to other modes
  * (ARQ_CONNECT_MINOR_MIN).  The current minor is. */
 void test_translate_older_minor_not_connected(void)
@@ -131,9 +132,11 @@ void test_translate_older_minor_not_connected(void)
     TEST_ASSERT_TRUE(fs > 0);
     TEST_ASSERT_TRUE(sim_translate_frame(frame, (size_t)fs, 3.0f, "B0AAA", &ev));
     TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_ACCEPT, ev.id);
-    write_frame_header(frame, PACKET_TYPE_ARQ_CALL2,
-                       (uint8_t)(ARQ_BW_TOKEN_2300 | 1u << ARQ_CONNECT_EXT_MINOR_SHIFT));
-    TEST_ASSERT_FALSE(sim_translate_frame(frame, (size_t)fs, 3.0f, "B0AAA", &ev));
+    for (unsigned minor = 0; minor < ARQ_CONNECT_MINOR_MIN; minor++) {
+        write_frame_header(frame, PACKET_TYPE_ARQ_CALL2,
+                           (uint8_t)(ARQ_BW_TOKEN_2300 | minor << ARQ_CONNECT_EXT_MINOR_SHIFT));
+        TEST_ASSERT_FALSE(sim_translate_frame(frame, (size_t)fs, 3.0f, "B0AAA", &ev));
+    }
 }
 
 /* ======================================================================
@@ -600,7 +603,7 @@ void test_sim_fuzz_fading(void)
                 { FREEDV_MODE_DATAC13, 0.25 * sev }, { FREEDV_MODE_DATAC14, 0.25 * sev },
                 { FREEDV_MODE_DATAC4,  0.45 * sev }, { FREEDV_MODE_DATAC3,  0.67 * sev },
                 { FREEDV_MODE_DATAC1,  0.89 * sev }, { FREEDV_MODE_DATAC17, 0.93 * sev },
-                { FREEDV_MODE_QAM16C2, 0.95 * sev },
+                { FREEDV_MODE_QAM16C2, 0.95 * sev }, { MERCURY_MODE_PSK3,   0.05 * sev },   /* as carousel_sim.c */
             };
             sim_set_mode_per(s, tbl, (int)(sizeof(tbl)/sizeof(tbl[0])), 10.0f);
         }

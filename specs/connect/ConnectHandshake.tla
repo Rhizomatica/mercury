@@ -45,7 +45,8 @@
 (* ignored like another session's), the disconnect of a session once up.  *)
 (*                                                                         *)
 (* Encryption (arq_crypto.h, crypto_negotiate): each CONNECT's CALLs     *)
-(* offer it or not (a key for E, the client's ENCRYPT ON/OFF); E, taking  *)
+(* offer it or not (a key for E, the client's ENCRYPT ON/OFF), in the     *)
+(* session id's low bit (Offers: odd ids offer); E, taking                *)
 (* a CALL, answers the offer once for the session (it holds a key for C,  *)
 (* its client has not said OFF) and every ACCEPT of the session carries   *)
 (* that answer; C takes an ACCEPT's bit only with an offer of its own.    *)
@@ -71,8 +72,9 @@
 (*                  fails closed);                                        *)
 (*   ReqGate        a required end connected is encrypted;                *)
 (*   SameLadder     C connected: both ends map the ladder's levels to the *)
-(*                  same modes (both of minor >= MinMinor, or both older).*)
-(*                  The wire carries a rung's level, not its mode.        *)
+(*                  same modes (minors 0 and 1 share a ladder; 2 and 3    *)
+(*                  each have their own).  The wire carries a rung's      *)
+(*                  level, not its mode.                                  *)
 (***************************************************************************)
 EXTENDS Integers
 
@@ -84,9 +86,11 @@ CONSTANTS Sids,     \* session ids C may pick
           Bws,      \* bandwidths a CALL may advertise
           CReq,     \* C's [crypto] mode is required
           EReq,     \* E's
-          CMinor,   \* C's protocol minor (1.9.24: 1, 1.9.25: 2)
+          CMinor,   \* C's protocol minor (1.9.24: 1, 1.9.25: 2, PSK3: 3)
           EMinor,   \* E's
-          MinMinor, \* the lowest minor a station of MinMinor or later connects to
+          CMin,     \* the lowest minor C takes a frame of
+                    \* (ARQ_CONNECT_MINOR_MIN; 1.9.20-1.9.24: 0)
+          EMin,     \* E's
           Mutant    \* "none", or one rule broken (to show the model can fail):
                     \*   "renonce":   a repeated CALL gets a fresh nonce
                     \*   "remeasure": a repeated CALL gets a re-measured start rung
@@ -111,9 +115,8 @@ CONSTANTS Sids,     \* session ids C may pick
                     \*   "staletake": E answering answers a stale CALL, one of
                     \*                a session C keyed earlier and left (the
                     \*                switch before the age check, 2026-11-20)
-                    \*   "mixed":    a station of MinMinor or later takes a CALL
-                    \*                or ACCEPT of any minor (no
-                    \*                arq_protocol_connect_compatible)
+                    \*   "mixed":    a station takes a CALL or ACCEPT of any
+                    \*                minor (no arq_protocol_connect_compatible)
 
 VARIABLES
     cSt, cSid, cCalls, cNonce, cLevel, cSessions, cBw,
@@ -140,12 +143,17 @@ Init ==
     /\ cPast = {}
     /\ cOffer = FALSE /\ cEnc = FALSE /\ eOffer = FALSE /\ eTake = FALSE
 
-\* Does a station of minor `me` take a CALL or ACCEPT of minor `peer`?  One of
-\* MinMinor or later only from MinMinor up (arq_protocol_connect_compatible);
-\* an older one (1.9.20-1.9.24) reads any minor.
-Takes(me, peer) == me < MinMinor \/ peer >= MinMinor \/ Mutant = "mixed"
-\* The ladder a minor maps levels with: before MinMinor, or from it.
-Ladder(m) == m >= MinMinor
+\* Does a station whose lowest minor is `min` take a CALL or ACCEPT of minor
+\* `peer`?  Only from `min` up (arq_protocol_connect_compatible); 1.9.20-1.9.24
+\* read any minor (min 0).
+Takes(min, peer) == peer >= min \/ Mutant = "mixed"
+\* The ladder a minor maps levels with: minors 0 and 1 share one, minor 2
+\* (the per-bandwidth ladders) and minor 3 (PSK3 at rung 2) have their own.
+Ladder(m) == IF m < 2 THEN 1 ELSE m
+
+\* The offer is the session id's low bit (ARQ_CALL_CRYPTO_OFFER): an ACCEPT,
+\* echoing the id, answers that id's offer.
+Offers(s) == s % 2 = 1
 
 \* E holds a session's seed: answering its CALLs, or keeping it after them.
 EHolds == eSt \in {"accepting", "fallback"}
@@ -157,7 +165,7 @@ AppConnect ==
     /\ cSt' = "calling" /\ cCalls' = R /\ cSessions' = cSessions + 1
     /\ cNonce' = 0 /\ cLevel' = 0
     \* A required C calls only to offer (arq_crypto_may_call).
-    /\ \E o \in BOOLEAN : /\ cOffer' = o /\ (CReq => o)
+    /\ cOffer' = Offers(cSid') /\ (CReq => cOffer')
     /\ cEnc' = FALSE
     /\ UNCHANGED <<eSt, eSid, eNonce, eLevel, eBw, sent>>
     /\ UNCHANGED <<eLeft, deaf, cPast, eOffer, eTake>>
@@ -195,7 +203,7 @@ Call ==
             \* a required E answers only a CALL it takes; silence is the
             \* refusal (arq_handle_incoming_connect_frame)
             refused == (EReq /\ ~(cOffer /\ take) /\ ~(EHolds /\ eSid = cSid))
-                       \/ ~Takes(EMinor, CMinor)
+                       \/ ~Takes(EMin, CMinor)
         IN
         IF ~heard \/ busy \/ refused
         THEN \* lost, or E is busy with another session: no ACCEPT
@@ -217,7 +225,7 @@ HearAccept ==
     /\ \E a \in sent :
         /\ a.sid = cSid
         /\ (a.crypto => cOffer) \/ Mutant = "anyaccept"
-        /\ Takes(CMinor, EMinor)
+        /\ Takes(CMin, EMinor)
         /\ IF CReq /\ ~a.crypto
            THEN cSt' = "idle" /\ UNCHANGED <<cNonce, cLevel, cBw, cEnc>>
            ELSE /\ cSt' = "connected" /\ cNonce' = a.nonce /\ cLevel' = a.level /\ cBw' = a.bw

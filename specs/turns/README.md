@@ -138,3 +138,33 @@ M_END (poll type 3, `car_wish_end`) is S's ordinary poll with its type
 changed: it goes in the same slots, with the same length, so the slot
 rules here cover it as they cover any poll of S's.  Which end may end the
 session on it, and when, is `specs/teardown` (`NoUnasked`, `NoLostWord`).
+
+## The callee's out-of-turn DISCONNECT (`AbortKey.tla`)
+
+An ABORTed callee whose slot does not come by the host's key-by time keys
+its one DISCONNECT out of turn, on a clear channel (`abort_must_key`,
+`channel_clear_at` in `datalink_arq/arq_fsm.c`).  The model starts at the
+end of the callee's last keydown, which asked the caller for a round on an
+OFDM or MFSK rung (a decoder syncs on it), on a PSK rung (none does: the
+PSK decoder finds a frame once it has ended), or for nothing.  The caller
+answers within the reply window, with that round or with control, or not
+at all, and does not hear the callee's keydown.  `NoOverlap`: the
+DISCONNECT never meets the caller's keydown.
+
+    java -cp tla2tools.jar tlc2.TLC -workers 4 \
+        -metadir /tmp/tlc-abortkey -config AbortKey.cfg AbortKey.tla
+
+- `AbortKey.cfg`: the clear time waits out the PSK round asked for
+  (`car_unsensed_round_ms`).  No error, 4910 distinct states.
+- `Mut_pskblind.cfg`: without that term (#628 before review).  Violates
+  `NoOverlap`: the caller keys a PSK round at the end of its window, and the
+  callee keys over it once its reply window and the acquisition time are
+  over.  The sim showed the same at -1 dB, 2.8 s into a PSK3 round
+  (`test_car_callee_abort_keeps_off_a_psk_round`).
+- The caller's out-of-turn DISCONNECT waits out the same term: its poll
+  fills `poll_level`/`poll_n` as the callee's does, and `car_unsensed_round_ms`
+  no longer returns 0 for it.  The model's roles are symmetric here -- the
+  end that keys the DISCONNECT asked the other for a round it cannot sense --
+  so `AbortKey.cfg` and `Mut_pskblind.cfg` cover the caller as they stand;
+  the sim found it at -2/-1 dB, 2 of 60 ABORT moments each, before the fix
+  (`test_car_caller_abort_keeps_off_a_psk_round`, #628 review).

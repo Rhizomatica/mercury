@@ -184,6 +184,23 @@ void test_connect_transitions_to_calling(void)
     TEST_ASSERT_EQUAL_STRING("TEST1", sess.remote_call);
 }
 
+/* A CONNECT's session id is never 0, and its low bit (the encryption
+ * offer, reserved) is clear */
+void test_connect_session_id_offers_nothing(void)
+{
+    for (uint64_t t = 1000; t < 1000 + 2 * 63; t++)
+    {
+        mock_set_uptime_ms(t);
+        arq_fsm_init(&sess);
+        arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+        strncpy(ev.remote_call, "TEST1", CALLSIGN_MAX_SIZE);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_NOT_EQUAL(0, sess.session_id);
+        TEST_ASSERT_EQUAL(0, sess.session_id & ARQ_CALL_CRYPTO_OFFER);
+        TEST_ASSERT_EQUAL(0, sess.session_id & ~ARQ_CONNECT_SESSION_MASK);
+    }
+}
+
 /* Incoming CALL from LISTENING transitions to ACCEPTING */
 void test_incoming_call_transitions_to_accepting(void)
 {
@@ -2042,15 +2059,22 @@ void test_silent_peer_after_hangup_is_ended_early(void)
 void test_silent_peer_after_hangup_waits_the_callees_drain(void)
 {
     int saved = atomic_load(&arq_disconnect_drain_timeout_s);
-    atomic_store(&arq_disconnect_drain_timeout_s, 110);
     goto_connected();
     sess.car->end_req = CAR_END_WISH;
-    uint64_t budget = UINT64_MAX;                       /* a rung whose budget is under 110 s */
-    for (int lv = 1; lv < CAR_NLEVELS && budget >= 110000; lv++) {
+    /* The rung with the shortest budget, and a drain timeout past it but
+     * under the 120 s cap, so the timeout is what holds the caller. */
+    uint64_t budget = UINT64_MAX;
+    int at = 1;
+    for (int lv = 1; lv < CAR_NLEVELS; lv++) {
         sess.car->tx_level = sess.car->poll_level = lv;
-        budget = car_drain_budget_ms(sess.car);
+        uint64_t b = car_drain_budget_ms(sess.car);
+        if (b < budget) { budget = b; at = lv; }
     }
-    TEST_ASSERT_TRUE_MESSAGE(budget < 110000, "the rung's budget is under the drain timeout");
+    sess.car->tx_level = sess.car->poll_level = at;
+    int timeout_s = (int)(budget / 1000) + 2;            /* rung 2: 116.9 s -> 118 */
+    TEST_ASSERT_TRUE_MESSAGE(timeout_s <= 120, "a rung's budget leaves room under the 120 s cap");
+    uint64_t timeout = (uint64_t)timeout_s * 1000;
+    atomic_store(&arq_disconnect_drain_timeout_s, timeout_s);
 
     mock_set_uptime_ms(sess.car_last_rx_ms + budget + 1000);
     arq_event_t ev = make_event(ARQ_EV_TIMER_CAROUSEL);
@@ -2059,13 +2083,13 @@ void test_silent_peer_after_hangup_waits_the_callees_drain(void)
 
     /* The silence may have taken the poll a rung down, whose budget can be
      * past the timeout: the wait is then that budget, at most the 120 s cap.
-     * Either way it is at least the configured 110 s.  (This mirrors
+     * Either way it is at least the configured timeout.  (This mirrors
      * car_peer_end_wait_ms in arq_fsm.c: the timeout set above, and the
      * 120 s of ARQ_CAR_PEER_QUIET_MS; if either changes, change it here.) */
     uint64_t end = car_drain_budget_ms(sess.car);
-    if (end < 110000) end = 110000;
+    if (end < timeout) end = timeout;
     if (end > 120000) end = 120000;
-    mock_set_uptime_ms(sess.car_last_rx_ms + 110000 - 1000);
+    mock_set_uptime_ms(sess.car_last_rx_ms + timeout - 1000);
     ev = make_event(ARQ_EV_TIMER_CAROUSEL);
     arq_fsm_dispatch(&sess, &ev);
     bool held_to_timeout = sess.conn_state == ARQ_CONN_CONNECTED;
@@ -3312,6 +3336,7 @@ int main(void)
     RUN_TEST(test_init_mode_defaults);
     RUN_TEST(test_listen_transitions_to_listening);
     RUN_TEST(test_connect_transitions_to_calling);
+    RUN_TEST(test_connect_session_id_offers_nothing);
     RUN_TEST(test_call_retry_deadline_anchored_to_ptt_off);
     RUN_TEST(test_call_after_a_repeat_waits_out_a_floor_accept);
     RUN_TEST(test_incoming_call_transitions_to_accepting);

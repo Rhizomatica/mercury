@@ -12,6 +12,7 @@
  */
 #include "unity.h"
 #include "modem_mfsk.h"
+#include "modem_psk.h"             /* MERCURY_MODE_PSK3 */
 #include "sim_clock.h"
 #include "sim_channel.h"
 #include "sim_endpoint.h"
@@ -907,14 +908,14 @@ static abort_fate_t abort_fate(sim_t *s, sim_endpoint_t *ep, sim_endpoint_t *pee
  * keydown of ours was on the air at it (a keydown goes to the modem whole,
  * and the peer answers it before anything else can go); *untold counts the
  * peers never told within 60 s. */
-static uint64_t abort_sweep(bool callee, int n, int *untold, int *cases)
+static uint64_t abort_sweep(bool callee, int n, double snr_db, int *untold, int *cases)
 {
     static uint8_t blob[6000];
     fill(blob, sizeof(blob), 5);
     uint64_t worst = 0;
     *untold = *cases = 0;
     for (int k = 0; k < n; k++) {
-        sim_t *s = idle_session(31 + k, 6.0);
+        sim_t *s = idle_session(31 + k, snr_db);
         sim_endpoint_t *me = callee ? sim_b(s) : sim_a(s);
         sim_endpoint_t *peer = callee ? sim_a(s) : sim_b(s);
         sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
@@ -957,7 +958,7 @@ static uint64_t abort_sweep(bool callee, int n, int *untold, int *cases)
 void test_car_abort_disconnect_before_the_hop(void)
 {
     int untold, cases;
-    abort_sweep(false, 12, &untold, &cases);
+    abort_sweep(false, 12, 6.0, &untold, &cases);
     TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
     TEST_ASSERT_EQUAL_INT(0, untold);
 }
@@ -969,7 +970,7 @@ void test_car_abort_disconnect_before_the_hop(void)
 void test_car_callee_abort_disconnect_before_the_hop(void)
 {
     int untold, cases;
-    uint64_t worst = abort_sweep(true, 12, &untold, &cases);
+    uint64_t worst = abort_sweep(true, 12, 6.0, &untold, &cases);
     TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
     TEST_ASSERT_EQUAL_INT(0, untold);
     TEST_ASSERT_TRUE(worst <= 15000);
@@ -983,7 +984,31 @@ void test_car_callee_abort_disconnect_before_the_hop(void)
 void test_car_callee_abort_tells_the_caller_whole_sweep(void)
 {
     int untold, cases;
-    abort_sweep(true, 60, &untold, &cases);
+    abort_sweep(true, 60, 6.0, &untold, &cases);
+    TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
+    TEST_ASSERT_EQUAL_INT(0, untold);
+}
+
+/* ...and at -1 dB, where the caller's rounds go on PSK3: its decoder finds a
+ * frame only once it has ended and reports no sync, so nothing senses the
+ * round.  The callee took the channel for clear once its reply window was
+ * over, and keyed its DISCONNECT 2.8 s into the caller's round (case 20,
+ * #628 review); it waits out the round its last poll asked for. */
+void test_car_callee_abort_keeps_off_a_psk_round(void)
+{
+    int untold, cases;
+    abort_sweep(true, 60, -1.0, &untold, &cases);
+    TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
+    TEST_ASSERT_EQUAL_INT(0, untold);
+}
+
+/* ...and the caller the same: its poll asked the callee for a PSK3 round,
+ * which nothing senses, and its DISCONNECT keyed 2350 and 650 ms into it
+ * (cases 12 and 13, -1 dB, #628 review). */
+void test_car_caller_abort_keeps_off_a_psk_round(void)
+{
+    int untold, cases;
+    abort_sweep(false, 60, -1.0, &untold, &cases);
     TEST_ASSERT_TRUE_MESSAGE(cases > 0, "no case reached the ABORT with the DISCONNECT still held");
     TEST_ASSERT_EQUAL_INT(0, untold);
 }
@@ -1040,7 +1065,7 @@ void test_car_fuzz(void)
         { FREEDV_MODE_DATAC15, 0.20 }, { FREEDV_MODE_DATAC16, 0.20 },
         { FREEDV_MODE_DATAC4,  0.45 }, { FREEDV_MODE_DATAC3,  0.67 },
         { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },
-        { FREEDV_MODE_QAM16C2, 0.95 },
+        { FREEDV_MODE_QAM16C2, 0.95 }, { MERCURY_MODE_PSK3,   0.05 },   /* as carousel_sim.c */
     };
     for (size_t c = 0; c < sizeof(CH) / sizeof(CH[0]); c++)
         for (uint64_t seed = 1; seed <= 8; seed++)
@@ -1369,6 +1394,8 @@ int main(void)
     RUN_TEST(test_car_abort_disconnect_before_the_hop);
     RUN_TEST(test_car_callee_abort_disconnect_before_the_hop);
     RUN_TEST(test_car_callee_abort_tells_the_caller_whole_sweep);
+    RUN_TEST(test_car_callee_abort_keeps_off_a_psk_round);
+    RUN_TEST(test_car_caller_abort_keeps_off_a_psk_round);
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
     RUN_TEST(test_car_bandwidth_caps_the_rungs);

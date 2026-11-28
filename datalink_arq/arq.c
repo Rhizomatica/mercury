@@ -16,6 +16,7 @@
 #include "arq_channels.h"
 #include "carousel.h"
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK, _N32 */
+#include "../modem/modem_psk.h"    /* MERCURY_MODE_PSK3 */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -1043,7 +1044,7 @@ static void call_progress(uint64_t now)
     /* The modem's speed levels (modem.c, bitrate_level_from_payload_mode),
      * and 16 for the control mode, which it never reports. */
     uint32_t level = mode == MERCURY_MODE_MFSK ? 100 : mode == MERCURY_MODE_MFSK_N32 ? 103 :
-                     mode == MERCURY_MODE_MFSK_W2 ? 104 : 16;
+                     mode == MERCURY_MODE_MFSK_W2 ? 104 : mode == MERCURY_MODE_PSK3 ? 110 : 16;
     arq_tnc_send_bitrate(level, bps);
 }
 
@@ -1481,9 +1482,9 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     }
     if (rc == -3)
     {
-        /* Minors 0 and 1 (1.9.20-1.9.24) map the ladder's levels to other
+        /* Minors 0-2 (1.9.20-1.9.25) map the ladder's levels to other
          * modes (ARQ_CONNECT_MINOR_MIN): a session would lose its rounds. */
-        HLOGW(LOG_COMP, "%s for %s from Mercury 1.9.24 or older (protocol minor %d): the versions do not connect, %s",
+        HLOGW(LOG_COMP, "%s for %s from Mercury 1.9.25 or older (protocol minor %d): the versions do not connect, %s",
               is_accept ? "ACCEPT" : "CALL", dialed_call, arq_protocol_connect_minor(data),
               is_accept ? "ignored" : "not answered");
         return false;
