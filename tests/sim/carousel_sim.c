@@ -20,6 +20,7 @@
 #include "modem_mfsk.h"            /* MERCURY_MODE_MFSK */
 #include "sim_channel.h"
 #include "carousel.h"
+#include "rung_hint.h"
 #include "arq_protocol.h"
 #include "freedv_api.h"
 
@@ -769,6 +770,14 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     ctl_snr_n = data_snr_n = 0;
     memset(S, 0, sizeof(S));
 
+    /* Rung memory across runs (docs/EFFICIENCY-FOLLOWUPS.md, A): with
+     * MERCURY_RUNG_HINTS=<file> both stations load what the peer's rungs
+     * delivered in the previous run, and store their own at the end.
+     * Without it no file is touched -- the stations here are A and B. */
+    const char *hints_path = getenv("MERCURY_RUNG_HINTS");
+    if (hints_path && hints_path[0]) rung_hint_set_path(hints_path);
+    else hints_path = NULL;
+
     double snr_db = 12.0;                  /* what the sim stamps on frames */
     ch = carousel_sim_channel(seed, chan, &snr_db);
     sim_channel_set_ctl_snr_offset(ch, ctl_snr_offset);
@@ -814,6 +823,14 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         }
         s->rx_mode = -1;
     }
+    if (hints_path)
+        /* Each station loads its OWN line: the file's per-station keys stand
+         * in for the per-station files two real daemons keep. */
+        for (int i = 0; i < 2; i++) {
+            char self[2] = { (char)('A' + i), 0 };
+            car_rung_hint_t h;
+            if (rung_hint_load(self, &h)) car_rung_seed(&S[i].car, &h, 0.5);
+        }
     for (int i = 0; i < CAR_SIM_BYTES; i++) {
         S[0].tx[i] = (uint8_t)((i * 13 + 7) & 0xFF);
         S[1].tx[i] = (uint8_t)((i * 29 + 3) & 0xFF);
@@ -921,6 +938,13 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             car_tx_inflight(&S[1].car) == 0 && S[1].tx_read == S[1].tx_len) { confirm_ms = now_ms; break; }
     }
     while (nev) { event_t e; pop(&e); free(e.bytes); }
+    if (hints_path)
+        for (int i = 0; i < 2; i++) {
+            char peer[2] = { (char)('A' + i), 0 };
+            car_rung_hint_t h;
+            car_rung_export(&S[i].car, &h);
+            rung_hint_store(peer, &h);
+        }
 
     res->a2b = S[1].rx_len;
     res->b2a = S[0].rx_len;

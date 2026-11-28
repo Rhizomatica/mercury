@@ -347,6 +347,22 @@ void car_seed_ctl_deaf(car_t *c, uint8_t mine, uint8_t peers);
  * frame -- the carousel's first, so its first control frame reports one --
  * and the peer's of mine (the caller has it from the ACCEPT). */
 void car_seed_snr(car_t *c, float mine, float peers);
+
+/* Per-rung delivery, as the estimator measures it (rung[].sent/lost), to
+ * carry across sessions: written at teardown, seeded at car_start.  The
+ * receiver chooses the rung, so the hint never crosses the wire (docs/
+ * EFFICIENCY-FOLLOWUPS.md, A). */
+typedef struct {
+    double sent[CAR_NLEVELS];
+    double lost[CAR_NLEVELS];
+} car_rung_hint_t;
+/* What this session measured, per rung.  In-session dynamics (dead_run,
+ * backoff, probe clocks) are not part of it. */
+void car_rung_export(const car_t *c, car_rung_hint_t *h);
+/* Seed the estimator from a hint, scaled by weight (a hint is history: the
+ * session's own frames must outvote it), counts capped so the seed is a
+ * handful of frames of evidence, never a verdict. */
+void car_rung_seed(car_t *c, const car_rung_hint_t *h, double weight);
 /* The peer hears us below the control mode, as it last reported: our control
  * frames go on MFSK.  The session's own control frames follow the same rule. */
 bool car_peer_ctl_deaf(const car_t *c);
