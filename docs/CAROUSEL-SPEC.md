@@ -68,8 +68,11 @@ read via `mode_payload`/`mode_air`, C:157-167). `ppf = (payload - 6) / 24`
 Control mode: DATAC16, 14 payload bytes, 3740 ms (P:92, P:208).
 
 **[bw500-cap]** The session's bandwidth caps the ladder at `max_level`
-(`car_max_level_for_bw`): BW500 → 3 (DATAC3), BW2300 and BW2750 → 6.  Both
-ends derive it from the bandwidth the connect negotiated (the ACCEPT carries
+(`car_max_level_for_bw`): 6 for BW500, BW2300 and BW2750 alike, the level of
+each bandwidth's top mode (QAM16N2, QAM16C2, QAM16C2W).  Since 1.9.25 the
+narrowing comes from the ladder itself (`ladder_for_bw`: BW500's rungs are
+MFSK500 to QAM16N2); through 1.9.24 the cap held BW500 at 3 (DATAC3).  Both
+ends derive the cap and the ladder from the bandwidth the connect negotiated (the ACCEPT carries
 min(caller, callee)), so they agree.  No rung above `max_level` is chosen,
 started on or sent (invariant I-BW, section 7).
 
