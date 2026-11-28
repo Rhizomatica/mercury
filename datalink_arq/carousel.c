@@ -3939,6 +3939,43 @@ uint32_t car_unsensed_round_ms(const car_t *c)
     return s_round_ms(c, c->poll_level, c->poll_n);
 }
 
+/* My silence moves my control to the floor at the end of the first keydown
+ * of mine at or after heard_ms + SILENT_MS -- or + S_FALLBACK_MS once two
+ * asks in a row are unanswered (car_on_tx_done) -- and in silence I key at
+ * least once a floor exchange: my poll, S's slot for its answer, the guards
+ * and the ask again (~37 s at 2300 Hz, ~64 s at 500 Hz; in the sim, nvis, M
+ * keyed every ~34 s).  So the move is over by heard_ms + SILENT_MS + one
+ * exchange, with no state kept for it.  S, bound to a rung above, may have
+ * decoded that keydown, and listens at the floor only S_FALLBACK_MS after it
+ * (plus its decode): my MFSK polls before then are not heard.  The first
+ * poll of mine keyed once S is there starts within one exchange and is over
+ * one poll later; its answer is waited for as any other (car_answer_due_ms).
+ * The lost-peer watchdog counted only from the last frame heard: with the
+ * default 150 s silence, 240 s left 90 s after the move, the very time S's
+ * fallback takes, and the session ended 1.9 s before S listened at the floor
+ * (sim, nvis, a B2F-shaped exchange, seed 68: the FF never sent).
+ * specs/rungs/FloorSilence.tla, FloorSilence_Lost.cfg; mutant Mut_fs_oldmark.
+ *
+ * SILENT_MS even with reqs >= 2: reqs is what it is now, not at the move.
+ * Two asks may go unanswered only after heard_ms + S_FALLBACK_MS, and the
+ * move then comes on the SILENT_MS branch; the bound on S_FALLBACK_MS ended
+ * such a session at the 240 s mark (sim, fade:-5, seed 1147: reqs reached 2
+ * at 158 s, the move at 162 s).  The cost is on a vanished peer: the caller
+ * ends later (specs/rungs/README.md, FloorSilence).
+ *
+ * Not covered: a poll held off the air by listen-before-talk, or kept back
+ * by the continuation slots of a floor poll that asked for more than one
+ * frame, may start later than one exchange after S listens at the floor.
+ * Such a session ends at this mark, not earlier than before #623. */
+uint64_t car_recover_by_ms(const car_t *c)
+{
+    if (!c || !c->master || !c->io.pattern || !(c->ctl_deaf && c->peer_ctl_deaf)) return 0;
+    uint64_t poll = s_ctl_for(c, true);                  /* a control frame at the floor */
+    uint64_t exchange = poll + TG_MS + D_MFSK_MS + poll + 2 * TURN_G_MS + IDLE_POLL_MIN_MS;
+    uint64_t moved_by = c->heard_ms + SILENT_MS + exchange;   /* either branch of the rule */
+    return moved_by + D_MFSK_MS + S_FALLBACK_MS + exchange + poll;
+}
+
 bool car_is_master(const car_t *c) { return c && c->master; }
 bool car_peer_ending(const car_t *c) { return c && c->master && c->end_req == CAR_END_WISH; }
 

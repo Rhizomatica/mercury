@@ -227,7 +227,9 @@ What the rules became in `carousel.c`, beyond §2-§4:
 - **Teardown**: the caller's DISCONNECT is keyed clear of S's slots and its
   reply slot logged; the callee sends its own only in a slot.  With nothing heard from the peer in 120 s, the caller sends one
   DISCONNECT, not three, and the callee, with no slot to send in, ends at
-  once: the peer's own lost-peer watchdog (240 s, idle or not) ends its end.
+  once: the peer's own lost-peer watchdog (240 s, idle or not; on the
+  caller with its control on the floor, not before `car_recover_by_ms`,
+  #623) ends its end.
   Either end answers the other's DISCONNECT with an ACK pattern keyed by the
   session (0.64 s, where
   a DISCONNECT frame is 3.7 s, 13.5 s at the floor), which only an end whose

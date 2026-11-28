@@ -811,17 +811,25 @@ static void disconnect_answered(arq_session_t *sess)
 #define ARQ_CAR_PEER_QUIET_MS 120000
 
 /* When the lost-peer watchdog ends the session: ARQ_CAR_PEER_LOST_MS after
- * the last thing heard -- or, if the callee's answer to a keydown of mine
- * already on the air by then is still due, once that answer's slot is over.
+ * the last thing heard, or on the caller with its control on the floor, not
+ * before car_recover_by_ms (#623: the callee may listen at the floor only
+ * S_FALLBACK_MS after my last frame before my silence moved my control
+ * there, and my next floor poll has to have reached it) -- and then, if the
+ * callee's answer to a keydown of mine already on the air by that mark is
+ * still due, once that answer's slot is over.
  * At the floor an answer is a 27 s keydown, and the 240 s fell inside it: on
  * NW8L's IONOS MPD at -10 dB (1.9.23, BW500) the caller polled at the floor,
  * the callee keyed its answer at once, and the session ended 6 s before the
  * frame was through, the file never sent.  Only a keydown that ended by the
- * 240 s mark: one keyed after it is not waited for, so a caller asking
- * again and again does not hold the session open. */
+ * mark: one keyed after it is not waited for, so a caller asking again and
+ * again does not hold the session open. */
 static uint64_t car_lost_at(const arq_session_t *sess)
 {
     uint64_t at = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
+    /* ...and not before my control, moved to the floor by my silence, has
+     * had a poll there that the callee listens for (car_recover_by_ms, #623). */
+    uint64_t rec = car_recover_by_ms(sess->car);
+    if (rec > at) at = rec;
     uint64_t due = car_answer_due_ms(sess->car, at);
     return due > at ? due : at;
 }

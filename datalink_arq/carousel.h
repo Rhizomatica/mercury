@@ -472,6 +472,11 @@ uint64_t car_answer_due_ms(const car_t *c, uint64_t keyed_by);
  * DISCONNECT keyed over a PSK3 round it had asked for (sim, -2/-1 dB, 2 of
  * 60 ABORT moments each, #628 review). */
 uint32_t car_unsensed_round_ms(const car_t *c);
+/* The caller, with its control on the floor: the time by which a floor poll
+ * of mine has had a chance to reach a callee that heard my last frame before
+ * my silence moved it there, and falls back to the floor only after its own
+ * silence (#623).  0 when my control is not on the floor. */
+uint64_t car_recover_by_ms(const car_t *c);
 /* The caller has heard the callee say its application has hung up (M_END),
  * whether or not everything of the callee's has arrived since. */
 bool     car_peer_ending(const car_t *c);

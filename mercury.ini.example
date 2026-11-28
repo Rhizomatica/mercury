@@ -218,7 +218,12 @@ retry_stagger_ms = 2000
 ; out, slower on multipath, which it moves to the slow floor it did not need
 ; (in the sim, 30 seeds both ways against 150: 110 s is ~1-2 % faster when the
 ; channel steps down and 11 % slower on NVIS; 300 s the reverse).  The sim has
-; no QRM, so the gain under interference is not measured (#442).
+; no QRM, so the gain under interference is not measured (#442).  It also
+; lengthens the caller's lost-peer watchdog: once its control is on the floor
+; the caller waits for the receiver to listen there and for one floor poll
+; (#623), so it gives up on a vanished peer about 1.6 times this setting plus
+; two floor exchanges after the last frame heard (at 150: ~330 s at 2300 Hz,
+; ~400 s at 500 Hz) instead of 240 s.
 silence_fallback_s = 150
 
 ; The longest a station calls, in seconds, whatever the host's RETRIES asks

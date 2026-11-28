@@ -26,6 +26,7 @@
 #include "freedv_api.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 extern int arq_test_session_bw_hz;   /* arq_test_stubs.c: the negotiated BW */
@@ -74,6 +75,17 @@ static bool intact_prefix(sim_endpoint_t *dst, const uint8_t *sent, size_t sent_
 }
 
 static arq_conn_state_t state(sim_endpoint_t *ep) { return sim_endpoint_session(ep)->conn_state; }
+
+/* Measured NVIS (pathsim --midlat-dist-nvis --snr 10), per-mode erasure: as
+ * ab_bench, conn_bench and carousel_sim.c. */
+static const sim_mode_per_t NVIS[] = {
+    { FREEDV_MODE_DATAC15, 0.20 }, { FREEDV_MODE_DATAC16, 0.20 },
+    { FREEDV_MODE_DATAC13, 0.30 }, { FREEDV_MODE_DATAC14, 0.30 },
+    { FREEDV_MODE_DATAC4,  0.45 }, { FREEDV_MODE_DATAC3,  0.67 },
+    { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },
+    { FREEDV_MODE_QAM16C2, 0.95 }, { MERCURY_MODE_PSK3,   0.05 },   /* as carousel_sim.c */
+};
+#define NVIS_N ((int)(sizeof(NVIS) / sizeof(NVIS[0])))
 
 void test_car_connect_seeds_both_ends(void)
 {
@@ -195,12 +207,14 @@ static sim_t *idle_session(uint64_t seed, double snr_db)
 
 /* #384: the peer leaves an idle session.  The lost-peer watchdog ran only
  * with data in flight, and the caller polled the vanished peer for 10 min,
- * until the operator aborted. */
+ * until the operator aborted.  The caller ends 331 s after the loss: its
+ * silence moves its control to the floor, and it waits for a floor poll the
+ * callee would be listening for (car_recover_by_ms, #623). */
 void test_car_idle_peer_loss_disconnects(void)
 {
     sim_t *s = idle_session(9, 10.0);
     sim_set_per(s, 1.0);
-    sim_run_until_idle(s, 300000);
+    sim_run_until_idle(s, 360000);
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
     sim_destroy(s);
@@ -1061,12 +1075,6 @@ void test_car_fuzz(void)
         { "cliff 3", 0.02, 3, 0, 0 }, { "cliff 10", 0.02, 10, 0, 0 }, { "nvis", 0.02, 0, 1, 0 },
         { "fade 8", 0.02, 0, 0, 8 }, { "fade 15", 0.02, 0, 0, 15 },
     };
-    static const sim_mode_per_t NVIS[] = {
-        { FREEDV_MODE_DATAC15, 0.20 }, { FREEDV_MODE_DATAC16, 0.20 },
-        { FREEDV_MODE_DATAC4,  0.45 }, { FREEDV_MODE_DATAC3,  0.67 },
-        { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },
-        { FREEDV_MODE_QAM16C2, 0.95 }, { MERCURY_MODE_PSK3,   0.05 },   /* as carousel_sim.c */
-    };
     for (size_t c = 0; c < sizeof(CH) / sizeof(CH[0]); c++)
         for (uint64_t seed = 1; seed <= 8; seed++)
         {
@@ -1074,7 +1082,7 @@ void test_car_fuzz(void)
             snprintf(what, sizeof(what), "%s seed %llu", CH[c].name, (unsigned long long)seed);
             sim_t *s = make_sim(seed, CH[c].per);
             if (CH[c].snr) sim_set_snr(s, CH[c].snr);
-            if (CH[c].nvis) sim_set_mode_per(s, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])), 10.0f);
+            if (CH[c].nvis) sim_set_mode_per(s, NVIS, NVIS_N, 10.0f);
             if (CH[c].fade) sim_set_fading(s, CH[c].fade, 1.0);
             sim_endpoint_queue_tx(sim_a(s), ab, sizeof(ab));
             sim_endpoint_queue_tx(sim_b(s), ba, sizeof(ba));
@@ -1281,6 +1289,72 @@ void test_car_step_drop_watchdog_waits_for_the_floor_answer(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(runs, done, what);
 }
 
+/* #623: the caller's silence moves its control to the floor, while the
+ * callee, bound to a rung above, heard the caller's last DATAC16 frame before
+ * the move and listens at the floor only S_FALLBACK_MS (90 s) after it.  The
+ * lost-peer watchdog counted 240 s from the last frame heard, which left the
+ * caller those same 90 s: it ended the session with its MFSK polls unheard,
+ * as the callee was about to listen for them.  B2F-shaped exchanges (the
+ * callee speaks first), seeds that failed so: 13 of 3000 sessions on nvis
+ * and 6 of 3000 at fade:-5 with the shorter script, none with
+ * car_recover_by_ms. */
+static bool script_completes(uint64_t seed, int chan, const char *script)
+{
+    sim_channel_cfg_t chan_cfg = { .seed = seed, .per = 0.0, .guard_ms = 150 };
+    sim_t *s = sim_create(&chan_cfg, "A0AAA", "B0BBB");
+    TEST_ASSERT_NOT_NULL(s);
+    if (chan == 0) {
+        sim_set_mode_per(s, NVIS, NVIS_N, 10.0f);
+    } else {
+        sim_set_rx_snr(s, -5.0f);
+        sim_set_fading(s, -5.0, 0.5);
+    }
+    sim_set_half_duplex(s, true);
+    sim_set_carrier_sense(s, true, 400);
+    connect_ab(s);
+    for (int i = 0; i < 36000 && !(state(sim_a(s)) == ARQ_CONN_CONNECTED &&
+                                   state(sim_b(s)) == ARQ_CONN_CONNECTED); i++)
+        sim_run_until_idle(s, 100);
+    bool ok = state(sim_a(s)) == ARQ_CONN_CONNECTED && state(sim_b(s)) == ARQ_CONN_CONNECTED;
+    static uint8_t buf[1024], rx[16 * 1024];
+    size_t want[2] = { 0, 0 };                          /* bytes to A, to B */
+    for (const char *p = script; ok && *p; ) {
+        bool from_a = *p == 'A';
+        int n = atoi(p + 1);
+        sim_endpoint_t *from = from_a ? sim_a(s) : sim_b(s), *to = from_a ? sim_b(s) : sim_a(s);
+        memset(buf, *p, (size_t)n);
+        queue(s, from, buf, (size_t)n);
+        want[from_a] += (size_t)n;
+        for (int i = 0; i < 36000 && sim_endpoint_delivered(to, rx, sizeof(rx)) < want[from_a]; i++) {
+            if (state(sim_a(s)) != ARQ_CONN_CONNECTED || state(sim_b(s)) != ARQ_CONN_CONNECTED) break;
+            sim_run_until_idle(s, 100);
+        }
+        ok = sim_endpoint_delivered(to, rx, sizeof(rx)) >= want[from_a];
+        p = strchr(p, '/');
+        p = p ? p + 1 : "";
+    }
+    sim_destroy(s);
+    return ok;
+}
+
+void test_car_watchdog_waits_for_the_callee_at_the_floor(void)
+{
+    static const struct { uint64_t seed; int chan; const char *script; } RUN[] = {
+        { 125,  0, "B90/A120/B6/A600/B45/A5/B400/A3/B3" },
+        { 153,  0, "B90/A120/B6/A600/B45/A5/B400/A3/B3" },
+        { 746,  0, "B90/A120/B6/A600/B45/A5/B400/A3/B3" },
+        { 504,  1, "B90/A85/B5/A300/B3/A3" },
+        { 1121, 1, "B90/A85/B5/A300/B3/A3" },
+        { 1147, 1, "B90/A85/B5/A300/B3/A3" },
+    };
+    for (size_t r = 0; r < sizeof(RUN) / sizeof(RUN[0]); r++) {
+        char what[64];
+        snprintf(what, sizeof(what), "%s seed %llu", RUN[r].chan ? "fade:-5" : "nvis",
+                 (unsigned long long)RUN[r].seed);
+        TEST_ASSERT_TRUE_MESSAGE(script_completes(RUN[r].seed, RUN[r].chan, RUN[r].script), what);
+    }
+}
+
 /* On air, 2026-11-16 18:32 (KG9NI calling K7EK, 1.9.24): K7EK sent its BBS's
  * last 3 bytes, KG9NI's BPQ32 hung up as they arrived, and KG9NI's one
  * DISCONNECT went unheard.  Its retry waited for K7EK's answer slot until
@@ -1372,6 +1446,7 @@ int main(void)
     RUN_TEST(test_car_idle_peer_loss_disconnects);
     RUN_TEST(test_car_idle_lossy_link_stays_connected);
     RUN_TEST(test_car_step_drop_watchdog_waits_for_the_floor_answer);
+    RUN_TEST(test_car_watchdog_waits_for_the_callee_at_the_floor);
     RUN_TEST(test_car_disconnect_quiet_peer_one_try);
     RUN_TEST(test_car_disconnect_after_reply_is_prompt);
     RUN_TEST(test_car_winlink_tail_ends_cleanly);
