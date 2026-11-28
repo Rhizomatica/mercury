@@ -33,10 +33,27 @@ int main(int argc, char **argv)
     if (getenv("SILENCE_S")) arq_protocol_set_silence_fallback_s(atoi(getenv("SILENCE_S")));
     /* CAR_LIMIT_S: a longer run than the default (the deep fringe is slow). */
     uint64_t limit = getenv("CAR_LIMIT_S") ? (uint64_t)atoll(getenv("CAR_LIMIT_S")) * 1000 : LIMIT_MS;
+    /* CAR_LOSE=i,j,...: those frames (in keying order, both stations) are
+     * lost and every other one arrives; CAR_UNSENSED=k,...: the peer never
+     * senses those keydowns (carousel_sim_force_losses / _unsensed).  With
+     * CAR_TRACE=1 the "keys:" lines give both orders. */
+    int lose[64], nlose = 0, uns[64], nuns = 0;
+    for (int w = 0; w < 2; w++) {
+        const char *e = getenv(w ? "CAR_UNSENSED" : "CAR_LOSE");
+        int *v = w ? uns : lose, *n = w ? &nuns : &nlose;
+        for (char *q = (char *)e; q && *q && *n < 64; ) {
+            v[(*n)++] = (int)strtol(q, &q, 10);
+            if (*q == ',') q++;
+            else break;
+        }
+    }
+    if (getenv("CAR_LOSE")) carousel_sim_force_losses(lose, nlose);
+    if (nuns) carousel_sim_force_unsensed(uns, nuns);
     carousel_sim_run(seed, argv[2], bidir, limit, &r);
-    printf("seed=%llu chan=%s %s a2b=%zu b2a=%zu integrity=%s done_ms=%llu collisions=%d overruns=%d kd_max=%.1f/%.1f air=%.1f+%.1f keys=%d%s\n",
+    printf("seed=%llu chan=%s %s a2b=%zu b2a=%zu integrity=%s done_ms=%llu collisions=%d overlaps=%d/%d overruns=%d kd_max=%.1f/%.1f air=%.1f+%.1f keys=%d%s\n",
            (unsigned long long)seed, argv[2], bidir ? "bidir" : "oneway", r.a2b, r.b2a,
-           r.intact ? "OK" : "CORRUPT", (unsigned long long)r.done_ms, r.collisions, r.overruns,
+           r.intact ? "OK" : "CORRUPT", (unsigned long long)r.done_ms, r.collisions,
+           r.kd_overlaps, r.kd_unexplained, r.overruns,
            r.max_kd_ms[0] / 1000.0, r.max_kd_ms[1] / 1000.0,
            r.air_ms[0] / 1000.0, r.air_ms[1] / 1000.0, r.keydowns,
            r.stalled ? " STALLED" : "");

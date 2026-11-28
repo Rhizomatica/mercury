@@ -332,6 +332,37 @@ static void test_carousel_unheard_polls_free_their_slots(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, (int)r.slot_hold_ms, what);
 }
 
+/* B's answer to a floor poll of A's, the poll A's answer to a round of B's
+ * it heard, lost and never sensed: B is mid-stream, and continues on one
+ * anchor or the other, so A keeps the poll's continuation slots (m_watch,
+ * CAR_LOG_AFTER_ROUND).  Freed, A's next keydown went into B's continuation when
+ * something else held it past the gap before them (on air, VE4KLM <- K7EK
+ * 2026-11-24 23:51Z and 23:52Z).  Kept, they still leave A the gap: its
+ * re-poll goes there, no longer held than before.  The frames: B's round
+ * (kd 13: frames 17, 18) after A's poll for 2 (kd 12, frame 16). */
+static void test_carousel_lost_answer_after_a_round_keeps_the_slots(void)
+{
+    static const int lost[] = { 17, 18 };
+    static const int unsensed[] = { 13 };
+    car_sim_result_t r;
+    setenv("CAR_SCRIPT", "A40,B2000+2000", 1);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, "cliff:-8", false, LIMIT_MS, &r);
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(28, r.keydowns, "the keydown order changed: pick the lost round again (CAR_TRACE=1)");
+    carousel_sim_force_losses(lost, 2);
+    carousel_sim_force_unsensed(unsensed, 1);
+    carousel_sim_run(1, "cliff:-8", false, LIMIT_MS, &r);
+    carousel_sim_force_unsensed(NULL, 0);
+    carousel_sim_force_losses(NULL, -1);
+    unsetenv("CAR_SCRIPT");
+    TEST_ASSERT_TRUE(r.intact);
+    TEST_ASSERT_EQUAL_INT(0, r.kd_overlaps);
+    char what[64];
+    snprintf(what, sizeof(what), "held %llu ms for the kept slots", (unsigned long long)r.slot_hold_ms);
+    TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(2000, r.slot_hold_ms, what);
+}
+
 /* M's own round of one frame, after my "done", lost whole: M asks (REQ)
  * about the one frame it sent.  Scored as the 8 my last poll had asked for,
  * one lost frame took QAM16C2 out at 20 dB (on air at its threshold: NW8L-
@@ -927,6 +958,7 @@ int main(void)
     RUN_TEST(test_carousel_no_reprobe_below_gate);
     RUN_TEST(test_carousel_dark_rounds_drop_the_rung);
     RUN_TEST(test_carousel_unheard_polls_free_their_slots);
+    RUN_TEST(test_carousel_lost_answer_after_a_round_keeps_the_slots);
     RUN_TEST(test_carousel_req_scores_the_frames_sent);
     RUN_TEST(test_carousel_done_poll_asks_for_nothing);
     RUN_TEST(test_carousel_short_round_scored_as_sent);

@@ -144,8 +144,12 @@ typedef struct {
     uint8_t  k;                     /* continuation slots after the response slot */
     uint8_t  done;                  /* slots I heard S's keydown in, end to end */
     uint8_t  mk;                    /* its id */
-    bool     pat;                   /* a pattern: S's answers name no id */
+    uint8_t  flags;                 /* CAR_LOG_*, below */
 } car_mlog_t;
+#define CAR_LOG_PAT         1u      /* a pattern: S's answers name no id */
+#define CAR_LOG_AFTER_ROUND 2u      /* keyed after a round of S's heard since my keydown
+                                       before it: S is mid-stream (m_watch) */
+#define CAR_LOG_KEPT        4u      /* m_watch has kept its continuation slots (said once) */
 
 typedef struct {
     car_io_t io;
