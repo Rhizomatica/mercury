@@ -7,7 +7,7 @@
 #
 #   utils/snr_calib_sweep.sh 1 DATAC3 "-2 0 2 4 6 10"
 #
-# 60 s of test frames (mercury -t) are generated once, put through ch at each
+# 60 s of test frames (mercury -t: random bytes, as real traffic) are generated once, put through ch at each
 # noise level, and decoded by a second mercury fed in real time over a FIFO
 # (reading a capture faster than real time drops audio).  Prints, per point,
 # ch's SNR3k, the median reported SNR of the frames that decoded, and how many

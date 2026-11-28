@@ -227,6 +227,7 @@ Encoder: `build_round` (C:479-586), `put_seg_hdr` (C:324-330). Decoder: `decode_
 | b1[7:4] | `poll_id` | id of the poll this round answers (`tx_poll_id`, C:582) |
 | b1[3:0] | `hi` | `(next_blk_id-1) mod 16` (C:582) |
 | then ≤ 8 segments, each 4-byte header + pieces | | stop at count 0, at < 4 bytes left, or after 8 segments (C:306-320) |
+| the room after the segments | | a zero segment header (count 0, where 4 bytes are left), then bytes that look random: a fixed hash of each byte's place in the frame (`fill_room`). Zeros there put one symbol on every carrier: a mostly empty OFDM frame clipped into peaks, sent less power at the same peak and read ~3 dB low (bench: lone DATAC17W 11.9 against 15.0 dB). The receiver reads nothing past the zero header, so older peers parse it as before. |
 | block bytes | | **[since 2c07bf4]** a block is the application's bytes followed by a 4-byte check, `len = app_len + 4`; K, pad and the pieces cover both. Check = CRC-32 (IEEE, reflected, init and final XOR 0xFFFFFFFF) over `seed` (4 bytes LE) ‖ `id` (the block's 8-bit id) ‖ `K` ‖ the application's bytes, stored LE. The receiver delivers only `app_len` bytes. |
 | hdr[31:28] | block id mod 16 | |
 | hdr[27:21] | K-1 | K ≤ 96 enforced on RX (C:316) |

@@ -470,13 +470,34 @@ int freedv_comprx_700c(struct freedv *f, COMP demod_in_8kHz[]) {
  * ~9 dB low raw and flattened past 20 dB (21.3 at 27.6).  The
  * decision-directed estimate rises to 27.6 dB and is mapped by a table of
  * its own.  It compresses near 8 dB, where QAM16C2 barely decodes.
- */
+ *
+ * DATAC3, DATAC1 and DATAC15 refitted (2026-11-28).  The lines and tables
+ * above were fitted on `mercury -t` frames, which were zeros with one byte
+ * set; the estimate depends on what the frame carries, and on random frames
+ * (as real traffic is, and as the carousel's spare room now is) those three
+ * read low: at 14 dB true, DATAC3 9.3, DATAC1 11.3, DATAC15 12.9, and DATAC3
+ * 9.4 dB low at 20.  That was the bench's DATAC3 reading 5-6 dB under the
+ * wide modes on one link.  Each now maps its raw estimate by a table of its
+ * own: 30 random frames a point on white noise, SNR3k from the modem frames'
+ * power, the median raw estimate.  The raw estimate flattens (DATAC3 7.7 at
+ * 14, 8.4 at 18, +-0.4 a frame), so each table stops where its last segment
+ * is still under ~7 dB a raw dB: DATAC3 at 18, DATAC1 at 20, DATAC15 at 22;
+ * past that SNR_MAP_MAX_SLOPE holds it.  DATAC16, DATAC4 and the 2.0 rungs
+ * read within 0.5 dB of the truth on random frames up to 16 dB, and keep
+ * their maps. */
 typedef struct { float x, y; } snr_knot_t;
-static const snr_knot_t SNR_MAP_DATAC15[] = {{10.77f, 10.77f}, {14.34f, 14.90f}, {17.66f, 18.90f}, {20.17f, 22.90f}};
+static const snr_knot_t SNR_MAP_DATAC15[] = {{-7.47f, -8.00f}, {-6.15f, -6.00f}, {-4.37f, -4.00f}, {-2.44f, -2.00f},
+                                             {-0.51f, 0.00f},  {1.51f, 2.00f},   {3.55f, 4.00f},   {5.47f, 6.00f},
+                                             {7.44f, 8.00f},   {9.26f, 10.00f},  {11.02f, 12.00f}, {12.65f, 14.00f},
+                                             {13.92f, 16.00f}, {15.11f, 18.00f}, {16.13f, 20.00f}, {16.93f, 22.00f}};
 static const snr_knot_t SNR_MAP_DATAC16[] = {{10.72f, 10.72f}, {13.94f, 14.80f}, {16.34f, 18.80f}, {17.28f, 22.80f}};
 static const snr_knot_t SNR_MAP_DATAC4[]  = {{12.00f, 12.00f}, {15.05f, 16.20f}, {17.07f, 20.20f}};
-static const snr_knot_t SNR_MAP_DATAC3[]  = {{9.75f, 9.75f}, {12.64f, 13.87f}, {14.58f, 17.87f}, {15.49f, 21.87f}};
-static const snr_knot_t SNR_MAP_DATAC1[]  = {{9.64f, 9.64f}, {14.33f, 13.43f}, {18.54f, 17.43f}, {22.04f, 21.43f}};
+static const snr_knot_t SNR_MAP_DATAC3[]  = {{-3.10f, -4.00f}, {-2.16f, -2.00f}, {-0.94f, 0.00f}, {0.62f, 2.00f},
+                                             {2.20f, 4.00f},   {3.70f, 6.00f},   {5.06f, 8.00f},  {6.18f, 10.00f},
+                                             {7.04f, 12.00f},  {7.69f, 14.00f},  {8.07f, 16.00f}, {8.37f, 18.00f}};
+static const snr_knot_t SNR_MAP_DATAC1[]  = {{2.00f, 2.00f},   {3.09f, 4.00f},   {4.46f, 6.00f},   {5.95f, 8.00f},
+                                             {7.43f, 10.00f},  {8.75f, 12.00f},  {9.90f, 14.00f},  {10.80f, 16.00f},
+                                             {11.46f, 18.00f}, {11.93f, 20.00f}};
 /* DATAC17 on the 2.0 geometry (36 carriers, 4 ms guard, a pilot every 8
  * symbols): the raw estimate against the truth, 40 frames a point on white
  * noise, SNR3k from the modem frames' power.  It flattens past 20 dB
@@ -527,8 +548,8 @@ static float freedv_snr_calib(int mode, float snr_raw) {
   switch (mode) {
     case FREEDV_MODE_DATAC16: return SNR_MAP(SNR_MAP_DATAC16, 1.045f * snr_raw + 0.29f);
     case FREEDV_MODE_DATAC4:  return SNR_MAP(SNR_MAP_DATAC4,  1.071f * snr_raw + 0.33f);
-    case FREEDV_MODE_DATAC3:  return SNR_MAP(SNR_MAP_DATAC3,  1.154f * snr_raw + 0.37f);
-    case FREEDV_MODE_DATAC1:  return SNR_MAP(SNR_MAP_DATAC1,  1.220f * snr_raw - 0.42f);
+    case FREEDV_MODE_DATAC3:  return SNR_MAP(SNR_MAP_DATAC3,  snr_raw);
+    case FREEDV_MODE_DATAC1:  return SNR_MAP(SNR_MAP_DATAC1,  snr_raw);
     case FREEDV_MODE_DATAC17: return SNR_MAP(SNR_MAP_DATAC17, snr_raw);
     case FREEDV_MODE_QAM16C2: return SNR_MAP(SNR_MAP_QAM16C2, snr_raw);
     case FREEDV_MODE_DATAC17W: return SNR_MAP(SNR_MAP_DATAC17W, snr_raw);
