@@ -2650,6 +2650,153 @@ void test_keydown_tells_peer_reply(void)
 }
 
 
+/* ---- A session we ended, its peer still polling (linger) ---- */
+
+/* ABORT, our one DISCONNECT out, and no answer: follow the FSM's deadlines
+ * until the session has ended. */
+static void end_with_unanswered_disconnect(void)
+{
+    goto_disconnecting_caller();
+    for (int i = 0; i < 200 && sess.conn_state == ARQ_CONN_DISCONNECTING; i++)
+    {
+        if (sess.tx_active) {
+            arq_event_t tx = make_event(ARQ_EV_TX_COMPLETE);
+            arq_fsm_dispatch(&sess, &tx);
+            continue;
+        }
+        if (sess.deadline_ms == UINT64_MAX) break;
+        mock_set_uptime_ms(sess.deadline_ms);
+        arq_event_t ev = make_event(sess.deadline_event);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    RESET_FAKE(fake_send_tx_frame);
+    RESET_FAKE(fake_notify_cancelpending);
+}
+
+static void hear_peer_poll(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_RX_CAROUSEL);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+}
+
+/* On air, K7EK <- N3JXB 2026-11-26 19:30:41Z: N3JXB missed K7EK's DISCONNECT
+ * and polled for 70 s; K7EK's decoders locked on its polls and, the seed
+ * gone, could not read them.  Now the seed stays, a poll is answered with
+ * the DISCONNECT one reply guard later, and the linger -- with the host it
+ * holds (arq.c, linger_hold) -- goes on for the peer's next poll. */
+void test_linger_answers_a_gone_peers_poll(void)
+{
+    end_with_unanswered_disconnect();
+    TEST_ASSERT_NOT_EQUAL(0, sess.crc_seed);
+    TEST_ASSERT_NOT_EQUAL(0, sess.linger_until_ms);
+
+    hear_peer_poll();
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);   /* the guard first */
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+    mock_set_uptime_ms(sess.deadline_ms);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+
+    ev = make_event(ARQ_EV_TX_STARTED);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_cancelpending_fake.call_count);
+    TEST_ASSERT_NOT_EQUAL(0, sess.linger_until_ms);
+    TEST_ASSERT_EQUAL_UINT64(sess.linger_until_ms, sess.deadline_ms);
+}
+
+/* At most ARQ_LINGER_REPLIES answers, then the seed goes. */
+void test_linger_answers_at_most_twice(void)
+{
+    end_with_unanswered_disconnect();
+    for (int i = 0; i < ARQ_LINGER_REPLIES + 2; i++)
+    {
+        hear_peer_poll();
+        if (sess.deadline_event == ARQ_EV_TIMER_ACK) {
+            mock_set_uptime_ms(sess.deadline_ms);
+            arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+            arq_fsm_dispatch(&sess, &ev);
+            ev = make_event(ARQ_EV_TX_COMPLETE);
+            arq_fsm_dispatch(&sess, &ev);
+        }
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_LINGER_REPLIES, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL(0, sess.crc_seed);
+    TEST_ASSERT_EQUAL_UINT64(0, sess.linger_until_ms);
+}
+
+/* ARQ_LINGER_MS with nothing heard: the seed goes, broadcast decodes again. */
+void test_linger_ends_after_its_time(void)
+{
+    end_with_unanswered_disconnect();
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_RETRY, sess.deadline_event);
+    mock_set_uptime_ms(sess.deadline_ms);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL(0, sess.crc_seed);
+    TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, sess.deadline_ms);
+    hear_peer_poll();
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+}
+
+/* LISTEN OFF (a scanner hopping) ends it: the radio is the host's again. */
+void test_linger_ends_at_listen_off(void)
+{
+    end_with_unanswered_disconnect();
+    arq_event_t ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL(0, sess.crc_seed);
+    ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    hear_peer_poll();
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+}
+
+/* A new CALL ends it, and is answered as any other. */
+void test_linger_ends_at_a_new_call(void)
+{
+    end_with_unanswered_disconnect();
+    arq_event_t ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "OTHER", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT64(0, sess.linger_until_ms);
+}
+
+/* The peer's own DISCONNECT ends it: nothing left to tell. */
+void test_linger_ends_at_the_peers_disconnect(void)
+{
+    end_with_unanswered_disconnect();
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL(0, sess.crc_seed);
+    TEST_ASSERT_EQUAL_UINT64(0, sess.linger_until_ms);
+}
+
+/* A session the peer acknowledged ending leaves no linger. */
+void test_no_linger_after_an_answered_disconnect(void)
+{
+    goto_disconnecting_caller();
+    arq_event_t ev = make_event(ARQ_EV_RX_PATTERN);   /* the peer's ACK */
+    arq_fsm_dispatch(&sess, &ev);
+    for (int i = 0; i < 50 && sess.conn_state == ARQ_CONN_DISCONNECTING && sess.deadline_ms != UINT64_MAX; i++)
+    {
+        mock_set_uptime_ms(sess.deadline_ms);
+        ev = make_event(sess.deadline_event);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT64(0, sess.linger_until_ms);
+    TEST_ASSERT_EQUAL(0, sess.crc_seed);
+}
+
 /* ---- Timeout tests ---- */
 
 /* CALL timeout returns to the pre-call status.  The app had LISTEN enabled
@@ -3383,6 +3530,13 @@ int main(void)
     RUN_TEST(test_keydown_tells_peer_reply);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     /* Timeout tests */
+    RUN_TEST(test_linger_answers_a_gone_peers_poll);
+    RUN_TEST(test_linger_answers_at_most_twice);
+    RUN_TEST(test_linger_ends_after_its_time);
+    RUN_TEST(test_linger_ends_at_listen_off);
+    RUN_TEST(test_linger_ends_at_a_new_call);
+    RUN_TEST(test_linger_ends_at_the_peers_disconnect);
+    RUN_TEST(test_no_linger_after_an_answered_disconnect);
     RUN_TEST(test_call_timeout);
     RUN_TEST(test_call_timeout_no_listen);
     RUN_TEST(test_call_gives_up_at_call_max_s);

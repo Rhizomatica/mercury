@@ -312,6 +312,18 @@ void arq_protocol_session_calls(bool we_called, const char *remote_call,
  * deferral step: a decode at the allowance's very end otherwise ties with the
  * CALL (specs/connect/ConnectCarrier.tla, DW). */
 #define ARQ_CALL_DECODE_WAIT_MS       (4500 + ARQ_CHANNEL_DEFER_MS)
+/* After a session we ended with a DISCONNECT the peer never answered
+ * (ABORT's one, or retries spent): how long LISTENING keeps its seed, so
+ * that a poll of the peer's -- it never heard us hang up -- still decodes
+ * and is answered with the DISCONNECT again, at most LINGER_REPLIES times.
+ * The peer polls every 11-15 s above the floor, so 60 s is four or five of
+ * them.  On air (K7EK, callee, N3JXB caller, 2026-11-26 19:30:41Z): the
+ * host's ABORT came 0.3 s before the end of K7EK's DISCONNECT, N3JXB never
+ * decoded it, and polled for 70 s until its operator pressed Stop; K7EK's
+ * decoders locked on three of those polls in 30 s and could not read them
+ * (the seed was gone). */
+#define ARQ_LINGER_MS                 60000
+#define ARQ_LINGER_REPLIES            2
 /* Before a DISCONNECT: how long past the longer reply guard to leave for a
  * frame our last transmission invited to start and be heard, before keying
  * over the gap. */
