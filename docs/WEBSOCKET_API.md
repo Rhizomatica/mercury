@@ -172,6 +172,15 @@ section.
 
 The current values ride in the status event's `hl2` field.
 
+### 3.4b `refresh_devices`
+
+Re-list the capture and playback devices. No fields. The engine enumerates
+the devices again and publishes `capture_dev_list`, `playback_dev_list` and
+`input_channel` (§5.2, §5.3) to every client, as it does when a client
+connects. The lists are otherwise sent only on connect and after
+`set_audio_config`, so a sound card plugged in later was not offered until a
+restart (issue #556). The UI sends this when its Soundcards dialog opens.
+
 ### 3.5 `set_callsign`
 
 Persist the operator callsign so it survives a restart.

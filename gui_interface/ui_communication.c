@@ -387,6 +387,13 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
         pthread_mutex_unlock(&ctx->cfg_mutex);
 
+    } else if (strcmp(cmd->command, "refresh_devices") == 0) {
+        /* Re-list the audio devices for every client.  The list is read when
+         * a client connects and after set_audio_config; a device plugged in
+         * later (a Digirig on a Mac, issue #556) showed up only after a
+         * restart.  The UI sends this when the Soundcards dialog opens. */
+        ctx->soundcard_list_pending = 1;
+
     } else {
         HLOGW(UI_LOG_TAG, "Unknown UI command: %s", cmd->command);
         return -1;
